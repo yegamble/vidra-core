@@ -146,8 +146,8 @@ func TestActorURLAndEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AccountActor: %v", err)
 	}
-	if person.URL != person.ID {
-		t.Errorf("person url = %q, want %q", person.URL, person.ID)
+	if person.URL != "https://videos.example/users/ada" {
+		t.Errorf("person url = %q, want the frontend profile page", person.URL)
 	}
 	if person.Endpoints == nil || person.Endpoints.SharedInbox != person.ID+"/inbox" {
 		t.Errorf("person endpoints = %+v, want sharedInbox %q", person.Endpoints, person.ID+"/inbox")
@@ -160,8 +160,8 @@ func TestActorURLAndEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChannelActor: %v", err)
 	}
-	if group.URL != group.ID {
-		t.Errorf("group url = %q, want %q", group.URL, group.ID)
+	if group.URL != "https://videos.example/channels/films" {
+		t.Errorf("group url = %q, want the frontend channel page", group.URL)
 	}
 	if group.Endpoints == nil || group.Endpoints.SharedInbox != group.ID+"/inbox" {
 		t.Errorf("group endpoints = %+v, want sharedInbox %q", group.Endpoints, group.ID+"/inbox")
@@ -185,7 +185,7 @@ func TestWebFinger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WebFinger account: %v", err)
 	}
-	if jrd.Subject != "acct:ada@videos.example" || len(jrd.Links) != 1 {
+	if jrd.Subject != "acct:ada@videos.example" || len(actorLinks(jrd)) != 1 || len(jrd.Links) != 2 {
 		t.Fatalf("jrd = %+v", jrd)
 	}
 	if jrd.Links[0].Href != "https://videos.example/accounts/ada" || jrd.Links[0].Rel != "self" {
@@ -216,5 +216,39 @@ func TestWebFingerRejects(t *testing.T) {
 		if _, err := svc.WebFinger(context.Background(), bad); !errors.Is(err, ErrBadResource) {
 			t.Errorf("resource %q: err = %v, want ErrBadResource", bad, err)
 		}
+	}
+}
+
+func TestActorsCarryAvatarAndBanner(t *testing.T) {
+	repo := newActorRepo()
+	uid := repo.usersByName["ada"].ID
+	cid := repo.channels["films"].ID
+	repo.images = map[string]string{
+		uid.String() + "|avatar": "image/png",
+		cid.String() + "|avatar": "image/webp",
+		cid.String() + "|banner": "image/jpeg",
+	}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+
+	person, err := svc.AccountActor(context.Background(), "ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if person.Icon == nil || person.Icon.Type != "Image" || person.Icon.MediaType != "image/png" ||
+		person.Icon.URL != "https://videos.example/api/v1/users/"+uid.String()+"/avatar" {
+		t.Errorf("person icon = %+v", person.Icon)
+	}
+	if person.Image != nil {
+		t.Errorf("person image = %+v, want nil without a banner", person.Image)
+	}
+	group, err := svc.ChannelActor(context.Background(), "films")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group.Icon == nil || group.Icon.MediaType != "image/webp" || group.Icon.URL != "https://videos.example/api/v1/channels/films/avatar" {
+		t.Errorf("group icon = %+v", group.Icon)
+	}
+	if group.Image == nil || group.Image.MediaType != "image/jpeg" || group.Image.URL != "https://videos.example/api/v1/channels/films/banner" {
+		t.Errorf("group image = %+v", group.Image)
 	}
 }

@@ -72,6 +72,50 @@ func TestIsBlockedIP(t *testing.T) {
 	}
 }
 
+// IPv6 transition and embedding ranges carry an IPv4 address inside an IPv6
+// one; a guard that only looks at the outer address lets a private IPv4
+// through them. Each is either blocked outright or has its embedded IPv4
+// checked against the private ranges.
+func TestIsBlockedIPv6TransitionRanges(t *testing.T) {
+	cases := []struct {
+		ip      string
+		blocked bool
+	}{
+		// NAT64 well-known prefix 64:ff9b::/96: embedded IPv4 decides.
+		{"64:ff9b::7f00:1", true},    // 127.0.0.1
+		{"64:ff9b::a00:1", true},     // 10.0.0.1
+		{"64:ff9b::a9fe:a9fe", true}, // 169.254.169.254
+		{"64:ff9b::808:808", false},  // 8.8.8.8
+		// NAT64 local-use 64:ff9b:1::/48: blocked outright.
+		{"64:ff9b:1::1", true},
+		{"64:ff9b:1:ffff::808:808", true},
+		// 6to4 2002::/16: embedded IPv4 in bytes 2-5.
+		{"2002:7f00:1::1", true},   // 127.0.0.1
+		{"2002:a00:1::1", true},    // 10.0.0.1
+		{"2002:c0a8:101::1", true}, // 192.168.1.1
+		{"2002:808:808::1", false}, // 8.8.8.8
+		// Teredo 2001::/32: blocked outright.
+		{"2001:0:4136:e378:8000:63bf:3fff:fdd2", true},
+		{"2001:0::1", true},
+		// IPv4-compatible ::/96 (deprecated): blocked outright.
+		{"::7f00:1", true},
+		{"::a00:1", true},
+		{"::808:808", true},
+		// Neighbouring public space stays reachable.
+		{"2001:4860:4860::8888", false},
+		{"2003::1", false},
+	}
+	for _, tc := range cases {
+		ip := net.ParseIP(tc.ip)
+		if ip == nil {
+			t.Fatalf("bad test address %q", tc.ip)
+		}
+		if got := IsBlockedIP(ip); got != tc.blocked {
+			t.Errorf("IsBlockedIP(%s) = %v, want %v", tc.ip, got, tc.blocked)
+		}
+	}
+}
+
 // TestClientBlocksLoopback proves the dial-time guard actually refuses a
 // connection to a loopback address even for a syntactically-valid http URL — the
 // real SSRF defense (this is what stops a rebinding DNS name too).

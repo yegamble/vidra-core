@@ -115,6 +115,7 @@ func TestW8ToggleBatchRegistry(t *testing.T) {
 		{KeyVideoCardPreviewsEnabled, KindBool, false, PageVOD, "playback"},
 		{KeyVideoCardPreviewsDefaultEnabled, KindBool, false, PageVOD, "playback"},
 		{KeyTranscriptionEnabled, KindBool, false, PageVOD, "transcription"}, // TranscriptionEnabled=false
+		{KeyAutoTranscribeNewUploads, KindBool, false, PageVOD, "transcription"},
 		{KeyUserImportEnabled, KindBool, true, PageAdvanced, "user_data"},
 		{KeyUserExportEnabled, KindBool, true, PageAdvanced, "user_data"},
 		{KeyUserExportExpirationHours, KindInt, int64(DefaultUserExportExpirationHours), PageAdvanced, "user_data"},

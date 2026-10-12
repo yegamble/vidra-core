@@ -163,9 +163,18 @@ func (q *Queries) CountUnreadNotifications(ctx context.Context, userID uuid.UUID
 }
 
 const createNotification = `-- name: CreateNotification :one
-INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id, report_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id, registration_request_id, remote_follow_id
+WITH n AS (
+    INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id, report_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id, registration_request_id, remote_follow_id
+), owed AS (
+    INSERT INTO notification_emails (notification_id)
+    SELECT n.id FROM n
+    JOIN notification_prefs np ON np.user_id = n.user_id AND np.type = n.type
+    WHERE np.email_enabled
+)
+SELECT id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id, registration_request_id, remote_follow_id
+FROM n
 `
 
 type CreateNotificationParams struct {
@@ -179,9 +188,32 @@ type CreateNotificationParams struct {
 	ReportID       pgtype.UUID `json:"report_id"`
 }
 
+type CreateNotificationRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	UserID                uuid.UUID          `json:"user_id"`
+	Type                  string             `json:"type"`
+	ActorID               pgtype.UUID        `json:"actor_id"`
+	ChannelID             pgtype.UUID        `json:"channel_id"`
+	VideoID               pgtype.UUID        `json:"video_id"`
+	CommentID             pgtype.UUID        `json:"comment_id"`
+	ReadAt                pgtype.Timestamptz `json:"read_at"`
+	CreatedAt             time.Time          `json:"created_at"`
+	ConversationID        pgtype.UUID        `json:"conversation_id"`
+	ReportID              pgtype.UUID        `json:"report_id"`
+	RegistrationRequestID pgtype.UUID        `json:"registration_request_id"`
+	RemoteFollowID        pgtype.UUID        `json:"remote_follow_id"`
+}
+
 // Record a notification for a recipient (user_id). Context columns are optional
 // and depend on the type.
-func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotificationParams) (Notification, error) {
+//
+// The same statement records whether it is ALSO owed an email (migration 0157):
+// a notification_emails row when, and only when, the recipient explicitly
+// turned email on for this type. Email is opt-in, and the prefs API accepts an
+// email choice only for the types that offer it, so for every other type the
+// second insert is empty. One statement, so a notification can never exist
+// without the email decision that belongs to it (or the reverse).
+func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotificationParams) (CreateNotificationRow, error) {
 	row := q.db.QueryRow(ctx, createNotification,
 		arg.UserID,
 		arg.Type,
@@ -192,7 +224,7 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		arg.ConversationID,
 		arg.ReportID,
 	)
-	var i Notification
+	var i CreateNotificationRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -402,7 +434,99 @@ func (q *Queries) MarkNotificationRead(ctx context.Context, arg MarkNotification
 	return result.RowsAffected(), nil
 }
 
-const notifyFollowersOfNewVideo = `-- name: NotifyFollowersOfNewVideo :execrows
+const notifyCommentMentions = `-- name: NotifyCommentMentions :execrows
+WITH cand AS (
+    SELECT u.id AS user_id, c.user_id AS actor_id, c.video_id, c.id AS comment_id,
+           row_number() OVER (ORDER BY u.id) AS rn
+    FROM comments c
+    JOIN videos v ON v.id = c.video_id
+    JOIN users u ON lower(u.username) = ANY($2::text[])
+    LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
+    WHERE c.id = $1::uuid
+      AND c.deleted_at IS NULL
+      AND v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks vb WHERE vb.video_id = v.id)
+      AND c.user_id IS DISTINCT FROM u.id
+      AND u.is_active
+      AND u.deleted_at IS NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts ma
+          WHERE ma.muter_id = u.id AND ma.muted_id = c.user_id
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE (ub.blocker_id = u.id AND ub.blocked_id = c.user_id)
+             OR (ub.blocker_id = c.user_id AND ub.blocked_id = u.id)
+      )
+      -- A federated comment has no local author, so the checks above are vacuous
+      -- for it. These are the SAME predicates ListCommentsByVideo hides it with:
+      -- instance blocks, the recipient's instance mutes, and remote-actor blocks
+      -- (the recipient's own plus the admin's instance-wide ones).
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = u.id AND mi.domain = ra.domain
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_block_reach rab
+          WHERE (rab.blocker_id = u.id OR rab.blocker_id IS NULL)
+            AND rab.actor_url = c.remote_actor_url
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM notification_prefs np
+          WHERE np.user_id = u.id AND np.type = 'comment_mention' AND np.enabled = FALSE
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+          WHERE n.user_id = u.id AND n.comment_id = c.id
+            AND n.type IN ('comment', 'comment_reply', 'comment_mention')
+      )
+)
+INSERT INTO notifications (user_id, type, actor_id, video_id, comment_id)
+SELECT user_id, 'comment_mention', actor_id, video_id, comment_id
+FROM cand
+WHERE rn <= 10 - (SELECT count(*) FROM notifications x
+                  WHERE x.comment_id = $1::uuid AND x.type = 'comment_mention')
+ON CONFLICT (user_id, comment_id) WHERE type = 'comment_mention' DO NOTHING
+`
+
+type NotifyCommentMentionsParams struct {
+	CommentID uuid.UUID `json:"comment_id"`
+	Usernames []string  `json:"usernames"`
+}
+
+// Tell every LOCAL account @-mentioned in a comment, in one round trip (the
+// 0101/0103 idiom: selection rules live in the statement, not in an N+1 of Go
+// lookups). `usernames` is the already-parsed, lower-cased list; unknown names
+// simply match no row.
+//
+// A mention notifies only when ALL of these hold:
+//   - the comment is live (not a tombstone, 0057) and on a public, published,
+//     unblocked video — a mention must not leak a private video's existence;
+//   - the recipient is an active, non-deleted account and not the author;
+//   - the recipient has not muted the author and neither side blocked the other
+//     (for a federated comment user_id is NULL, so these are vacuously true);
+//   - the recipient has not turned 'comment_mention' off (absence of a prefs
+//     row = enabled);
+//   - the recipient is not ALREADY being told about this comment as a reply or
+//     as the video owner — one comment, one notification.
+//
+// The author is the actor; a federated comment has none (the UI falls back to
+// comments.remote_author_name). ON CONFLICT rides
+// notifications_comment_mention_unique_idx, so re-running is a no-op; a comment
+// never holds more than 10 comment_mention rows in total.
+// At most 10 comment_mention rows per comment IN TOTAL, so repeated edits cannot
+// keep fanning out fresh batches.
+func (q *Queries) NotifyCommentMentions(ctx context.Context, arg NotifyCommentMentionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, notifyCommentMentions, arg.CommentID, arg.Usernames)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const notifyFollowersOfNewVideo = `-- name: NotifyFollowersOfNewVideo :one
+WITH ins AS (
 INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id)
 SELECT cf.follower_id, 'new_video', ch.owner_id, v.channel_id, v.id
 FROM videos v
@@ -430,6 +554,14 @@ WHERE v.id = $1
          OR (ub.blocker_id = ch.owner_id AND ub.blocked_id = cf.follower_id)
   )
 ON CONFLICT (user_id, video_id) WHERE type = 'new_video' DO NOTHING
+RETURNING id, user_id
+), owed AS (
+    INSERT INTO notification_emails (notification_id)
+    SELECT ins.id FROM ins
+    JOIN notification_prefs np ON np.user_id = ins.user_id AND np.type = 'new_video'
+    WHERE np.email_enabled
+)
+SELECT count(*)::bigint FROM ins
 `
 
 // The "new video from a channel you follow" fan-out (migration 0101), fired by
@@ -452,12 +584,18 @@ ON CONFLICT (user_id, video_id) WHERE type = 'new_video' DO NOTHING
 //
 // ON CONFLICT rides notifications_new_video_unique_idx, so a publish hook that
 // fires twice for the same video is a no-op the second time.
+//
+// The same statement queues the EMAILS (migration 0157): one notification_emails
+// row per notification it actually inserted whose recipient explicitly turned
+// new_video email on. Keyed off what the INSERT returned, so the no-op re-run
+// above queues nothing either; nothing is mailed here — the outbox drain sends
+// in the background, so a large follower list never mails inline. Returns how
+// many followers were notified (not how many emails were queued).
 func (q *Queries) NotifyFollowersOfNewVideo(ctx context.Context, videoID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, notifyFollowersOfNewVideo, videoID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	row := q.db.QueryRow(ctx, notifyFollowersOfNewVideo, videoID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const notifyStaffOfFederationFollowerRequest = `-- name: NotifyStaffOfFederationFollowerRequest :execrows

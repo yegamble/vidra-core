@@ -26,7 +26,11 @@ const (
 	// it. It is deliberately distinct from TypeComment: TypeComment addresses
 	// the VIDEO OWNER ("someone commented on your video") and says nothing to
 	// the person actually being answered, who may not own the video at all.
-	TypeCommentReply   = "comment_reply"
+	TypeCommentReply = "comment_reply"
+	// TypeCommentMention tells a local user that a comment @-mentioned them. It
+	// is created by a set-based fan-out (NotifyCommentMentions) and is skipped
+	// for a user already told about the same comment as a reply or video owner.
+	TypeCommentMention = "comment_mention"
 	TypeMessage        = "message"
 	TypeReportResolved = "report_resolved"
 	TypeVideoRejected  = "video_rejected"
@@ -69,13 +73,29 @@ const (
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeCaptionReady, TypeComment, TypeCommentReply, TypeFederationFollowerRequest, TypeFollow, TypeMessage, TypeNewRegistrationRequest, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeUploadQuarantined, TypeVideoBlocked, TypeVideoRejected, TypeVideoUnblocked}
+	return []string{TypeCaptionReady, TypeComment, TypeCommentMention, TypeCommentReply, TypeFederationFollowerRequest, TypeFollow, TypeMessage, TypeNewRegistrationRequest, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeUploadQuarantined, TypeVideoBlocked, TypeVideoRejected, TypeVideoUnblocked}
+}
+
+// EmailTypes lists, in stable order, the types a user may ALSO receive by email
+// (migration 0157): the three that bring someone back — a new video from a
+// channel they follow, a comment on their video, a reply to their comment. Email
+// is OPT-IN for each, mirroring PeerTube's defaults for the equivalent types
+// (newVideoFromSubscription, newCommentOnMyVideo, commentMention — all web-only
+// in server/core/lib/user.ts). The SQL that queues emails honours only an
+// explicit TRUE, so the default lives there as well as in EmailPrefs.
+func EmailTypes() []string {
+	return []string{TypeComment, TypeCommentReply, TypeNewVideo}
+}
+
+// emailType reports whether t offers email delivery.
+func emailType(t string) bool {
+	return t == TypeComment || t == TypeCommentReply || t == TypeNewVideo
 }
 
 // knownType reports whether t is a recognised notification type.
 func knownType(t string) bool {
 	switch t {
-	case TypeFollow, TypeComment, TypeCommentReply, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeVideoUnblocked, TypeCaptionReady, TypeNewVideo, TypeNewReport,
+	case TypeFollow, TypeComment, TypeCommentReply, TypeCommentMention, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeVideoUnblocked, TypeCaptionReady, TypeNewVideo, TypeNewReport,
 		TypeNewRegistrationRequest, TypeUploadQuarantined, TypeFederationFollowerRequest:
 		return true
 	}
@@ -88,12 +108,15 @@ var (
 	ErrNotFound = errors.New("notification: not found")
 	// ErrUnknownType means a preference targets a type that does not exist.
 	ErrUnknownType = errors.New("notification: unknown notification type")
+	// ErrNoEmailForType means an email preference targets a type that has no
+	// email delivery (see EmailTypes) — storing it would be a dead switch.
+	ErrNoEmailForType = errors.New("notification: type has no email delivery")
 )
 
 // Repository is the data access the notification service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
-	CreateNotification(ctx context.Context, arg sqlcgen.CreateNotificationParams) (sqlcgen.Notification, error)
+	CreateNotification(ctx context.Context, arg sqlcgen.CreateNotificationParams) (sqlcgen.CreateNotificationRow, error)
 	ListNotifications(ctx context.Context, arg sqlcgen.ListNotificationsParams) ([]sqlcgen.ListNotificationsRow, error)
 	CountNotifications(ctx context.Context, arg sqlcgen.CountNotificationsParams) (int64, error)
 	CountUnreadNotifications(ctx context.Context, userID uuid.UUID) (int64, error)
@@ -103,8 +126,11 @@ type Repository interface {
 	ListNotificationPrefs(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationPrefsRow, error)
 	UpsertNotificationPref(ctx context.Context, arg sqlcgen.UpsertNotificationPrefParams) error
 	IsNotificationTypeEnabled(ctx context.Context, arg sqlcgen.IsNotificationTypeEnabledParams) (bool, error)
+	ListNotificationEmailPrefs(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationEmailPrefsRow, error)
+	UpsertNotificationEmailPref(ctx context.Context, arg sqlcgen.UpsertNotificationEmailPrefParams) error
 	NotifyFollowersOfNewVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
 	NotifyStaffOfNewReport(ctx context.Context, reportID uuid.UUID) (int64, error)
+	NotifyCommentMentions(ctx context.Context, arg sqlcgen.NotifyCommentMentionsParams) (int64, error)
 	NotifyStaffOfNewRegistrationRequest(ctx context.Context, requestID uuid.UUID) (int64, error)
 	NotifyStaffOfQuarantinedUpload(ctx context.Context, videoID uuid.UUID) (int64, error)
 	NotifyStaffOfFederationFollowerRequest(ctx context.Context, remoteFollowID uuid.UUID) (int64, error)
@@ -299,6 +325,21 @@ func (s *Service) NotifyCommentReply(ctx context.Context, actorID, commentID uui
 	return recipient, nil
 }
 
+// NotifyCommentMentions tells the local accounts named in usernames (already
+// parsed and lower-cased by internal/mention) that commentID mentioned them,
+// and returns how many were notified. Every selection rule — visibility, no
+// self-notification, mute/block, the recipient's comment_mention preference,
+// and "not already told about this comment" — lives in the SQL (see
+// NotifyCommentMentions), and a unique index makes a repeat a no-op, so an edit
+// that keeps an old mention only notifies the newly added ones. No usernames is
+// a no-op. Best-effort: the caller treats an error as non-fatal.
+func (s *Service) NotifyCommentMentions(ctx context.Context, commentID uuid.UUID, usernames []string) (int64, error) {
+	if len(usernames) == 0 {
+		return 0, nil
+	}
+	return s.repo.NotifyCommentMentions(ctx, sqlcgen.NotifyCommentMentionsParams{CommentID: commentID, Usernames: usernames})
+}
+
 // NotifyMessage records that actorID sent recipientID a direct message in a
 // conversation. Notifying yourself is a no-op, as is a recipient who disabled
 // message notifications. Best-effort. The message body is deliberately NOT
@@ -332,7 +373,9 @@ func (s *Service) NotifyMessage(ctx context.Context, recipientID, actorID, conve
 // CreateNotification like every other Notify* method — is what keeps a publish
 // to a large follower list a single bounded round trip instead of an N+1 storm.
 // A repeat call for the same video inserts nothing (the partial unique index in
-// migration 0101), so hooks that fire more than once are safe.
+// migration 0101), so hooks that fire more than once are safe. The same
+// statement queues an email for each follower who opted in (migration 0157) —
+// queued, never sent inline: an outbox drain mails them in the background.
 //
 // Best-effort, like the other Notify* methods: the caller treats an error as
 // non-fatal — a notification failure must never fail or reverse a publish.
@@ -592,6 +635,50 @@ func (s *Service) SetPrefs(ctx context.Context, userID uuid.UUID, changes map[st
 			UserID:  userID,
 			Type:    typ,
 			Enabled: enabled,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// EmailPrefs returns the user's email switchboard: every type in EmailTypes,
+// defaulting to OFF, overlaid with the explicit choices they stored. Email is
+// layered on the in-app notification — it is queued only when that
+// notification is created — so an in-app type that is off sends no email either.
+func (s *Service) EmailPrefs(ctx context.Context, userID uuid.UUID) (map[string]bool, error) {
+	prefs := make(map[string]bool, len(EmailTypes()))
+	for _, typ := range EmailTypes() {
+		prefs[typ] = false
+	}
+	rows, err := s.repo.ListNotificationEmailPrefs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if emailType(r.Type) {
+			prefs[r.Type] = r.EmailEnabled
+		}
+	}
+	return prefs, nil
+}
+
+// SetEmailPrefs applies a partial email update, touching only the types present.
+// A type without email delivery rejects the whole update with ErrNoEmailForType
+// and nothing is written. The in-app switch is never changed.
+func (s *Service) SetEmailPrefs(ctx context.Context, userID uuid.UUID, changes map[string]bool) error {
+	for typ := range changes {
+		if !emailType(typ) {
+			return ErrNoEmailForType
+		}
+	}
+	for _, typ := range EmailTypes() {
+		on, ok := changes[typ]
+		if !ok {
+			continue
+		}
+		if err := s.repo.UpsertNotificationEmailPref(ctx, sqlcgen.UpsertNotificationEmailPrefParams{
+			UserID: userID, Type: typ, EmailEnabled: on,
 		}); err != nil {
 			return err
 		}

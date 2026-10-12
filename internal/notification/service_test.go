@@ -20,6 +20,10 @@ type fakeRepo struct {
 	notifs   []sqlcgen.Notification
 	prefs    map[string]bool
 	prefsErr error
+	// emailPrefs maps "userID\x00type" → the EXPLICIT email choice, mirroring
+	// notification_prefs.email_enabled: a separate column, so an absent key is
+	// the type's default whatever prefs says.
+	emailPrefs map[string]bool
 	// fanOut records the videos handed to the new-video fan-out and what the
 	// (SQL-side) statement reported back. The fan-out's real rules live in the
 	// query, so they are proved against a live schema in the integration test —
@@ -54,6 +58,16 @@ type fakeRepo struct {
 	followRecipients map[uuid.UUID]uuid.UUID
 	followLookups    []uuid.UUID
 	followErr        error
+	// mentionCalls records the arguments NotifyCommentMentions was handed (the
+	// selection rules are SQL, proved in store.TestNotifyCommentMentionsOnRealPG).
+	mentionCalls []sqlcgen.NotifyCommentMentionsParams
+	mentionN     int64
+	mentionErr   error
+}
+
+func (f *fakeRepo) NotifyCommentMentions(_ context.Context, a sqlcgen.NotifyCommentMentionsParams) (int64, error) {
+	f.mentionCalls = append(f.mentionCalls, a)
+	return f.mentionN, f.mentionErr
 }
 
 // FollowNotificationRecipient mirrors the :one contract of the real query. Its
@@ -173,14 +187,38 @@ func (f *fakeRepo) IsNotificationTypeEnabled(_ context.Context, a sqlcgen.IsNoti
 	return true, nil
 }
 
-func (f *fakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNotificationParams) (sqlcgen.Notification, error) {
+func (f *fakeRepo) ListNotificationEmailPrefs(_ context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationEmailPrefsRow, error) {
+	if f.prefsErr != nil {
+		return nil, f.prefsErr
+	}
+	var rows []sqlcgen.ListNotificationEmailPrefsRow
+	for _, typ := range KnownTypes() { // stable order, like ORDER BY type
+		if on, ok := f.emailPrefs[prefKey(userID, typ)]; ok {
+			rows = append(rows, sqlcgen.ListNotificationEmailPrefsRow{Type: typ, EmailEnabled: on})
+		}
+	}
+	return rows, nil
+}
+
+func (f *fakeRepo) UpsertNotificationEmailPref(_ context.Context, a sqlcgen.UpsertNotificationEmailPrefParams) error {
+	if f.prefsErr != nil {
+		return f.prefsErr
+	}
+	if f.emailPrefs == nil {
+		f.emailPrefs = map[string]bool{}
+	}
+	f.emailPrefs[prefKey(a.UserID, a.Type)] = a.EmailEnabled
+	return nil
+}
+
+func (f *fakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNotificationParams) (sqlcgen.CreateNotificationRow, error) {
 	n := sqlcgen.Notification{
 		ID: uuid.New(), UserID: a.UserID, Type: a.Type,
 		ActorID: a.ActorID, ChannelID: a.ChannelID, VideoID: a.VideoID, CommentID: a.CommentID,
 		ConversationID: a.ConversationID, ReportID: a.ReportID, CreatedAt: time.Now(),
 	}
 	f.notifs = append(f.notifs, n)
-	return n, nil
+	return sqlcgen.CreateNotificationRow(n), nil
 }
 
 func (f *fakeRepo) ListNotifications(_ context.Context, a sqlcgen.ListNotificationsParams) ([]sqlcgen.ListNotificationsRow, error) {
@@ -950,6 +988,132 @@ func TestNotifyVideoUnblockedSkipsSelfAndDisabled(t *testing.T) {
 	}
 	if !repo.notifs[0].VideoID.Valid {
 		t.Error("video_unblocked carries no video, so it cannot link back to the restored video")
+	}
+}
+
+// TestNotifyCommentMentionsPassesThrough: the service only forwards the parsed
+// names to the fan-out (every gate is SQL) and reports its count; no names is a
+// no-op that never reaches the repository, and a repository error surfaces.
+func TestNotifyCommentMentionsPassesThrough(t *testing.T) {
+	repo := &fakeRepo{mentionN: 2}
+	svc := NewService(repo)
+	cid := uuid.New()
+
+	if n, err := svc.NotifyCommentMentions(context.Background(), cid, nil); err != nil || n != 0 || len(repo.mentionCalls) != 0 {
+		t.Fatalf("no names: n=%d err=%v calls=%d, want a silent no-op", n, err, len(repo.mentionCalls))
+	}
+	n, err := svc.NotifyCommentMentions(context.Background(), cid, []string{"ada", "bob"})
+	if err != nil || n != 2 {
+		t.Fatalf("n=%d err=%v, want 2 nil", n, err)
+	}
+	if got := repo.mentionCalls[0]; got.CommentID != cid || len(got.Usernames) != 2 {
+		t.Fatalf("fan-out args = %+v", got)
+	}
+	repo.mentionErr = errors.New("db down")
+	if _, err := svc.NotifyCommentMentions(context.Background(), cid, []string{"ada"}); err == nil {
+		t.Fatal("repository error must surface to the caller")
+	}
+}
+
+// TestCommentMentionIsAPreferenceType: comment_mention must be registered with
+// the prefs model, or it could never be turned off nor reach the email work.
+func TestCommentMentionIsAPreferenceType(t *testing.T) {
+	if !knownType(TypeCommentMention) {
+		t.Fatal("comment_mention is not a known type")
+	}
+	found := false
+	for _, typ := range KnownTypes() {
+		found = found || typ == TypeCommentMention
+	}
+	if !found {
+		t.Fatalf("KnownTypes() = %v, missing comment_mention", KnownTypes())
+	}
+}
+
+// TestEmailIsOptInForExactlyTheOfferedTypes pins the email switchboard's shape
+// and its defaults. Email is offered for the three types that bring a user
+// back — a new video from a channel they follow, a comment on their video, a
+// reply to their comment — and is OFF until they turn it on, mirroring
+// PeerTube's web-only defaults for the equivalent types. The SQL that queues
+// emails hardcodes the same opt-in rule (only an explicit TRUE mails), so a
+// default that flipped here without the SQL would show a switch that lies.
+func TestEmailIsOptInForExactlyTheOfferedTypes(t *testing.T) {
+	want := []string{TypeComment, TypeCommentReply, TypeNewVideo}
+	got := EmailTypes()
+	if len(got) != len(want) {
+		t.Fatalf("EmailTypes() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("EmailTypes() = %v, want %v", got, want)
+		}
+		if !knownType(got[i]) {
+			t.Errorf("email type %q is not a known notification type", got[i])
+		}
+	}
+
+	svc := NewService(&fakeRepo{})
+	prefs, err := svc.EmailPrefs(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("EmailPrefs: %v", err)
+	}
+	if len(prefs) != len(want) {
+		t.Fatalf("EmailPrefs = %v, want exactly %v", prefs, want)
+	}
+	for _, typ := range want {
+		on, ok := prefs[typ]
+		if !ok || on {
+			t.Errorf("email[%s] = %v (present=%v), want false: email is opt-in", typ, on, ok)
+		}
+	}
+}
+
+// TestSetEmailPrefsRejectsTypesWithoutEmail proves a switch can only be set
+// where an email can actually be sent. Accepting {"follow": true} would store a
+// preference nothing honours — a dead control — so the whole update is
+// refused and nothing is written, even the valid half.
+func TestSetEmailPrefsRejectsTypesWithoutEmail(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	user := uuid.New()
+	for _, typ := range []string{TypeFollow, TypeMessage, "premium_offers"} {
+		err := svc.SetEmailPrefs(context.Background(), user, map[string]bool{TypeComment: true, typ: true})
+		if !errors.Is(err, ErrNoEmailForType) {
+			t.Errorf("SetEmailPrefs(%s) err = %v, want ErrNoEmailForType", typ, err)
+		}
+	}
+	if len(repo.emailPrefs) != 0 {
+		t.Fatalf("a refused update wrote %v", repo.emailPrefs)
+	}
+}
+
+// TestEmailAndInAppSwitchesAreIndependent proves the two columns never write
+// through each other: turning email on leaves the in-app switch alone, and
+// turning the in-app switch off leaves the email choice alone.
+func TestEmailAndInAppSwitchesAreIndependent(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	ctx, user := context.Background(), uuid.New()
+
+	if err := svc.SetEmailPrefs(ctx, user, map[string]bool{TypeNewVideo: true}); err != nil {
+		t.Fatalf("SetEmailPrefs: %v", err)
+	}
+	if err := svc.SetPrefs(ctx, user, map[string]bool{TypeComment: false}); err != nil {
+		t.Fatalf("SetPrefs: %v", err)
+	}
+	email, err := svc.EmailPrefs(ctx, user)
+	if err != nil {
+		t.Fatalf("EmailPrefs: %v", err)
+	}
+	if !email[TypeNewVideo] || email[TypeComment] {
+		t.Errorf("email = %v, want new_video on and comment untouched (off)", email)
+	}
+	inApp, err := svc.Prefs(ctx, user)
+	if err != nil {
+		t.Fatalf("Prefs: %v", err)
+	}
+	if !inApp[TypeNewVideo] || inApp[TypeComment] {
+		t.Errorf("in-app = %v, want new_video untouched (on) and comment off", inApp)
 	}
 }
 

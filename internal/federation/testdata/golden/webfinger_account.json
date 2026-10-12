@@ -4,6 +4,10 @@
       "href": "https://videos.example/accounts/ada",
       "rel": "self",
       "type": "application/activity+json"
+    },
+    {
+      "rel": "http://ostatus.org/schema/1.0/subscribe",
+      "template": "https://videos.example/remote-interaction?uri={uri}"
     }
   ],
   "subject": "acct:ada@videos.example"

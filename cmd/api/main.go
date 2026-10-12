@@ -453,6 +453,8 @@ func run() error {
 	// requests, quarantined uploads, follower requests) close over it and are
 	// nil-guarded, the same deferred-service seam as the publish hooks.
 	var notifsvc *notification.Service
+	// Deferred like notifsvc: the publish hook below runs only after startup.
+	var captionjobsvc *captionjob.Service
 	staffQueueHook := func(what string, fan func(context.Context, uuid.UUID) (int64, error)) func(context.Context, uuid.UUID) {
 		return notification.StaffQueueHook(logger, what, func(ctx context.Context, id uuid.UUID) (int64, error) {
 			if notifsvc == nil {
@@ -1330,6 +1332,15 @@ func run() error {
 		func(ctx context.Context, id uuid.UUID) (int64, error) {
 			return notifsvc.NotifyUploadQuarantined(ctx, id)
 		})))
+	// Auto-transcribe new uploads (auto_transcribe_new_uploads, default off):
+	// queue the same Whisper job the on-demand route does. Whisper reads the
+	// stored original, so publish (incl. release of a publish-after-transcode
+	// hold) is the right seam. Best-effort inside AutoEnqueueOnPublish.
+	vopts = append(vopts, video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
+		if captionjobsvc != nil {
+			captionjobsvc.AutoEnqueueOnPublish(ctx, videoID)
+		}
+	}))
 	vopts = append(vopts, video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
 		if notifsvc == nil {
 			return
@@ -1646,7 +1657,7 @@ func run() error {
 	ratingsvc := rating.NewService(db.Queries())
 	opts = append(opts, httpapi.WithRatingService(ratingsvc))
 
-	notifsvc = notification.NewService(db.Queries())
+	notifsvc = notification.NewService(db.NotificationRepository())
 	opts = append(opts, httpapi.WithNotificationService(notifsvc))
 
 	playersettingssvc := playersettings.NewService(db.Queries(),
@@ -2180,7 +2191,7 @@ func run() error {
 		}
 		transcriber = media.NewWhisperClient(blobs, cfg.WhisperEndpoint)
 	}
-	captionjobsvc := captionjob.NewService(db.Queries(), videosvc, transcriber,
+	captionjobsvc = captionjob.NewService(db.Queries(), videosvc, transcriber,
 		captionjob.WithEnabled(cfg.WhisperEnabled),
 		// The BOOT half on its own (see the channel-sync twin above): whisper
 		// wired at boot, with transcription_enabled deliberately NOT folded in,
@@ -2191,6 +2202,9 @@ func run() error {
 		// env-only — mirroring the contact_form_enabled env-dependency pattern).
 		captionjob.WithEnabledFunc(func() bool {
 			return cfg.WhisperEnabled && settingssvc.Bool(instancesettings.KeyTranscriptionEnabled)
+		}),
+		captionjob.WithAutoTranscribeFunc(func() bool {
+			return settingssvc.Bool(instancesettings.KeyAutoTranscribeNewUploads)
 		}),
 		captionjob.WithDefaultLanguage(cfg.WhisperDefaultLanguage),
 		captionjob.WithNotifier(notifsvc),
@@ -2233,6 +2247,9 @@ func run() error {
 		// comment or account) lands in the local moderation queue and fans
 		// out new_report to staff, exactly as a local report does.
 		federation.WithFlagReporting(moderationsvc.ReportFromRemote, notifsvc.NotifyNewReport),
+		// A federated comment whose Mention tag names one of our users raises
+		// the same comment_mention notification as a local @mention.
+		federation.WithCommentMentionNotifier(notifsvc.NotifyCommentMentions),
 		// A follow that lands in the approval queue pings the admins who
 		// approve it (migration 0156).
 		federation.WithFollowerRequestHook(staffQueueHook("federation_follower_request",
@@ -2495,6 +2512,23 @@ func run() error {
 		defer workerCancel()
 		go runAccountExportWorker(workerCtx, logger, accountsvc)
 		logger.Info("account export worker started")
+	}
+
+	// Drain the notification email outbox (migration 0157): the emails users
+	// opted into, sent in bounded batches in the background and never from the
+	// request that raised the notification. Always on — the due scan is an index
+	// lookup — and with no mail path the drain drops what is owed unsent. The
+	// dev capture seam wins over the composer, as it does for every message.
+	if runWorkers {
+		var notifMailer notification.EmailSender = smtpMailer
+		if captureMailer != nil {
+			notifMailer = captureMailer
+		}
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runNotificationEmailWorker(workerCtx, logger,
+			notification.NewEmailDrain(db.Queries(), notifMailer, mailAvailable, logger))
+		logger.Info("notification email worker started")
 	}
 
 	// Drain the CDN purge queue (migration 0137): retries the invalidations an
@@ -3121,6 +3155,25 @@ func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsv
 			Run: func(ctx context.Context, _ time.Time) (int, error) {
 				return fedsvc.DrainDeliveries(ctx, batch)
 			},
+		}},
+	}.Run(ctx, logger)
+}
+
+// runNotificationEmailWorker drains the notification email outbox every 5 s on
+// every instance, whose SKIP LOCKED claims are disjoint. A tick keeps taking
+// bounded batches while they come back full, within a ~4 s budget, so a large
+// fan-out is paced by the relay rather than burst at it or starved by the tick.
+// Per-email failures are retried from the queue; only a claim's own failure
+// reaches the loop.
+func runNotificationEmailWorker(ctx context.Context, logger *slog.Logger, drain *notification.EmailDrain) {
+	jobloop.Loop{
+		Interval: 5 * time.Second,
+		Jitter:   true,
+		Passes: []jobloop.Pass{{
+			FailMsg:   "notification email drain failed",
+			DoneMsg:   "notification emails processed",
+			DoneLevel: slog.LevelDebug,
+			Run:       func(ctx context.Context, _ time.Time) (int, error) { return drain.Drain(ctx) },
 		}},
 	}.Run(ctx, logger)
 }
