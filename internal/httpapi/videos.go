@@ -590,8 +590,7 @@ func (s *Server) respondVideo(c echo.Context, id uuid.UUID) error {
 	view := videoViewFromRow(v)
 	// The EFFECTIVE comment availability (config-parity W9): the instance-wide
 	// comments_enabled toggle AND this video's comments_policy. The watch page
-	// shows/hides its composer from this one field; requires_approval (0161)
-	// still accepts comments, it only holds them for review.
+	// shows/hides its composer from this one field.
 	commentsEnabled := s.commentsEnabled() && v.CommentsPolicy != video.CommentsPolicyDisabled
 	view.CommentsEnabled = &commentsEnabled
 	if md, ok, err := s.videosvc.GetMetadata(c.Request().Context(), id); err == nil && ok {

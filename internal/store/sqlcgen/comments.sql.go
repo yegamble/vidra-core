@@ -68,11 +68,11 @@ func (q *Queries) CountAdminComments(ctx context.Context, query *string) (int64,
 }
 
 const countComments = `-- name: CountComments :one
-SELECT count(*) FROM comments WHERE user_id IS NOT NULL
+SELECT count(*) FROM comments WHERE user_id IS NOT NULL AND NOT held_for_review
 `
 
-// LOCAL comments only — the "local comments" count NodeInfo advertises.
-// Federated (remote-authored) comments are excluded.
+// LOCAL published comments only — the "local comments" count NodeInfo
+// advertises. Federated (remote-authored) and held (0161) comments are excluded.
 func (q *Queries) CountComments(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countComments)
 	var count int64
@@ -115,10 +115,8 @@ WHERE c.video_id = $1
       WHERE (rab.blocker_id = $2 OR rab.blocker_id IS NULL)
         AND rab.actor_url = c.remote_actor_url
   )
-  -- Held comments (0161) are visible only to their author and to callers the
-  -- HTTP layer has established may review them (the video's owner, an editor
-  -- member, staff): include_held. Everyone else — anonymous readers included —
-  -- never sees one, in the rows or in the count.
+  -- Held comments (0161): only their author, and callers the HTTP layer marked
+  -- as reviewers (include_held), see them — in the rows and in the count.
   AND (NOT c.held_for_review
        OR $3::boolean
        OR c.user_id = $2)
@@ -218,7 +216,9 @@ VALUES ($1, $2, $3,
         $4, $5, $6,
         $7)
 ON CONFLICT (remote_object_url) DO UPDATE
-    SET body = EXCLUDED.body, updated_at = now()
+    SET body = EXCLUDED.body, updated_at = now(),
+        held_for_review = comments.held_for_review
+            OR (EXCLUDED.held_for_review AND comments.body IS DISTINCT FROM EXCLUDED.body)
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
           remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 `
@@ -236,9 +236,9 @@ type CreateRemoteCommentParams struct {
 // Store an inbound federated Note as a comment (remote-content §6): attributed
 // to a remote actor (with a display-name snapshot) instead of a local user.
 // Idempotent by the Note's ActivityPub object id — a re-delivered or updated
-// Note refreshes the body. held_for_review (0161) is set only on the first
-// insert: a re-delivery must neither re-hold an approved comment nor release a
-// held one, so the conflict arm deliberately leaves it alone.
+// Note refreshes the body. held_for_review (0161) is never released here; on a
+// requires_approval video (held_for_review passed true) a re-delivery that
+// CHANGES the body re-holds it — an approved comment must not change unreviewed.
 func (q *Queries) CreateRemoteComment(ctx context.Context, arg CreateRemoteCommentParams) (Comment, error) {
 	row := q.db.QueryRow(ctx, createRemoteComment,
 		arg.VideoID,
@@ -574,10 +574,8 @@ WHERE c.video_id = $1
       WHERE (rab.blocker_id = $2 OR rab.blocker_id IS NULL)
         AND rab.actor_url = c.remote_actor_url
   )
-  -- Held comments (0161) are visible only to their author and to callers the
-  -- HTTP layer has established may review them (the video's owner, an editor
-  -- member, staff): include_held. Everyone else — anonymous readers included —
-  -- never sees one, in the rows or in the count.
+  -- Held comments (0161): only their author, and callers the HTTP layer marked
+  -- as reviewers (include_held), see them — in the rows and in the count.
   AND (NOT c.held_for_review
        OR $3::boolean
        OR c.user_id = $2)
@@ -818,13 +816,15 @@ func (q *Queries) TombstoneUserComments(ctx context.Context, userID pgtype.UUID)
 const updateComment = `-- name: UpdateComment :one
 
 UPDATE comments
-SET body = $1, updated_at = now()
-WHERE id = $2
+SET held_for_review = held_for_review OR ($1::boolean AND body IS DISTINCT FROM $2),
+    body = $2, updated_at = now()
+WHERE id = $3
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
           remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 `
 
 type UpdateCommentParams struct {
+	Hold bool      `json:"hold"`
 	Body string    `json:"body"`
 	ID   uuid.UUID `json:"id"`
 }
@@ -832,9 +832,11 @@ type UpdateCommentParams struct {
 // NOTE: keep the column list of the two queries above in lock-step; both project
 // the full comments row so sqlc maps them to the Comment model.
 // Edit a comment's body (author-only; enforced in the service). Bumps updated_at
-// so clients can show an "edited" marker (updated_at > created_at).
+// so clients can show an "edited" marker (updated_at > created_at). hold
+// (0161): a body CHANGE that must be reviewed (a non-reviewer's edit on a
+// requires_approval video) sends the comment back to held; never releases one.
 func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (Comment, error) {
-	row := q.db.QueryRow(ctx, updateComment, arg.Body, arg.ID)
+	row := q.db.QueryRow(ctx, updateComment, arg.Hold, arg.Body, arg.ID)
 	var i Comment
 	err := row.Scan(
 		&i.ID,
