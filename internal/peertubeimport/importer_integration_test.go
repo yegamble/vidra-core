@@ -2311,7 +2311,10 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`CREATE TABLE "application" (id serial PRIMARY KEY, "migrationVersion" integer NOT NULL)`,
 		`CREATE TABLE "actor" (
 			id serial PRIMARY KEY, type text NOT NULL, "preferredUsername" text NOT NULL,
-			url text, "publicKey" text, "privateKey" text, "serverId" integer, "createdAt" timestamptz NOT NULL DEFAULT now())`,
+			url text, "publicKey" text, "privateKey" text, "serverId" integer,
+			"inboxUrl" text, "sharedInboxUrl" text, "followersUrl" text,
+			"createdAt" timestamptz NOT NULL DEFAULT now())`,
+		`CREATE TABLE "server" (id serial PRIMARY KEY, host text NOT NULL)`,
 		`CREATE TABLE "account" (
 			id serial PRIMARY KEY, name text NOT NULL, "userId" integer, "actorId" integer NOT NULL,
 			description text, "createdAt" timestamptz NOT NULL DEFAULT now())`,
@@ -2372,7 +2375,7 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`CREATE TABLE "videoTag" ("videoId" integer NOT NULL, "tagId" integer NOT NULL)`,
 		`CREATE TABLE "actorFollow" (
 			id serial PRIMARY KEY, state text NOT NULL, "actorId" integer NOT NULL,
-			"targetActorId" integer NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now())`,
+			"targetActorId" integer NOT NULL, url text, "createdAt" timestamptz NOT NULL DEFAULT now())`,
 		// videoBlacklist is a table of its own and touches NEITHER video.privacy nor
 		// video.state, so a blacklisted video is indistinguishable from a published
 		// one in every column the importer reads. Its mapping onto video_blocks
