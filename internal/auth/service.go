@@ -261,6 +261,9 @@ type Service struct {
 	mfaCipher     *secretbox.Cipher // nil in dev → secrets stored raw
 	mfaIssuerName string            // otpauth:// issuer label
 	mfaTokens     *TokenIssuer      // single-purpose mfa_token minting/parsing
+
+	// onRegistrationRequest is the WithRegistrationRequestHook callback (nil = none).
+	onRegistrationRequest func(context.Context, uuid.UUID)
 }
 
 // NewService builds the auth service. refreshTTL is the refresh-token lifetime.
@@ -369,6 +372,14 @@ func WithRegistrationPolicyFunc(f func() (bool, bool)) Option {
 			s.registrationPolicyFn = f
 		}
 	}
+}
+
+// WithRegistrationRequestHook registers a best-effort callback fired with the
+// request id after a registration request (password or provider) is filed in
+// approval mode — the seam the staff push notification uses without this
+// package depending on notifications. A hook failure is the callback's concern.
+func WithRegistrationRequestHook(fn func(context.Context, uuid.UUID)) Option {
+	return func(s *Service) { s.onRegistrationRequest = fn }
 }
 
 // newUserHistoryEnabled resolves the history-preference seed for a new account.

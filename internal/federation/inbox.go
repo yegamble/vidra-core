@@ -216,11 +216,18 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 	// The Accept is delivered on approval; a Reject on rejection. An existing
 	// row (accepted or already pending) stays as-is.
 	if s.followerApprovalRequired() {
-		return s.repo.InsertRemoteFollowPending(ctx, sqlcgen.InsertRemoteFollowPendingParams{
+		id, err := s.repo.InsertRemoteFollowPending(ctx, sqlcgen.InsertRemoteFollowPendingParams{
 			ChannelID:         ch.ID,
 			RemoteActorUrl:    signerActorURL,
 			FollowActivityUrl: act.ID,
 		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // a row already existed: nothing new to announce
+		}
+		if err == nil && s.onFollowerRequest != nil {
+			s.onFollowerRequest(ctx, id)
+		}
+		return err
 	}
 	if err := s.repo.InsertRemoteFollow(ctx, sqlcgen.InsertRemoteFollowParams{
 		ChannelID:         ch.ID,

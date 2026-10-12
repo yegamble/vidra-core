@@ -327,16 +327,17 @@ func (f fakeRepo) DeleteRemoteFollow(_ context.Context, arg sqlcgen.DeleteRemote
 
 // --- W12 follower-approval queue + follow-backs (migration 0087) ------------
 
-func (f fakeRepo) InsertRemoteFollowPending(_ context.Context, arg sqlcgen.InsertRemoteFollowPendingParams) error {
+func (f fakeRepo) InsertRemoteFollowPending(_ context.Context, arg sqlcgen.InsertRemoteFollowPendingParams) (uuid.UUID, error) {
 	key := arg.ChannelID.String() + "|" + arg.RemoteActorUrl
 	if _, ok := f.remoteFollows[key]; ok {
-		return nil // ON CONFLICT DO NOTHING — existing state untouched
+		return uuid.Nil, pgx.ErrNoRows // ON CONFLICT DO NOTHING — existing state untouched
 	}
+	id := uuid.New()
 	f.remoteFollows[key] = &fakeRemoteFollow{
-		ID: uuid.New(), ChannelID: arg.ChannelID, RemoteActorUrl: arg.RemoteActorUrl,
+		ID: id, ChannelID: arg.ChannelID, RemoteActorUrl: arg.RemoteActorUrl,
 		FollowActivityUrl: arg.FollowActivityUrl, State: "pending", CreatedAt: time.Now(),
 	}
-	return nil
+	return id, nil
 }
 
 func (f fakeRepo) ListPendingRemoteFollows(_ context.Context, arg sqlcgen.ListPendingRemoteFollowsParams) ([]sqlcgen.ListPendingRemoteFollowsRow, error) {

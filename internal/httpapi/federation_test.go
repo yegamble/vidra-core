@@ -325,8 +325,8 @@ func (fakeFedRepo) HasRemoteChannelFollow(context.Context, string) (bool, error)
 
 // W12 follower-approval queue + follow-back stubs: the handler suite for the
 // admin queue lives in admin_federation_test.go, whose fake overrides these.
-func (fakeFedRepo) InsertRemoteFollowPending(context.Context, sqlcgen.InsertRemoteFollowPendingParams) error {
-	return nil
+func (fakeFedRepo) InsertRemoteFollowPending(context.Context, sqlcgen.InsertRemoteFollowPendingParams) (uuid.UUID, error) {
+	return uuid.New(), nil
 }
 func (fakeFedRepo) ListPendingRemoteFollows(context.Context, sqlcgen.ListPendingRemoteFollowsParams) ([]sqlcgen.ListPendingRemoteFollowsRow, error) {
 	return nil, nil
