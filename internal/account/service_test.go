@@ -244,6 +244,7 @@ func (f *fakeRepo) DeleteUserBlocksByUser(context.Context, uuid.UUID) error { re
 func (f *fakeRepo) DeleteOAuthIdentitiesByUser(context.Context, uuid.UUID) error {
 	return f.purge("oauth")
 }
+func (f *fakeRepo) DeleteUserBan(context.Context, uuid.UUID) error { return f.purge("user_ban") }
 func (f *fakeRepo) DeleteUserMFA(context.Context, uuid.UUID) (int64, error) {
 	return 1, f.purge("mfa")
 }
@@ -572,7 +573,7 @@ func TestDeleteRunsFullChecklist(t *testing.T) {
 		"ratings", "saved", "history", "playlists", "follows", "remote_follows",
 		"mutes", "instance_mutes", "blocks", "oauth", "recovery_codes",
 		"notifications", "notification_prefs", "reset_tokens", "verify_tokens",
-		"actor_key", "mfa", "e2ee_devices",
+		"actor_key", "mfa", "e2ee_devices", "user_ban",
 	}
 	got := map[string]bool{}
 	for _, p := range repo.purged {

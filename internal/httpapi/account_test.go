@@ -139,6 +139,7 @@ func (f *accountFakeRepo) DeleteUserBlocksByUser(context.Context, uuid.UUID) err
 func (f *accountFakeRepo) DeleteOAuthIdentitiesByUser(context.Context, uuid.UUID) error {
 	return nil
 }
+func (f *accountFakeRepo) DeleteUserBan(context.Context, uuid.UUID) error          { return nil }
 func (f *accountFakeRepo) DeleteUserMFA(context.Context, uuid.UUID) (int64, error) { return 0, nil }
 func (f *accountFakeRepo) DeleteRecoveryCodes(context.Context, uuid.UUID) error    { return nil }
 func (f *accountFakeRepo) DeleteNotificationsByUser(context.Context, uuid.UUID) error {

@@ -133,6 +133,17 @@ func (s *Service) AdminCreateAccount(ctx context.Context, adminID uuid.UUID, adm
 	return user, nil
 }
 
+// NotifyAccountSuspended and NotifyAccountReinstated are the best-effort notices
+// after a ban or unban: a mail failure is returned for the caller to log (never
+// the address or reason) and must not fail the action.
+func (s *Service) NotifyAccountSuspended(ctx context.Context, email, reason string) error {
+	return s.mailer.SendAccountSuspended(ctx, email, reason)
+}
+
+func (s *Service) NotifyAccountReinstated(ctx context.Context, email string) error {
+	return s.mailer.SendAccountReinstated(ctx, email)
+}
+
 // AdminDiscardAccount deactivates an account AdminCreateAccount just made, for a
 // create that failed afterwards (no audit row, no link). It is the rollback:
 // the service has no transaction seam across the creation and the steps after

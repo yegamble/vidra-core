@@ -278,9 +278,9 @@ func TestModeratorDemotionReachesTheModerationRoutes(t *testing.T) {
 	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos", "", fresh.Token); rec.Code != http.StatusOK {
 		t.Fatalf("moderator on /admin/videos = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	// A moderator never had the admin tier.
-	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/users", "", fresh.Token); rec.Code != http.StatusForbidden {
-		t.Errorf("moderator on /admin/users = %d, want 403", rec.Code)
+	// A moderator may list accounts (MANAGE_USERS) but never held the admin tier.
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/users", "", fresh.Token); rec.Code != http.StatusOK {
+		t.Errorf("moderator on /admin/users = %d, want 200 (list is shared; see admin_moderator_users_test.go)", rec.Code)
 	}
 	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+modID, `{"role":"user"}`, adminTok); rec.Code != http.StatusOK {
 		t.Fatalf("demote = %d; body=%s", rec.Code, rec.Body.String())

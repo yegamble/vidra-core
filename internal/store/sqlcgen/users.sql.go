@@ -586,8 +586,10 @@ SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.i
        -- enrollment (enabled=FALSE) is not two-factor protection and must not
        -- be shown as one. EXISTS keeps the list one query: an admin console
        -- that asked per row would issue a query per account on every page.
-       EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = u.id AND m.enabled) AS mfa_enabled
+       EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = u.id AND m.enabled) AS mfa_enabled,
+       b.reason AS ban_reason, b.banned_at AS banned_at, b.banned_by AS banned_by
 FROM users u
+LEFT JOIN user_bans b ON b.user_id = u.id
 WHERE ($1::text = ''
        OR u.username ILIKE '%' || $1::text || '%'
        OR u.email ILIKE '%' || $1::text || '%')
@@ -623,6 +625,9 @@ type ListUsersRow struct {
 	IsOwner                  bool               `json:"is_owner"`
 	StorageUsedBytes         int64              `json:"storage_used_bytes"`
 	MfaEnabled               bool               `json:"mfa_enabled"`
+	BanReason                *string            `json:"ban_reason"`
+	BannedAt                 pgtype.Timestamptz `json:"banned_at"`
+	BannedBy                 pgtype.UUID        `json:"banned_by"`
 }
 
 // Admin user list: newest first, optionally filtered by a username/email
@@ -660,6 +665,9 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 			&i.IsOwner,
 			&i.StorageUsedBytes,
 			&i.MfaEnabled,
+			&i.BanReason,
+			&i.BannedAt,
+			&i.BannedBy,
 		); err != nil {
 			return nil, err
 		}

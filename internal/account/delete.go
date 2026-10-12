@@ -141,6 +141,9 @@ func (s *Service) Delete(ctx context.Context, userID uuid.UUID) error {
 	if _, err := s.repo.DeleteUserMFA(ctx, userID); err != nil {
 		return fmt.Errorf("account: delete mfa: %w", err)
 	}
+	if err := s.repo.DeleteUserBan(ctx, userID); err != nil {
+		return fmt.Errorf("account: delete ban explanation: %w", err)
+	}
 	// Export rows + their archive blobs (the archive contains account data —
 	// it must not outlive the account).
 	exportKeys, err := s.repo.DeleteAccountExportsByUser(ctx, userID)
