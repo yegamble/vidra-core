@@ -867,6 +867,8 @@ type RemoteActorMove struct {
 	OriginActorUrl string    `json:"origin_actor_url"`
 	TargetActorUrl string    `json:"target_actor_url"`
 	ClaimedAt      time.Time `json:"claimed_at"`
+	State          string    `json:"state"`
+	TouchedAt      time.Time `json:"touched_at"`
 }
 
 type RemoteChannelFollow struct {

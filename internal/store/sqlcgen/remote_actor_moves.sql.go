@@ -11,12 +11,35 @@ import (
 	"github.com/google/uuid"
 )
 
+const carryRemoteActorBlocks = `-- name: CarryRemoteActorBlocks :execrows
+INSERT INTO remote_actor_blocks (blocker_id, remote_actor_url)
+SELECT b.blocker_id, $1 FROM remote_actor_blocks b
+WHERE b.remote_actor_url = $2
+ON CONFLICT (blocker_id, remote_actor_url) DO NOTHING
+`
+
+type CarryRemoteActorBlocksParams struct {
+	TargetActorUrl string `json:"target_actor_url"`
+	OriginActorUrl string `json:"origin_actor_url"`
+}
+
+// A local user who blocked the actor that moved blocks where it moved to, as
+// Mastodon carries blocks over on a Move.
+func (q *Queries) CarryRemoteActorBlocks(ctx context.Context, arg CarryRemoteActorBlocksParams) (int64, error) {
+	result, err := q.db.Exec(ctx, carryRemoteActorBlocks, arg.TargetActorUrl, arg.OriginActorUrl)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const claimRemoteActorMove = `-- name: ClaimRemoteActorMove :execrows
 
 INSERT INTO remote_actor_moves (origin_actor_url, target_actor_url)
 VALUES ($1, $2)
 ON CONFLICT (origin_actor_url) DO UPDATE
-SET target_actor_url = EXCLUDED.target_actor_url, claimed_at = now()
+SET target_actor_url = EXCLUDED.target_actor_url, claimed_at = now(),
+    state = 'claimed', touched_at = now()
 WHERE remote_actor_moves.claimed_at < now() - interval '24 hours'
 `
 
@@ -40,15 +63,20 @@ func (q *Queries) ClaimRemoteActorMove(ctx context.Context, arg ClaimRemoteActor
 }
 
 const listRemoteChannelFollowsOfActor = `-- name: ListRemoteChannelFollowsOfActor :many
-SELECT id, user_id
-FROM remote_channel_follows
-WHERE remote_actor_url = $1 AND state IN ('pending', 'accepted')
-ORDER BY created_at, id
-LIMIT $2
+SELECT f.id, f.user_id
+FROM remote_channel_follows f
+WHERE f.remote_actor_url = $1 AND f.state IN ('pending', 'accepted')
+  AND NOT EXISTS (
+      SELECT 1 FROM remote_actor_block_reach r
+      WHERE r.blocker_id = f.user_id AND r.actor_url = $2
+  )
+ORDER BY f.created_at, f.id
+LIMIT $3
 `
 
 type ListRemoteChannelFollowsOfActorParams struct {
 	RemoteActorUrl string `json:"remote_actor_url"`
+	TargetActorUrl string `json:"target_actor_url"`
 	ResultLimit    int32  `json:"result_limit"`
 }
 
@@ -58,11 +86,11 @@ type ListRemoteChannelFollowsOfActorRow struct {
 }
 
 // Local users' live follow edges (pending or accepted, never rejected) to a
-// remote actor that moved, oldest first, at most result_limit of them: one Move
-// migrates a bounded batch, and edges left behind are still on the old actor,
-// where a later Move reaches them.
+// remote actor that moved, oldest first, at most result_limit of them: a move is
+// re-pointed in bounded batches. A user who blocks the TARGET is left out — they
+// keep the old follow — so the list empties once the move is done.
 func (q *Queries) ListRemoteChannelFollowsOfActor(ctx context.Context, arg ListRemoteChannelFollowsOfActorParams) ([]ListRemoteChannelFollowsOfActorRow, error) {
-	rows, err := q.db.Query(ctx, listRemoteChannelFollowsOfActor, arg.RemoteActorUrl, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listRemoteChannelFollowsOfActor, arg.RemoteActorUrl, arg.TargetActorUrl, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -79,4 +107,58 @@ func (q *Queries) ListRemoteChannelFollowsOfActor(ctx context.Context, arg ListR
 		return nil, err
 	}
 	return items, nil
+}
+
+const nextMovingRemoteActorMove = `-- name: NextMovingRemoteActorMove :one
+UPDATE remote_actor_moves SET touched_at = now()
+WHERE origin_actor_url = (
+    SELECT origin_actor_url FROM remote_actor_moves
+    WHERE state = 'moving'
+    ORDER BY touched_at
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING origin_actor_url, target_actor_url
+`
+
+type NextMovingRemoteActorMoveRow struct {
+	OriginActorUrl string `json:"origin_actor_url"`
+	TargetActorUrl string `json:"target_actor_url"`
+}
+
+// The move whose turn it is: the least recently touched 'moving' row, touched
+// now so the next call takes another, and SKIP LOCKED so concurrent workers
+// take different moves. pgx.ErrNoRows when nothing is moving.
+func (q *Queries) NextMovingRemoteActorMove(ctx context.Context) (NextMovingRemoteActorMoveRow, error) {
+	row := q.db.QueryRow(ctx, nextMovingRemoteActorMove)
+	var i NextMovingRemoteActorMoveRow
+	err := row.Scan(&i.OriginActorUrl, &i.TargetActorUrl)
+	return i, err
+}
+
+const releaseRemoteActorMove = `-- name: ReleaseRemoteActorMove :exec
+DELETE FROM remote_actor_moves WHERE origin_actor_url = $1 AND state = 'claimed'
+`
+
+// The target did not verify (unreachable, or no alsoKnownAs back-reference):
+// give the claim back so a redelivered or corrected Move is not stranded for a
+// day. Only an unverified claim is released; a move under way is not undone.
+func (q *Queries) ReleaseRemoteActorMove(ctx context.Context, originActorUrl string) error {
+	_, err := q.db.Exec(ctx, releaseRemoteActorMove, originActorUrl)
+	return err
+}
+
+const setRemoteActorMoveState = `-- name: SetRemoteActorMoveState :exec
+UPDATE remote_actor_moves SET state = $2, touched_at = now()
+WHERE origin_actor_url = $1
+`
+
+type SetRemoteActorMoveStateParams struct {
+	OriginActorUrl string `json:"origin_actor_url"`
+	State          string `json:"state"`
+}
+
+func (q *Queries) SetRemoteActorMoveState(ctx context.Context, arg SetRemoteActorMoveStateParams) error {
+	_, err := q.db.Exec(ctx, setRemoteActorMoveState, arg.OriginActorUrl, arg.State)
+	return err
 }

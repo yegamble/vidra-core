@@ -84,11 +84,12 @@ func (f fakeRepo) ClaimRemoteActorMove(_ context.Context, arg sqlcgen.ClaimRemot
 	return 1, nil
 }
 
-// ListRemoteChannelFollowsOfActor mirrors the SQL: live edges, oldest first.
+// ListRemoteChannelFollowsOfActor mirrors the SQL: live edges, oldest first,
+// leaving out users who block the target.
 func (f fakeRepo) ListRemoteChannelFollowsOfActor(_ context.Context, arg sqlcgen.ListRemoteChannelFollowsOfActorParams) ([]sqlcgen.ListRemoteChannelFollowsOfActorRow, error) {
 	var rows []*sqlcgen.RemoteChannelFollow
 	for _, r := range f.rcFollows {
-		if r.RemoteActorUrl == arg.RemoteActorUrl && r.State != "rejected" {
+		if r.RemoteActorUrl == arg.RemoteActorUrl && r.State != "rejected" && !f.remoteBlocks[r.UserID.String()+"|"+arg.TargetActorUrl] {
 			rows = append(rows, r)
 		}
 	}

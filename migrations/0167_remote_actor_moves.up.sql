@@ -13,9 +13,18 @@
 -- No foreign key to remote_actors: the origin may be evicted from the actor
 -- cache (an inbound Delete), and that must not reset its cooldown.
 --
+-- It is also the work queue for the move. state walks claimed → (verification
+-- fails: the row is DELETED, releasing the claim, as Mastodon does) → moving →
+-- done. A 'moving' row is drained by the federation worker in bounded batches,
+-- round-robin by touched_at, so one large move cannot starve another.
+--
 -- Numbered 0167: 0164–0166 are claimed by PRs developed in parallel.
 CREATE TABLE remote_actor_moves (
     origin_actor_url TEXT        PRIMARY KEY,
     target_actor_url TEXT        NOT NULL,
-    claimed_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+    claimed_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    state            TEXT        NOT NULL DEFAULT 'claimed'
+                                 CHECK (state IN ('claimed', 'moving', 'done')),
+    touched_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX remote_actor_moves_moving_idx ON remote_actor_moves (touched_at) WHERE state = 'moving';
