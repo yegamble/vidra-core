@@ -417,7 +417,7 @@ SET display_name        = COALESCE($1, display_name),
     description         = COALESCE($2, description),
     activitypub_enabled = COALESCE($3, activitypub_enabled),
     atproto_enabled     = COALESCE($4, atproto_enabled),
-    -- support (0160): NULL leaves it; '' clears it to NULL (the column's "unset").
+    -- support (0159): NULL leaves it; '' clears it to NULL (the column's "unset").
     support             = CASE WHEN $5::text IS NULL THEN support ELSE NULLIF($5::text, '') END,
     updated_at          = now()
 WHERE id = $6

@@ -13,7 +13,7 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// TestSupportTextOnRealPG holds migration 0160's SQL contract where only the
+// TestSupportTextOnRealPG holds migration 0159's SQL contract where only the
 // database can: the update queries read NULL as "leave it" and ” as "clear it"
 // (an unconditional COALESCE could never clear), the detail row carries the
 // video's text, and the 1000-character CHECK stands behind the API's cap.

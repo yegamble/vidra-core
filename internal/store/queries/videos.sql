@@ -1108,7 +1108,7 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     download_enabled = COALESCE(sqlc.narg('download_enabled'), download_enabled),
     publish_after_transcode = COALESCE(sqlc.narg('publish_after_transcode'), publish_after_transcode),
     originally_published_at = COALESCE(sqlc.narg('originally_published_at'), originally_published_at),
-    -- support (0160): NULL leaves it; '' clears it to NULL (the column's "unset").
+    -- support (0159): NULL leaves it; '' clears it to NULL (the column's "unset").
     support     = CASE WHEN sqlc.narg('support')::text IS NULL THEN support ELSE NULLIF(sqlc.narg('support')::text, '') END,
     -- Move to another channel (T20). channel_id is the only ownership column a
     -- video has (owner is derived through channels), so this one assignment IS

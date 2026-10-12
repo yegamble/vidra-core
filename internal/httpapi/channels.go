@@ -55,7 +55,7 @@ type channelView struct {
 	DisplayName string `json:"display_name"`
 	Description string `json:"description"`
 	// Support is PeerTube's free-text "support" field (markdown, migration
-	// 0160) — "Support me on Liberapay: <link>". Omitted when unset.
+	// 0159) — "Support me on Liberapay: <link>". Omitted when unset.
 	Support       string    `json:"support,omitempty"`
 	FollowerCount int64     `json:"follower_count"`
 	CreatedAt     time.Time `json:"created_at"`

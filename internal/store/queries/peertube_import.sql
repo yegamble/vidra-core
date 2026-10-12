@@ -236,7 +236,7 @@ SELECT id FROM users WHERE lower(email) = lower($1) LIMIT 1;
 SELECT id FROM users WHERE lower(username) = lower($1) LIMIT 1;
 
 -- name: ImportInsertChannel :one
--- support is the source's videoChannel.support (migration 0160), NULL when blank.
+-- support is the source's videoChannel.support (migration 0159), NULL when blank.
 INSERT INTO channels (owner_id, handle, display_name, description, created_at, support)
 VALUES ($1, $2, $3, $4, $5, sqlc.narg('support')::text)
 RETURNING id;

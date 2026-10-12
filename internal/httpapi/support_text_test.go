@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// The PeerTube "support" text (migration 0160): a markdown message on a channel
+// The PeerTube "support" text (migration 0159): a markdown message on a channel
 // and on a video. These tests pin the HTTP contract end to end — the channel
 // PATCH, the length cap, and a new video inheriting its channel's text unless it
 // states its own.

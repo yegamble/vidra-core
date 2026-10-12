@@ -4186,7 +4186,7 @@ func readSupport(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table, c
 	return got
 }
 
-// PeerTube's channel and video "support" text (migration 0160) is carried on
+// PeerTube's channel and video "support" text (migration 0159) is carried on
 // import, blank means NULL, a source-authoritative re-run follows an edit at the
 // source, and a source schema without the columns still imports.
 func TestPeerTubeImportCarriesSupportText(t *testing.T) {

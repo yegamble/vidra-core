@@ -233,7 +233,7 @@ func (s *Service) ListOwn(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.Cha
 type UpdateInput struct {
 	DisplayName *string
 	Description *string
-	// Support: nil leaves the support text unchanged; "" clears it (0160).
+	// Support: nil leaves the support text unchanged; "" clears it (0159).
 	Support *string
 	// ActivitypubEnabled/AtprotoEnabled are the per-channel protocol
 	// distribution flags (migration 0096). nil leaves the flag unchanged.

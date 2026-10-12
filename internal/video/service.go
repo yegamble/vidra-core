@@ -774,7 +774,7 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 // §18): at most 5 tags of at most 50 characters each (after normalization).
 const (
 	// MaxSupportLen is PeerTube's SUPPORT max (1000 characters) for both the
-	// channel and the video support text; migration 0160 CHECKs the same.
+	// channel and the video support text; migration 0159 CHECKs the same.
 	MaxSupportLen = 1000
 
 	MaxTagsPerVideo = 5

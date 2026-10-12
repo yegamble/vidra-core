@@ -595,7 +595,7 @@ type ImportInsertChannelParams struct {
 	Support     *string   `json:"support"`
 }
 
-// support is the source's videoChannel.support (migration 0160), NULL when blank.
+// support is the source's videoChannel.support (migration 0159), NULL when blank.
 func (q *Queries) ImportInsertChannel(ctx context.Context, arg ImportInsertChannelParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, importInsertChannel,
 		arg.OwnerID,

@@ -243,7 +243,7 @@ type SourceChannel struct {
 	DisplayName string
 	Description string
 	// Support is the source's videoChannel.support (markdown, "" when blank);
-	// carried into channels.support (migration 0160).
+	// carried into channels.support (migration 0159).
 	Support       string
 	CreatedAt     time.Time
 	PublicKeyPEM  string
@@ -259,7 +259,7 @@ type SourceVideo struct {
 	Title       string
 	Description string
 	// Support is the source's video.support ("" when blank), carried into
-	// videos.support (migration 0160).
+	// videos.support (migration 0159).
 	Support   string
 	Privacy   int // PeerTube VideoPrivacy: 1 public, 2 unlisted, 3 private, 4 internal
 	State     int // PeerTube VideoState: 1 published, others = not-yet-published

@@ -2679,7 +2679,7 @@ SET title       = COALESCE($1, title),
     download_enabled = COALESCE($11, download_enabled),
     publish_after_transcode = COALESCE($12, publish_after_transcode),
     originally_published_at = COALESCE($13, originally_published_at),
-    -- support (0160): NULL leaves it; '' clears it to NULL (the column's "unset").
+    -- support (0159): NULL leaves it; '' clears it to NULL (the column's "unset").
     support     = CASE WHEN $14::text IS NULL THEN support ELSE NULLIF($14::text, '') END,
     -- Move to another channel (T20). channel_id is the only ownership column a
     -- video has (owner is derived through channels), so this one assignment IS

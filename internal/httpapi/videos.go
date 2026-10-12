@@ -48,7 +48,7 @@ type createVideoRequest struct {
 	License     string     `json:"license"`
 	Tags        []string   `json:"tags"`
 	PublishAt   *time.Time `json:"publish_at"`
-	// Support is the markdown support text (migration 0160), at most
+	// Support is the markdown support text (migration 0159), at most
 	// video.MaxSupportLen characters. Omitted (null) = INHERIT the channel's
 	// support text; "" = deliberately none.
 	Support *string `json:"support"`
@@ -250,7 +250,7 @@ type videoView struct {
 	Category *string `json:"category,omitempty"`
 	Language *string `json:"language,omitempty"`
 	License  *string `json:"license,omitempty"`
-	// Support is the markdown support text (migration 0160) — PeerTube's
+	// Support is the markdown support text (migration 0159) — PeerTube's
 	// per-video "support" field. Omitted when unset. Set on the detail and
 	// create/update views.
 	Support *string `json:"support,omitempty"`

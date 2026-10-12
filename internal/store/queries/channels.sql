@@ -80,7 +80,7 @@ SET display_name        = COALESCE(sqlc.narg('display_name'), display_name),
     description         = COALESCE(sqlc.narg('description'), description),
     activitypub_enabled = COALESCE(sqlc.narg('activitypub_enabled'), activitypub_enabled),
     atproto_enabled     = COALESCE(sqlc.narg('atproto_enabled'), atproto_enabled),
-    -- support (0160): NULL leaves it; '' clears it to NULL (the column's "unset").
+    -- support (0159): NULL leaves it; '' clears it to NULL (the column's "unset").
     support             = CASE WHEN sqlc.narg('support')::text IS NULL THEN support ELSE NULLIF(sqlc.narg('support')::text, '') END,
     updated_at          = now()
 WHERE id = sqlc.arg('id')

@@ -1,6 +1,6 @@
--- 0160: PeerTube's free-text "support" field (markdown, e.g. "Support me on
--- Liberapay: <link>") on channels and on videos. Numbered 0160 on purpose: it
--- merges after the 0157-0159 PRs, so a contiguity gap is expected until they land.
+-- 0159: PeerTube's free-text "support" field (markdown, e.g. "Support me on
+-- Liberapay: <link>") on channels and on videos. Numbered 0159: it
+-- merges after the 0157 and 0158 PRs; contiguity holds once they land.
 --
 -- NULL means "no support text". The CHECK is PeerTube's own SUPPORT max (1000
 -- characters, server/core/initializers/constants.ts) so an import can never
