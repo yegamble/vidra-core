@@ -453,6 +453,8 @@ func run() error {
 	// requests, quarantined uploads, follower requests) close over it and are
 	// nil-guarded, the same deferred-service seam as the publish hooks.
 	var notifsvc *notification.Service
+	// Deferred like notifsvc: the publish hook below runs only after startup.
+	var captionjobsvc *captionjob.Service
 	staffQueueHook := func(what string, fan func(context.Context, uuid.UUID) (int64, error)) func(context.Context, uuid.UUID) {
 		return notification.StaffQueueHook(logger, what, func(ctx context.Context, id uuid.UUID) (int64, error) {
 			if notifsvc == nil {
@@ -1330,6 +1332,15 @@ func run() error {
 		func(ctx context.Context, id uuid.UUID) (int64, error) {
 			return notifsvc.NotifyUploadQuarantined(ctx, id)
 		})))
+	// Auto-transcribe new uploads (auto_transcribe_new_uploads, default off):
+	// queue the same Whisper job the on-demand route does. Whisper reads the
+	// stored original, so publish (incl. release of a publish-after-transcode
+	// hold) is the right seam. Best-effort inside AutoEnqueueOnPublish.
+	vopts = append(vopts, video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
+		if captionjobsvc != nil {
+			captionjobsvc.AutoEnqueueOnPublish(ctx, videoID)
+		}
+	}))
 	vopts = append(vopts, video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
 		if notifsvc == nil {
 			return
@@ -2180,7 +2191,7 @@ func run() error {
 		}
 		transcriber = media.NewWhisperClient(blobs, cfg.WhisperEndpoint)
 	}
-	captionjobsvc := captionjob.NewService(db.Queries(), videosvc, transcriber,
+	captionjobsvc = captionjob.NewService(db.Queries(), videosvc, transcriber,
 		captionjob.WithEnabled(cfg.WhisperEnabled),
 		// The BOOT half on its own (see the channel-sync twin above): whisper
 		// wired at boot, with transcription_enabled deliberately NOT folded in,
@@ -2191,6 +2202,9 @@ func run() error {
 		// env-only — mirroring the contact_form_enabled env-dependency pattern).
 		captionjob.WithEnabledFunc(func() bool {
 			return cfg.WhisperEnabled && settingssvc.Bool(instancesettings.KeyTranscriptionEnabled)
+		}),
+		captionjob.WithAutoTranscribeFunc(func() bool {
+			return settingssvc.Bool(instancesettings.KeyAutoTranscribeNewUploads)
 		}),
 		captionjob.WithDefaultLanguage(cfg.WhisperDefaultLanguage),
 		captionjob.WithNotifier(notifsvc),
