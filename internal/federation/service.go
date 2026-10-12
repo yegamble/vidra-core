@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 
@@ -172,6 +173,13 @@ type Service struct {
 	baseURL string            // canonical public origin, e.g. https://videos.example (no trailing slash)
 	cipher  *secretbox.Cipher // nil in dev → private keys stored raw
 
+	// inst is the instance actor's persistence (instance_actor.go), picked up
+	// from repo when it provides it. Nil = no instance actor. instAvailable
+	// caches the one fact about it that can only ever turn true: that 0166's
+	// reservation of its name is the instance actor's.
+	inst          InstanceRepository
+	instAvailable atomic.Bool
+
 	// edges gates remote-video ingestion on an accepted local follow edge
 	// (see FollowEdgeChecker). Nil = consult the repository's
 	// remote_channel_follows edges directly (the production wiring).
@@ -326,6 +334,9 @@ func (s *Service) autoFollowBackEnabled() bool {
 // NewService builds a federation Service over the given repository.
 func NewService(repo Repository, opts ...Option) *Service {
 	s := &Service{repo: repo}
+	if ir, ok := repo.(InstanceRepository); ok {
+		s.inst = ir
+	}
 	for _, o := range opts {
 		o(s)
 	}
