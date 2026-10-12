@@ -76,7 +76,8 @@ SELECT u.id, 'new_report', r.reporter_id, r.id
 FROM reports r
 JOIN users u ON u.role IN ('admin', 'moderator')
 WHERE r.id = sqlc.arg('report_id')
-  AND u.id <> r.reporter_id
+  -- not <>: a remote Flag report (0153) has a NULL reporter_id
+  AND r.reporter_id IS DISTINCT FROM u.id
   AND u.is_active
   AND u.deleted_at IS NULL
   AND NOT EXISTS (

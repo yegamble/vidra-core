@@ -391,8 +391,8 @@ func TestReportResolutionNotificationPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveReport: %v", err)
 	}
-	if gotReporter != reporter {
-		t.Fatalf("ResolveReport reporter = %s, want %s", gotReporter, reporter)
+	if !gotReporter.Valid || uuid.UUID(gotReporter.Bytes) != reporter {
+		t.Fatalf("ResolveReport reporter = %v, want %s", gotReporter, reporter)
 	}
 
 	// The notification stores the report FK (no actor: the moderator's identity

@@ -151,9 +151,22 @@ func (s *Server) handleReportAccount(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// reportReporterView identifies who filed a report.
+// reportReporterView identifies who filed a report. A remote Flag report sets
+// Remote + the actor and domain, and Username carries the domain so an older
+// client still names who reported it.
 type reportReporterView struct {
 	Username string `json:"username"`
+	Remote   bool   `json:"remote,omitempty"`
+	ActorURL string `json:"actor_url,omitempty"`
+	Domain   string `json:"domain,omitempty"`
+}
+
+func newReportReporterView(it moderation.Item) reportReporterView {
+	if it.RemoteReporterActorURL == "" {
+		return reportReporterView{Username: it.ReporterUsername}
+	}
+	return reportReporterView{Username: it.RemoteReporterDomain, Remote: true,
+		ActorURL: it.RemoteReporterActorURL, Domain: it.RemoteReporterDomain}
 }
 
 // reportView is the moderation-queue projection of a report. Target context is
@@ -194,7 +207,7 @@ func newReportView(it moderation.Item) reportView {
 		ModeratorNote:     it.ModeratorNote,
 		CreatedAt:         it.CreatedAt,
 		ResolvedAt:        it.ResolvedAt,
-		Reporter:          reportReporterView{Username: it.ReporterUsername},
+		Reporter:          newReportReporterView(it),
 		VideoID:           it.VideoID,
 		VideoTitle:        it.VideoTitle,
 		CommentID:         it.CommentID,
@@ -285,8 +298,8 @@ func (s *Server) handleResolveReport(c echo.Context) error {
 	}
 	s.audit(c, observability.ActionReportResolve, observability.ResultSuccess, userID.String(), in.Status)
 	// Tell the reporter their report was handled (best-effort; skipped when no
-	// notifier is wired or the resolving moderator reported it themselves).
-	if s.notifsvc != nil {
+	// notifier is wired, the moderator reported it themselves, or it is remote).
+	if s.notifsvc != nil && reporterID != uuid.Nil {
 		if nerr := s.notifsvc.NotifyReportResolved(ctx, reporterID, userID, id); nerr != nil {
 			s.logger.WarnContext(ctx, "notify report resolved failed", "error", nerr, "report_id", id)
 		}
