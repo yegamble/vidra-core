@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -17,7 +18,7 @@ import (
 // `false AS is_sensitive` and skip the hide_sensitive predicate, so under the
 // "hide" policy a remote NSFW video still surfaced — labelled safe. The
 // remote arms now carry rv.is_sensitive and honour hide_sensitive exactly as
-// the local arms do; list and count agree.
+// the local arms do, and the hide-policy counts move by exactly this row.
 func TestRemoteSensitiveVideoFollowsTheHidePolicy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -49,7 +50,7 @@ func TestRemoteSensitiveVideoFollowsTheHidePolicy(t *testing.T) {
 		t.Fatalf("UpsertRemoteVideo: %v", err)
 	}
 
-	feed := func(hide bool) (found, flagged bool, total int64) {
+	feed := func(hide bool) (found, flagged bool) {
 		t.Helper()
 		rows, err := q.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
 			HideSensitive: hide, IncludeRemote: true, Sort: "recent", ResultLimit: 10000,
@@ -62,13 +63,9 @@ func TestRemoteSensitiveVideoFollowsTheHidePolicy(t *testing.T) {
 				found, flagged = true, r.IsSensitive
 			}
 		}
-		total, err = q.CountPublicVideosSorted(ctx, sqlcgen.CountPublicVideosSortedParams{HideSensitive: hide, IncludeRemote: true})
-		if err != nil {
-			t.Fatalf("CountPublicVideosSorted: %v", err)
-		}
-		return found, flagged, total
+		return found, flagged
 	}
-	search := func(hide bool) (found, flagged bool, total int64) {
+	search := func(hide bool) (found, flagged bool) {
 		t.Helper()
 		rows, err := q.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
 			Query: title, HideSensitive: hide, Sort: "relevance", ResultLimit: 50,
@@ -81,27 +78,51 @@ func TestRemoteSensitiveVideoFollowsTheHidePolicy(t *testing.T) {
 				found, flagged = true, r.IsSensitive
 			}
 		}
-		total, err = q.CountSearchPublicVideos(ctx, sqlcgen.CountSearchPublicVideosParams{Query: title, HideSensitive: hide})
-		if err != nil {
-			t.Fatalf("CountSearchPublicVideos: %v", err)
-		}
-		return found, flagged, total
+		return found, flagged
 	}
 
 	for _, surface := range []struct {
 		name string
-		read func(bool) (bool, bool, int64)
+		read func(bool) (bool, bool)
 	}{{"public feed", feed}, {"search", search}} {
-		shown, flagged, totalShown := surface.read(false)
+		shown, flagged := surface.read(false)
 		if !shown || !flagged {
 			t.Errorf("%s, warn/blur/display: found=%v is_sensitive=%v, want the video WITH its flag", surface.name, shown, flagged)
 		}
-		hidden, _, totalHidden := surface.read(true)
-		if hidden {
+		if hidden, _ := surface.read(true); hidden {
 			t.Errorf("%s, hide: the sensitive remote video still surfaced", surface.name)
 		}
-		if totalShown-totalHidden < 1 {
-			t.Errorf("%s: count %d (shown) vs %d (hidden) — the count must drop with the list", surface.name, totalShown, totalHidden)
+	}
+
+	// The counts must move with the list by EXACTLY this row. Measured inside
+	// one REPEATABLE READ snapshot, toggling only this row's flag, so another
+	// package's concurrent writes cannot satisfy (or break) the assertion.
+	tx, err := st.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	tq := sqlcgen.New(tx)
+	counts := func() (feedN, searchN int64) {
+		t.Helper()
+		if feedN, err = tq.CountPublicVideosSorted(ctx, sqlcgen.CountPublicVideosSortedParams{HideSensitive: true, IncludeRemote: true}); err != nil {
+			t.Fatalf("CountPublicVideosSorted: %v", err)
 		}
+		if searchN, err = tq.CountSearchPublicVideos(ctx, sqlcgen.CountSearchPublicVideosParams{Query: title, HideSensitive: true}); err != nil {
+			t.Fatalf("CountSearchPublicVideos: %v", err)
+		}
+		return feedN, searchN
+	}
+	feedFlagged, searchFlagged := counts()
+	if _, err := tq.UpsertRemoteVideo(ctx, sqlcgen.UpsertRemoteVideoParams{
+		ObjectUrl: "https://" + domain + "/videos/1", RemoteActorUrl: actor, Title: title,
+		WatchUrl: "https://" + domain + "/w/1", IsSensitive: false,
+	}); err != nil {
+		t.Fatalf("UpsertRemoteVideo (unflag): %v", err)
+	}
+	feedClear, searchClear := counts()
+	if feedClear-feedFlagged != 1 || searchClear-searchFlagged != 1 {
+		t.Errorf("hide-policy counts after un-flagging this row: feed %d→%d, search %d→%d; want each +1 exactly",
+			feedFlagged, feedClear, searchFlagged, searchClear)
 	}
 }

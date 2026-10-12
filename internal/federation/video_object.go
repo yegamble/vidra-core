@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	_ "golang.org/x/image/webp" // register the WebP decoder for image.DecodeConfig
 
-	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -95,7 +94,7 @@ func videoObject(in videoObjectInput) map[string]any {
 	obj := map[string]any{
 		"id":           in.ObjectID,
 		"type":         "Video",
-		"name":         in.Title,
+		"name":         truncate(in.Title, peertubeMaxNameLen),
 		"attributedTo": attributedTo,
 		"url":          videoURLLinks(in.HLSURL, in.WatchURL),
 		"to":           []string{publicAudience},
@@ -126,6 +125,10 @@ func videoObject(in videoObjectInput) map[string]any {
 	return obj
 }
 
+// peertubeMaxNameLen is PeerTube's title limit (videos.ts:81, constants.ts:519);
+// vidra allows 200 bytes, and a longer name is rejected outright.
+const peertubeMaxNameLen = 120
+
 // peertubeCommentsPolicy maps vidra's per-video policy to PeerTube's
 // VideoCommentPolicy (1 enabled, 2 disabled; vidra has no approval tier).
 var peertubeCommentsPolicy = map[string]int{"enabled": 1, "disabled": 2}
@@ -155,9 +158,17 @@ func (s *Service) peertubeFields(obj map[string]any, r sqlcgen.ListChannelOutbox
 	for _, t := range r.Tags {
 		tags = append(tags, map[string]any{"type": "Hashtag", "name": t})
 	}
+	seen := map[string]bool{}
 	for _, lang := range r.CaptionLanguages {
+		// An unknown or duplicate language key throws in PeerTube's caption
+		// model (video-caption.ts:74-76,88) and rolls the WHOLE video back.
+		key := peertubeCaptionLanguage(lang)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
 		href := s.baseURL + "/api/v1/videos/" + r.ID.String() + "/captions/" + url.PathEscape(lang)
-		subs = append(subs, map[string]any{"identifier": lang, "url": []map[string]any{{"type": "Link", "mediaType": "text/vtt", "href": href}}})
+		subs = append(subs, map[string]any{"identifier": key, "url": []map[string]any{{"type": "Link", "mediaType": "text/vtt", "href": href}}})
 	}
 	if len(tags) > 0 {
 		obj["tag"] = tags
@@ -168,6 +179,37 @@ func (s *Service) peertubeFields(obj map[string]any, r sqlcgen.ListChannelOutbox
 }
 
 func isDigits(s string) bool { return s != "" && strings.Trim(s, "0123456789") == "" }
+
+// peertubeTextLanguages is PeerTube's caption-language key set
+// (VIDEO_TEXT_LANGUAGES: buildLanguages, constants.ts:1510-1600), keyed by
+// lowercase tag. PeerTube builds it at boot from the iso-639-3 package, so
+// this copy is CONSERVATIVE: living ISO 639-1 codes whose status is not in
+// doubt, the 639-3 additions and the regional keys. A key PeerTube lacks rolls
+// the video back; a missing one only drops that caption.
+var peertubeTextLanguages = func() map[string]string {
+	m := map[string]string{"pt-br": "pt-BR", "pt-pt": "pt-PT", "es-419": "es-419", "zh-hans": "zh-Hans", "zh-hant": "zh-Hant", "ca-valencia": "ca-valencia"}
+	for _, c := range strings.Fields(`aa ab af ak am an ar as av ay az ba be bg bi bm bn bo br bs ca ce ch co cr cs cv cy
+		da de dv dz ee el en eo es et eu fa ff fi fj fo fr fy ga gd gl gn gu ha he hi ho hr ht hu hy hz id ig ii ik is
+		it iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv ky la lb lg li ln lo lt lu lv mg mh mi mk ml mn mr ms mt my
+		na nb nd ne ng nl nn no nr nv ny oc oj om or os pa pl ps pt qu rm rn ro ru rw sc sd se sg si sk sl sm sn so sq
+		sr ss st su sv sw ta te tg th ti tk tl tn to tr ts tt tw ty ug uk ur uz ve vi wa wo xh yi yo za zh zu
+		kab gcf tlh jbo avk gsw tok rcf gcr`) {
+		m[c] = c
+	}
+	return m
+}()
+
+// peertubeCaptionLanguage maps a vidra caption tag (any BCP-47-ish case) to a
+// PeerTube key: the tag itself (pt-br → pt-BR), else its base language
+// (en-US → en), else "" — no key, so the caption is not offered.
+func peertubeCaptionLanguage(tag string) string {
+	t := strings.ToLower(tag)
+	if k, ok := peertubeTextLanguages[t]; ok {
+		return k
+	}
+	base, _, _ := strings.Cut(t, "-")
+	return peertubeTextLanguages[base]
+}
 
 // videoURLLinks builds the `url` array: the playable HLS master first (when
 // there is one), then the human watch page. Always an array, even with one
@@ -237,16 +279,29 @@ func publishedAt(originallyPublished, publishAt pgtype.Timestamptz, createdAt ti
 	return createdAt
 }
 
-// maxPosterHeaderBytes bounds the read that recovers a poster's pixel size.
-const maxPosterHeaderBytes = 256 << 10
+// maxPosterHeaderBytes bounds the read that recovers a poster's pixel size;
+// maxPosterSizes bounds the in-process cache of the sizes read.
+const (
+	maxPosterHeaderBytes = 256 << 10
+	maxPosterSizes       = 50000
+)
 
-// posterSize reads the stored poster's pixel size from its header bytes (0, 0
-// when unreadable). Every poster lives at media.VideoThumbnailKey.
-func (s *Service) posterSize(ctx context.Context, videoID uuid.UUID) (int, int) {
-	if s.media == nil {
+// posterSize returns the pixel size of the poster stored at key (the
+// video_files thumbnail row /thumbnail serves), 0, 0 when unreadable. Only the
+// header is decoded and the reader is closed straight after, and a size is
+// cached per thumbnail ROW id: a replaced poster is a new row, so an outbox
+// page or object fetch re-reads nothing it has read before.
+func (s *Service) posterSize(ctx context.Context, fileID, key string) (int, int) {
+	if s.media == nil || key == "" {
 		return 0, 0
 	}
-	rc, err := s.media.Open(ctx, media.VideoThumbnailKey(videoID))
+	s.posterMu.Lock()
+	wh, ok := s.posterSizes[fileID]
+	s.posterMu.Unlock()
+	if ok {
+		return wh[0], wh[1]
+	}
+	rc, err := s.media.Open(ctx, key)
 	if err != nil {
 		return 0, 0
 	}
@@ -254,6 +309,14 @@ func (s *Service) posterSize(ctx context.Context, videoID uuid.UUID) (int, int) 
 	cfg, _, err := image.DecodeConfig(io.LimitReader(rc, maxPosterHeaderBytes))
 	if err != nil {
 		return 0, 0
+	}
+	if fileID != "" {
+		s.posterMu.Lock()
+		if s.posterSizes == nil || len(s.posterSizes) >= maxPosterSizes {
+			s.posterSizes = map[string][2]int{}
+		}
+		s.posterSizes[fileID] = [2]int{cfg.Width, cfg.Height}
+		s.posterMu.Unlock()
 	}
 	return cfg.Width, cfg.Height
 }
@@ -275,6 +338,7 @@ func (s *Service) videoObjectFromDetail(ctx context.Context, channelActor string
 		IsSensitive: v.IsSensitive, CommentsPolicy: v.CommentsPolicy,
 		DownloadEnabled: v.DownloadEnabled, PublishAfterTranscode: v.PublishAfterTranscode,
 		OwnerUsername: f.OwnerUsername, Views: f.Views, Tags: f.Tags, CaptionLanguages: f.CaptionLanguages,
+		ThumbnailFileID: f.ThumbnailFileID, ThumbnailStorageKey: f.ThumbnailStorageKey,
 	}), nil
 }
 
@@ -299,7 +363,7 @@ func (s *Service) videoObjectFromOutbox(ctx context.Context, channelActor string
 	if r.HasThumbnail {
 		in.IconURL = s.videoThumbnailURL(r.ID)
 		in.IconMediaTyp = r.ThumbnailContentType
-		in.IconWidth, in.IconHeight = s.posterSize(ctx, r.ID)
+		in.IconWidth, in.IconHeight = s.posterSize(ctx, r.ThumbnailFileID, r.ThumbnailStorageKey)
 	}
 	obj := videoObject(in)
 	s.peertubeFields(obj, r)

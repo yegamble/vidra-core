@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -422,6 +423,9 @@ func (f fakeRepo) GetVideoFederationFacts(_ context.Context, id uuid.UUID) (sqlc
 	}
 	row := f.videoFacts[id]
 	row.OwnerUsername = f.usersByID[f.channelsByID[v.ChannelID].OwnerID].Username
+	if v.HasThumbnail && row.ThumbnailStorageKey == "" {
+		row.ThumbnailStorageKey = media.VideoThumbnailKey(id) // the usual poster row's key
+	}
 	return row, nil
 }
 

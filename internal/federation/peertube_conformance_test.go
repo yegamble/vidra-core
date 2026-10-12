@@ -18,10 +18,12 @@ package federation
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io"
 	"math"
 	"net/url"
 	"regexp"
@@ -496,7 +498,7 @@ func ptIsCommentsPolicyValid(x any) bool {
 
 // ptPoster writes a real w×h JPEG at the video's poster key, so the icon's
 // width/height are read from bytes, not asserted by the test.
-func ptPoster(t *testing.T, blobs storage.Backend, id uuid.UUID, w, h int) {
+func ptPoster(t *testing.T, blobs storage.Backend, key string, w, h int) {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	img.Set(0, 0, color.RGBA{R: 200, A: 255})
@@ -504,7 +506,7 @@ func ptPoster(t *testing.T, blobs storage.Backend, id uuid.UUID, w, h int) {
 	if err := jpeg.Encode(&buf, img, nil); err != nil {
 		t.Fatalf("encode poster: %v", err)
 	}
-	if _, err := blobs.Put(t.Context(), media.VideoThumbnailKey(id), &buf); err != nil {
+	if _, err := blobs.Put(t.Context(), key, &buf); err != nil {
 		t.Fatalf("put poster: %v", err)
 	}
 }
@@ -527,7 +529,7 @@ func ptWorld(t *testing.T) (*Service, fakeRepo) {
 	finished.Category, finished.Language, finished.License = ptStr("2"), ptStr("en"), ptStr("1")
 	finished.DownloadEnabled, finished.CommentsPolicy = true, "enabled"
 	repo.videosByID[ctVideoID] = finished
-	ptPoster(t, blobs, ctVideoID, 640, 360)
+	ptPoster(t, blobs, media.VideoThumbnailKey(ctVideoID), 640, 360)
 
 	noThumb := finished
 	noThumb.ID, noThumb.Title, noThumb.HasThumbnail, noThumb.ThumbnailContentType = ptNoThumbID, "Poster never generated", false, ""
@@ -537,17 +539,25 @@ func ptWorld(t *testing.T) (*Service, fakeRepo) {
 	sensitive.ID, sensitive.Title, sensitive.IsSensitive = ptSensitiveID, "Surgery, unedited", true
 	sensitive.SensitiveReason, sensitive.CommentsPolicy = "Graphic medical footage.", "disabled"
 	repo.videosByID[ptSensitiveID] = sensitive
-	ptPoster(t, blobs, ptSensitiveID, 640, 480)
+	ptPoster(t, blobs, media.VideoThumbnailKey(ptSensitiveID), 640, 480)
 
 	captioned := finished
-	captioned.ID, captioned.Title = ptCaptionedID, "Interview with subtitles"
+	// 130 characters, multi-byte: vidra allows 200 bytes, PeerTube 120 chars.
+	captioned.ID, captioned.Title = ptCaptionedID, "Interview with subtitles — "+strings.Repeat("ü", 103)
 	captioned.OriginallyPublishedAt = pgtype.Timestamptz{}
 	repo.videosByID[ptCaptionedID] = captioned
-	ptPoster(t, blobs, ptCaptionedID, 640, 272)
+	// An importer reference-mode poster (entities_videoimages.go:149) keeps its
+	// SOURCE filename as the key, not media.VideoThumbnailKey.
+	ptPoster(t, blobs, "imports/peertube/thumbnails/source-name.jpg", 640, 272)
 
 	repo.videoFacts = map[uuid.UUID]sqlcgen.GetVideoFederationFactsRow{
-		ctVideoID:     {Views: 1234, Tags: []string{"fjord", "kayak"}},
-		ptCaptionedID: {Views: 7, CaptionLanguages: []string{"en", "pt-br"}},
+		ctVideoID: {Views: 1234, Tags: []string{"fjord", "kayak"}},
+		// vidra stores captions under any BCP-47-ish tag (video/captions.go:21),
+		// sorted by language as the SQL returns them.
+		ptCaptionedID: {
+			Views: 7, CaptionLanguages: []string{"en", "en-US", "fr-CA", "pt-br", "qaa"},
+			ThumbnailFileID: "c0ffee00-0000-4000-8000-000000000001", ThumbnailStorageKey: "imports/peertube/thumbnails/source-name.jpg",
+		},
 	}
 
 	return NewService(repo, WithBaseURL(contractBase), WithMediaStorage(blobs)), repo
@@ -593,21 +603,31 @@ func TestVideoObjectPassesPeerTubeValidator(t *testing.T) {
 			ptAssertIcon(t, v, 640, 480)
 		}},
 		{name: "video with captions", id: ptCaptionedID, check: func(t *testing.T, v ptVerdict) {
+			// The poster was found under its importer key, not the canonical one.
 			ptAssertIcon(t, v, 640, 272)
-			// Each caption survives setValidRemoteCaptions with the text/vtt
-			// link getCaptionAttributesFromObject dereferences
-			// (object-to-model-attributes.ts:227-245).
+			// Each caption survives setValidRemoteCaptions with the text/vtt link
+			// getCaptionAttributesFromObject dereferences
+			// (object-to-model-attributes.ts:227-245), its identifier mapped to a
+			// PeerTube language KEY: en-US → en is a duplicate of en and dropped,
+			// fr-CA → fr, pt-br → pt-BR, qaa has no key and is omitted. The href
+			// still names vidra's stored tag.
 			subs, _ := v.Object["subtitleLanguage"].([]any)
-			if len(subs) != 2 {
-				t.Fatalf("surviving captions = %v, want en + pt-br", subs)
+			want := [][2]string{{"en", "en"}, {"fr", "fr-CA"}, {"pt-BR", "pt-br"}}
+			if len(subs) != len(want) {
+				t.Fatalf("surviving captions = %v, want %v", subs, want)
 			}
-			for i, lang := range []string{"en", "pt-br"} {
+			for i, w := range want {
 				c := subs[i].(map[string]any)
 				link := c["url"].([]any)[0].(map[string]any)
-				want := contractBase + "/api/v1/videos/" + ptCaptionedID.String() + "/captions/" + lang
-				if c["identifier"] != lang || link["mediaType"] != "text/vtt" || link["href"] != want {
-					t.Errorf("caption %d = %v", i, c)
+				href := contractBase + "/api/v1/videos/" + ptCaptionedID.String() + "/captions/" + w[1]
+				if c["identifier"] != w[0] || link["mediaType"] != "text/vtt" || link["href"] != href {
+					t.Errorf("caption %d = %v, want identifier %s → %s", i, c, w[0], href)
 				}
+			}
+			// The 130-character title is cut to PeerTube's 120 (videos.ts:81) on a
+			// rune boundary rather than rejected.
+			if n := utf8.RuneCountInString(v.Object["name"].(string)); n != 120 || !utf8.ValidString(v.Object["name"].(string)) {
+				t.Errorf("name = %d runes (valid UTF-8: %v), want 120", n, utf8.ValidString(v.Object["name"].(string)))
 			}
 		}},
 	}
@@ -623,6 +643,9 @@ func TestVideoObjectPassesPeerTubeValidator(t *testing.T) {
 			}
 			if tc.wantReject != "" {
 				return
+			}
+			if m := peertubeModelCheck(v); m != "" {
+				t.Errorf("PeerTube's model layer throws on %s: the creator transaction rolls the video back", m)
 			}
 			ptAssertPlayableAndOwned(t, v, tc.id)
 			for _, f := range []string{"state", "waitTranscoding", "downloadEnabled", "sensitive", "commentsPolicy"} {
@@ -661,16 +684,44 @@ func ptAssertPlayableAndOwned(t *testing.T, v ptVerdict, id uuid.UUID) {
 		t.Errorf("surviving HLS playlist = %q, want %q (filtered out = PeerTube stores an unplayable video)", hls, want)
 	}
 	// findOwner walks attributedTo for a same-host GROUP and throws without one
-	// (abstract-builder.ts:48-56 → actors/get.ts:108-137).
-	var group string
-	for _, a := range v.Object["attributedTo"].([]any) {
-		if m, _ := a.(map[string]any); m != nil && m["type"] == "Group" {
-			group, _ = m["id"].(string)
+	// (abstract-builder.ts:48-56 → actors/get.ts:108-137). It must also be the
+	// FIRST entry: vidra's own Announce/search ingest takes firstAttributedTo
+	// as the owner (ingest.go, search.go), and only goldens guarded that.
+	at := v.Object["attributedTo"].([]any)
+	first, _ := at[0].(map[string]any)
+	if first["type"] != "Group" || first["id"] != contractBase+"/video-channels/films" {
+		t.Errorf("attributedTo[0] = %v, want the channel Group first", at[0])
+	}
+}
+
+// ptRegionalLanguageKeys are the non-ISO-639 keys buildLanguages adds
+// (constants.ts:1585-1600), in their exact case.
+var ptRegionalLanguageKeys = map[string]bool{"pt-BR": true, "pt-PT": true, "es-419": true, "zh-Hans": true, "zh-Hant": true, "ca-valencia": true}
+
+// peertubeModelCheck ports the model-layer @Is checks the creator transaction
+// runs AFTER the validator (creator.ts:33-43): a throw there rolls the whole
+// video back. VideoCaptionModel.language must be a VIDEO_TEXT_LANGUAGES key
+// (video-caption.ts:88 → video-captions.ts:10-12 → constants.ts:1510-1521)
+// and (videoId, language) is unique (video-caption.ts:74-76). The key table is
+// built at runtime from the iso-639-3 package, which is not vendored here, so
+// this checks a NECESSARY condition: a regional key in its exact case, or an
+// all-lowercase 2-3 letter ISO 639 code. That is what rejects "pt-br",
+// "en-US" and "fr-CA".
+func peertubeModelCheck(v ptVerdict) string {
+	seen := map[string]bool{}
+	subs, _ := v.Object["subtitleLanguage"].([]any)
+	for _, raw := range subs {
+		id, _ := raw.(map[string]any)["identifier"].(string)
+		iso := len(id) >= 2 && len(id) <= 3 && strings.Trim(id, "abcdefghijklmnopqrstuvwxyz") == ""
+		if !iso && !ptRegionalLanguageKeys[id] {
+			return "caption language " + strconv.Quote(id)
 		}
+		if seen[id] {
+			return "duplicate caption language " + strconv.Quote(id)
+		}
+		seen[id] = true
 	}
-	if group != contractBase+"/video-channels/films" {
-		t.Errorf("attributedTo Group = %q, want the channel actor", group)
-	}
+	return ""
 }
 
 // ptAssertIcon: the poster survived misc.ts:48-72 with its REAL pixel size.
@@ -725,6 +776,17 @@ func TestPeerTubeCheckBites(t *testing.T) {
 		})
 	}
 
+	for _, bad := range []string{"pt-br", "en-US", "fr-CA"} {
+		v := ptVerdict{Object: map[string]any{"subtitleLanguage": []any{map[string]any{"identifier": bad}}}}
+		if peertubeModelCheck(v) == "" {
+			t.Errorf("model check accepted caption language %q", bad)
+		}
+	}
+	dup := ptVerdict{Object: map[string]any{"subtitleLanguage": []any{map[string]any{"identifier": "en"}, map[string]any{"identifier": "en"}}}}
+	if peertubeModelCheck(dup) == "" {
+		t.Error("model check accepted a duplicate caption language")
+	}
+
 	// An HLS link without `tag` is not a rejection: it is silently filtered,
 	// leaving an accepted video with nothing to play (videos.ts:133-138,236).
 	obj, err := svc.VideoObject(t.Context(), ctVideoID)
@@ -743,5 +805,54 @@ func TestPeerTubeCheckBites(t *testing.T) {
 		if u.(map[string]any)["mediaType"] == "application/x-mpegURL" {
 			t.Error("an HLS link without tag survived; PeerTube filters it out")
 		}
+	}
+}
+
+// countingBackend counts Opens, i.e. poster reads.
+type countingBackend struct {
+	storage.Backend
+	opens *int
+}
+
+func (c countingBackend) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	*c.opens++
+	return c.Backend.Open(ctx, key)
+}
+
+// TestPosterSizeIsReadOncePerThumbnailRow: an unauthenticated outbox page or
+// object fetch must not re-read posters on every request. The size is cached
+// per video_files thumbnail row — a replaced poster is a NEW row, so the cache
+// can never serve a stale size.
+func TestPosterSizeIsReadOncePerThumbnailRow(t *testing.T) {
+	repo := newContractRepo()
+	local, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("local storage: %v", err)
+	}
+	ptPoster(t, local, media.VideoThumbnailKey(ctVideoID), 640, 360)
+	repo.videoFacts = map[uuid.UUID]sqlcgen.GetVideoFederationFactsRow{ctVideoID: {ThumbnailFileID: "row-1"}}
+	opens := 0
+	svc := NewService(repo, WithBaseURL(contractBase), WithMediaStorage(countingBackend{local, &opens}))
+	for i := 0; i < 3; i++ {
+		obj, err := svc.VideoObject(t.Context(), ctVideoID)
+		if err != nil {
+			t.Fatalf("VideoObject: %v", err)
+		}
+		if icon := obj["icon"].([]map[string]any)[0]; icon["width"] != 640 {
+			t.Fatalf("icon = %v, want the poster's size", icon)
+		}
+	}
+	if opens != 1 {
+		t.Errorf("poster opened %d times for 3 emissions, want 1", opens)
+	}
+	// A replaced poster is a new thumbnail row: read again, never stale.
+	ptPoster(t, local, media.VideoThumbnailKey(ctVideoID), 320, 180)
+	repo.videoFacts[ctVideoID] = sqlcgen.GetVideoFederationFactsRow{ThumbnailFileID: "row-2"}
+	obj, err := svc.VideoObject(t.Context(), ctVideoID)
+	if err != nil {
+		t.Fatalf("VideoObject: %v", err)
+	}
+	if icon := obj["icon"].([]map[string]any)[0]; icon["width"] != 320 || opens != 2 {
+		t.Errorf("after replacement: icon = %v, opens = %d; want 320 wide from a second read", icon, opens)
 	}
 }

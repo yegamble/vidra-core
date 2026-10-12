@@ -47,12 +47,22 @@ SELECT v.id, v.title, v.description, v.short_code,
        au.username AS owner_username,
        COALESCE(vc.views, 0)::bigint AS views,
        ARRAY(SELECT t.tag FROM video_tags t WHERE t.video_id = v.id ORDER BY t.tag)::text[] AS tags,
-       ARRAY(SELECT cp.language FROM captions cp WHERE cp.video_id = v.id ORDER BY cp.language)::text[] AS caption_languages
+       ARRAY(SELECT cp.language FROM captions cp WHERE cp.video_id = v.id ORDER BY cp.language)::text[] AS caption_languages,
+       COALESCE(th.id::text, '')::text AS thumbnail_file_id,
+       COALESCE(th.storage_key, '')::text AS thumbnail_storage_key
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN LATERAL (
+    -- The poster row /thumbnail serves: its OWN storage key (an importer
+    -- reference-mode poster keeps its source key) and its id, which the
+    -- poster-size cache keys on — a replaced poster is a new row.
+    SELECT f.id, f.storage_key FROM video_files f
+    WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+    ORDER BY f.created_at DESC LIMIT 1
+) th ON true
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
 ORDER BY v.created_at DESC, v.id DESC
 LIMIT $2 OFFSET $3;
@@ -65,11 +75,21 @@ LIMIT $2 OFFSET $3;
 SELECT au.username AS owner_username,
        COALESCE(vc.views, 0)::bigint AS views,
        ARRAY(SELECT t.tag FROM video_tags t WHERE t.video_id = v.id ORDER BY t.tag)::text[] AS tags,
-       ARRAY(SELECT cp.language FROM captions cp WHERE cp.video_id = v.id ORDER BY cp.language)::text[] AS caption_languages
+       ARRAY(SELECT cp.language FROM captions cp WHERE cp.video_id = v.id ORDER BY cp.language)::text[] AS caption_languages,
+       COALESCE(th.id::text, '')::text AS thumbnail_file_id,
+       COALESCE(th.storage_key, '')::text AS thumbnail_storage_key
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN LATERAL (
+    -- The poster row /thumbnail serves: its OWN storage key (an importer
+    -- reference-mode poster keeps its source key) and its id, which the
+    -- poster-size cache keys on — a replaced poster is a new row.
+    SELECT f.id, f.storage_key FROM video_files f
+    WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+    ORDER BY f.created_at DESC LIMIT 1
+) th ON true
 WHERE v.id = $1;
 
 -- name: GetVideoByID :one
