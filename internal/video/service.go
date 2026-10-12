@@ -2674,7 +2674,21 @@ func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter Fee
 // first, each carrying discovery-card data, with the matching total. The caller
 // clamps limit/offset.
 func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]FeedItem, int64, error) {
+	return s.listSubscriptions(ctx, userID, limit, offset, true)
+}
+
+// ListLocalSubscriptions is ListSubscriptions without the remote branch of the
+// UNION, filtered IN SQL so the LIMIT counts only rows the caller will keep (the
+// token-gated RSS feed cannot render remote cards, and filtering after the
+// LIMIT let a busy remote follow crowd local videos out of the window).
+func (s *Service) ListLocalSubscriptions(ctx context.Context, userID uuid.UUID, limit int32) ([]FeedItem, error) {
+	items, _, err := s.listSubscriptions(ctx, userID, limit, 0, false)
+	return items, err
+}
+
+func (s *Service) listSubscriptions(ctx context.Context, userID uuid.UUID, limit, offset int32, includeRemote bool) ([]FeedItem, int64, error) {
 	rows, err := s.repo.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{
+		LocalOnly:    !includeRemote,
 		FollowerID:   userID,
 		ResultLimit:  limit,
 		ResultOffset: offset,
@@ -2682,9 +2696,11 @@ func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := s.repo.CountSubscriptionVideos(ctx, userID)
-	if err != nil {
-		return nil, 0, err
+	var total int64
+	if includeRemote { // the total is only read by the paginated API
+		if total, err = s.repo.CountSubscriptionVideos(ctx, userID); err != nil {
+			return nil, 0, err
+		}
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
