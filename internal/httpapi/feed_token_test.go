@@ -230,3 +230,17 @@ func TestSensitivePolicyForUserFailsClosed(t *testing.T) {
 		t.Errorf("policy for unreadable user = %q, want hide", got)
 	}
 }
+
+// The ordinary subscriptions API keeps remote cards; only the token feed drops them.
+func TestSubscriptionsAPIStillIncludesRemoteCards(t *testing.T) {
+	srv, _, _, _, repo := videoServerFull(t, testConfig())
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	repo.remoteSubs = append(repo.remoteSubs, sqlcgen.ListSubscriptionVideosRow{
+		ID: uuid.New(), Remote: true, Title: "Remote premiere", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		Domain: "tube.remote.example", WatchUrl: "https://tube.remote.example/w/abc",
+	})
+	rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/me/subscriptions/videos", "", tok)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Remote premiere") {
+		t.Fatalf("subscriptions API = %d, remote card missing: %s", rec.Code, rec.Body.String())
+	}
+}

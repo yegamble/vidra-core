@@ -2688,10 +2688,10 @@ func (s *Service) ListLocalSubscriptions(ctx context.Context, userID uuid.UUID, 
 
 func (s *Service) listSubscriptions(ctx context.Context, userID uuid.UUID, limit, offset int32, includeRemote bool) ([]FeedItem, int64, error) {
 	rows, err := s.repo.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{
-		IncludeRemote: includeRemote,
-		FollowerID:    userID,
-		ResultLimit:   limit,
-		ResultOffset:  offset,
+		LocalOnly:    !includeRemote,
+		FollowerID:   userID,
+		ResultLimit:  limit,
+		ResultOffset: offset,
 	})
 	if err != nil {
 		return nil, 0, err

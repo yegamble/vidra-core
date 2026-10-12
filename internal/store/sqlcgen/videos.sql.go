@@ -2355,7 +2355,9 @@ FROM (
            ''::text AS short_code
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
-    WHERE $2::bool
+    -- local_only is the zero-value-safe polarity: a caller that sets nothing
+    -- (every direct query user) keeps the remote branch.
+    WHERE NOT $2::bool
       AND EXISTS (
           SELECT 1 FROM remote_channel_follows rcf
           WHERE rcf.user_id = $1
@@ -2393,10 +2395,10 @@ LIMIT $4 OFFSET $3
 `
 
 type ListSubscriptionVideosParams struct {
-	FollowerID    uuid.UUID `json:"follower_id"`
-	IncludeRemote bool      `json:"include_remote"`
-	ResultOffset  int32     `json:"result_offset"`
-	ResultLimit   int32     `json:"result_limit"`
+	FollowerID   uuid.UUID `json:"follower_id"`
+	LocalOnly    bool      `json:"local_only"`
+	ResultOffset int32     `json:"result_offset"`
+	ResultLimit  int32     `json:"result_limit"`
 }
 
 type ListSubscriptionVideosRow struct {
@@ -2433,7 +2435,7 @@ type ListSubscriptionVideosRow struct {
 func (q *Queries) ListSubscriptionVideos(ctx context.Context, arg ListSubscriptionVideosParams) ([]ListSubscriptionVideosRow, error) {
 	rows, err := q.db.Query(ctx, listSubscriptionVideos,
 		arg.FollowerID,
-		arg.IncludeRemote,
+		arg.LocalOnly,
 		arg.ResultOffset,
 		arg.ResultLimit,
 	)

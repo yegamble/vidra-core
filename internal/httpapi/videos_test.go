@@ -413,7 +413,7 @@ func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.List
 		}
 	}
 	// Remote branch of the UNION (remote-content §3): seeded remote cards.
-	if a.IncludeRemote {
+	if !a.LocalOnly {
 		rows = append(rows, f.remoteSubs...)
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
