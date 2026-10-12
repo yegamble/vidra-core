@@ -64,12 +64,16 @@ const (
 	TypeUploadQuarantined = "upload_quarantined"
 	// TypeFederationFollowerRequest: a remote actor's follow awaits approval.
 	TypeFederationFollowerRequest = "federation_follower_request"
+	// TypeCommentHeld tells a video's managers (channel owner + editor
+	// members) that a comment on a requires_approval video awaits their
+	// approval (migration 0161). A set-based fan-out (NotifyCommentHeld).
+	TypeCommentHeld = "comment_held"
 )
 
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeCaptionReady, TypeComment, TypeCommentReply, TypeFederationFollowerRequest, TypeFollow, TypeMessage, TypeNewRegistrationRequest, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeUploadQuarantined, TypeVideoBlocked, TypeVideoRejected, TypeVideoUnblocked}
+	return []string{TypeCaptionReady, TypeComment, TypeCommentHeld, TypeCommentReply, TypeFederationFollowerRequest, TypeFollow, TypeMessage, TypeNewRegistrationRequest, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeUploadQuarantined, TypeVideoBlocked, TypeVideoRejected, TypeVideoUnblocked}
 }
 
 // EmailTypes lists, in stable order, the types a user may ALSO receive by email
@@ -91,7 +95,7 @@ func emailType(t string) bool {
 // knownType reports whether t is a recognised notification type.
 func knownType(t string) bool {
 	switch t {
-	case TypeFollow, TypeComment, TypeCommentReply, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeVideoUnblocked, TypeCaptionReady, TypeNewVideo, TypeNewReport,
+	case TypeFollow, TypeComment, TypeCommentReply, TypeCommentHeld, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeVideoUnblocked, TypeCaptionReady, TypeNewVideo, TypeNewReport,
 		TypeNewRegistrationRequest, TypeUploadQuarantined, TypeFederationFollowerRequest:
 		return true
 	}
@@ -129,6 +133,7 @@ type Repository interface {
 	NotifyStaffOfNewRegistrationRequest(ctx context.Context, requestID uuid.UUID) (int64, error)
 	NotifyStaffOfQuarantinedUpload(ctx context.Context, videoID uuid.UUID) (int64, error)
 	NotifyStaffOfFederationFollowerRequest(ctx context.Context, remoteFollowID uuid.UUID) (int64, error)
+	NotifyManagersOfHeldComment(ctx context.Context, commentID uuid.UUID) (int64, error)
 	CommentReplyRecipient(ctx context.Context, commentID uuid.UUID) (sqlcgen.CommentReplyRecipientRow, error)
 	CommentVideoOwnerRecipient(ctx context.Context, commentID uuid.UUID) (sqlcgen.CommentVideoOwnerRecipientRow, error)
 	FollowNotificationRecipient(ctx context.Context, arg sqlcgen.FollowNotificationRecipientParams) (uuid.UUID, error)
@@ -407,6 +412,16 @@ func (s *Service) NotifyUploadQuarantined(ctx context.Context, videoID uuid.UUID
 // as NotifyNewRegistrationRequest.
 func (s *Service) NotifyFederationFollowerRequest(ctx context.Context, remoteFollowID uuid.UUID) (int64, error) {
 	return s.repo.NotifyStaffOfFederationFollowerRequest(ctx, remoteFollowID)
+}
+
+// NotifyCommentHeld tells the people who can approve a held comment (0161) —
+// the video's channel owner and editor members — that it is waiting, so the
+// review queue does not stall. One set-based statement; every selection rule
+// (still held, not the commenter, active, preference, mute/block) and the
+// one-per-(recipient, comment) guarantee live in the SQL. Returns how many
+// were notified. Best-effort: the caller logs an error and moves on.
+func (s *Service) NotifyCommentHeld(ctx context.Context, commentID uuid.UUID) (int64, error) {
+	return s.repo.NotifyManagersOfHeldComment(ctx, commentID)
 }
 
 // NotifyReportResolved records that a moderator (actorID) resolved recipientID's

@@ -38,6 +38,14 @@ func WithFollowerRequestHook(fn func(context.Context, uuid.UUID)) Option {
 	return func(s *Service) { s.onFollowerRequest = fn }
 }
 
+// WithHeldCommentHook registers a best-effort callback fired with the comment
+// id when an inbound Note is stored HELD on a requires_approval video (0161) —
+// the seam the video managers' comment_held notification uses. A re-delivered
+// held Note fires it again; the fan-out behind it is idempotent.
+func WithHeldCommentHook(fn func(context.Context, uuid.UUID)) Option {
+	return func(s *Service) { s.onHeldComment = fn }
+}
+
 // handleFlag (T07): a fediverse user reported OUR video, comment or account —
 // PeerTube sends one object, Mastodon [account, statuses...]. One report per
 // LOCAL object; an admin-blocked actor is refused like a blocked instance. A

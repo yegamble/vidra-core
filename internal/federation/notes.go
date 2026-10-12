@@ -118,6 +118,9 @@ func (s *Service) handleCreateNote(ctx context.Context, act inboxActivity, signe
 		return err
 	}
 	s.flagRemoteComment(ctx, row.ID, row.Body)
+	if row.HeldForReview && s.onHeldComment != nil {
+		s.onHeldComment(ctx, row.ID)
+	}
 	return nil
 }
 

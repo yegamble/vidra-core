@@ -118,6 +118,49 @@ WHERE r.id = sqlc.arg('report_id')
   )
 ON CONFLICT (user_id, report_id) WHERE type = 'new_report' DO NOTHING;
 
+-- name: NotifyManagersOfHeldComment :execrows
+-- The "a comment awaits your approval" fan-out (migration 0161), fired when a
+-- comment is HELD on a requires_approval video (posted locally or delivered as
+-- a federated Note). Set-based like NotifyStaffOfNewReport; the recipients are
+-- the people who can approve it: the channel owner and every editor member.
+-- Notified only when the comment is still held and not a tombstone, and the
+-- recipient is not the commenter, is active and non-deleted, has not turned
+-- 'comment_held' off, and has not muted (nor blocked, nor been blocked by) the
+-- commenter — the comment still waits in the queue; only the push is withheld.
+-- ON CONFLICT rides notifications_comment_held_unique_idx, so a re-delivered
+-- Note or a re-fired hook never double-notifies.
+INSERT INTO notifications (user_id, type, actor_id, video_id, comment_id)
+SELECT r.user_id, 'comment_held', c.user_id, c.video_id, c.id
+FROM comments c
+JOIN videos v ON v.id = c.video_id
+JOIN channels ch ON ch.id = v.channel_id
+CROSS JOIN LATERAL (
+    SELECT ch.owner_id AS user_id
+    UNION
+    SELECT m.user_id FROM channel_members m WHERE m.channel_id = ch.id
+) r
+JOIN users u ON u.id = r.user_id
+WHERE c.id = sqlc.arg('comment_id')
+  AND c.held_for_review
+  AND c.deleted_at IS NULL
+  AND r.user_id IS DISTINCT FROM c.user_id
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = r.user_id AND np.type = 'comment_held' AND np.enabled = FALSE
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts ma
+      WHERE ma.muter_id = r.user_id AND ma.muted_id = c.user_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE (ub.blocker_id = r.user_id AND ub.blocked_id = c.user_id)
+         OR (ub.blocker_id = c.user_id AND ub.blocked_id = r.user_id)
+  )
+ON CONFLICT (user_id, comment_id) WHERE type = 'comment_held' DO NOTHING;
+
 -- name: NotifyStaffOfNewRegistrationRequest :execrows
 -- Staff push signal for the registration approval queue (migration 0156), fired
 -- when a request is filed. Set-based like NotifyStaffOfNewReport. Recipients are

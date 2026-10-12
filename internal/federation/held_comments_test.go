@@ -93,3 +93,40 @@ func TestInboundNoteOnApprovalVideoIsHeld(t *testing.T) {
 		t.Error("re-delivered Note re-held an approved comment")
 	}
 }
+
+// TestInboundHeldNoteFiresTheHeldHook: a Note stored held tells the video's
+// managers (the hook cmd/api wires to NotifyCommentHeld); a published one
+// does not.
+func TestInboundHeldNoteFiresTheHeldHook(t *testing.T) {
+	approval, open := uuid.New(), uuid.New()
+	repo := newNotesRepo(approval)
+	v := repo.videosByID[approval]
+	v.CommentsPolicy = "requires_approval"
+	repo.videosByID[approval] = v
+	repo.videosByID[open] = v
+	o := repo.videosByID[open]
+	o.ID, o.CommentsPolicy = open, "enabled"
+	repo.videosByID[open] = o
+	var fired []uuid.UUID
+	svc := NewService(repo, WithBaseURL(noteBase),
+		WithHeldCommentHook(func(_ context.Context, id uuid.UUID) { fired = append(fired, id) }))
+	ctx := context.Background()
+
+	for i, vid := range []uuid.UUID{approval, open} {
+		n := string(rune('a' + i))
+		note := createNote("https://remote.example/act/k"+n, remoteBob,
+			"https://remote.example/comments/k"+n, remoteBob, noteBase+"/videos/"+vid.String(), "hello "+n)
+		if err := svc.HandleInbox(ctx, remoteBob, []byte(note)); err != nil {
+			t.Fatalf("HandleInbox %s: %v", n, err)
+		}
+	}
+	var heldID uuid.UUID
+	for id, c := range repo.commentsByID {
+		if c.HeldForReview {
+			heldID = id
+		}
+	}
+	if len(fired) != 1 || fired[0] != heldID {
+		t.Errorf("held hook fired %v, want exactly the held comment %s", fired, heldID)
+	}
+}

@@ -225,6 +225,11 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 	}
 	if !held {
 		s.notifyCommentPublished(ctx, userID, created.ID, v.OwnerID, false)
+	} else if s.notifsvc != nil {
+		// Tell the video's managers a comment awaits them (best-effort).
+		if _, nerr := s.notifsvc.NotifyCommentHeld(ctx, created.ID); nerr != nil {
+			s.logger.WarnContext(ctx, "notify comment held failed", "error", nerr, "comment_id", created.ID)
+		}
 	}
 	// Flag the comment against the moderation watched-words list (best-effort;
 	// records matches for the admin review queue — never blocks the post).
@@ -536,7 +541,55 @@ func (s *Server) handleApproveComment(c echo.Context) error {
 			ActorID: userID.String(), ResourceType: "comment", ResourceID: commentID.String(),
 		})
 	}
-	view := newCommentView(wa.Comment, wa.AuthorUsername, wa.AuthorDisplayName)
-	view.Remote, view.AuthorDomain, view.Pinned = wa.Remote, wa.AuthorDomain, wa.Pinned
-	return c.JSON(http.StatusOK, view)
+	return c.JSON(http.StatusOK, commentViewOf(wa))
+}
+
+// commentViewOf renders a service projection (author identity, remote origin,
+// pinned) the way the thread renders it.
+func commentViewOf(wa comment.WithAuthor) commentView {
+	v := newCommentView(wa.Comment, wa.AuthorUsername, wa.AuthorDisplayName)
+	v.Remote, v.AuthorDomain, v.Pinned = wa.Remote, wa.AuthorDomain, wa.Pinned
+	return v
+}
+
+// managedCommentView is a review-queue entry: the comment plus its video.
+type managedCommentView struct {
+	commentView
+	VideoTitle string `json:"video_title"`
+}
+
+// managedCommentListResponse is the GET /me/videos/comments page.
+type managedCommentListResponse struct {
+	Comments []managedCommentView `json:"comments"`
+	pageMeta
+}
+
+// handleListManagedComments is the review queue (0161): comments on every
+// video the caller manages (channels they own or edit), newest first. Behind
+// requireAuth. ?held=true lists only comments awaiting approval, ?held=false
+// only published ones; omitted lists both; anything else is 422.
+func (s *Server) handleListManagedComments(c echo.Context) error {
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
+	}
+	var held *bool
+	switch q := c.QueryParam("held"); q {
+	case "":
+	case "true", "false":
+		b := q == "true"
+		held = &b
+	default:
+		return &ValidationError{Fields: []FieldError{{Field: "held", Message: "must be true or false"}}}
+	}
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, total, err := s.commentsvc.ListForManager(c.Request().Context(), userID, held, page.Limit32(), page.Offset32())
+	if err != nil {
+		return err
+	}
+	views := make([]managedCommentView, 0, len(items))
+	for _, it := range items {
+		views = append(views, managedCommentView{commentView: commentViewOf(it.WithAuthor), VideoTitle: it.VideoTitle})
+	}
+	return c.JSON(http.StatusOK, managedCommentListResponse{Comments: views, pageMeta: page.meta(total)})
 }
