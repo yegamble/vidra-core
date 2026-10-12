@@ -1262,6 +1262,7 @@ type VideoOwnershipChange struct {
 	VideoID     uuid.UUID `json:"video_id"`
 	InitiatorID uuid.UUID `json:"initiator_id"`
 	NextOwnerID uuid.UUID `json:"next_owner_id"`
+	VideoTitle  string    `json:"video_title"`
 	Status      string    `json:"status"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`

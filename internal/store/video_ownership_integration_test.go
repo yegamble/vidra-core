@@ -100,7 +100,7 @@ func TestVideoOwnershipChangeLifecycle(t *testing.T) {
 	}
 
 	give := func() (sqlcgen.VideoOwnershipChange, error) {
-		return q.CreateVideoOwnershipChange(ctx, sqlcgen.CreateVideoOwnershipChangeParams{VideoID: vid, InitiatorID: giver, NextOwnerID: taker})
+		return q.CreateVideoOwnershipChange(ctx, sqlcgen.CreateVideoOwnershipChangeParams{VideoID: vid, InitiatorID: giver, NextOwnerID: taker, VideoTitle: "gift"})
 	}
 	first, err := give()
 	if err != nil || first.Status != "pending" {
@@ -188,4 +188,167 @@ func TestVideoOwnershipChangeLifecycle(t *testing.T) {
 	if n, _ := q.CountIncomingVideoOwnershipChanges(ctx, taker); n != 0 {
 		t.Errorf("requests after the video was deleted = %d, want 0", n)
 	}
+}
+
+// TestVideoOwnershipChangeGuards: what the recipient sees never follows the
+// video after the request; stale and expired requests neither block the current
+// owner nor accept; the giver can withdraw; a refusal starts a cooldown for the
+// pair; and no transfer happens while media work on the video is unfinished.
+func TestVideoOwnershipChangeGuards(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := st.Pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	giver, giverCh := seedOwnerChannel(ctx, t, st, "ogG")
+	taker, takerCh := seedOwnerChannel(ctx, t, st, "ogT")
+	other, otherCh := seedOwnerChannel(ctx, t, st, "ogO")
+	vid := seedPublishedVideo(ctx, t, st, giverCh, "Original Title")
+	give := func(from, to uuid.UUID) (sqlcgen.VideoOwnershipChange, error) {
+		return q.CreateVideoOwnershipChange(ctx, sqlcgen.CreateVideoOwnershipChangeParams{
+			VideoID: vid, InitiatorID: from, NextOwnerID: to, VideoTitle: "Original Title"})
+	}
+	list := func(who uuid.UUID, expiredBefore time.Time) []sqlcgen.ListIncomingVideoOwnershipChangesRow {
+		t.Helper()
+		rows, err := q.ListIncomingVideoOwnershipChanges(ctx, sqlcgen.ListIncomingVideoOwnershipChangesParams{
+			NextOwnerID: who, ExpiredBefore: expiredBefore, ResultLimit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	window := time.Now().Add(-30 * 24 * time.Hour)
+	statusOf := func(id uuid.UUID) string {
+		t.Helper()
+		for _, r := range list(taker, window) {
+			if r.ID == id {
+				return r.Status
+			}
+		}
+		t.Fatalf("request %s not listed", id)
+		return ""
+	}
+
+	// Withdraw: only the giver, only while pending.
+	first, err := give(giver, taker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := q.CancelVideoOwnershipChange(ctx, sqlcgen.CancelVideoOwnershipChangeParams{VideoID: vid, InitiatorID: taker}); n != 0 {
+		t.Errorf("a non-giver cancelled %d rows", n)
+	}
+	if n, _ := q.CancelVideoOwnershipChange(ctx, sqlcgen.CancelVideoOwnershipChangeParams{VideoID: vid, InitiatorID: giver}); n != 1 {
+		t.Fatalf("giver cancel = %d rows", n)
+	}
+	if oc, _ := q.GetVideoOwnershipChange(ctx, first.ID); oc.Status != "cancelled" {
+		t.Errorf("status after cancel = %q", oc.Status)
+	}
+
+	// Refusal cooldown: per (giver, recipient), from the refusal.
+	refused, err := give(giver, taker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := q.RefuseVideoOwnershipChange(ctx, sqlcgen.RefuseVideoOwnershipChangeParams{ID: refused.ID, NextOwnerID: taker}); n != 1 {
+		t.Fatal("refuse")
+	}
+	cool := func(from, to uuid.UUID, after time.Time) bool {
+		b, err := q.HasRecentOwnershipRefusal(ctx, sqlcgen.HasRecentOwnershipRefusalParams{InitiatorID: from, NextOwnerID: to, RefusedAfter: after})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	if !cool(giver, taker, time.Now().Add(-24*time.Hour)) || cool(giver, taker, time.Now().Add(time.Hour)) || cool(giver, other, time.Now().Add(-24*time.Hour)) {
+		t.Error("refusal cooldown is not per pair and per window")
+	}
+
+	// The list shows the title AT GIVE TIME, whatever the video is called now.
+	exec(`UPDATE videos SET title = 'Renamed Later' WHERE id = $1`, vid)
+	for _, r := range list(taker, window) {
+		if r.VideoTitle != "Original Title" {
+			t.Errorf("list title for a %s request = %q, want the snapshot", r.Status, r.VideoTitle)
+		}
+	}
+
+	// Expired by the offer window: listed as expired, and never accepted.
+	pending, err := give(giver, taker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec(`UPDATE video_ownership_changes SET created_at = now() - interval '31 days' WHERE id = $1`, pending.ID)
+	if got := statusOf(pending.ID); got != "expired" {
+		t.Errorf("an old pending request lists as %q, want expired", got)
+	}
+	if _, err := q.AcceptVideoOwnershipChange(ctx, sqlcgen.AcceptVideoOwnershipChangeParams{
+		ID: pending.ID, NextOwnerID: taker, ChannelID: takerCh, ExpiredBefore: window}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("accepting an expired request: err = %v", err)
+	}
+
+	// A stale request (giver lost the video) does not block the new owner.
+	exec(`UPDATE video_ownership_changes SET created_at = now() WHERE id = $1`, pending.ID)
+	exec(`UPDATE channels SET owner_id = $1 WHERE id = $2`, other, giverCh)
+	if got := statusOf(pending.ID); got != "expired" {
+		t.Errorf("a stale pending request lists as %q, want expired", got)
+	}
+	if n, err := q.ExpireStaleVideoOwnershipChanges(ctx, sqlcgen.ExpireStaleVideoOwnershipChangesParams{VideoID: vid, ExpiredBefore: window}); err != nil || n != 1 {
+		t.Fatalf("expire stale = %d, %v", n, err)
+	}
+	if busy, _ := q.HasPendingVideoOwnershipChange(ctx, vid); busy {
+		t.Error("a stale request still counts as pending")
+	}
+	fresh, err := give(other, taker) // the new owner can offer it
+	if err != nil {
+		t.Fatalf("new owner give: %v", err)
+	}
+	if n, _ := q.ExpireStaleVideoOwnershipChanges(ctx, sqlcgen.ExpireStaleVideoOwnershipChangesParams{VideoID: vid, ExpiredBefore: window}); n != 0 {
+		t.Errorf("expire touched a live request (%d rows)", n)
+	}
+
+	// Media work in flight blocks the transfer, in the accept statement itself.
+	accept := func() error {
+		_, err := q.AcceptVideoOwnershipChange(ctx, sqlcgen.AcceptVideoOwnershipChangeParams{
+			ID: fresh.ID, NextOwnerID: taker, ChannelID: takerCh, ExpiredBefore: window})
+		return err
+	}
+	var session uuid.UUID
+	if err := st.Pool.QueryRow(ctx, `INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, purpose, expires_at)
+		VALUES ($1, $2, 'r.mp4', 10, 5, 'replace', now() + interval '1 hour') RETURNING id`, vid, other).Scan(&session); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, on, off string }{
+		{"open replace session", `SELECT 1`, `UPDATE upload_sessions SET state = 'queued' WHERE id = '` + session.String() + `'`},
+		{"queued replace session", `SELECT 1`, `UPDATE upload_sessions SET state = 'completed' WHERE id = '` + session.String() + `'`},
+		{"finalize job", `INSERT INTO upload_finalize_jobs (upload_id, video_id, purpose) VALUES ('` + session.String() + `', '` + vid.String() + `', 'replace')`, `UPDATE upload_finalize_jobs SET state = 'done'`},
+		{"import job", `INSERT INTO import_jobs (video_id, url) VALUES ('` + vid.String() + `', 'https://example.test/v')`, `UPDATE import_jobs SET state = 'failed' WHERE video_id = '` + vid.String() + `'`},
+		{"transcode job", `INSERT INTO transcode_jobs (video_id, source_key, state) VALUES ('` + vid.String() + `', 'k', 'running')`, `UPDATE transcode_jobs SET state = 'done' WHERE video_id = '` + vid.String() + `'`},
+	} {
+		exec(c.on)
+		if busy, err := q.VideoMediaWorkInFlight(ctx, vid); err != nil || !busy {
+			t.Errorf("%s: in flight = %v, %v", c.name, busy, err)
+		}
+		if err := accept(); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("%s: accept err = %v, want no row", c.name, err)
+		}
+		exec(c.off)
+	}
+	if busy, _ := q.VideoMediaWorkInFlight(ctx, vid); busy {
+		t.Fatal("finished work still reads as in flight")
+	}
+	if err := accept(); err != nil {
+		t.Fatalf("accept once the work finished: %v", err)
+	}
+	if row, _ := q.GetVideoByID(ctx, vid); row.ChannelID != takerCh {
+		t.Errorf("accept did not move the video")
+	}
+	_ = otherCh
 }

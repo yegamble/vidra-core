@@ -23,8 +23,19 @@ WITH req AS (
       AND oc.next_owner_id = $3
       AND oc.status = 'pending'
       AND v.id = oc.video_id
+      AND oc.created_at > $4
       AND vc.owner_id = oc.initiator_id
       AND tc.owner_id = oc.next_owner_id
+      AND NOT EXISTS (SELECT 1 FROM upload_sessions us
+                      WHERE us.video_id = v.id
+                        AND (us.state IN ('queued', 'processing')
+                             OR (us.state = 'active' AND us.expires_at > now())))
+      AND NOT EXISTS (SELECT 1 FROM upload_finalize_jobs fj
+                      WHERE fj.video_id = v.id AND fj.state IN ('pending', 'running'))
+      AND NOT EXISTS (SELECT 1 FROM import_jobs ij
+                      WHERE ij.video_id = v.id AND ij.state IN ('pending', 'running'))
+      AND NOT EXISTS (SELECT 1 FROM transcode_jobs tj
+                      WHERE tj.video_id = v.id AND tj.state IN ('pending', 'running'))
     RETURNING oc.video_id, v.channel_id AS from_channel_id
 )
 UPDATE videos
@@ -35,9 +46,10 @@ RETURNING videos.id, req.from_channel_id
 `
 
 type AcceptVideoOwnershipChangeParams struct {
-	ChannelID   uuid.UUID `json:"channel_id"`
-	ID          uuid.UUID `json:"id"`
-	NextOwnerID uuid.UUID `json:"next_owner_id"`
+	ChannelID     uuid.UUID `json:"channel_id"`
+	ID            uuid.UUID `json:"id"`
+	NextOwnerID   uuid.UUID `json:"next_owner_id"`
+	ExpiredBefore time.Time `json:"expired_before"`
 }
 
 type AcceptVideoOwnershipChangeRow struct {
@@ -48,19 +60,50 @@ type AcceptVideoOwnershipChangeRow struct {
 // Accept AND move, in one statement, so a request can never read 'accepted'
 // for a video that did not move (or the reverse). The request flips only while
 // ALL of these hold at the moment of the write:
-//   - it is still pending and addressed to next_owner_id;
+//   - it is still pending, addressed to next_owner_id, and made after
+//     expired_before (the offer window);
 //   - its initiator STILL owns the video (ownership may have changed since the
 //     give — the request must not outlive it);
-//   - the target channel belongs to next_owner_id.
+//   - the target channel belongs to next_owner_id;
+//   - no media work on the video is unfinished (VideoMediaWorkInFlight, the
+//     same four clauses inline).
 //
 // No row means one of them failed. The move itself is the same channel_id
 // assignment a same-owner move makes (UpdateVideo); the owner follows the
 // channel. from_channel_id is where the video was, for the move hooks.
 func (q *Queries) AcceptVideoOwnershipChange(ctx context.Context, arg AcceptVideoOwnershipChangeParams) (AcceptVideoOwnershipChangeRow, error) {
-	row := q.db.QueryRow(ctx, acceptVideoOwnershipChange, arg.ChannelID, arg.ID, arg.NextOwnerID)
+	row := q.db.QueryRow(ctx, acceptVideoOwnershipChange,
+		arg.ChannelID,
+		arg.ID,
+		arg.NextOwnerID,
+		arg.ExpiredBefore,
+	)
 	var i AcceptVideoOwnershipChangeRow
 	err := row.Scan(&i.ID, &i.FromChannelID)
 	return i, err
+}
+
+const cancelVideoOwnershipChange = `-- name: CancelVideoOwnershipChange :execrows
+UPDATE video_ownership_changes
+SET status = 'cancelled', updated_at = now()
+WHERE video_id = $1
+  AND initiator_id = $2
+  AND status = 'pending'
+`
+
+type CancelVideoOwnershipChangeParams struct {
+	VideoID     uuid.UUID `json:"video_id"`
+	InitiatorID uuid.UUID `json:"initiator_id"`
+}
+
+// The giver withdraws their pending offer of a video. 0 rows: no pending
+// request for that video was made by them.
+func (q *Queries) CancelVideoOwnershipChange(ctx context.Context, arg CancelVideoOwnershipChangeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelVideoOwnershipChange, arg.VideoID, arg.InitiatorID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const countIncomingVideoOwnershipChanges = `-- name: CountIncomingVideoOwnershipChanges :one
@@ -77,29 +120,37 @@ func (q *Queries) CountIncomingVideoOwnershipChanges(ctx context.Context, nextOw
 }
 
 const createVideoOwnershipChange = `-- name: CreateVideoOwnershipChange :one
-INSERT INTO video_ownership_changes (video_id, initiator_id, next_owner_id)
-VALUES ($1, $2, $3)
+INSERT INTO video_ownership_changes (video_id, initiator_id, next_owner_id, video_title)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (video_id) WHERE status = 'pending' DO NOTHING
-RETURNING id, video_id, initiator_id, next_owner_id, status, created_at, updated_at
+RETURNING id, video_id, initiator_id, next_owner_id, video_title, status, created_at, updated_at
 `
 
 type CreateVideoOwnershipChangeParams struct {
 	VideoID     uuid.UUID `json:"video_id"`
 	InitiatorID uuid.UUID `json:"initiator_id"`
 	NextOwnerID uuid.UUID `json:"next_owner_id"`
+	VideoTitle  string    `json:"video_title"`
 }
 
 // A new pending request. A second pending request for the same video hits
 // video_ownership_changes_one_pending_idx and inserts nothing (pgx.ErrNoRows),
 // so two concurrent gives cannot both land.
+// video_title is the title at give time (see 0165).
 func (q *Queries) CreateVideoOwnershipChange(ctx context.Context, arg CreateVideoOwnershipChangeParams) (VideoOwnershipChange, error) {
-	row := q.db.QueryRow(ctx, createVideoOwnershipChange, arg.VideoID, arg.InitiatorID, arg.NextOwnerID)
+	row := q.db.QueryRow(ctx, createVideoOwnershipChange,
+		arg.VideoID,
+		arg.InitiatorID,
+		arg.NextOwnerID,
+		arg.VideoTitle,
+	)
 	var i VideoOwnershipChange
 	err := row.Scan(
 		&i.ID,
 		&i.VideoID,
 		&i.InitiatorID,
 		&i.NextOwnerID,
+		&i.VideoTitle,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -107,8 +158,36 @@ func (q *Queries) CreateVideoOwnershipChange(ctx context.Context, arg CreateVide
 	return i, err
 }
 
+const expireStaleVideoOwnershipChanges = `-- name: ExpireStaleVideoOwnershipChanges :execrows
+UPDATE video_ownership_changes oc
+SET status = 'expired', updated_at = now()
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE oc.video_id = $1
+  AND v.id = oc.video_id
+  AND oc.status = 'pending'
+  AND (c.owner_id <> oc.initiator_id OR oc.created_at <= $2)
+`
+
+type ExpireStaleVideoOwnershipChangesParams struct {
+	VideoID       uuid.UUID `json:"video_id"`
+	ExpiredBefore time.Time `json:"expired_before"`
+}
+
+// Marks a video's pending request 'expired' when it can no longer be honoured:
+// its giver no longer owns the video, or it was made at or before
+// expired_before (the offer window). Run before a give, so a stale request
+// never blocks the video's current owner from offering it.
+func (q *Queries) ExpireStaleVideoOwnershipChanges(ctx context.Context, arg ExpireStaleVideoOwnershipChangesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, expireStaleVideoOwnershipChanges, arg.VideoID, arg.ExpiredBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getVideoOwnershipChange = `-- name: GetVideoOwnershipChange :one
-SELECT id, video_id, initiator_id, next_owner_id, status, created_at, updated_at
+SELECT id, video_id, initiator_id, next_owner_id, video_title, status, created_at, updated_at
 FROM video_ownership_changes
 WHERE id = $1
 `
@@ -121,6 +200,7 @@ func (q *Queries) GetVideoOwnershipChange(ctx context.Context, id uuid.UUID) (Vi
 		&i.VideoID,
 		&i.InitiatorID,
 		&i.NextOwnerID,
+		&i.VideoTitle,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -128,22 +208,68 @@ func (q *Queries) GetVideoOwnershipChange(ctx context.Context, id uuid.UUID) (Vi
 	return i, err
 }
 
+const hasPendingVideoOwnershipChange = `-- name: HasPendingVideoOwnershipChange :one
+SELECT EXISTS (
+    SELECT 1 FROM video_ownership_changes
+    WHERE video_id = $1 AND status = 'pending'
+)
+`
+
+func (q *Queries) HasPendingVideoOwnershipChange(ctx context.Context, videoID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hasPendingVideoOwnershipChange, videoID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const hasRecentOwnershipRefusal = `-- name: HasRecentOwnershipRefusal :one
+SELECT EXISTS (
+    SELECT 1 FROM video_ownership_changes
+    WHERE initiator_id = $1
+      AND next_owner_id = $2
+      AND status = 'refused'
+      AND updated_at > $3
+)
+`
+
+type HasRecentOwnershipRefusalParams struct {
+	InitiatorID  uuid.UUID `json:"initiator_id"`
+	NextOwnerID  uuid.UUID `json:"next_owner_id"`
+	RefusedAfter time.Time `json:"refused_after"`
+}
+
+// Whether next_owner_id refused an offer from initiator_id after refused_after
+// (any video): the re-offer cooldown, so a refusal is not answered by another
+// push notification straight away.
+func (q *Queries) HasRecentOwnershipRefusal(ctx context.Context, arg HasRecentOwnershipRefusalParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasRecentOwnershipRefusal, arg.InitiatorID, arg.NextOwnerID, arg.RefusedAfter)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listIncomingVideoOwnershipChanges = `-- name: ListIncomingVideoOwnershipChanges :many
-SELECT oc.id, oc.status, oc.created_at, oc.updated_at,
-       oc.video_id, v.title AS video_title,
+SELECT oc.id,
+       (CASE WHEN oc.status = 'pending'
+                  AND (c.owner_id <> oc.initiator_id OR oc.created_at <= $1)
+             THEN 'expired' ELSE oc.status END)::text AS status,
+       oc.created_at, oc.updated_at,
+       oc.video_id, oc.video_title,
        iu.username AS initiator_username, iu.display_name AS initiator_display_name
 FROM video_ownership_changes oc
 JOIN videos v ON v.id = oc.video_id
+JOIN channels c ON c.id = v.channel_id
 JOIN users iu ON iu.id = oc.initiator_id
-WHERE oc.next_owner_id = $1
+WHERE oc.next_owner_id = $2
 ORDER BY oc.created_at DESC, oc.id DESC
-LIMIT $3 OFFSET $2
+LIMIT $4 OFFSET $3
 `
 
 type ListIncomingVideoOwnershipChangesParams struct {
-	NextOwnerID  uuid.UUID `json:"next_owner_id"`
-	ResultOffset int32     `json:"result_offset"`
-	ResultLimit  int32     `json:"result_limit"`
+	ExpiredBefore time.Time `json:"expired_before"`
+	NextOwnerID   uuid.UUID `json:"next_owner_id"`
+	ResultOffset  int32     `json:"result_offset"`
+	ResultLimit   int32     `json:"result_limit"`
 }
 
 type ListIncomingVideoOwnershipChangesRow struct {
@@ -158,9 +284,19 @@ type ListIncomingVideoOwnershipChangesRow struct {
 }
 
 // The requests addressed to a user, newest first, with what the recipient needs
-// to decide: which video, and who is offering it.
+// to decide: which video, and who is offering it. The title is the snapshot
+// taken at give time, never the video's live one: once a request is answered
+// the video may pass to someone else, and the old recipient must not keep a
+// window onto it. A pending request that can no longer be accepted (its giver
+// no longer owns the video, or it is older than the offer window) reads
+// 'expired' even before a give has marked it so.
 func (q *Queries) ListIncomingVideoOwnershipChanges(ctx context.Context, arg ListIncomingVideoOwnershipChangesParams) ([]ListIncomingVideoOwnershipChangesRow, error) {
-	rows, err := q.db.Query(ctx, listIncomingVideoOwnershipChanges, arg.NextOwnerID, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listIncomingVideoOwnershipChanges,
+		arg.ExpiredBefore,
+		arg.NextOwnerID,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -250,4 +386,31 @@ func (q *Queries) ResolveOwnershipRecipient(ctx context.Context, arg ResolveOwne
 	var i ResolveOwnershipRecipientRow
 	err := row.Scan(&i.ID, &i.MutedInitiator)
 	return i, err
+}
+
+const videoMediaWorkInFlight = `-- name: VideoMediaWorkInFlight :one
+SELECT (
+    EXISTS (SELECT 1 FROM upload_sessions us
+            WHERE us.video_id = $1
+              AND (us.state IN ('queued', 'processing')
+                   OR (us.state = 'active' AND us.expires_at > now())))
+    OR EXISTS (SELECT 1 FROM upload_finalize_jobs fj
+               WHERE fj.video_id = $1 AND fj.state IN ('pending', 'running'))
+    OR EXISTS (SELECT 1 FROM import_jobs ij
+               WHERE ij.video_id = $1 AND ij.state IN ('pending', 'running'))
+    OR EXISTS (SELECT 1 FROM transcode_jobs tj
+               WHERE tj.video_id = $1 AND tj.state IN ('pending', 'running'))
+)::bool AS in_flight
+`
+
+// Whether media work on the video is unfinished: an open upload or
+// replacement session (an 'active' one only until it expires), or a pending or
+// running finalize, import or transcode job. An ownership change waits for it:
+// its result must land with the owner who started it, and its bytes must be
+// known before the recipient's quota is checked.
+func (q *Queries) VideoMediaWorkInFlight(ctx context.Context, videoID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, videoMediaWorkInFlight, videoID)
+	var in_flight bool
+	err := row.Scan(&in_flight)
+	return in_flight, err
 }
