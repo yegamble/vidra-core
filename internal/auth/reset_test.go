@@ -274,3 +274,21 @@ func TestRequestPasswordResetSurfacesNonDeliveryErrors(t *testing.T) {
 		t.Errorf("mailer called %d times after a storage failure, want 0", mailer.calls)
 	}
 }
+
+// A token minted before an account was deactivated (e.g. a refused admin-created
+// account) must not set a password on it.
+func TestResetPasswordRefusesAnInactiveAccount(t *testing.T) {
+	repo := newFakeRepo()
+	mailer := &captureMailer{}
+	svc := newResetService(repo, mailer)
+	u, _ := register(t, svc, "ada", "ada@example.test")
+	if err := svc.RequestPasswordReset(context.Background(), "ada@example.test"); err != nil {
+		t.Fatalf("RequestPasswordReset: %v", err)
+	}
+	if err := repo.DeactivateUser(context.Background(), u.ID); err != nil {
+		t.Fatalf("DeactivateUser: %v", err)
+	}
+	if err := svc.ResetPassword(context.Background(), mailer.token, "brand-new-pass"); err != ErrInvalidResetToken {
+		t.Errorf("reset on an inactive account = %v, want ErrInvalidResetToken", err)
+	}
+}

@@ -53,11 +53,14 @@ const (
 	// ActionAdminUserCreate: an administrator created an account. The address,
 	// password and set-password token are never recorded.
 	ActionAdminUserCreate = "admin.user.create"
-	ActionOAuthLink       = "auth.oauth.link"
-	ActionOAuthUnlink     = "auth.oauth.unlink"
-	ActionMFAEnable       = "auth.mfa.enable"
-	ActionMFADisable      = "auth.mfa.disable"
-	ActionMFAChallenge    = "auth.mfa.challenge"
+	// ActionAdminUserCreateDiscarded: a create failed after the account existed
+	// and the account was deactivated. No address or credential is recorded.
+	ActionAdminUserCreateDiscarded = "admin.user.create_discarded"
+	ActionOAuthLink                = "auth.oauth.link"
+	ActionOAuthUnlink              = "auth.oauth.unlink"
+	ActionMFAEnable                = "auth.mfa.enable"
+	ActionMFADisable               = "auth.mfa.disable"
+	ActionMFAChallenge             = "auth.mfa.challenge"
 	// ActionAdminMFAReset records an administrator removing a user's second
 	// factor (A05 ruling 2) — the operator answer to a lost authenticator. It
 	// is an ADMIN-domain action against a target account, distinct from

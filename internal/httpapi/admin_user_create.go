@@ -126,17 +126,38 @@ func (s *Server) handleAdminCreateUser(c echo.Context) error {
 	// Every failure from here leaves NO usable account: a password-less staff
 	// account would be unreachable (the reset-link route refuses staff) while
 	// still counting as an active admin. So the account is deactivated instead.
-	discard := func(reason string, cause error) {
-		if derr := s.authsvc.AdminDiscardAccount(ctx, user.ID); derr != nil {
+	// rollback deactivates the account and says so truthfully: the account is
+	// not gone (its username and email stay reserved until deleted), and if the
+	// deactivation itself failed it may still be active. The rollback is audited
+	// best-effort; that write's failure never changes the response.
+	rollback := func(status int, reason string, cause error) error {
+		derr := s.authsvc.AdminDiscardAccount(ctx, user.ID)
+		if derr != nil {
 			s.logger.ErrorContext(ctx, "refused admin-created account could not be deactivated", "error", derr, "target", user.ID.String())
 		}
 		s.logger.ErrorContext(ctx, "admin account creation rolled back: "+reason, "error", cause, "target", user.ID.String())
+		if s.auditLog != nil {
+			res := observability.ResultSuccess
+			if derr != nil {
+				res = observability.ResultFailure
+			}
+			s.auditEvent(c, audit.Event{
+				Action: observability.ActionAdminUserCreateDiscarded, Result: res,
+				ActorID: callerID.String(), Reason: "target=" + user.ID.String(),
+				ResourceType: auditResourceUser, ResourceID: user.ID.String(),
+				Metadata: []audit.MetadataField{{Key: "reason_code", Value: reason}},
+			})
+		}
+		if derr != nil {
+			return &AdminCreateRolledBackError{Status: status, Message: "the account may exist in an incomplete state; check the users list"}
+		}
+		return &AdminCreateRolledBackError{Status: status, Message: "the account was deactivated (" + reason + "); its username and email stay reserved until it is deleted from the users list"}
 	}
 	// Checked BEFORE any delivery path, emailed or returned: no durable record,
-	// no account.
+	// no usable account.
 	if auditErr != nil {
-		discard("audit write failed", auditErr)
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "the action could not be written to the audit log, so the account was not created")
+		s.logger.ErrorContext(ctx, "create-user audit write failed", "error", auditErr, "target", user.ID.String())
+		return rollback(http.StatusServiceUnavailable, "audit_failed", auditErr)
 	}
 	// Quota and the admin-vouched verification ride the existing admin edit path.
 	verified := true
@@ -146,14 +167,12 @@ func (s *Server) handleAdminCreateUser(c echo.Context) error {
 	}
 	updated, err := s.adminsvc.UpdateUser(ctx, callerID, user.ID, upd)
 	if err != nil {
-		discard("update failed", err)
-		return err
+		return rollback(http.StatusInternalServerError, "update_failed", err)
 	}
 	user = updated
 	link, err := s.authsvc.AdminIssueSetPasswordLink(ctx, user.ID)
 	if err != nil {
-		discard("link issuance failed", err)
-		return err
+		return rollback(http.StatusInternalServerError, "link_failed", err)
 	}
 	c.Response().Header().Set("Cache-Control", "no-store")
 	resp := adminCreateUserResponse{User: newAdminUserView(user, 0, false), ExpiresAt: link.ExpiresAt}
@@ -165,8 +184,7 @@ func (s *Server) handleAdminCreateUser(c echo.Context) error {
 		}
 		if base == "" {
 			// No relay and no origin to hand the link over on: nothing to give.
-			discard("set-password mail failed", merr)
-			return echo.NewHTTPError(http.StatusBadGateway, "the set-password email could not be sent, so the account was not created")
+			return rollback(http.StatusBadGateway, "mail_failed", merr)
 		}
 		s.logger.WarnContext(ctx, "set-password mail failed; returning the link instead", "target", user.ID.String())
 	}

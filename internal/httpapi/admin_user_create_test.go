@@ -146,7 +146,24 @@ func TestAdminCreateUserFailsClosedWithoutAudit(t *testing.T) {
 			if strings.Contains(rec.Body.String(), "reset-password") {
 				t.Error("a link was returned although the audit write failed")
 			}
+			if !strings.Contains(rec.Body.String(), "deactivated") || strings.Contains(rec.Body.String(), "not created") {
+				t.Errorf("rollback message = %s", rec.Body.String())
+			}
 			failing.fail = false
+			// No redeemable credential survives for the refused account.
+			for _, u := range env.authRepo.users {
+				if u.Username != "nina" {
+					continue
+				}
+				for _, r := range env.authRepo.resets {
+					if r.UserID == u.ID && !r.UsedAt.Valid {
+						t.Error("an unused reset token survived the refused create")
+					}
+				}
+			}
+			if ev := findAudit(auditEvents(t, env.logs), observability.ActionAdminUserCreateDiscarded, observability.ResultSuccess); ev == nil {
+				t.Error("the rollback was not audited")
+			}
 			found, active, admins := leftAccount(t, env, ownerTok, "nina")
 			if found && active {
 				t.Error("the refused account is still active")
@@ -171,5 +188,21 @@ func TestAdminCreateUserRefusesModerators(t *testing.T) {
 	rec := createUser(env, `{"username":"nina","email":"nina@example.test","role":"user","password":"supersecret"}`, modTok)
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("moderator create = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// When the rollback itself fails the response must not claim the account was
+// not created, and must point the admin at the users list.
+func TestAdminCreateUserReportsAFailedRollback(t *testing.T) {
+	failing := &failingAuditRepo{}
+	env, ownerTok, _ := resetLinkFixture(t, failing)
+	failing.fail = true
+	env.authRepo.failDeactivate = true
+	rec := createUser(env, `{"username":"nina","email":"nina@example.test","role":"user","password":"supersecret"}`, ownerTok)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("create = %d, want 503; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "incomplete state") || strings.Contains(rec.Body.String(), "not created") {
+		t.Errorf("failed rollback message = %s", rec.Body.String())
 	}
 }
