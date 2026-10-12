@@ -38,11 +38,13 @@ type fakeRepo struct {
 	remoteFollowerN map[uuid.UUID]int64
 	channelVideoN   map[uuid.UUID]int64
 	outboxVideos    map[uuid.UUID][]sqlcgen.ListChannelOutboxVideosRow
-	remoteVideos    map[string]*fakeRemoteVideo // keyed by object_url
-	blockedDomains  map[string]bool
-	usersByID       map[uuid.UUID]sqlcgen.GetUserActorByIDRow
-	rcFollows       map[uuid.UUID]*sqlcgen.RemoteChannelFollow // keyed by row id
-	commentsByID    map[uuid.UUID]sqlcgen.Comment              // federated-comment rows (§6)
+	// videoFacts seeds GetVideoFederationFacts' views/tags/captions (T05).
+	videoFacts     map[uuid.UUID]sqlcgen.GetVideoFederationFactsRow
+	remoteVideos   map[string]*fakeRemoteVideo // keyed by object_url
+	blockedDomains map[string]bool
+	usersByID      map[uuid.UUID]sqlcgen.GetUserActorByIDRow
+	rcFollows      map[uuid.UUID]*sqlcgen.RemoteChannelFollow // keyed by row id
+	commentsByID   map[uuid.UUID]sqlcgen.Comment              // federated-comment rows (§6)
 	// authoredRemoteComments are locally-authored comments ON remote videos
 	// (migration 0147), keyed by id.
 	authoredRemoteComments map[uuid.UUID]sqlcgen.AuthoredRemoteComment
@@ -409,6 +411,18 @@ func (f fakeRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVide
 		return v, nil
 	}
 	return sqlcgen.GetVideoByIDRow{}, pgx.ErrNoRows
+}
+
+// GetVideoFederationFacts mirrors the SQL join: the owner is the video's
+// channel's owner; views/tags/captions come from the videoFacts seed.
+func (f fakeRepo) GetVideoFederationFacts(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoFederationFactsRow, error) {
+	v, ok := f.videosByID[id]
+	if !ok {
+		return sqlcgen.GetVideoFederationFactsRow{}, pgx.ErrNoRows
+	}
+	row := f.videoFacts[id]
+	row.OwnerUsername = f.usersByID[f.channelsByID[v.ChannelID].OwnerID].Username
+	return row, nil
 }
 
 func (f fakeRepo) GetChannelByID(_ context.Context, id uuid.UUID) (sqlcgen.Channel, error) {

@@ -1,12 +1,22 @@
 package federation
 
 import (
+	"context"
+	"image"
+	_ "image/jpeg" // register the JPEG decoder for image.DecodeConfig
+	_ "image/png"  // register the PNG decoder for image.DecodeConfig
+	"io"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	_ "golang.org/x/image/webp" // register the WebP decoder for image.DecodeConfig
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -29,17 +39,24 @@ import (
 //     human watch page (/v/{code}) as `text/html`. The follower picks the
 //     stream link for its player and the html link for "watch on origin"; a
 //     follower that understands neither still has a URL it can open.
-//   - `icon` is an Image object rather than a bare URL string, so its
-//     `mediaType` travels with it — the poster is a png as often as a jpeg, and
-//     a consumer that guesses gets it wrong. Width and height are DELIBERATELY
-//     absent: vidra records the video's dimensions (video_metadata) but never
-//     the poster's, and inventing them would be worse than omitting them.
+//   - `icon` is an ARRAY of Image objects carrying `mediaType`, `width` and
+//     `height`: PeerTube drops an icon without integer width/height
+//     (misc.ts:48-72) and then rejects a video with no icon (videos.ts:58).
+//     vidra records no poster dimensions, so they are read from the stored
+//     poster's own header — never invented; unreadable means omitted.
 //   - `duration` is xsd:duration in the whole-seconds form PeerTube emits
 //     ("PT123S"), which is what parseISODurationSeconds on the other side reads.
 //   - `published` is when the video became public, preferring the creator's
 //     declared original date, then the scheduled publication, then the row's
 //     creation. `updated` is the row's last edit, which is what lets a follower
 //     tell a re-Announce from a real edit.
+//
+// PeerTube v8.3.1 (T05) re-fetches the object id and drops, silently, any
+// object failing sanitizeAndCheckVideoTorrentObject; peertubeFields adds what
+// that requires. attributedTo names the channel Group FIRST, then the owning
+// Person: findOwner wants the Group, and vidra's Announce ingest takes the
+// first entry as the owner. Proof is the validator port in
+// peertube_conformance_test.go — by test, not against a live PeerTube.
 //
 // A field is OMITTED rather than emitted empty whenever its underlying fact is
 // absent: no ready ladder means no HLS link, no poster means no icon, no probe
@@ -62,18 +79,30 @@ type videoObjectInput struct {
 	DurationSeconds *int32
 	Published       time.Time
 	Updated         time.Time
+
+	// OwnerActor is the owning account's Person actor, or "" when unknown.
+	OwnerActor string
+	// IconWidth/IconHeight are the poster's pixel size, 0 when unreadable.
+	IconWidth, IconHeight int
 }
 
 // videoObject renders an AS Video object from the gathered facts.
 func videoObject(in videoObjectInput) map[string]any {
+	attributedTo := []map[string]any{{"type": "Group", "id": in.ChannelActor}}
+	if in.OwnerActor != "" {
+		attributedTo = append(attributedTo, map[string]any{"type": "Person", "id": in.OwnerActor})
+	}
 	obj := map[string]any{
 		"id":           in.ObjectID,
 		"type":         "Video",
 		"name":         in.Title,
-		"content":      in.Description,
-		"attributedTo": in.ChannelActor,
+		"attributedTo": attributedTo,
 		"url":          videoURLLinks(in.HLSURL, in.WatchURL),
 		"to":           []string{publicAudience},
+	}
+	// PeerTube rejects content shorter than 3 characters (videos.ts:100,223).
+	if utf8.RuneCountInString(in.Description) >= 3 {
+		obj["content"], obj["mediaType"] = in.Description, "text/markdown"
 	}
 	if d := isoDuration(in.DurationSeconds); d != "" {
 		obj["duration"] = d
@@ -83,7 +112,10 @@ func videoObject(in videoObjectInput) map[string]any {
 		if in.IconMediaTyp != "" {
 			icon["mediaType"] = in.IconMediaTyp
 		}
-		obj["icon"] = icon
+		if in.IconWidth > 0 && in.IconHeight > 0 {
+			icon["width"], icon["height"] = in.IconWidth, in.IconHeight
+		}
+		obj["icon"] = []map[string]any{icon}
 	}
 	if !in.Published.IsZero() {
 		obj["published"] = in.Published.UTC().Format(time.RFC3339)
@@ -94,6 +126,49 @@ func videoObject(in videoObjectInput) map[string]any {
 	return obj
 }
 
+// peertubeCommentsPolicy maps vidra's per-video policy to PeerTube's
+// VideoCommentPolicy (1 enabled, 2 disabled; vidra has no approval tier).
+var peertubeCommentsPolicy = map[string]int{"enabled": 1, "disabled": 2}
+
+// peertubeFields adds the fields PeerTube's validator requires (uuid, views)
+// or would otherwise overwrite with its defaults (videos.ts:63-78), plus the
+// identifiers, hashtags and captions it reads. state is 1 (PUBLISHED): only
+// published videos federate.
+func (s *Service) peertubeFields(obj map[string]any, r sqlcgen.ListChannelOutboxVideosRow) {
+	obj["uuid"], obj["views"], obj["state"] = r.ID.String(), r.Views, 1
+	obj["sensitive"], obj["downloadEnabled"], obj["waitTranscoding"] = r.IsSensitive, r.DownloadEnabled, r.PublishAfterTranscode
+	if p, ok := peertubeCommentsPolicy[r.CommentsPolicy]; ok {
+		obj["commentsPolicy"], obj["commentsEnabled"] = p, p == 1
+	}
+	// A non-integer category/licence id rejects the WHOLE video
+	// (videos.ts:91,263), so a custom non-numeric id is omitted.
+	if r.Category != nil && isDigits(*r.Category) {
+		obj["category"] = map[string]any{"identifier": *r.Category}
+	}
+	if r.License != nil && isDigits(*r.License) {
+		obj["licence"] = map[string]any{"identifier": *r.License}
+	}
+	if r.Language != nil && *r.Language != "" {
+		obj["language"] = map[string]any{"identifier": *r.Language}
+	}
+	var tags, subs []map[string]any
+	for _, t := range r.Tags {
+		tags = append(tags, map[string]any{"type": "Hashtag", "name": t})
+	}
+	for _, lang := range r.CaptionLanguages {
+		href := s.baseURL + "/api/v1/videos/" + r.ID.String() + "/captions/" + url.PathEscape(lang)
+		subs = append(subs, map[string]any{"identifier": lang, "url": []map[string]any{{"type": "Link", "mediaType": "text/vtt", "href": href}}})
+	}
+	if len(tags) > 0 {
+		obj["tag"] = tags
+	}
+	if len(subs) > 0 {
+		obj["subtitleLanguage"] = subs
+	}
+}
+
+func isDigits(s string) bool { return s != "" && strings.Trim(s, "0123456789") == "" }
+
 // videoURLLinks builds the `url` array: the playable HLS master first (when
 // there is one), then the human watch page. Always an array, even with one
 // entry, so the shape a consumer parses does not change with the transcode
@@ -101,10 +176,14 @@ func videoObject(in videoObjectInput) map[string]any {
 func videoURLLinks(hlsURL, watchURL string) []map[string]any {
 	links := make([]map[string]any, 0, 2)
 	if hlsURL != "" {
+		// `tag` must be an array or PeerTube filters the link out
+		// (videos.ts:133-138). It is empty: vidra publishes no segment
+		// hashes and no per-resolution file to list there.
 		links = append(links, map[string]any{
 			"type":      "Link",
 			"href":      hlsURL,
 			"mediaType": "application/x-mpegURL",
+			"tag":       []any{},
 		})
 	}
 	links = append(links, map[string]any{
@@ -158,30 +237,49 @@ func publishedAt(originallyPublished, publishAt pgtype.Timestamptz, createdAt ti
 	return createdAt
 }
 
-// videoObjectFromDetail gathers the AS Video facts from a GetVideoByID row.
-func (s *Service) videoObjectFromDetail(channelActor string, v sqlcgen.GetVideoByIDRow) map[string]any {
-	in := videoObjectInput{
-		ChannelActor:    channelActor,
-		ObjectID:        s.baseURL + "/videos/" + v.ID.String(),
-		WatchURL:        s.videoWatchURL(v.ID, v.ShortCode),
-		Title:           v.Title,
-		Description:     v.Description,
-		DurationSeconds: v.MetadataDurationSeconds,
-		Published:       publishedAt(v.OriginallyPublishedAt, v.PublishAt, v.CreatedAt),
-		Updated:         v.UpdatedAt,
+// maxPosterHeaderBytes bounds the read that recovers a poster's pixel size.
+const maxPosterHeaderBytes = 256 << 10
+
+// posterSize reads the stored poster's pixel size from its header bytes (0, 0
+// when unreadable). Every poster lives at media.VideoThumbnailKey.
+func (s *Service) posterSize(ctx context.Context, videoID uuid.UUID) (int, int) {
+	if s.media == nil {
+		return 0, 0
 	}
-	if v.HasHls {
-		in.HLSURL = s.videoHLSURL(v.ID)
+	rc, err := s.media.Open(ctx, media.VideoThumbnailKey(videoID))
+	if err != nil {
+		return 0, 0
 	}
-	if v.HasThumbnail {
-		in.IconURL = s.videoThumbnailURL(v.ID)
-		in.IconMediaTyp = v.ThumbnailContentType
+	defer func() { _ = rc.Close() }()
+	cfg, _, err := image.DecodeConfig(io.LimitReader(rc, maxPosterHeaderBytes))
+	if err != nil {
+		return 0, 0
 	}
-	return videoObject(in)
+	return cfg.Width, cfg.Height
 }
 
-// videoObjectFromOutbox gathers the same facts from an outbox page row.
-func (s *Service) videoObjectFromOutbox(channelActor string, r sqlcgen.ListChannelOutboxVideosRow) map[string]any {
+// videoObjectFromDetail gathers the AS Video facts for one video (the pushed
+// activity and the dereferenced object id). It reshapes the row into the
+// outbox row so both paths go through ONE builder.
+func (s *Service) videoObjectFromDetail(ctx context.Context, channelActor string, v sqlcgen.GetVideoByIDRow) (map[string]any, error) {
+	f, err := s.repo.GetVideoFederationFacts(ctx, v.ID)
+	if err != nil {
+		return nil, err
+	}
+	return s.videoObjectFromOutbox(ctx, channelActor, sqlcgen.ListChannelOutboxVideosRow{
+		ID: v.ID, Title: v.Title, Description: v.Description, ShortCode: v.ShortCode,
+		CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt, PublishAt: v.PublishAt,
+		OriginallyPublishedAt: v.OriginallyPublishedAt, DurationSeconds: v.MetadataDurationSeconds,
+		HasThumbnail: v.HasThumbnail, ThumbnailContentType: v.ThumbnailContentType, HasHls: v.HasHls,
+		Category: v.Category, Language: v.Language, License: v.License,
+		IsSensitive: v.IsSensitive, CommentsPolicy: v.CommentsPolicy,
+		DownloadEnabled: v.DownloadEnabled, PublishAfterTranscode: v.PublishAfterTranscode,
+		OwnerUsername: f.OwnerUsername, Views: f.Views, Tags: f.Tags, CaptionLanguages: f.CaptionLanguages,
+	}), nil
+}
+
+// videoObjectFromOutbox gathers the AS Video facts from an outbox page row.
+func (s *Service) videoObjectFromOutbox(ctx context.Context, channelActor string, r sqlcgen.ListChannelOutboxVideosRow) map[string]any {
 	in := videoObjectInput{
 		ChannelActor:    channelActor,
 		ObjectID:        s.baseURL + "/videos/" + r.ID.String(),
@@ -192,12 +290,18 @@ func (s *Service) videoObjectFromOutbox(channelActor string, r sqlcgen.ListChann
 		Published:       publishedAt(r.OriginallyPublishedAt, r.PublishAt, r.CreatedAt),
 		Updated:         r.UpdatedAt,
 	}
+	if r.OwnerUsername != "" {
+		in.OwnerActor = s.baseURL + "/accounts/" + r.OwnerUsername
+	}
 	if r.HasHls {
 		in.HLSURL = s.videoHLSURL(r.ID)
 	}
 	if r.HasThumbnail {
 		in.IconURL = s.videoThumbnailURL(r.ID)
 		in.IconMediaTyp = r.ThumbnailContentType
+		in.IconWidth, in.IconHeight = s.posterSize(ctx, r.ID)
 	}
-	return videoObject(in)
+	obj := videoObject(in)
+	s.peertubeFields(obj, r)
+	return obj
 }

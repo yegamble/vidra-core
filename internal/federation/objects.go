@@ -71,7 +71,10 @@ func (s *Service) VideoObject(ctx context.Context, videoID uuid.UUID) (map[strin
 	if !ch.ActivitypubEnabled {
 		return nil, ErrNotFound
 	}
-	obj := s.videoObjectFromDetail(s.baseURL+"/video-channels/"+ch.Handle, v)
+	obj, err := s.videoObjectFromDetail(ctx, s.baseURL+"/video-channels/"+ch.Handle, v)
+	if err != nil {
+		return nil, err
+	}
 	obj["@context"] = "https://www.w3.org/ns/activitystreams"
 	return obj, nil
 }

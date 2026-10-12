@@ -39,12 +39,38 @@ SELECT v.id, v.title, v.description, v.short_code,
        EXISTS (
            SELECT 1 FROM streaming_playlists sp
            WHERE sp.video_id = v.id AND sp.state = 'ready' AND sp.master_key <> ''
-       ) AS has_hls
+       ) AS has_hls,
+       -- The PeerTube-required facts GetVideoFederationFacts carries for the
+       -- pushed object (T05), so the walked outbox and the push agree.
+       v.category, v.language, v.license, v.is_sensitive, v.comments_policy,
+       v.download_enabled, v.publish_after_transcode,
+       au.username AS owner_username,
+       COALESCE(vc.views, 0)::bigint AS views,
+       ARRAY(SELECT t.tag FROM video_tags t WHERE t.video_id = v.id ORDER BY t.tag)::text[] AS tags,
+       ARRAY(SELECT cp.language FROM captions cp WHERE cp.video_id = v.id ORDER BY cp.language)::text[] AS caption_languages
 FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
 ORDER BY v.created_at DESC, v.id DESC
 LIMIT $2 OFFSET $3;
+
+-- name: GetVideoFederationFacts :one
+-- What PeerTube's inbound Video validator requires (or a follower needs to
+-- render) beyond GetVideoByID (T05): the owning account for attributedTo, the
+-- view count, the hashtags and the caption languages. Federation-only, so the
+-- hot GetVideoByID row stays as it is.
+SELECT au.username AS owner_username,
+       COALESCE(vc.views, 0)::bigint AS views,
+       ARRAY(SELECT t.tag FROM video_tags t WHERE t.video_id = v.id ORDER BY t.tag)::text[] AS tags,
+       ARRAY(SELECT cp.language FROM captions cp WHERE cp.video_id = v.id ORDER BY cp.language)::text[] AS caption_languages
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+WHERE v.id = $1;
 
 -- name: GetVideoByID :one
 SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,

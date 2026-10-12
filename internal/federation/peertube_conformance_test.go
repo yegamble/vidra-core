@@ -36,6 +36,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // ptVerdict is what PeerTube makes of one object.
@@ -544,6 +545,11 @@ func ptWorld(t *testing.T) (*Service, fakeRepo) {
 	repo.videosByID[ptCaptionedID] = captioned
 	ptPoster(t, blobs, ptCaptionedID, 640, 272)
 
+	repo.videoFacts = map[uuid.UUID]sqlcgen.GetVideoFederationFactsRow{
+		ctVideoID:     {Views: 1234, Tags: []string{"fjord", "kayak"}},
+		ptCaptionedID: {Views: 7, CaptionLanguages: []string{"en", "pt-br"}},
+	}
+
 	return NewService(repo, WithBaseURL(contractBase), WithMediaStorage(blobs)), repo
 }
 
@@ -561,6 +567,17 @@ func TestVideoObjectPassesPeerTubeValidator(t *testing.T) {
 	}{
 		{name: "published transcoded video", id: ctVideoID, check: func(t *testing.T, v ptVerdict) {
 			ptAssertIcon(t, v, 640, 360)
+			if v.Object["views"] != float64(1234) || v.Object["uuid"] != ctVideoID.String() {
+				t.Errorf("views/uuid = %v/%v", v.Object["views"], v.Object["uuid"])
+			}
+			// Both hashtags survive setValidRemoteTags (videos.ts:170-185).
+			if tags := v.Object["tag"].([]any); len(tags) != 2 {
+				t.Errorf("surviving hashtags = %v, want fjord + kayak", tags)
+			}
+			// Integer identifiers pass videos.ts:91 and 260-271 unchanged.
+			if c := v.Object["category"].(map[string]any); c["identifier"] != "2" {
+				t.Errorf("category = %v", c)
+			}
 		}},
 		// PeerTube requires at least one icon (videos.ts:58) and vidra has no
 		// image to offer for a video whose poster was never generated: no
@@ -577,6 +594,21 @@ func TestVideoObjectPassesPeerTubeValidator(t *testing.T) {
 		}},
 		{name: "video with captions", id: ptCaptionedID, check: func(t *testing.T, v ptVerdict) {
 			ptAssertIcon(t, v, 640, 272)
+			// Each caption survives setValidRemoteCaptions with the text/vtt
+			// link getCaptionAttributesFromObject dereferences
+			// (object-to-model-attributes.ts:227-245).
+			subs, _ := v.Object["subtitleLanguage"].([]any)
+			if len(subs) != 2 {
+				t.Fatalf("surviving captions = %v, want en + pt-br", subs)
+			}
+			for i, lang := range []string{"en", "pt-br"} {
+				c := subs[i].(map[string]any)
+				link := c["url"].([]any)[0].(map[string]any)
+				want := contractBase + "/api/v1/videos/" + ptCaptionedID.String() + "/captions/" + lang
+				if c["identifier"] != lang || link["mediaType"] != "text/vtt" || link["href"] != want {
+					t.Errorf("caption %d = %v", i, c)
+				}
+			}
 		}},
 	}
 	for _, tc := range cases {
@@ -648,5 +680,68 @@ func ptAssertIcon(t *testing.T, v ptVerdict, w, h int) {
 	ic := icons[0].(map[string]any)
 	if ic["width"] != float64(w) || ic["height"] != float64(h) {
 		t.Errorf("icon size = %vx%v, want %dx%d (read from the stored poster)", ic["width"], ic["height"], w, h)
+	}
+}
+
+// TestPeerTubeCheckBites proves the port is not vacuous: each mutation of an
+// accepted object trips the clause PeerTube would.
+func TestPeerTubeCheckBites(t *testing.T) {
+	svc, _ := ptWorld(t)
+	cases := []struct {
+		name, want string
+		mutate     func(o map[string]any)
+	}{
+		{"no uuid", "uuid", func(o map[string]any) { delete(o, "uuid") }},
+		{"non-v4 uuid", "uuid", func(o map[string]any) { o["uuid"] = "0190a0b2-7c3d-7e4f-8a5b-6c7d8e9f0a1b" }},
+		{"no views", "views", func(o map[string]any) { delete(o, "views") }},
+		{"no duration", "duration format", func(o map[string]any) { delete(o, "duration") }},
+		{"short name", "name", func(o map[string]any) { o["name"] = "ab" }},
+		{"long name", "name", func(o map[string]any) { o["name"] = strings.Repeat("x", 121) }},
+		{"short content", "mediaType/content", func(o map[string]any) { o["content"] = "ab" }},
+		{"plain-text mediaType", "mediaType/content", func(o map[string]any) { o["mediaType"] = "text/plain" }},
+		{"slug category", "category", func(o map[string]any) { o["category"] = map[string]any{"identifier": "music"} }},
+		{"numeric licence id", "licence", func(o map[string]any) { o["licence"] = map[string]any{"identifier": 1} }},
+		{"icon without size", "icons", func(o map[string]any) {
+			o["icon"] = []any{map[string]any{"type": "Image", "url": "https://videos.example/p.jpg", "mediaType": "image/jpeg"}}
+		}},
+		{"no updated", "updated", func(o map[string]any) { delete(o, "updated") }},
+		{"attributedTo unusable", "attributedTo", func(o map[string]any) {
+			o["attributedTo"] = []any{map[string]any{"type": "Service", "id": "https://x.example/a"}}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			obj, err := svc.VideoObject(t.Context(), ctVideoID)
+			if err != nil {
+				t.Fatalf("VideoObject: %v", err)
+			}
+			raw, _ := json.Marshal(obj)
+			var o map[string]any
+			_ = json.Unmarshal(raw, &o)
+			tc.mutate(o)
+			if got := peertubeCheck(t, o).Reject; got != tc.want {
+				t.Errorf("reject = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// An HLS link without `tag` is not a rejection: it is silently filtered,
+	// leaving an accepted video with nothing to play (videos.ts:133-138,236).
+	obj, err := svc.VideoObject(t.Context(), ctVideoID)
+	if err != nil {
+		t.Fatalf("VideoObject: %v", err)
+	}
+	raw, _ := json.Marshal(obj)
+	var o map[string]any
+	_ = json.Unmarshal(raw, &o)
+	delete(o["url"].([]any)[0].(map[string]any), "tag")
+	v := peertubeCheck(t, o)
+	if v.Reject != "" {
+		t.Fatalf("reject = %q, want accepted", v.Reject)
+	}
+	for _, u := range v.Object["url"].([]any) {
+		if u.(map[string]any)["mediaType"] == "application/x-mpegURL" {
+			t.Error("an HLS link without tag survived; PeerTube filters it out")
+		}
 	}
 }

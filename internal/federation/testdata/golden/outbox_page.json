@@ -6,11 +6,24 @@
       "actor": "https://videos.example/video-channels/films",
       "id": "https://videos.example/video-channels/films/activities/create/00000000-0000-0000-0000-000000000000",
       "object": {
-        "attributedTo": "https://videos.example/video-channels/films",
+        "attributedTo": [
+          {
+            "id": "https://videos.example/video-channels/films",
+            "type": "Group"
+          },
+          {
+            "id": "https://videos.example/accounts/ada",
+            "type": "Person"
+          }
+        ],
         "content": "Part two.",
+        "downloadEnabled": false,
         "id": "https://videos.example/videos/8b2e0f53-6c4d-4a9f-b7e1-0d9c8b7a6f5e",
+        "mediaType": "text/markdown",
         "name": "Night paddle",
         "published": "2026-09-01T10:00:00Z",
+        "sensitive": false,
+        "state": 1,
         "to": [
           "https://www.w3.org/ns/activitystreams#Public"
         ],
@@ -22,7 +35,10 @@
             "mediaType": "text/html",
             "type": "Link"
           }
-        ]
+        ],
+        "uuid": "8b2e0f53-6c4d-4a9f-b7e1-0d9c8b7a6f5e",
+        "views": 0,
+        "waitTranscoding": false
       },
       "to": [
         "https://www.w3.org/ns/activitystreams#Public"
@@ -33,17 +49,65 @@
       "actor": "https://videos.example/video-channels/films",
       "id": "https://videos.example/video-channels/films/activities/create/00000000-0000-0000-0000-000000000000",
       "object": {
-        "attributedTo": "https://videos.example/video-channels/films",
-        "content": "A quiet opening.",
-        "duration": "PT367S",
-        "icon": {
-          "mediaType": "image/jpeg",
-          "type": "Image",
-          "url": "https://videos.example/api/v1/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d/thumbnail"
+        "attributedTo": [
+          {
+            "id": "https://videos.example/video-channels/films",
+            "type": "Group"
+          },
+          {
+            "id": "https://videos.example/accounts/ada",
+            "type": "Person"
+          }
+        ],
+        "category": {
+          "identifier": "2"
         },
+        "commentsEnabled": true,
+        "commentsPolicy": 1,
+        "content": "A quiet opening.",
+        "downloadEnabled": true,
+        "duration": "PT367S",
+        "icon": [
+          {
+            "mediaType": "image/jpeg",
+            "type": "Image",
+            "url": "https://videos.example/api/v1/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d/thumbnail"
+          }
+        ],
         "id": "https://videos.example/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d",
+        "language": {
+          "identifier": "en"
+        },
+        "licence": {
+          "identifier": "1"
+        },
+        "mediaType": "text/markdown",
         "name": "Dawn over the fjord",
         "published": "2026-08-30T08:00:00Z",
+        "sensitive": false,
+        "state": 1,
+        "subtitleLanguage": [
+          {
+            "identifier": "en",
+            "url": [
+              {
+                "href": "https://videos.example/api/v1/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d/captions/en",
+                "mediaType": "text/vtt",
+                "type": "Link"
+              }
+            ]
+          }
+        ],
+        "tag": [
+          {
+            "name": "fjord",
+            "type": "Hashtag"
+          },
+          {
+            "name": "kayak",
+            "type": "Hashtag"
+          }
+        ],
         "to": [
           "https://www.w3.org/ns/activitystreams#Public"
         ],
@@ -53,6 +117,7 @@
           {
             "href": "https://videos.example/api/v1/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d/hls/master.m3u8",
             "mediaType": "application/x-mpegURL",
+            "tag": [],
             "type": "Link"
           },
           {
@@ -60,7 +125,10 @@
             "mediaType": "text/html",
             "type": "Link"
           }
-        ]
+        ],
+        "uuid": "7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d",
+        "views": 42,
+        "waitTranscoding": false
       },
       "to": [
         "https://www.w3.org/ns/activitystreams#Public"

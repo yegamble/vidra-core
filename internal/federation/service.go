@@ -41,6 +41,7 @@ type Repository interface {
 	DeleteRemoteFollow(ctx context.Context, arg sqlcgen.DeleteRemoteFollowParams) error
 	// Outbox fan-out (Slice 5b).
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
+	GetVideoFederationFacts(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoFederationFactsRow, error)
 	GetChannelByID(ctx context.Context, id uuid.UUID) (sqlcgen.Channel, error)
 	ListRemoteFollowerInboxes(ctx context.Context, channelID uuid.UUID) ([]string, error)
 	// Actor collections (Slice 5c).
