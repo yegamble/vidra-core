@@ -184,6 +184,25 @@ WHERE rf.id = sqlc.arg('remote_follow_id')
   )
 ON CONFLICT (user_id, remote_follow_id) WHERE type = 'federation_follower_request' DO NOTHING;
 
+-- name: NotifyStaffOfInstanceFollowerRequest :execrows
+-- The instance-follower half of the federation_follower_request signal
+-- (migration 0166): a remote INSTANCE asked to follow this one while follower
+-- approval is on. No channel and no subject row — the notice points at the
+-- queue — so at most one UNREAD notice per admin, guaranteed by
+-- notifications_federation_instance_follower_request_unread_idx.
+INSERT INTO notifications (user_id, type)
+SELECT u.id, 'federation_follower_request'
+FROM users u
+WHERE u.role = 'admin'
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = u.id AND np.type = 'federation_follower_request' AND np.enabled = FALSE
+  )
+ON CONFLICT (user_id) WHERE type = 'federation_follower_request' AND remote_follow_id IS NULL AND read_at IS NULL
+DO NOTHING;
+
 -- name: ListNotifications :many
 -- A user's notifications, newest first, joined with the actor's identity and the
 -- context (channel handle/name for follows, video title for comments, report

@@ -635,6 +635,34 @@ func (q *Queries) NotifyStaffOfFederationFollowerRequest(ctx context.Context, re
 	return result.RowsAffected(), nil
 }
 
+const notifyStaffOfInstanceFollowerRequest = `-- name: NotifyStaffOfInstanceFollowerRequest :execrows
+INSERT INTO notifications (user_id, type)
+SELECT u.id, 'federation_follower_request'
+FROM users u
+WHERE u.role = 'admin'
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = u.id AND np.type = 'federation_follower_request' AND np.enabled = FALSE
+  )
+ON CONFLICT (user_id) WHERE type = 'federation_follower_request' AND remote_follow_id IS NULL AND read_at IS NULL
+DO NOTHING
+`
+
+// The instance-follower half of the federation_follower_request signal
+// (migration 0166): a remote INSTANCE asked to follow this one while follower
+// approval is on. No channel and no subject row — the notice points at the
+// queue — so at most one UNREAD notice per admin, guaranteed by
+// notifications_federation_instance_follower_request_unread_idx.
+func (q *Queries) NotifyStaffOfInstanceFollowerRequest(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, notifyStaffOfInstanceFollowerRequest)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const notifyStaffOfNewRegistrationRequest = `-- name: NotifyStaffOfNewRegistrationRequest :execrows
 INSERT INTO notifications (user_id, type, registration_request_id)
 SELECT u.id, 'new_registration_request', rr.id

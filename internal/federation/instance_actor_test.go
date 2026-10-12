@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -21,6 +22,8 @@ type fakeInstance struct {
 	key               *sqlcgen.GetInstanceActorKeyRow
 	acceptedFollowers int64
 	acceptedFollowing int64
+	// followers are instance_followers rows, keyed by remote actor url.
+	followers map[string]*sqlcgen.GetInstanceFollowerByActorRow
 }
 
 func (f fakeRepo) InstanceActorNameReserved(_ context.Context, name string) (bool, error) {
@@ -56,9 +59,32 @@ func (f fakeRepo) CountAcceptedInstanceFollowing(context.Context) (int64, error)
 	return f.inst.acceptedFollowing, nil
 }
 
+func (f fakeRepo) InsertInstanceFollowerIfAbsent(_ context.Context, a sqlcgen.InsertInstanceFollowerIfAbsentParams) (int64, error) {
+	if _, ok := f.inst.followers[a.RemoteActorUrl]; ok {
+		return 0, nil
+	}
+	f.inst.followers[a.RemoteActorUrl] = &sqlcgen.GetInstanceFollowerByActorRow{ID: uuid.New(), State: a.State, FollowActivityUrl: a.FollowActivityUrl}
+	return 1, nil
+}
+
+func (f fakeRepo) GetInstanceFollowerByActor(_ context.Context, actor string) (sqlcgen.GetInstanceFollowerByActorRow, error) {
+	if r, ok := f.inst.followers[actor]; ok {
+		return *r, nil
+	}
+	return sqlcgen.GetInstanceFollowerByActorRow{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) DeleteInstanceFollowerByActor(_ context.Context, actor string) (int64, error) {
+	if r, ok := f.inst.followers[actor]; !ok || r.State == "rejected" {
+		return 0, nil // the SQL keeps a rejected follower rejected
+	}
+	delete(f.inst.followers, actor)
+	return 1, nil
+}
+
 func newInstanceRepo() fakeRepo {
 	repo := newActorRepo()
-	repo.inst = &fakeInstance{reserved: true}
+	repo.inst = &fakeInstance{reserved: true, followers: map[string]*sqlcgen.GetInstanceFollowerByActorRow{}}
 	return repo
 }
 

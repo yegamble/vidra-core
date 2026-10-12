@@ -305,6 +305,9 @@ func (f *notifFakeRepo) NotifyStaffOfQuarantinedUpload(context.Context, uuid.UUI
 func (f *notifFakeRepo) NotifyStaffOfFederationFollowerRequest(context.Context, uuid.UUID) (int64, error) {
 	return 0, nil
 }
+func (f *notifFakeRepo) NotifyStaffOfInstanceFollowerRequest(context.Context) (int64, error) {
+	return 0, nil
+}
 
 // NotifyStaffOfNewReport mirrors the shape of the real set-based staff fan-out
 // (migration 0103) closely enough to prove the HTTP-level wiring: filing a

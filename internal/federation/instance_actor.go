@@ -42,6 +42,10 @@ type InstanceRepository interface {
 	InsertInstanceActorKeyIfAbsent(ctx context.Context, arg sqlcgen.InsertInstanceActorKeyIfAbsentParams) (int64, error)
 	CountAcceptedInstanceFollowers(ctx context.Context) (int64, error)
 	CountAcceptedInstanceFollowing(ctx context.Context) (int64, error)
+	// Inbound instance follows (instance_followers.go).
+	InsertInstanceFollowerIfAbsent(ctx context.Context, arg sqlcgen.InsertInstanceFollowerIfAbsentParams) (int64, error)
+	GetInstanceFollowerByActor(ctx context.Context, remoteActorURL string) (sqlcgen.GetInstanceFollowerByActorRow, error)
+	DeleteInstanceFollowerByActor(ctx context.Context, remoteActorURL string) (int64, error)
 }
 
 // The production repository provides it; a drift here is a compile error, not

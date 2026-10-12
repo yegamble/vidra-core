@@ -139,6 +139,8 @@ func (s *Service) attemptDelivery(ctx context.Context, row sqlcgen.ClaimDueDeliv
 		signer, err = s.channelActorSigner(ctx, uuid.UUID(row.SigningChannelID.Bytes), row.SigningChannelHandle)
 	case row.SigningUserID.Valid:
 		signer, err = s.accountActorSigner(ctx, uuid.UUID(row.SigningUserID.Bytes), row.SigningUsername)
+	case row.SigningInstanceActor:
+		signer, err = s.instanceActorSigner(ctx)
 	default:
 		return errors.New("federation: delivery has no signing actor")
 	}
@@ -248,20 +250,25 @@ func (s *Service) SendAcceptFollow(ctx context.Context, channelID uuid.UUID, cha
 
 // buildAcceptFollow renders the Accept activity for a channel accepting a Follow.
 func (s *Service) buildAcceptFollow(channelHandle, followerActorURL, followActivityURL string) ([]byte, error) {
-	channelActor := s.baseURL + "/video-channels/" + channelHandle
-	accept := map[string]any{
+	return followAnswer("Accept", s.baseURL+"/video-channels/"+channelHandle, followerActorURL, followActivityURL)
+}
+
+// followAnswer renders actor's Accept or Reject of an inbound Follow, embedding
+// the Follow it answers — the shape PeerTube and Mastodon both match on. One
+// builder for every actor that answers follows: a channel, or the instance.
+func followAnswer(typ, actor, followerActorURL, followActivityURL string) ([]byte, error) {
+	return json.Marshal(map[string]any{
 		"@context": "https://www.w3.org/ns/activitystreams",
-		"id":       channelActor + "/activities/accept/" + uuid.NewString(),
-		"type":     "Accept",
-		"actor":    channelActor,
+		"id":       actor + "/activities/" + strings.ToLower(typ) + "/" + uuid.NewString(),
+		"type":     typ,
+		"actor":    actor,
 		"object": map[string]any{
 			"id":     followActivityURL,
 			"type":   "Follow",
 			"actor":  followerActorURL,
-			"object": channelActor,
+			"object": actor,
 		},
-	}
-	return json.Marshal(accept)
+	})
 }
 
 // buildRejectFollow renders the Reject activity for a channel refusing a
@@ -269,20 +276,7 @@ func (s *Service) buildAcceptFollow(channelHandle, followerActorURL, followActiv
 // the follower-approval queue — config-parity W12). Same embedded-Follow shape
 // as the Accept, per the AP convention PeerTube/Mastodon follow.
 func (s *Service) buildRejectFollow(channelHandle, followerActorURL, followActivityURL string) ([]byte, error) {
-	channelActor := s.baseURL + "/video-channels/" + channelHandle
-	reject := map[string]any{
-		"@context": "https://www.w3.org/ns/activitystreams",
-		"id":       channelActor + "/activities/reject/" + uuid.NewString(),
-		"type":     "Reject",
-		"actor":    channelActor,
-		"object": map[string]any{
-			"id":     followActivityURL,
-			"type":   "Follow",
-			"actor":  followerActorURL,
-			"object": channelActor,
-		},
-	}
-	return json.Marshal(reject)
+	return followAnswer("Reject", s.baseURL+"/video-channels/"+channelHandle, followerActorURL, followActivityURL)
 }
 
 // channelActorSigner builds an HTTP-signature signer for a local channel, minting

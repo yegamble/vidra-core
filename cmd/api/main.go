@@ -2256,6 +2256,11 @@ func run() error {
 			func(ctx context.Context, id uuid.UUID) (int64, error) {
 				return notifsvc.NotifyFederationFollowerRequest(ctx, id)
 			})),
+		// ...and so does a remote INSTANCE's follow of this one (0166).
+		federation.WithInstanceFollowerRequestHook(staffQueueHook("federation_instance_follower_request",
+			func(ctx context.Context, _ uuid.UUID) (int64, error) {
+				return notifsvc.NotifyInstanceFollowerRequest(ctx)
+			})),
 		// Federation policy gates (config-parity W12): runtime provider funcs
 		// over the settings overlay, read per inbound activity so an admin
 		// change applies without a restart. All gate the ActivityPub inbox
