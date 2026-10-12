@@ -114,10 +114,9 @@ func (s *Service) ResolveRemoteActor(ctx context.Context, actorURL string) (sqlc
 }
 
 // InboxesOnActorHost reports whether an actor's inbox, and its shared inbox
-// when it names one, live on the actor's own host. Anything else would have
-// this instance deliver signed activities to a server the actor merely named.
-// It is the rule #361 adds as inboxesOnOwnHost for instance followers; the two
-// are the same check and should be deduplicated once both are on main.
+// when it names one, live on the actor's own host. It is the rule #361 adds as
+// inboxesOnOwnHost for instance followers; the two are the same check and
+// should be deduplicated once both are on main.
 func InboxesOnActorHost(ra sqlcgen.RemoteActor) bool {
 	if !sameHost(ra.InboxUrl, ra.ActorUrl) {
 		return false

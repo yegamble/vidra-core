@@ -86,8 +86,8 @@ func TestInboxesOnActorHost(t *testing.T) {
 	}{
 		"both on the actor's host": {sqlcgen.RemoteActor{ActorUrl: "https://a.example/u/x", InboxUrl: "https://a.example/u/x/inbox", SharedInboxUrl: str("https://A.example/inbox")}, true},
 		"no shared inbox":          {sqlcgen.RemoteActor{ActorUrl: "https://a.example/u/x", InboxUrl: "https://a.example/u/x/inbox"}, true},
-		"inbox elsewhere":          {sqlcgen.RemoteActor{ActorUrl: "https://a.example/u/x", InboxUrl: "https://victim.example/inbox"}, false},
-		"shared inbox elsewhere":   {sqlcgen.RemoteActor{ActorUrl: "https://a.example/u/x", InboxUrl: "https://a.example/i", SharedInboxUrl: str("https://victim.example/inbox")}, false},
+		"inbox elsewhere":          {sqlcgen.RemoteActor{ActorUrl: "https://a.example/u/x", InboxUrl: "https://other.example/inbox"}, false},
+		"shared inbox elsewhere":   {sqlcgen.RemoteActor{ActorUrl: "https://a.example/u/x", InboxUrl: "https://a.example/i", SharedInboxUrl: str("https://other.example/inbox")}, false},
 		"no inbox":                 {sqlcgen.RemoteActor{ActorUrl: "https://a.example/u/x"}, false},
 	} {
 		if got := InboxesOnActorHost(tc.ra); got != tc.want {
