@@ -236,8 +236,9 @@ SELECT id FROM users WHERE lower(email) = lower($1) LIMIT 1;
 SELECT id FROM users WHERE lower(username) = lower($1) LIMIT 1;
 
 -- name: ImportInsertChannel :one
-INSERT INTO channels (owner_id, handle, display_name, description, created_at)
-VALUES ($1, $2, $3, $4, $5)
+-- support is the source's videoChannel.support (migration 0159), NULL when blank.
+INSERT INTO channels (owner_id, handle, display_name, description, created_at, support)
+VALUES ($1, $2, $3, $4, $5, sqlc.narg('support')::text)
 RETURNING id;
 
 -- name: ImportFindChannelByHandle :one
@@ -256,10 +257,11 @@ SELECT id FROM channels WHERE lower(handle) = lower($1) LIMIT 1;
 -- source video became this one" for a public URL — see 0127 for why the import
 -- ledger cannot. It is what keeps the source instance's /w/{shortUUID} and
 -- /videos/watch/{uuid} links alive after an operator cuts their domain over.
-INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at, is_sensitive, peertube_uuid, comments_policy, download_enabled)
+INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at, is_sensitive, peertube_uuid, comments_policy, download_enabled, support)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
         COALESCE(sqlc.narg('comments_policy')::text, 'enabled'),
-        COALESCE(sqlc.narg('download_enabled')::boolean, true))
+        COALESCE(sqlc.narg('download_enabled')::boolean, true),
+        sqlc.narg('support')::text)
 RETURNING id;
 
 -- name: ImportUpsertVideoMetadata :exec
@@ -622,7 +624,8 @@ WHERE l.entity_kind = 'user' AND l.status = 'done' AND l.created_by_import;
 -- skip/merge was made on this instance, is somebody's here, and is not the
 -- resync's to reassign or rename. handle is the natural key: read, reported,
 -- never rewritten.
-SELECT l.source_id, c.id, c.owner_id, c.handle, c.display_name, c.description
+SELECT l.source_id, c.id, c.owner_id, c.handle, c.display_name, c.description,
+       COALESCE(c.support, '')::text AS support
 FROM peertube_import_ledger l
 JOIN channels c ON c.id = l.vidra_id
 WHERE l.entity_kind = 'channel' AND l.status = 'done' AND l.created_by_import;
@@ -641,7 +644,8 @@ SELECT l.source_id, v.id, v.channel_id, v.title, v.description, v.privacy, v.sta
        -- video was first published here), and folding it into a zero time would
        -- make "never published elsewhere" and "published at the epoch"
        -- indistinguishable to the digest.
-       v.originally_published_at, v.comments_policy, v.download_enabled
+       v.originally_published_at, v.comments_policy, v.download_enabled,
+       COALESCE(v.support, '')::text AS support
 FROM peertube_import_ledger l
 JOIN videos v ON v.id = l.vidra_id
 LEFT JOIN video_metadata m ON m.video_id = v.id
@@ -729,6 +733,7 @@ UPDATE channels
 SET owner_id     = $2,
     display_name = $3,
     description  = $4,
+    support      = sqlc.narg('support')::text,
     updated_at   = now()
 WHERE id = $1;
 
@@ -745,6 +750,7 @@ SET channel_id  = $2,
     originally_published_at = $10,
     comments_policy = $11,
     download_enabled = $12,
+    support     = sqlc.narg('support')::text,
     updated_at  = now()
 WHERE id = $1;
 

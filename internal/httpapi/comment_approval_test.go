@@ -31,16 +31,17 @@ type approvalCast struct {
 	ledger                       *httpAuditFakeRepo
 	logs                         *bytes.Buffer
 	videos                       *videoFakeRepo
+	notifs                       *notifFakeRepo
 }
 
 func newApprovalCast(t *testing.T) approvalCast {
 	t.Helper()
-	srv, _, _, _, videos := videoServerFull(t, testConfig())
+	srv, _, _, notifs, videos := videoServerFull(t, testConfig())
 	var buf bytes.Buffer
 	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
 	ledger := &httpAuditFakeRepo{}
 	srv.auditLog = audit.NewService(ledger)
-	c := approvalCast{srv: srv, ledger: ledger, logs: &buf, videos: videos}
+	c := approvalCast{srv: srv, ledger: ledger, logs: &buf, videos: videos, notifs: notifs}
 	c.ada = createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	c.bob = createChannelFor(t, srv, "bob", "bob@example.test", "bob")
 	c.vid = createPublishedVideo(t, srv, c.bob, "bob",
@@ -445,5 +446,36 @@ func TestEditFailsClosedWhenTheVideoLookupFails(t *testing.T) {
 	}
 	if got, _ := c.srv.commentsvc.Get(context.Background(), uuid.MustParse(cv.ID)); got.Body != "approved" {
 		t.Errorf("body after the refused edit = %q, want it unchanged", got.Body)
+	}
+}
+
+// TestMentionsWaitUntilACommentIsPublic: a held comment's @mentions notify
+// nobody; approval fans them out; an edit that re-holds it notifies no one.
+func TestMentionsWaitUntilACommentIsPublic(t *testing.T) {
+	c := newApprovalCast(t)
+	mentionsOf := func(commentID string) [][]string {
+		var out [][]string
+		for _, call := range c.notifs.mentionCalls {
+			if call.CommentID.String() == commentID {
+				out = append(out, call.Usernames)
+			}
+		}
+		return out
+	}
+	held := c.post(t, c.eve, `{"body":"hello @carl"}`)
+	if got := mentionsOf(held.ID); len(got) != 0 {
+		t.Fatalf("a held comment fanned out mentions: %v", got)
+	}
+	if r := c.approve(c.bob, held.ID); r.code != http.StatusOK {
+		t.Fatalf("approve = %d; body=%s", r.code, r.body)
+	}
+	if got := mentionsOf(held.ID); len(got) != 1 || len(got[0]) != 1 || got[0][0] != "carl" {
+		t.Fatalf("mentions after approval = %v, want one fan-out naming carl", got)
+	}
+	if rec := sendJSONAuth(c.srv, http.MethodPatch, "/api/v1/comments/"+held.ID, `{"body":"now @mia"}`, c.eve); rec.Code != http.StatusOK {
+		t.Fatalf("edit = %d", rec.Code)
+	}
+	if got := mentionsOf(held.ID); len(got) != 1 {
+		t.Errorf("an edit that re-held the comment fanned out mentions: %v", got)
 	}
 }

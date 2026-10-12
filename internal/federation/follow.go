@@ -291,26 +291,34 @@ func (s *Service) webFingerRemote(ctx context.Context, name, domain string) (str
 // that want the subject itself (a per-account block climbs from the Person) keep
 // webFingerRemote.
 func (s *Service) webFingerCandidates(ctx context.Context, name, domain string) ([]string, error) {
-	query := "/.well-known/webfinger?resource=" + url.QueryEscape("acct:"+name+"@"+domain)
-	hrefs, err := s.fetchWebFinger(ctx, "https://"+domain+query)
-	if err != nil && s.allowPrivateFetch {
-		if httpHrefs, herr := s.fetchWebFinger(ctx, "http://"+domain+query); herr == nil {
-			return httpHrefs, nil
-		}
-	}
-	return hrefs, err
+	return webFingerTry(ctx, s, name, domain, actorHrefs)
 }
 
-// fetchWebFinger GETs and parses one WebFinger JRD document, returning every
-// ActivityPub actor it names for the subject: the rel=self actor FIRST, then any
-// rel=alternate ones.
-//
-// More than one is what a shared handle namespace (migration 0142) produces: a
-// name an account and a channel have both held answers with the Person at
-// rel=self and the Group at rel=alternate, so a peer can pick BY TYPE instead of
-// taking whichever link the server happened to put first. A name only one kind
-// holds still answers with exactly one link, and that path is unchanged.
-func (s *Service) fetchWebFinger(ctx context.Context, jrdURL string) ([]string, error) {
+// webFingerTry fetches acct:name@domain's JRD (https first, plain-http fallback
+// only when private fetches are allowed) and extracts one answer from it. The
+// extraction runs inside each attempt, so an https document that cannot be read
+// still falls back to http exactly as the fetch-only path always did.
+func webFingerTry[T any](ctx context.Context, s *Service, name, domain string, extract func(*JRD) (T, error)) (T, error) {
+	query := "/.well-known/webfinger?resource=" + url.QueryEscape("acct:"+name+"@"+domain)
+	attempt := func(u string) (T, error) {
+		doc, err := s.fetchJRD(ctx, u)
+		if err != nil {
+			var zero T
+			return zero, err
+		}
+		return extract(doc)
+	}
+	out, err := attempt("https://" + domain + query)
+	if err != nil && s.allowPrivateFetch {
+		if httpOut, herr := attempt("http://" + domain + query); herr == nil {
+			return httpOut, nil
+		}
+	}
+	return out, err
+}
+
+// fetchJRD GETs and parses one WebFinger JRD document through the SSRF guard.
+func (s *Service) fetchJRD(ctx context.Context, jrdURL string) (*JRD, error) {
 	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
 	target, err := guard.ValidateURL(jrdURL)
 	if err != nil {
@@ -341,6 +349,18 @@ func (s *Service) fetchWebFinger(ctx context.Context, jrdURL string) ([]string, 
 	if err := json.Unmarshal(body, &jrd); err != nil {
 		return nil, fmt.Errorf("federation: parse webfinger: %w", err)
 	}
+	return &jrd, nil
+}
+
+// actorHrefs returns every ActivityPub actor a fetched JRD names for the
+// subject: the rel=self actor FIRST, then any rel=alternate ones.
+//
+// More than one is what a shared handle namespace (migration 0142) produces: a
+// name an account and a channel have both held answers with the Person at
+// rel=self and the Group at rel=alternate, so a peer can pick BY TYPE instead of
+// taking whichever link the server happened to put first. A name only one kind
+// holds still answers with exactly one link, and that path is unchanged.
+func actorHrefs(jrd *JRD) ([]string, error) {
 	var self, alternates []string
 	for _, l := range jrd.Links {
 		if l.Href == "" || !strings.Contains(l.Type, "activity+json") {

@@ -396,6 +396,12 @@ func (f *channelFakeRepo) UpdateChannel(_ context.Context, a sqlcgen.UpdateChann
 			if a.Description != nil {
 				ch.Description = *a.Description
 			}
+			if a.Support != nil { // NULLIF(narg, ''): '' clears
+				ch.Support = nil
+				if *a.Support != "" {
+					ch.Support = a.Support
+				}
+			}
 			if a.ActivitypubEnabled != nil {
 				ch.ActivitypubEnabled = *a.ActivitypubEnabled
 			}

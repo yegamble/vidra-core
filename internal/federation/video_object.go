@@ -137,6 +137,20 @@ var peertubeCommentsPolicy = map[string]int{"enabled": 1, "disabled": 2, comment
 // comments — inbound Notes included — for a manager's review (0161).
 const commentsPolicyRequiresApproval = "requires_approval"
 
+// federatedSupport returns the support text to put on the wire, or "" to omit
+// it. PeerTube's own SUPPORT constraint is 3..1000 characters; a value outside
+// it is left off rather than risking the whole object being refused for an
+// optional field.
+func federatedSupport(s *string) string {
+	if s == nil {
+		return ""
+	}
+	if n := utf8.RuneCountInString(*s); n < 3 || n > 1000 {
+		return ""
+	}
+	return *s
+}
+
 // peertubeFields adds the fields PeerTube's validator requires (uuid, views)
 // or would otherwise overwrite with its defaults (videos.ts:63-78), plus the
 // identifiers, hashtags and captions it reads. state is 1 (PUBLISHED): only
@@ -159,6 +173,9 @@ func (s *Service) peertubeFields(obj map[string]any, r sqlcgen.ListChannelOutbox
 	}
 	if r.Language != nil && *r.Language != "" {
 		obj["language"] = map[string]any{"identifier": *r.Language}
+	}
+	if sup := federatedSupport(r.Support); sup != "" {
+		obj["support"] = sup
 	}
 	var tags, subs []map[string]any
 	for _, t := range r.Tags {
@@ -340,7 +357,7 @@ func (s *Service) videoObjectFromDetail(ctx context.Context, channelActor string
 		CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt, PublishAt: v.PublishAt,
 		OriginallyPublishedAt: v.OriginallyPublishedAt, DurationSeconds: v.MetadataDurationSeconds,
 		HasThumbnail: v.HasThumbnail, ThumbnailContentType: v.ThumbnailContentType, HasHls: v.HasHls,
-		Category: v.Category, Language: v.Language, License: v.License,
+		Category: v.Category, Language: v.Language, License: v.License, Support: v.Support,
 		IsSensitive: v.IsSensitive, CommentsPolicy: v.CommentsPolicy,
 		DownloadEnabled: v.DownloadEnabled, PublishAfterTranscode: v.PublishAfterTranscode,
 		OwnerUsername: f.OwnerUsername, Views: f.Views, Tags: f.Tags, CaptionLanguages: f.CaptionLanguages,

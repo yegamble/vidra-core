@@ -32,15 +32,20 @@ func mapRole(ptRole int) string {
 }
 
 // mapPrivacy maps a PeerTube VideoPrivacy (1 PUBLIC, 2 UNLISTED, 3 PRIVATE,
-// 4 INTERNAL) to a Vidra privacy. INTERNAL has no Vidra equivalent and maps to
-// the safest option, private. Unknown values default to private.
+// 4 INTERNAL, 5 PASSWORD_PROTECTED) to a Vidra privacy. INTERNAL maps to Vidra's
+// own internal tier (any signed-in account); it used to fall back to private,
+// which hid every migrated "members only" video from its members.
+// PASSWORD_PROTECTED arrives without its passwords, so it — and any unknown
+// value — maps to the safest option, private.
 func mapPrivacy(ptPrivacy int) string {
 	switch ptPrivacy {
 	case 1:
 		return "public"
 	case 2:
 		return "unlisted"
-	default: // 3 PRIVATE, 4 INTERNAL, anything else
+	case 4:
+		return video.PrivacyInternal
+	default: // 3 PRIVATE, 5 PASSWORD_PROTECTED, anything else
 		return "private"
 	}
 }
@@ -72,6 +77,22 @@ func mapVideoState(ptState int) string {
 // intPtrToText renders an optional PeerTube numeric taxonomy id (category /
 // licence) as the text form Vidra stores (migration 0025: "PeerTube-compatible
 // numeric ids, as text"). nil stays nil (unset).
+// supportToText maps a source support string to the nullable column value:
+// trimmed, NULL when blank, capped at video.MaxSupportLen characters so one
+// over-long source value (PeerTube's own limit is 1000, but a hand-edited
+// database is not bound by it) cannot trip the column CHECK and fail a whole
+// channel or video.
+func supportToText(s string) *string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	if r := []rune(s); len(r) > video.MaxSupportLen {
+		s = string(r[:video.MaxSupportLen])
+	}
+	return &s
+}
+
 func intPtrToText(v *int) *string {
 	if v == nil {
 		return nil

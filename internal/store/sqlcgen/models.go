@@ -166,6 +166,7 @@ type Channel struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 	ActivitypubEnabled bool      `json:"activitypub_enabled"`
 	AtprotoEnabled     bool      `json:"atproto_enabled"`
+	Support            *string   `json:"support"`
 }
 
 type ChannelActorKey struct {
@@ -1193,6 +1194,7 @@ type Video struct {
 	ShortCode             string             `json:"short_code"`
 	PeertubeUuid          pgtype.UUID        `json:"peertube_uuid"`
 	TranscodeGeneration   int32              `json:"transcode_generation"`
+	Support               *string            `json:"support"`
 }
 
 type VideoBlock struct {

@@ -65,6 +65,8 @@ func TestRenderNginxExternalMirrorsTheCaddyfileRouting(t *testing.T) {
 	for _, path := range []string{
 		"/healthz", "/readyz", "/version", "/inbox", "/nodeinfo/2.1",
 		"/.well-known/nodeinfo", "/.well-known/webfinger",
+		"/.well-known/host-meta", "/.well-known/host-meta.json",
+		"/.well-known/security.txt", "/.well-known/change-password",
 		"/services/oembed", "/sitemap.xml",
 	} {
 		if !strings.Contains(out, "location = "+path+" {") {

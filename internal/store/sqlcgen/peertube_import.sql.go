@@ -581,8 +581,8 @@ func (q *Queries) ImportFollowChannel(ctx context.Context, arg ImportFollowChann
 }
 
 const importInsertChannel = `-- name: ImportInsertChannel :one
-INSERT INTO channels (owner_id, handle, display_name, description, created_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO channels (owner_id, handle, display_name, description, created_at, support)
+VALUES ($1, $2, $3, $4, $5, $6::text)
 RETURNING id
 `
 
@@ -592,8 +592,10 @@ type ImportInsertChannelParams struct {
 	DisplayName string    `json:"display_name"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
+	Support     *string   `json:"support"`
 }
 
+// support is the source's videoChannel.support (migration 0159), NULL when blank.
 func (q *Queries) ImportInsertChannel(ctx context.Context, arg ImportInsertChannelParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, importInsertChannel,
 		arg.OwnerID,
@@ -601,6 +603,7 @@ func (q *Queries) ImportInsertChannel(ctx context.Context, arg ImportInsertChann
 		arg.DisplayName,
 		arg.Description,
 		arg.CreatedAt,
+		arg.Support,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -739,10 +742,11 @@ func (q *Queries) ImportInsertUser(ctx context.Context, arg ImportInsertUserPara
 }
 
 const importInsertVideo = `-- name: ImportInsertVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at, is_sensitive, peertube_uuid, comments_policy, download_enabled)
+INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at, is_sensitive, peertube_uuid, comments_policy, download_enabled, support)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
         COALESCE($13::text, 'enabled'),
-        COALESCE($14::boolean, true))
+        COALESCE($14::boolean, true),
+        $15::text)
 RETURNING id
 `
 
@@ -761,6 +765,7 @@ type ImportInsertVideoParams struct {
 	PeertubeUuid          pgtype.UUID        `json:"peertube_uuid"`
 	CommentsPolicy        *string            `json:"comments_policy"`
 	DownloadEnabled       *bool              `json:"download_enabled"`
+	Support               *string            `json:"support"`
 }
 
 // originally_published_at is the source's own originallyPublishedAt and is NULL
@@ -791,6 +796,7 @@ func (q *Queries) ImportInsertVideo(ctx context.Context, arg ImportInsertVideoPa
 		arg.PeertubeUuid,
 		arg.CommentsPolicy,
 		arg.DownloadEnabled,
+		arg.Support,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -1060,7 +1066,8 @@ func (q *Queries) ImportPublishCopiedHLSPlaylist(ctx context.Context, arg Import
 }
 
 const importResyncChannels = `-- name: ImportResyncChannels :many
-SELECT l.source_id, c.id, c.owner_id, c.handle, c.display_name, c.description
+SELECT l.source_id, c.id, c.owner_id, c.handle, c.display_name, c.description,
+       COALESCE(c.support, '')::text AS support
 FROM peertube_import_ledger l
 JOIN channels c ON c.id = l.vidra_id
 WHERE l.entity_kind = 'channel' AND l.status = 'done' AND l.created_by_import
@@ -1073,6 +1080,7 @@ type ImportResyncChannelsRow struct {
 	Handle      string    `json:"handle"`
 	DisplayName string    `json:"display_name"`
 	Description string    `json:"description"`
+	Support     string    `json:"support"`
 }
 
 // Every channel the import CREATED — created_by_import is what makes that
@@ -1096,6 +1104,7 @@ func (q *Queries) ImportResyncChannels(ctx context.Context) ([]ImportResyncChann
 			&i.Handle,
 			&i.DisplayName,
 			&i.Description,
+			&i.Support,
 		); err != nil {
 			return nil, err
 		}
@@ -1364,7 +1373,8 @@ SELECT l.source_id, v.id, v.channel_id, v.title, v.description, v.privacy, v.sta
        -- video was first published here), and folding it into a zero time would
        -- make "never published elsewhere" and "published at the epoch"
        -- indistinguishable to the digest.
-       v.originally_published_at, v.comments_policy, v.download_enabled
+       v.originally_published_at, v.comments_policy, v.download_enabled,
+       COALESCE(v.support, '')::text AS support
 FROM peertube_import_ledger l
 JOIN videos v ON v.id = l.vidra_id
 LEFT JOIN video_metadata m ON m.video_id = v.id
@@ -1386,6 +1396,7 @@ type ImportResyncVideosRow struct {
 	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
 	CommentsPolicy        string             `json:"comments_policy"`
 	DownloadEnabled       bool               `json:"download_enabled"`
+	Support               string             `json:"support"`
 }
 
 // Every video the import created, with the mapped metadata AND the duration,
@@ -1416,6 +1427,7 @@ func (q *Queries) ImportResyncVideos(ctx context.Context) ([]ImportResyncVideosR
 			&i.OriginallyPublishedAt,
 			&i.CommentsPolicy,
 			&i.DownloadEnabled,
+			&i.Support,
 		); err != nil {
 			return nil, err
 		}
@@ -1477,6 +1489,7 @@ UPDATE channels
 SET owner_id     = $2,
     display_name = $3,
     description  = $4,
+    support      = $5::text,
     updated_at   = now()
 WHERE id = $1
 `
@@ -1486,6 +1499,7 @@ type ImportUpdateChannelParams struct {
 	OwnerID     uuid.UUID `json:"owner_id"`
 	DisplayName string    `json:"display_name"`
 	Description string    `json:"description"`
+	Support     *string   `json:"support"`
 }
 
 func (q *Queries) ImportUpdateChannel(ctx context.Context, arg ImportUpdateChannelParams) error {
@@ -1494,6 +1508,7 @@ func (q *Queries) ImportUpdateChannel(ctx context.Context, arg ImportUpdateChann
 		arg.OwnerID,
 		arg.DisplayName,
 		arg.Description,
+		arg.Support,
 	)
 	return err
 }
@@ -1591,6 +1606,7 @@ SET channel_id  = $2,
     originally_published_at = $10,
     comments_policy = $11,
     download_enabled = $12,
+    support     = $13::text,
     updated_at  = now()
 WHERE id = $1
 `
@@ -1608,6 +1624,7 @@ type ImportUpdateVideoParams struct {
 	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
 	CommentsPolicy        string             `json:"comments_policy"`
 	DownloadEnabled       bool               `json:"download_enabled"`
+	Support               *string            `json:"support"`
 }
 
 func (q *Queries) ImportUpdateVideo(ctx context.Context, arg ImportUpdateVideoParams) error {
@@ -1624,6 +1641,7 @@ func (q *Queries) ImportUpdateVideo(ctx context.Context, arg ImportUpdateVideoPa
 		arg.OriginallyPublishedAt,
 		arg.CommentsPolicy,
 		arg.DownloadEnabled,
+		arg.Support,
 	)
 	return err
 }

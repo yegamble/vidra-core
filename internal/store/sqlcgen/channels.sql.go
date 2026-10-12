@@ -90,7 +90,7 @@ func (q *Queries) CountSearchPublicChannels(ctx context.Context, arg CountSearch
 const createChannel = `-- name: CreateChannel :one
 INSERT INTO channels (owner_id, handle, display_name, description)
 VALUES ($1, $2, $3, $4)
-RETURNING id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
+RETURNING id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled, support
 `
 
 type CreateChannelParams struct {
@@ -118,6 +118,7 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 		&i.UpdatedAt,
 		&i.ActivitypubEnabled,
 		&i.AtprotoEnabled,
+		&i.Support,
 	)
 	return i, err
 }
@@ -132,7 +133,7 @@ func (q *Queries) DeleteChannel(ctx context.Context, id uuid.UUID) error {
 }
 
 const getChannelByHandle = `-- name: GetChannelByHandle :one
-SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
+SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled, support
 FROM channels
 WHERE lower(handle) = lower($1)
 `
@@ -150,12 +151,13 @@ func (q *Queries) GetChannelByHandle(ctx context.Context, lower string) (Channel
 		&i.UpdatedAt,
 		&i.ActivitypubEnabled,
 		&i.AtprotoEnabled,
+		&i.Support,
 	)
 	return i, err
 }
 
 const getChannelByID = `-- name: GetChannelByID :one
-SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
+SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled, support
 FROM channels
 WHERE id = $1
 `
@@ -173,12 +175,13 @@ func (q *Queries) GetChannelByID(ctx context.Context, id uuid.UUID) (Channel, er
 		&i.UpdatedAt,
 		&i.ActivitypubEnabled,
 		&i.AtprotoEnabled,
+		&i.Support,
 	)
 	return i, err
 }
 
 const listChannelsByOwner = `-- name: ListChannelsByOwner :many
-SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
+SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled, support
 FROM channels
 WHERE owner_id = $1
 ORDER BY created_at
@@ -203,6 +206,7 @@ func (q *Queries) ListChannelsByOwner(ctx context.Context, ownerID uuid.UUID) ([
 			&i.UpdatedAt,
 			&i.ActivitypubEnabled,
 			&i.AtprotoEnabled,
+			&i.Support,
 		); err != nil {
 			return nil, err
 		}
@@ -413,9 +417,11 @@ SET display_name        = COALESCE($1, display_name),
     description         = COALESCE($2, description),
     activitypub_enabled = COALESCE($3, activitypub_enabled),
     atproto_enabled     = COALESCE($4, atproto_enabled),
+    -- support (0159): NULL leaves it; '' clears it to NULL (the column's "unset").
+    support             = CASE WHEN $5::text IS NULL THEN support ELSE NULLIF($5::text, '') END,
     updated_at          = now()
-WHERE id = $5
-RETURNING id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
+WHERE id = $6
+RETURNING id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled, support
 `
 
 type UpdateChannelParams struct {
@@ -423,6 +429,7 @@ type UpdateChannelParams struct {
 	Description        *string   `json:"description"`
 	ActivitypubEnabled *bool     `json:"activitypub_enabled"`
 	AtprotoEnabled     *bool     `json:"atproto_enabled"`
+	Support            *string   `json:"support"`
 	ID                 uuid.UUID `json:"id"`
 }
 
@@ -432,6 +439,7 @@ func (q *Queries) UpdateChannel(ctx context.Context, arg UpdateChannelParams) (C
 		arg.Description,
 		arg.ActivitypubEnabled,
 		arg.AtprotoEnabled,
+		arg.Support,
 		arg.ID,
 	)
 	var i Channel
@@ -445,6 +453,7 @@ func (q *Queries) UpdateChannel(ctx context.Context, arg UpdateChannelParams) (C
 		&i.UpdatedAt,
 		&i.ActivitypubEnabled,
 		&i.AtprotoEnabled,
+		&i.Support,
 	)
 	return i, err
 }
