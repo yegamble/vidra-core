@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -163,15 +164,65 @@ func TestNotifyCommentMentionsOnRealPG(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM remote_actors WHERE actor_url = $1`, actorURL)
 	})
-	if err := st.Pool.QueryRow(ctx,
-		`INSERT INTO comments (video_id, body, remote_actor_url, remote_author_name, remote_object_url)
-		 VALUES ($1, 'from afar', $2, 'zed', $3) RETURNING id`,
-		videoID, actorURL, "https://far.test/comments/"+suffix).Scan(&remote); err != nil {
-		t.Fatalf("seed federated comment: %v", err)
+	mkRemote := func() uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO comments (video_id, body, remote_actor_url, remote_author_name, remote_object_url)
+			 VALUES ($1, 'from afar', $2, 'zed', $3) RETURNING id`,
+			videoID, actorURL, "https://far.test/comments/"+uuid.NewString()).Scan(&id); err != nil {
+			t.Fatalf("seed federated comment: %v", err)
+		}
+		return id
 	}
+	remote = mkRemote()
 	expect("federated", fan(remote, adaName), ada)
 	var actor *uuid.UUID
 	if err := st.Pool.QueryRow(ctx, `SELECT actor_id FROM notifications WHERE comment_id = $1`, remote).Scan(&actor); err != nil || actor != nil {
 		t.Fatalf("federated mention actor = %v (%v), want NULL", actor, err)
+	}
+
+	// A federated comment has no local author, so mute/block cannot gate it; the
+	// remote-actor blocks and instance mutes/blocks that hide it in the comment
+	// list must gate its notification too.
+	remoteCases := []struct {
+		why, apply, undo string
+		args             []any
+		want             []uuid.UUID
+	}{
+		{"recipient blocked the remote actor", `INSERT INTO remote_actor_blocks (blocker_id, remote_actor_url) VALUES ($1, $2)`, `DELETE FROM remote_actor_blocks WHERE blocker_id = $1 AND remote_actor_url = $2`, []any{ada, actorURL}, []uuid.UUID{bob}},
+		{"admin blocked the remote actor instance-wide", `INSERT INTO blocked_remote_actors (remote_actor_url) VALUES ($1)`, `DELETE FROM blocked_remote_actors WHERE remote_actor_url = $1`, []any{actorURL}, nil},
+		{"recipient muted the remote instance", `INSERT INTO muted_instances (muter_id, domain) VALUES ($1, 'far.test')`, `DELETE FROM muted_instances WHERE muter_id = $1`, []any{ada}, []uuid.UUID{bob}},
+		{"admin blocked the remote instance", `INSERT INTO blocked_instances (domain) VALUES ('far.test')`, `DELETE FROM blocked_instances WHERE domain = 'far.test'`, nil, nil},
+	}
+	for _, tc := range remoteCases {
+		exec(tc.apply, tc.args...)
+		expect(tc.why, fan(mkRemote(), adaName, bobName), tc.want...)
+		exec(tc.undo, tc.args...)
+		expect(tc.why+" (lifted)", fan(mkRemote(), adaName, bobName), ada, bob)
+	}
+
+	// An unpublished (e.g. scheduled) video must not be pinged about.
+	for _, state := range []string{"scheduled", "draft"} {
+		exec(`UPDATE videos SET state = $2 WHERE id = $1`, videoID, state)
+		expect("video "+state, fan(mkComment(&author, "s"), adaName))
+	}
+	exec(`UPDATE videos SET state = 'published' WHERE id = $1`, videoID)
+
+	// The cap is TOTAL per comment: later edits cannot fan out fresh batches.
+	capComment := mkComment(&author, "many")
+	var names []string
+	for i := 0; i < 13; i++ {
+		_, name := mkUser(fmt.Sprintf("m-cap%02d", i))
+		names = append(names, name)
+	}
+	if got := fan(capComment, names[:8]...); len(got) != 8 {
+		t.Fatalf("first batch notified %d, want 8", len(got))
+	}
+	if got := fan(capComment, names...); len(got) != 10 {
+		t.Fatalf("after the edit %d users hold a mention, want the total capped at 10", len(got))
+	}
+	if got := fan(capComment, names...); len(got) != 10 {
+		t.Fatalf("a further edit grew it to %d", len(got))
 	}
 }

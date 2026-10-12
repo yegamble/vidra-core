@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -137,4 +138,30 @@ func TestInboundMentionNotifierFailureDoesNotFailIngest(t *testing.T) {
 		t.Fatalf("HandleInbox: %v", err)
 	}
 	_ = onlyComment(t, repo)
+}
+
+// An inbound Note cannot name more than 10 local users, however many tags it
+// carries.
+func TestInboundMentionTagsAreCapped(t *testing.T) {
+	videoID := uuid.New()
+	repo := newNotesRepo(videoID)
+	var got []string
+	svc := NewService(repo, WithBaseURL(noteBase),
+		WithCommentMentionNotifier(func(_ context.Context, _ uuid.UUID, names []string) (int64, error) {
+			got = names
+			return 0, nil
+		}))
+	tags := ""
+	for i := 0; i < 25; i++ {
+		if i > 0 {
+			tags += ","
+		}
+		tags += fmt.Sprintf(`{"type":"Mention","href":"%s/accounts/user%d"}`, noteBase, i)
+	}
+	if err := svc.HandleInbox(context.Background(), remoteBob, []byte(inboundNoteWithTag(videoID, "["+tags+"]"))); err != nil {
+		t.Fatalf("HandleInbox: %v", err)
+	}
+	if len(got) != 10 {
+		t.Fatalf("notifier got %d names, want the cap of 10", len(got))
+	}
 }

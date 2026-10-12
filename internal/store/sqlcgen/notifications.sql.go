@@ -401,42 +401,64 @@ func (q *Queries) MarkNotificationRead(ctx context.Context, arg MarkNotification
 }
 
 const notifyCommentMentions = `-- name: NotifyCommentMentions :execrows
+WITH cand AS (
+    SELECT u.id AS user_id, c.user_id AS actor_id, c.video_id, c.id AS comment_id,
+           row_number() OVER (ORDER BY u.id) AS rn
+    FROM comments c
+    JOIN videos v ON v.id = c.video_id
+    JOIN users u ON lower(u.username) = ANY($2::text[])
+    LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
+    WHERE c.id = $1::uuid
+      AND c.deleted_at IS NULL
+      AND v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks vb WHERE vb.video_id = v.id)
+      AND c.user_id IS DISTINCT FROM u.id
+      AND u.is_active
+      AND u.deleted_at IS NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts ma
+          WHERE ma.muter_id = u.id AND ma.muted_id = c.user_id
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE (ub.blocker_id = u.id AND ub.blocked_id = c.user_id)
+             OR (ub.blocker_id = c.user_id AND ub.blocked_id = u.id)
+      )
+      -- A federated comment has no local author, so the checks above are vacuous
+      -- for it. These are the SAME predicates ListCommentsByVideo hides it with:
+      -- instance blocks, the recipient's instance mutes, and remote-actor blocks
+      -- (the recipient's own plus the admin's instance-wide ones).
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = u.id AND mi.domain = ra.domain
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_block_reach rab
+          WHERE (rab.blocker_id = u.id OR rab.blocker_id IS NULL)
+            AND rab.actor_url = c.remote_actor_url
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM notification_prefs np
+          WHERE np.user_id = u.id AND np.type = 'comment_mention' AND np.enabled = FALSE
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+          WHERE n.user_id = u.id AND n.comment_id = c.id
+            AND n.type IN ('comment', 'comment_reply', 'comment_mention')
+      )
+)
 INSERT INTO notifications (user_id, type, actor_id, video_id, comment_id)
-SELECT u.id, 'comment_mention', c.user_id, c.video_id, c.id
-FROM comments c
-JOIN videos v ON v.id = c.video_id
-JOIN users u ON lower(u.username) = ANY($1::text[])
-WHERE c.id = $2
-  AND c.deleted_at IS NULL
-  AND v.privacy = 'public' AND v.state = 'published'
-  AND NOT EXISTS (SELECT 1 FROM video_blocks vb WHERE vb.video_id = v.id)
-  AND c.user_id IS DISTINCT FROM u.id
-  AND u.is_active
-  AND u.deleted_at IS NULL
-  AND NOT EXISTS (
-      SELECT 1 FROM muted_accounts ma
-      WHERE ma.muter_id = u.id AND ma.muted_id = c.user_id
-  )
-  AND NOT EXISTS (
-      SELECT 1 FROM user_blocks ub
-      WHERE (ub.blocker_id = u.id AND ub.blocked_id = c.user_id)
-         OR (ub.blocker_id = c.user_id AND ub.blocked_id = u.id)
-  )
-  AND NOT EXISTS (
-      SELECT 1 FROM notification_prefs np
-      WHERE np.user_id = u.id AND np.type = 'comment_mention' AND np.enabled = FALSE
-  )
-  AND NOT EXISTS (
-      SELECT 1 FROM notifications n
-      WHERE n.user_id = u.id AND n.comment_id = c.id
-        AND n.type IN ('comment', 'comment_reply')
-  )
+SELECT user_id, 'comment_mention', actor_id, video_id, comment_id
+FROM cand
+WHERE rn <= 10 - (SELECT count(*) FROM notifications x
+                  WHERE x.comment_id = $1::uuid AND x.type = 'comment_mention')
 ON CONFLICT (user_id, comment_id) WHERE type = 'comment_mention' DO NOTHING
 `
 
 type NotifyCommentMentionsParams struct {
-	Usernames []string  `json:"usernames"`
 	CommentID uuid.UUID `json:"comment_id"`
+	Usernames []string  `json:"usernames"`
 }
 
 // Tell every LOCAL account @-mentioned in a comment, in one round trip (the
@@ -457,9 +479,12 @@ type NotifyCommentMentionsParams struct {
 //
 // The author is the actor; a federated comment has none (the UI falls back to
 // comments.remote_author_name). ON CONFLICT rides
-// notifications_comment_mention_unique_idx, so re-running is a no-op.
+// notifications_comment_mention_unique_idx, so re-running is a no-op; a comment
+// never holds more than 10 comment_mention rows in total.
+// At most 10 comment_mention rows per comment IN TOTAL, so repeated edits cannot
+// keep fanning out fresh batches.
 func (q *Queries) NotifyCommentMentions(ctx context.Context, arg NotifyCommentMentionsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, notifyCommentMentions, arg.Usernames, arg.CommentID)
+	result, err := q.db.Exec(ctx, notifyCommentMentions, arg.CommentID, arg.Usernames)
 	if err != nil {
 		return 0, err
 	}
