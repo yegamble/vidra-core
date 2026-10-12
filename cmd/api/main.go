@@ -1627,7 +1627,7 @@ func run() error {
 	ratingsvc := rating.NewService(db.Queries())
 	opts = append(opts, httpapi.WithRatingService(ratingsvc))
 
-	notifsvc = notification.NewService(db.Queries())
+	notifsvc = notification.NewService(db.NotificationRepository())
 	opts = append(opts, httpapi.WithNotificationService(notifsvc))
 
 	playersettingssvc := playersettings.NewService(db.Queries(),

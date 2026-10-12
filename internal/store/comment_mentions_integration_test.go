@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -224,5 +225,30 @@ func TestNotifyCommentMentionsOnRealPG(t *testing.T) {
 	}
 	if got := fan(capComment, names...); len(got) != 10 {
 		t.Fatalf("a further edit grew it to %d", len(got))
+	}
+
+	// Concurrent fan-outs for one comment (different name sets) must still
+	// respect the cap: the per-comment lock makes each see the other's rows.
+	raceComment := mkComment(&author, "race")
+	var raceNames []string
+	for i := 0; i < 24; i++ {
+		_, name := mkUser(fmt.Sprintf("m-race%02d", i))
+		raceNames = append(raceNames, name)
+	}
+	repo := st.NotificationRepository()
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			if _, err := repo.NotifyCommentMentions(ctx, sqlcgen.NotifyCommentMentionsParams{CommentID: raceComment, Usernames: raceNames[g*3 : g*3+3]}); err != nil {
+				t.Errorf("concurrent fan-out: %v", err)
+			}
+		}(g)
+	}
+	wg.Wait()
+	var total int
+	if err := st.Pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE comment_id = $1 AND type = 'comment_mention'`, raceComment).Scan(&total); err != nil || total != 10 {
+		t.Fatalf("concurrent fan-outs left %d mention rows (%v), want exactly the cap of 10", total, err)
 	}
 }
