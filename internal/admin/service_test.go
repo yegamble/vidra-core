@@ -545,6 +545,7 @@ func TestModeratorMayOnlyBanOrdinaryAccounts(t *testing.T) {
 		"verify email":    {user, UpdateUserInput{EmailVerified: &verified}},
 		"set a quota":     {user, UpdateUserInput{SetStorageQuota: true}},
 		"ban + role":      {user, UpdateUserInput{IsActive: &off, Role: &role}},
+		"set bypass":      {user, UpdateUserInput{BypassQuarantine: &verified}},
 	} {
 		tc.in.ActorRole = RoleModerator
 		if _, err := svc.UpdateUser(ctx, mod, tc.target, tc.in); !errors.Is(err, ErrModeratorForbidden) {
@@ -567,5 +568,36 @@ func TestModeratorMayOnlyBanOrdinaryAccounts(t *testing.T) {
 	long := strings.Repeat("x", MaxBanReasonLen+1)
 	if _, err := svc.UpdateUser(ctx, adm, user, UpdateUserInput{IsActive: &off, BanReason: &long}); !errors.Is(err, ErrBanReasonTooLong) {
 		t.Errorf("501-char reason = %v, want ErrBanReasonTooLong", err)
+	}
+}
+
+func TestBanKeepsTheOriginalAndModeratorsOnlyLiftRealBans(t *testing.T) {
+	repo := newFakeRepo()
+	mod := repo.add("mo", RoleModerator)
+	mod2 := repo.add("mo2", RoleModerator)
+	user := repo.add("uma", RoleUser)
+	closed := repo.add("clo", RoleUser) // closed by its OWNER: inactive, no ban row
+	c := repo.users[closed]
+	c.IsActive = false
+	repo.users[closed] = c
+	svc := NewService(repo)
+	off, on := false, true
+	first, second := "first reason", "second reason"
+	ctx := context.Background()
+
+	if _, err := svc.UpdateUser(ctx, mod, closed, UpdateUserInput{IsActive: &on, ActorRole: RoleModerator}); !errors.Is(err, ErrModeratorForbidden) {
+		t.Errorf("moderator reactivating a self-closed account = %v, want ErrModeratorForbidden", err)
+	}
+	if _, err := svc.UpdateUser(ctx, mod, user, UpdateUserInput{IsActive: &off, BanReason: &first, ActorRole: RoleModerator}); err != nil {
+		t.Fatalf("ban: %v", err)
+	}
+	if _, err := svc.UpdateUser(ctx, mod2, user, UpdateUserInput{IsActive: &off, BanReason: &second, ActorRole: RoleModerator}); err != nil {
+		t.Fatalf("re-ban: %v", err)
+	}
+	if b, _ := svc.Ban(ctx, user); b.Reason != first || b.BannedBy.Bytes != mod {
+		t.Errorf("re-ban overwrote the original: %+v", b)
+	}
+	if _, err := svc.UpdateUser(ctx, mod2, user, UpdateUserInput{IsActive: &on, ActorRole: RoleModerator}); err != nil {
+		t.Errorf("moderator lifting a real ban: %v", err)
 	}
 }

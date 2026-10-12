@@ -73,6 +73,7 @@ func TestModeratorUserActionMatrix(t *testing.T) {
 		{"moderator cannot ban self", f.mo, f.moID, ban, http.StatusForbidden},
 		{"moderator cannot change role", f.mo, f.vicID, `{"role":"moderator"}`, http.StatusForbidden},
 		{"moderator cannot verify email", f.mo, f.vicID, `{"email_verified":true}`, http.StatusForbidden},
+		{"moderator cannot exempt from quarantine", f.mo, f.vicID, `{"bypass_quarantine":true}`, http.StatusForbidden},
 		{"moderator cannot set quota", f.mo, f.vicID, `{"storage_quota_bytes":5}`, http.StatusForbidden},
 		{"moderator cannot mix ban with role", f.mo, f.vicID, `{"is_active":false,"ban_reason":"x","role":"admin"}`, http.StatusForbidden},
 		{"moderator ban needs a reason", f.mo, f.vicID, `{"is_active":false}`, http.StatusUnprocessableEntity},
@@ -119,6 +120,10 @@ func TestBanRecordsReasonMailsTheUserAndAuditsLengthOnly(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &v)
 	if v.IsActive || v.BanReason == nil || *v.BanReason != reason || v.BannedAt == nil || v.BannedBy == nil || *v.BannedBy != f.moID {
 		t.Errorf("ban view = %+v", v)
+	}
+	// The ban takes effect at once: the user's live token no longer resolves.
+	if rec := sendJSONAuth(f.env.srv, http.MethodGet, "/api/v1/auth/me", "", f.uma); rec.Code != http.StatusUnauthorized {
+		t.Errorf("banned user's live token = %d, want 401", rec.Code)
 	}
 	// The list shows it too.
 	for _, u := range adminUsers(t, f.env.srv, "", f.mo).Users {

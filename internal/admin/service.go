@@ -195,6 +195,13 @@ func (s *Service) UpdateUserDetailed(ctx context.Context, callerID, targetID uui
 		if !onlyBan || target.Role != RoleUser || target.IsOwner || callerID == targetID {
 			return UpdateResult{}, ErrModeratorForbidden
 		}
+		// A moderator lifts BANS only: an account its owner closed (or a staff
+		// action with no ban row) is not theirs to reopen.
+		if in.IsActive != nil && *in.IsActive && !target.IsActive {
+			if _, err := s.repo.GetUserBan(ctx, targetID); err != nil {
+				return UpdateResult{}, ErrModeratorForbidden
+			}
+		}
 	}
 	if in.BanReason != nil && utf8.RuneCountInString(*in.BanReason) > MaxBanReasonLen {
 		return UpdateResult{}, ErrBanReasonTooLong
@@ -241,17 +248,22 @@ func (s *Service) UpdateUserDetailed(ctx context.Context, callerID, targetID uui
 		return UpdateResult{}, err
 	}
 	if in.IsActive != nil && !*in.IsActive {
+		// The explanation is written BEFORE sessions are revoked, so a failure
+		// here cannot leave a revoked-but-unexplained ban. An already-banned
+		// account keeps its ORIGINAL reason, time and actor.
+		if _, banned := s.repo.GetUserBan(ctx, targetID); target.IsActive || banned != nil {
+			reason := ""
+			if in.BanReason != nil {
+				reason = strings.TrimSpace(*in.BanReason)
+			}
+			if err := s.repo.UpsertUserBan(ctx, sqlcgen.UpsertUserBanParams{
+				UserID: targetID, Reason: reason, BannedBy: pgtype.UUID{Bytes: callerID, Valid: true},
+			}); err != nil {
+				return UpdateResult{}, err
+			}
+		}
 		// Best-effort: a disabled account's tokens stop resolving anyway.
 		_ = s.repo.RevokeAllUserSessions(ctx, targetID)
-		reason := ""
-		if in.BanReason != nil {
-			reason = strings.TrimSpace(*in.BanReason)
-		}
-		if err := s.repo.UpsertUserBan(ctx, sqlcgen.UpsertUserBanParams{
-			UserID: targetID, Reason: reason, BannedBy: pgtype.UUID{Bytes: callerID, Valid: true},
-		}); err != nil {
-			return UpdateResult{}, err
-		}
 	} else if in.IsActive != nil {
 		if err := s.repo.DeleteUserBan(ctx, targetID); err != nil {
 			return UpdateResult{}, err
