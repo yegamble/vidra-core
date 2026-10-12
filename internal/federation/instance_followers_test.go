@@ -206,3 +206,48 @@ func TestDrainDeliveriesSignsAsInstanceActor(t *testing.T) {
 		t.Errorf("signed by %q (%v), want the instance actor", verifiedKey, verifyErr)
 	}
 }
+
+// An instance is followed by an instance actor, from its own server.
+func TestInstanceFollowFromTheWrongKindOfActor(t *testing.T) {
+	other := "https://elsewhere.example/inbox"
+	for name, tc := range map[string]struct {
+		mutate     func(*sqlcgen.RemoteActor)
+		wantReject bool
+	}{
+		"a Person":                 {func(ra *sqlcgen.RemoteActor) { ra.ActorType = "Person" }, true},
+		"an inbox on another host": {func(ra *sqlcgen.RemoteActor) { ra.InboxUrl = other }, false},
+		"a shared inbox elsewhere": {func(ra *sqlcgen.RemoteActor) { ra.SharedInboxUrl = &other }, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := newInstanceInboxRepo()
+			ra := repo.remoteActors[ptInstance]
+			tc.mutate(&ra)
+			repo.remoteActors[ptInstance] = ra
+			svc := NewService(repo, WithBaseURL("https://videos.example"))
+			if err := svc.HandleInbox(context.Background(), ptInstance, instanceFollow(instanceFollowID)); err != nil {
+				t.Fatal(err)
+			}
+			if len(repo.inst.followers) != 0 {
+				t.Error("the follow must not be recorded")
+			}
+			if tc.wantReject {
+				if d, body := onlyDelivery(t, repo); body["type"] != "Reject" || d.InboxUrl != ptInbox {
+					t.Errorf("answer = %v to %s, want a Reject to its own inbox", body, d.InboxUrl)
+				}
+			} else if len(repo.deliveries) != 0 {
+				t.Errorf("%d deliveries; nothing may be sent toward another server", len(repo.deliveries))
+			}
+		})
+	}
+	// A Service is an instance actor too.
+	repo := newInstanceInboxRepo()
+	ra := repo.remoteActors[ptInstance]
+	ra.ActorType = "Service"
+	repo.remoteActors[ptInstance] = ra
+	if err := NewService(repo, WithBaseURL("https://videos.example")).HandleInbox(context.Background(), ptInstance, instanceFollow(instanceFollowID)); err != nil {
+		t.Fatal(err)
+	}
+	if f := repo.inst.followers[ptInstance]; f == nil || f.State != "accepted" {
+		t.Errorf("a Service actor's follow = %+v, want accepted", f)
+	}
+}
