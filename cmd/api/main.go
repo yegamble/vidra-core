@@ -3013,6 +3013,9 @@ func run() error {
 					// restart rather than at the end of the run.
 					ReloadSettings: settingssvc.Load,
 					Logger:         logger,
+					// Remote followers' inboxes and keys come from their own
+					// actor documents, fetched the way federation fetches them.
+					ResolveRemoteActor: fedsvc.ResolveRemoteActor,
 				})
 				return imp, func() { src.Close() }, nil
 			}))
