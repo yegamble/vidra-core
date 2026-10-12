@@ -1,4 +1,4 @@
--- 0155: bound open remote reports per target — at most one OPEN remote (Flag)
+-- 0154: bound open remote reports per target — at most one OPEN remote (Flag)
 -- report per (reporting domain, target). CreateRemoteFlagReport's ON CONFLICT
 -- DO NOTHING turns a repeat into no row, so nothing is filed or notified; once
 -- that report is resolved the domain can report the target again.
