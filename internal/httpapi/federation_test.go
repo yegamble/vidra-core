@@ -141,6 +141,12 @@ func (f fakeFedRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetV
 	}
 	return sqlcgen.GetVideoByIDRow{}, pgx.ErrNoRows
 }
+func (f fakeFedRepo) GetVideoFederationFacts(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoFederationFactsRow, error) {
+	if _, ok := f.videosByID[id]; ok {
+		return sqlcgen.GetVideoFederationFactsRow{}, nil
+	}
+	return sqlcgen.GetVideoFederationFactsRow{}, pgx.ErrNoRows
+}
 func (f fakeFedRepo) GetChannelByID(_ context.Context, id uuid.UUID) (sqlcgen.Channel, error) {
 	if id == f.channelID {
 		return sqlcgen.Channel{ID: f.channelID, OwnerID: f.userID, Handle: "films", DisplayName: "Films", ActivitypubEnabled: true}, nil

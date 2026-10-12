@@ -39,12 +39,58 @@ SELECT v.id, v.title, v.description, v.short_code,
        EXISTS (
            SELECT 1 FROM streaming_playlists sp
            WHERE sp.video_id = v.id AND sp.state = 'ready' AND sp.master_key <> ''
-       ) AS has_hls
+       ) AS has_hls,
+       -- The PeerTube-required facts GetVideoFederationFacts carries for the
+       -- pushed object (T05), so the walked outbox and the push agree.
+       v.category, v.language, v.license, v.is_sensitive, v.comments_policy,
+       v.download_enabled, v.publish_after_transcode,
+       au.username AS owner_username,
+       COALESCE(vc.views, 0)::bigint AS views,
+       ARRAY(SELECT t.tag FROM video_tags t WHERE t.video_id = v.id ORDER BY t.tag)::text[] AS tags,
+       ARRAY(SELECT cp.language FROM captions cp WHERE cp.video_id = v.id ORDER BY cp.language)::text[] AS caption_languages,
+       COALESCE(th.id::text, '')::text AS thumbnail_file_id,
+       COALESCE(th.storage_key, '')::text AS thumbnail_storage_key
 FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN LATERAL (
+    -- The poster row /thumbnail serves: its OWN storage key (an importer
+    -- reference-mode poster keeps its source key) and its id, which the
+    -- poster-size cache keys on — a replaced poster is a new row.
+    SELECT f.id, f.storage_key FROM video_files f
+    WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+    ORDER BY f.created_at DESC LIMIT 1
+) th ON true
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
 ORDER BY v.created_at DESC, v.id DESC
 LIMIT $2 OFFSET $3;
+
+-- name: GetVideoFederationFacts :one
+-- What PeerTube's inbound Video validator requires (or a follower needs to
+-- render) beyond GetVideoByID (T05): the owning account for attributedTo, the
+-- view count, the hashtags and the caption languages. Federation-only, so the
+-- hot GetVideoByID row stays as it is.
+SELECT au.username AS owner_username,
+       COALESCE(vc.views, 0)::bigint AS views,
+       ARRAY(SELECT t.tag FROM video_tags t WHERE t.video_id = v.id ORDER BY t.tag)::text[] AS tags,
+       ARRAY(SELECT cp.language FROM captions cp WHERE cp.video_id = v.id ORDER BY cp.language)::text[] AS caption_languages,
+       COALESCE(th.id::text, '')::text AS thumbnail_file_id,
+       COALESCE(th.storage_key, '')::text AS thumbnail_storage_key
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN LATERAL (
+    -- The poster row /thumbnail serves: its OWN storage key (an importer
+    -- reference-mode poster keeps its source key) and its id, which the
+    -- poster-size cache keys on — a replaced poster is a new row.
+    SELECT f.id, f.storage_key FROM video_files f
+    WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+    ORDER BY f.created_at DESC LIMIT 1
+) th ON true
+WHERE v.id = $1;
 
 -- name: GetVideoByID :one
 SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
@@ -292,7 +338,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            ''::text AS sensitive_reason,
            ''::text AS short_code
     FROM remote_videos rv
@@ -303,6 +349,8 @@ FROM (
       AND sqlc.narg('language')::text IS NULL
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
+      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT rv.is_sensitive)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
@@ -404,7 +452,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            ''::text AS sensitive_reason
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -414,6 +462,8 @@ FROM (
       AND sqlc.narg('language')::text IS NULL
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
+      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT rv.is_sensitive)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
@@ -506,7 +556,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            ''::text AS sensitive_reason,
            ''::text AS short_code
     FROM remote_videos rv
@@ -604,7 +654,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            ''::text AS sensitive_reason
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -758,7 +808,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            ''::text AS sensitive_reason,
            ''::text AS short_code,
            similarity(rv.title, sqlc.arg('query')) AS search_rank
@@ -777,6 +827,8 @@ FROM (
       AND rv.title ILIKE '%' || sqlc.arg('query') || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
+      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT rv.is_sensitive)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
@@ -906,7 +958,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            ''::text AS sensitive_reason,
            similarity(rv.title, sqlc.arg('query')) AS search_rank
     FROM remote_videos rv
@@ -924,6 +976,8 @@ FROM (
       AND rv.title ILIKE '%' || sqlc.arg('query') || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
+      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT rv.is_sensitive)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
@@ -1203,7 +1257,7 @@ FROM (
            false AS is_local,
            ra.domain AS origin_domain,
            rv.watch_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            false AS external_link,
            (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
            false AS has_original,
@@ -1296,7 +1350,7 @@ FROM (
            false AS is_local,
            ra.domain AS origin_domain,
            rv.watch_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            false AS external_link,
            (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
            false AS has_original,

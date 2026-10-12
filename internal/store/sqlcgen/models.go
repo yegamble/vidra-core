@@ -880,6 +880,7 @@ type RemoteVideo struct {
 	ThumbnailKey    *string            `json:"thumbnail_key"`
 	FetchedAt       time.Time          `json:"fetched_at"`
 	UpdatedAt       time.Time          `json:"updated_at"`
+	IsSensitive     bool               `json:"is_sensitive"`
 }
 
 type RemoteVideoBlock struct {

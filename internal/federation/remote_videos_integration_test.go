@@ -145,3 +145,65 @@ func TestRemoteVideoIngestionPersists(t *testing.T) {
 		t.Errorf("video not visible again after unblock: %v", err)
 	}
 }
+
+// TestRemoteVideoSensitivePersists (T05): an inbound Create's `sensitive`
+// reaches remote_videos.is_sensitive and the read model, and the origin's
+// Update clearing it clears the row — against the real SQL, not the fake.
+func TestRemoteVideoSensitivePersists(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suf := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	domain := "nsfw-" + suf + ".example"
+	actorURL := "https://" + domain + "/video-channels/late"
+	objectURL := "https://" + domain + "/videos/watch/1"
+	if err := q.UpsertRemoteActor(ctx, sqlcgen.UpsertRemoteActorParams{
+		ActorUrl: actorURL, ActorType: "Group", PreferredUsername: "late", Domain: domain,
+		InboxUrl: "https://" + domain + "/inbox", FollowersUrl: actorURL + "/followers",
+		PublicKeyPem: "-----BEGIN PUBLIC KEY-----\nMA==\n-----END PUBLIC KEY-----",
+	}); err != nil {
+		t.Fatalf("UpsertRemoteActor: %v", err)
+	}
+	svc := federation.NewService(q, federation.WithBaseURL("https://videos.example"), federation.WithFollowEdgeChecker(allowAllEdges{}))
+
+	activity := func(id, typ, sensitive string) []byte {
+		return []byte(`{"id":"https://` + domain + `/act/` + id + `","type":"` + typ + `","actor":"` + actorURL + `","object":{` +
+			`"id":"` + objectURL + `","type":"Video","name":"Late show","sensitive":` + sensitive + `,` +
+			`"attributedTo":[{"type":"Group","id":"` + actorURL + `"}],"duration":"PT90S"}}`)
+	}
+	read := func() bool {
+		t.Helper()
+		ref, err := q.GetRemoteVideoByObjectURL(ctx, objectURL)
+		if err != nil {
+			t.Fatalf("GetRemoteVideoByObjectURL: %v", err)
+		}
+		row, err := q.GetRemoteVideoByID(ctx, ref.ID)
+		if err != nil {
+			t.Fatalf("GetRemoteVideoByID: %v", err)
+		}
+		return row.IsSensitive
+	}
+
+	if err := svc.HandleInbox(ctx, actorURL, activity("1", "Create", "true")); err != nil {
+		t.Fatalf("HandleInbox Create: %v", err)
+	}
+	if !read() {
+		t.Error("is_sensitive = false after a Create with sensitive:true")
+	}
+	if err := svc.HandleInbox(ctx, actorURL, activity("2", "Update", "false")); err != nil {
+		t.Fatalf("HandleInbox Update: %v", err)
+	}
+	if read() {
+		t.Error("is_sensitive = true after the origin's Update cleared it")
+	}
+}

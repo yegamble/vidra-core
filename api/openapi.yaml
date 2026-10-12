@@ -19645,7 +19645,7 @@ components:
                 $ref: "#/components/schemas/BlockedInstance"
     RemoteVideo:
       type: object
-      required: [id, remote, domain, title, description, object_url, watch_url, has_thumbnail]
+      required: [id, remote, domain, title, description, object_url, watch_url, has_thumbnail, is_sensitive]
       properties:
         id:
           type: string
@@ -19701,6 +19701,12 @@ components:
         has_thumbnail:
           type: boolean
           description: Whether a locally cached thumbnail is available.
+        is_sensitive:
+          type: boolean
+          description: >-
+            The origin flagged this video sensitive (ActivityStreams
+            `sensitive`). The viewer's sensitive-content policy applies as to a
+            local video's is_sensitive: under "hide" it is excluded from search.
     ATProtoLinkRequest:
       type: object
       required: [handle, app_password]

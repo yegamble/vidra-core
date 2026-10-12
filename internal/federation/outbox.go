@@ -29,7 +29,7 @@ func (s *Service) AnnounceVideo(ctx context.Context, videoID uuid.UUID) error {
 	if v.Privacy != "public" || v.State != "published" {
 		return nil
 	}
-	payload, err := s.buildVideoActivity("Create", ch.Handle, v)
+	payload, err := s.buildVideoActivity(ctx, "Create", ch.Handle, v)
 	if err != nil {
 		return err
 	}
@@ -64,7 +64,7 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID uuid.UUID, wasFederat
 	var payload []byte
 	switch {
 	case v.Privacy == "public" && v.State == "published":
-		payload, err = s.buildVideoActivity("Update", ch.Handle, v)
+		payload, err = s.buildVideoActivity(ctx, "Update", ch.Handle, v)
 	case wasFederated:
 		payload, err = s.buildDeleteVideo(ch.Handle, v.ID)
 	default:
@@ -149,15 +149,19 @@ func (s *Service) fanOutToFollowers(ctx context.Context, channelID uuid.UUID, ch
 
 // buildVideoActivity renders a Create or Update activity wrapping the video as an
 // AS Video object, attributed to the channel actor and addressed to the public.
-func (s *Service) buildVideoActivity(activityType, channelHandle string, v sqlcgen.GetVideoByIDRow) ([]byte, error) {
+func (s *Service) buildVideoActivity(ctx context.Context, activityType, channelHandle string, v sqlcgen.GetVideoByIDRow) ([]byte, error) {
 	channelActor := s.baseURL + "/video-channels/" + channelHandle
+	obj, err := s.videoObjectFromDetail(ctx, channelActor, v)
+	if err != nil {
+		return nil, err
+	}
 	activity := map[string]any{
 		"@context": "https://www.w3.org/ns/activitystreams",
 		"id":       channelActor + "/activities/" + strings.ToLower(activityType) + "/" + uuid.NewString(),
 		"type":     activityType,
 		"actor":    channelActor,
 		"to":       []string{publicAudience},
-		"object":   s.videoObjectFromDetail(channelActor, v),
+		"object":   obj,
 	}
 	return json.Marshal(activity)
 }
