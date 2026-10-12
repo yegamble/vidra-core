@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"sync"
+
+	"github.com/vidra/vidra-core/internal/mail"
 )
 
 // TokenKind identifies which account-security flow a captured token belongs to.
@@ -47,6 +49,8 @@ type CaptureMailer struct {
 	// the flag saying whether an administrator did it — the acceptance harness
 	// asserts both the recipient and which of the two messages they got.
 	twoFactorRemoved []CapturedTwoFactorRemoval
+	// notificationEmails are the notification emails the outbox drain sent.
+	notificationEmails []CapturedNotificationEmail
 }
 
 // CapturedTwoFactorRemoval is one two-factor-removed notice recorded instead of
@@ -314,4 +318,28 @@ func (c *CaptureMailer) Latest(kind TokenKind, email string) (string, bool) {
 	defer c.mu.Unlock()
 	t, ok := c.latest[captureKey(kind, email)]
 	return t, ok
+}
+
+// CapturedNotificationEmail is one notification email recorded instead of
+// being delivered.
+type CapturedNotificationEmail struct {
+	To    string
+	Email mail.NotificationEmail
+}
+
+// SendNotificationEmail records the notification email instead of mailing it
+// (in memory only — never logged or persisted).
+func (c *CaptureMailer) SendNotificationEmail(_ context.Context, to string, n mail.NotificationEmail) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.notificationEmails = append(c.notificationEmails, CapturedNotificationEmail{To: to, Email: n})
+	return nil
+}
+
+// NotificationEmails returns a copy of every captured notification email, in
+// send order.
+func (c *CaptureMailer) NotificationEmails() []CapturedNotificationEmail {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]CapturedNotificationEmail(nil), c.notificationEmails...)
 }

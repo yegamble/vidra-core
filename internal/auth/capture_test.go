@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"testing"
+
+	"github.com/vidra/vidra-core/internal/mail"
 )
 
 func TestCaptureMailerLatest(t *testing.T) {
@@ -46,3 +48,22 @@ func TestCaptureMailerLatest(t *testing.T) {
 // CaptureMailer must satisfy the Mailer interface so it can be injected via
 // WithMailer.
 var _ Mailer = (*CaptureMailer)(nil)
+
+// The dev capture seam records notification emails instead of mailing them, so
+// an end-to-end run can assert who was mailed which notification without a
+// relay. Copies are returned: a caller cannot mutate the record.
+func TestCaptureMailerRecordsNotificationEmails(t *testing.T) {
+	cm := NewCaptureMailer()
+	n := mail.NotificationEmail{Type: "new_video", ChannelName: "Ada's Lab", VideoID: "v1", VideoTitle: "Soldering 101"}
+	if err := cm.SendNotificationEmail(context.Background(), "bob@b.test", n); err != nil {
+		t.Fatalf("SendNotificationEmail: %v", err)
+	}
+	got := cm.NotificationEmails()
+	if len(got) != 1 || got[0].To != "bob@b.test" || got[0].Email != n {
+		t.Fatalf("captured = %+v, want one email to bob carrying %+v", got, n)
+	}
+	got[0].To = "mutated"
+	if cm.NotificationEmails()[0].To != "bob@b.test" {
+		t.Error("NotificationEmails returned the live slice, not a copy")
+	}
+}

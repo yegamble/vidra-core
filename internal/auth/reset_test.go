@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/vidra/vidra-core/internal/mail"
 )
 
 // captureMailer records the most recent password-reset delivery so tests can
@@ -23,6 +25,10 @@ type captureMailer struct {
 	// twoFactorRemoved records the two-factor-removed notices, with the flag
 	// saying whether an administrator did the removing.
 	twoFactorRemoved []CapturedTwoFactorRemoval
+}
+
+func (m *captureMailer) SendNotificationEmail(context.Context, string, mail.NotificationEmail) error {
+	return nil
 }
 
 func (m *captureMailer) SendTwoFactorRemoved(_ context.Context, email string, byAdmin bool) error {
