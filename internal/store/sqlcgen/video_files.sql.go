@@ -240,3 +240,18 @@ func (q *Queries) SumUserStorageUsage(ctx context.Context, ownerID uuid.UUID) (i
 	err := row.Scan(&used_bytes)
 	return used_bytes, err
 }
+
+const sumVideoStorageUsage = `-- name: SumVideoStorageUsage :one
+SELECT COALESCE(SUM(size_bytes), 0)::bigint AS used_bytes
+FROM video_files
+WHERE video_id = $1
+`
+
+// One video's share of SumUserStorageUsage: what moving it to another owner
+// adds to theirs (the quota check on accepting an ownership change, 0165).
+func (q *Queries) SumVideoStorageUsage(ctx context.Context, videoID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, sumVideoStorageUsage, videoID)
+	var used_bytes int64
+	err := row.Scan(&used_bytes)
+	return used_bytes, err
+}

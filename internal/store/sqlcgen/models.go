@@ -1241,6 +1241,16 @@ type VideoMetadatum struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+type VideoOwnershipChange struct {
+	ID          uuid.UUID `json:"id"`
+	VideoID     uuid.UUID `json:"video_id"`
+	InitiatorID uuid.UUID `json:"initiator_id"`
+	NextOwnerID uuid.UUID `json:"next_owner_id"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type VideoPassword struct {
 	ID           uuid.UUID `json:"id"`
 	VideoID      uuid.UUID `json:"video_id"`
