@@ -108,3 +108,54 @@ func TestRefederateUnblockedVideoSendsCreate(t *testing.T) {
 		}
 	}
 }
+
+func TestBlockedVideoCommentsDoNotFederate(t *testing.T) {
+	repo, c := newCommentOutboxRepo([]string{"https://a.example/inbox"})
+	v := repo.videosByID[c.VideoID]
+	v.Blocked = true
+	repo.videosByID[c.VideoID] = v
+	svc := NewService(repo, WithBaseURL(noteBase))
+
+	if err := svc.AnnounceComment(context.Background(), c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.deliveries) != 0 {
+		t.Errorf("comment on a blocked video federated %d activities", len(repo.deliveries))
+	}
+	// The shared visibility predicate (Note dereference, inbound replies) agrees.
+	ok, err := svc.videoIsPubliclyVisible(context.Background(), c.VideoID)
+	if err != nil || ok {
+		t.Errorf("videoIsPubliclyVisible = %v, %v; want false", ok, err)
+	}
+	if _, err := svc.NoteObject(context.Background(), c.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("NoteObject on blocked video: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestQueuedCreateForBlockedVideoIsNotDelivered(t *testing.T) {
+	channelID, videoID := uuid.New(), uuid.New()
+	repo := newOutboxRepo(channelID, videoID, "public", "published", []string{"https://a.example/inbox"})
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.AnnounceVideo(context.Background(), videoID); err != nil {
+		t.Fatal(err)
+	}
+	// The block lands while the Create is still queued.
+	v := repo.videosByID[videoID]
+	v.Blocked = true
+	repo.videosByID[videoID] = v
+
+	n, err := svc.DrainDeliveries(context.Background(), 10)
+	if err != nil || n != 0 {
+		t.Fatalf("DrainDeliveries = %d, %v; want 0 delivered", n, err)
+	}
+	for _, d := range repo.deliveries {
+		if d.state != "failed" {
+			t.Errorf("queued Create state = %q, want failed (cancelled)", d.state)
+		}
+	}
+	// And the redeliver arm refuses it too.
+	ok, err := svc.videoStillPublishable(context.Background(), videoID)
+	if err != nil || ok {
+		t.Errorf("videoStillPublishable = %v, %v; want false", ok, err)
+	}
+}

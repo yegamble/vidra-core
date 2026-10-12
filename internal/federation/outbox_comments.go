@@ -97,7 +97,7 @@ func (s *Service) federateComment(ctx context.Context, activityType string, comm
 	if !ch.ActivitypubEnabled {
 		return nil // channel opted out of ActivityPub (migration 0096)
 	}
-	if v.Privacy != "public" || v.State != "published" {
+	if v.Privacy != "public" || v.State != "published" || v.Blocked {
 		return nil // only public, published videos carry federated interactions
 	}
 	authorID := uuid.UUID(c.UserID.Bytes)
