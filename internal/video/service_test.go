@@ -2123,3 +2123,14 @@ func TestReplaceSourceFailsWhenThePriorDigestCannotBeRead(t *testing.T) {
 func (f *fakeRepo) GetChannelByID(_ context.Context, _ uuid.UUID) (sqlcgen.Channel, error) {
 	return sqlcgen.Channel{}, errors.New("not found")
 }
+
+// The account-scoped list is exercised end to end by the httpapi handler tests
+// and the store integration test; the service unit fake only has to satisfy
+// the Repository interface.
+func (f *fakeRepo) ListPublicVideosByOwner(context.Context, sqlcgen.ListPublicVideosByOwnerParams) ([]sqlcgen.ListPublicVideosByOwnerRow, error) {
+	return nil, nil
+}
+
+func (f *fakeRepo) CountPublicVideosByOwnerVisible(context.Context, sqlcgen.CountPublicVideosByOwnerVisibleParams) (int64, error) {
+	return 0, nil
+}

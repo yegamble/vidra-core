@@ -2983,6 +2983,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/users/{username}/videos:
+    get:
+      operationId: listUserVideos
+      summary: List an account's public videos
+      description: >-
+        The profile Videos tab: an account's public, published videos across ALL
+        of its channels, newest first, paginated with a `total`. Gated like
+        GET /users/{username}/profile (a private, inactive or unknown profile is
+        404; a signed-in owner may preview their own). Carries the same
+        visibility filters as GET /channels/{handle}/videos for a non-manager:
+        no private, unlisted, draft, quarantined or moderator-blocked video, the
+        signed-in viewer's mute/block clause, and the viewer's sensitive-content
+        setting.
+      tags: [users]
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: sort
+          in: query
+          required: false
+          description: >-
+            `-published_at` (newest first, the default) or `published_at`
+            (oldest first).
+          schema:
+            type: string
+            enum: [-published_at, published_at]
+            default: -published_at
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: The account's public videos (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoListResponse"
+        "404":
+          description: The profile is private, inactive, or unknown.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/users/{id}/donation-addresses:
     get:
       operationId: listUserDonationAddresses
