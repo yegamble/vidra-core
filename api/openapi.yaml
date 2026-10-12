@@ -4595,8 +4595,9 @@ paths:
         video; moderators and admins may manage any local video. An ordinary
         non-owner or unknown id is reported as 404 so a private video's existence
         is not leaked. The handle is immutable. Setting channel_id moves the
-        video to another channel the caller manages; a missing or unmanaged
-        target channel is reported as 404 (the two are indistinguishable).
+        video to another channel with the same owner that the caller manages; a
+        missing, unmanaged or differently-owned target is reported as 404 (these
+        are indistinguishable).
       tags: [videos]
       security:
         - bearerAuth: []
@@ -4630,7 +4631,7 @@ paths:
           description: >-
             No such video, or the caller is neither its owner nor a
             moderator/admin; or channel_id names a channel that does not exist
-            or that the caller does not manage.
+            or that the caller does not manage, or whose owner differs from the current channel's.
           content:
             application/json:
               schema:
@@ -19571,13 +19572,12 @@ components:
           type: string
           format: uuid
           description: >-
-            Move the video to this channel (omit to leave it where it is). The
-            caller must manage BOTH the video's current channel and this one
-            (owner or editor member); moderators/admins get no extra reach over
-            the target. The channel the video is already on is a no-op. Allowed
-            in any video state, including mid-transcode. Search is reindexed and
-            federation sends an Update for the video, which now names the target
-            channel as its attributedTo actor.
+            Move the video to this channel (omit to leave it where it is). Both
+            channels must have the SAME owner and the caller must manage both
+            (owner or editor member); no role is exempt. The channel the video is
+            already on is a no-op. Allowed in any video state, including
+            mid-transcode. Search is reindexed; federation sends an Update naming
+            the target channel and a Delete to followers of the old channel.
     Caption:
       type: object
       description: A WebVTT caption track's metadata (the file is fetched separately).

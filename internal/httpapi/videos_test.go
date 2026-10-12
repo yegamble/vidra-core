@@ -3021,3 +3021,13 @@ func TestPublicFeedReportsTotal(t *testing.T) {
 		t.Errorf("feed = %d rows / total %d / limit %d, want 2 / 4 / 2", len(body.Videos), body.Total, body.Limit)
 	}
 }
+
+// GetChannelByID mirrors the real query for the service's same-owner move guard.
+func (f *videoFakeRepo) GetChannelByID(_ context.Context, id uuid.UUID) (sqlcgen.Channel, error) {
+	for _, ch := range f.channels.byHandle {
+		if ch.ID == id {
+			return ch, nil
+		}
+	}
+	return sqlcgen.Channel{}, errors.New("not found")
+}

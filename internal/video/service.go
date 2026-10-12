@@ -48,6 +48,9 @@ var (
 	// ErrPublished means the operation only applies to a video that has not yet
 	// been published (e.g. scheduling a publish time after publication).
 	ErrPublished = errors.New("video: already published")
+	// ErrMoveRefused means a channel move was refused: the target channel does
+	// not exist or has a different owner than the video's current channel.
+	ErrMoveRefused = errors.New("video: channel move refused")
 	// ErrNotQuarantined means a quarantine approve/reject targeted a video that
 	// is not in the 'quarantined' state.
 	ErrNotQuarantined = errors.New("video: not quarantined")
@@ -142,6 +145,7 @@ type Repository interface {
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
 	GetVideoIDByShortCode(ctx context.Context, shortCode string) (uuid.UUID, error)
 	GetVideoIDByLegacyUUID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
+	GetChannelByID(ctx context.Context, id uuid.UUID) (sqlcgen.Channel, error)
 	ListVideosByChannel(ctx context.Context, arg sqlcgen.ListVideosByChannelParams) ([]sqlcgen.ListVideosByChannelRow, error)
 	CountVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error)
 	ListVideoIDsByChannel(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error)
@@ -326,6 +330,7 @@ type Service struct {
 	onPublish            []func(context.Context, uuid.UUID)
 	onTranscode          func(context.Context, uuid.UUID, string)
 	onUpdate             []func(context.Context, uuid.UUID, bool)
+	onMove               []func(ctx context.Context, videoID, fromChannelID uuid.UUID, wasFederated bool)
 	onDelete             []func(context.Context, uuid.UUID, uuid.UUID, bool)
 	onMediaReplaced      []func(context.Context, uuid.UUID, string)
 	// uploadUsageRecorder appends a rolling daily-upload-quota ledger event
@@ -484,6 +489,14 @@ func WithTranscodeHook(fn func(ctx context.Context, videoID uuid.UUID, sourceKey
 // call appends); they run in registration order.
 func WithUpdateHook(fn func(context.Context, uuid.UUID, bool)) Option {
 	return func(s *Service) { s.onUpdate = append(s.onUpdate, fn) }
+}
+
+// WithMoveHook registers a callback invoked (best-effort) after a video moved to
+// another channel, after the update hooks. It gets the channel the video LEFT and
+// whether it was public+published before the move (i.e. whether peers following
+// the old channel could hold a copy). Multiple hooks may be registered.
+func WithMoveHook(fn func(ctx context.Context, videoID, fromChannelID uuid.UUID, wasFederated bool)) Option {
+	return func(s *Service) { s.onMove = append(s.onMove, fn) }
 }
 
 // WithDeleteHook registers a callback invoked (best-effort) after a video is
@@ -2106,6 +2119,19 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 		// A publish time only makes sense before publication (§17).
 		return sqlcgen.Video{}, ErrPublished
 	}
+	// A move stays inside ONE owner's channels. A video's owner is derived from
+	// its channel, so a cross-owner move is a transfer, which this is not — and
+	// no actor class (editor collaborator, staff) is exempt. Enforced here, not
+	// only in the handler, so no caller can route around it. A same-owner move
+	// also leaves storage quota where it was (the owner is unchanged), so no
+	// quota re-check is needed.
+	moved := in.ChannelID != nil && *in.ChannelID != v.ChannelID
+	if moved {
+		target, terr := s.repo.GetChannelByID(ctx, *in.ChannelID)
+		if terr != nil || target.OwnerID != v.OwnerID {
+			return sqlcgen.Video{}, ErrMoveRefused
+		}
+	}
 	// Switching to privacy=password requires the video to already hold >=1
 	// password (CORE-17). Checked BEFORE the write so a rejected switch leaves the
 	// privacy untouched.
@@ -2192,6 +2218,11 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 	wasFederated := v.Privacy == "public" && v.State == "published"
 	for _, hook := range s.onUpdate {
 		hook(ctx, id, wasFederated)
+	}
+	if moved {
+		for _, hook := range s.onMove {
+			hook(ctx, id, v.ChannelID, wasFederated)
+		}
 	}
 	return updated, nil
 }

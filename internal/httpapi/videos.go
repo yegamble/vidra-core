@@ -2108,6 +2108,8 @@ func videoError(err error) error {
 	switch {
 	case errors.Is(err, video.ErrReplaceConflict):
 		return &ReplaceConflictError{}
+	case errors.Is(err, video.ErrMoveRefused):
+		return echo.NewHTTPError(http.StatusNotFound, "channel not found")
 	case errors.Is(err, video.ErrNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	case errors.Is(err, video.ErrForbidden):

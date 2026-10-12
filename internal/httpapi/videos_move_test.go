@@ -155,3 +155,57 @@ func TestMoveVideoBetweenChannels(t *testing.T) {
 		t.Errorf("admin who manages target = %d channel=%s; body=%s", rec.Code, channelOf(), rec.Body.String())
 	}
 }
+
+// TestMoveVideoSameOwnerOnly: a move is allowed only between channels with the
+// SAME owner, whoever asks. Every caller below manages BOTH channels, so only the
+// service's same-owner guard can refuse them (the handler's manage-both check
+// passes); a refusal writes no move audit event, fires no hook and leaves the
+// video where it was.
+func TestMoveVideoSameOwnerOnly(t *testing.T) {
+	var calls []moveHookCall
+	var moves int
+	srv, _, _, _, repo := videoServerFull(t, testConfig(),
+		video.WithUpdateHook(func(_ context.Context, id uuid.UUID, was bool) { calls = append(calls, moveHookCall{id, was}) }),
+		video.WithMoveHook(func(context.Context, uuid.UUID, uuid.UUID, bool) { moves++ }))
+	var buf bytes.Buffer
+	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	adminTok := createChannelFor(t, srv, "root", "root@example.test", "root") // first user = admin
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	editorTok := createChannelFor(t, srv, "eve", "eve@example.test", "eve") // owns channel "eve"
+	// eve is an editor of ada; ada is an editor of eve; root is an editor of ada.
+	for _, m := range []struct{ tok, ch, user string }{
+		{ownerTok, "ada", "eve"}, {editorTok, "eve", "ada"}, {ownerTok, "ada", "root"},
+	} {
+		if rec := postJSONAuth(srv, "/api/v1/channels/"+m.ch+"/members", `{"handle":"`+m.user+`"}`, m.tok); rec.Code != http.StatusCreated {
+			t.Fatalf("invite %s to %s = %d; body=%s", m.user, m.ch, rec.Code, rec.Body.String())
+		}
+	}
+	ada, eve, root := channelIDOf(t, srv, "ada"), channelIDOf(t, srv, "eve"), channelIDOf(t, srv, "root")
+
+	adaVideo := createVideo(t, srv, ownerTok, "ada", `{"title":"ada clip","privacy":"public"}`)
+	eveVideo := createVideo(t, srv, editorTok, "eve", `{"title":"eve clip","privacy":"public"}`)
+	for _, c := range []struct {
+		name, tok, video, target, stays string
+	}{
+		{"editor moves owner's video into the editor's own channel", editorTok, adaVideo, eve, ada},
+		{"editor pushes their own video into the owner's channel", editorTok, eveVideo, ada, eve},
+		{"staff moves into their own channel", adminTok, adaVideo, root, ada},
+		{"owner moves into a channel of an editor they share", ownerTok, adaVideo, eve, ada},
+	} {
+		buf.Reset()
+		rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+c.video, `{"channel_id":"`+c.target+`"}`, c.tok)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s = %d, want 404; body=%s", c.name, rec.Code, rec.Body.String())
+		}
+		if got := repo.videos[uuid.MustParse(c.video)].ChannelID.String(); got != c.stays {
+			t.Errorf("%s: video moved to %s", c.name, got)
+		}
+		if findAudit(auditEvents(t, &buf), observability.ActionVideoMove, observability.ResultSuccess) != nil {
+			t.Errorf("%s: a move audit event was written", c.name)
+		}
+	}
+	if len(calls) != 0 || moves != 0 {
+		t.Errorf("refused moves fired hooks: update=%d move=%d", len(calls), moves)
+	}
+}
