@@ -156,22 +156,25 @@ func (s *Server) handlePodcastFeed(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	// The discovery rows do not carry download_enabled: read the per-video flag
+	// for the whole page in ONE query rather than a point read per item.
+	ids := make([]uuid.UUID, 0, len(rows))
+	for _, it := range rows {
+		ids = append(ids, it.Video.ID)
+	}
+	dl, err := s.videosvc.DownloadEnabledSet(ctx, ids)
+	if err != nil {
+		return err
+	}
 	for _, it := range rows {
 		v := it.Video
-		// The discovery row does not carry download_enabled, so the per-video
-		// gate is read from the full row (<=50 point lookups, cached 5 min).
-		full, gerr := s.videosvc.GetByID(ctx, v.ID)
-		if gerr != nil {
+		if !s.publicDownloadOf(v.Privacy, v.State, dl[v.ID]) {
 			continue
 		}
-		if !s.publicDownloadOf(full.Privacy, full.State, full.DownloadEnabled) {
-			continue
-		}
+		// One item's storage/DB hiccup drops THAT episode, not the whole show:
+		// a 500 here would make every podcast app mark the feed as broken.
 		enc, ok, eerr := s.podcastEnclosure(c, v.ID)
-		if eerr != nil {
-			return eerr
-		}
-		if !ok {
+		if eerr != nil || !ok {
 			continue
 		}
 		item := podcastItem{

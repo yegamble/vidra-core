@@ -85,9 +85,11 @@ type videoFakeRepo struct {
 	// Seeded REMOTE cards, mirroring the UNION branches of the subscription /
 	// feed / search queries (remote-content §3-4). Tests append rows with
 	// Remote:true + domain/watch_url/stream_url set.
-	remoteSubs   []sqlcgen.ListSubscriptionVideosRow
-	remoteFeed   []sqlcgen.ListPublicVideosSortedRow
-	remoteSearch []sqlcgen.SearchPublicVideosRow
+	remoteSubs []sqlcgen.ListSubscriptionVideosRow
+	// downloadLookups counts batched download-flag reads (podcast feed N+1 fence).
+	downloadLookups int
+	remoteFeed      []sqlcgen.ListPublicVideosSortedRow
+	remoteSearch    []sqlcgen.SearchPublicVideosRow
 	// rejections mirrors video_rejections (0130): video ID -> the moderator's
 	// rejection note. Empty means "never rejected", which is what the query's
 	// COALESCE(..., '') returns.
@@ -2888,6 +2890,17 @@ func (f *videoFakeRepo) CountPublicVideosSorted(ctx context.Context, a sqlcgen.C
 		Sort: "recent", ResultLimit: 1 << 30,
 	})
 	return int64(len(rows)), err
+}
+
+func (f *videoFakeRepo) ListDownloadEnabledVideoIDs(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	f.downloadLookups++
+	var out []uuid.UUID
+	for _, id := range ids {
+		if r, ok := f.videos[id]; ok && r.DownloadEnabled {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 func (f *videoFakeRepo) CountSubscriptionVideos(ctx context.Context, followerID uuid.UUID) (int64, error) {

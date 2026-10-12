@@ -1510,7 +1510,7 @@ func (s *Server) routes() {
 	// the health probes and nodeinfo discovery.
 	if s.cfg.PublicBaseURL != "" && s.videosvc != nil && s.channelsvc != nil {
 		s.echo.GET("/feeds/videos.xml", s.handleVideosFeed)
-		s.echo.GET("/feeds/podcast/videos.xml", s.handlePodcastFeed)
+		s.echo.GET("/feeds/podcast/videos.xml", s.handlePodcastFeed, s.feedRateLimit())
 		s.echo.GET("/services/oembed", s.handleOEmbed)
 		s.echo.GET("/sitemap.xml", s.handleSitemap)
 	}

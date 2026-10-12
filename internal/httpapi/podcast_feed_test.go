@@ -3,10 +3,16 @@ package httpapi
 import (
 	"encoding/xml"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/ratelimit"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 func TestPodcastFeed(t *testing.T) {
@@ -61,6 +67,19 @@ func TestPodcastFeed(t *testing.T) {
 	if strings.Contains(body, "token=") || strings.Contains(body, "X-Amz") {
 		t.Errorf("feed carries a credentialed URL:\n%s", body)
 	}
+	// One batched flag read for the whole page, not a point read per item.
+	if repo.downloadLookups != 1 {
+		t.Errorf("download-flag lookups per render = %d, want exactly 1 (N+1 fence)", repo.downloadLookups)
+	}
+	// Instance downloads off: the feed must empty out even though every
+	// per-video flag is still on.
+	setToggle(t, srv, tok, "downloads_enabled", false)
+	off := get(t, srv, "/feeds/podcast/videos.xml?channel=ada")
+	var offDoc podcastDocument
+	if err := xml.Unmarshal(off.Body.Bytes(), &offDoc); err != nil || len(offDoc.Channel.Items) != 0 {
+		t.Errorf("downloads_enabled=false: items = %d (err %v), want 0", len(offDoc.Channel.Items), err)
+	}
+	setToggle(t, srv, tok, "downloads_enabled", true)
 	// Stable guid across renders.
 	rec2 := get(t, srv, "/feeds/podcast/videos.xml?videoChannelName=ada")
 	var doc2 podcastDocument
@@ -79,5 +98,75 @@ func TestPodcastFeedNeedsOneChannel(t *testing.T) {
 		if rec := get(t, srv, p); rec.Code != http.StatusNotFound {
 			t.Errorf("GET %s = %d, want 404", p, rec.Code)
 		}
+	}
+}
+
+func TestPodcastFeedHidesSensitiveUnderHidePolicy(t *testing.T) {
+	srv, blobs, tcRepo, _, repo := videoServerFull(t, distributionCfg())
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"Spicy","privacy":"public","is_sensitive":true}`)
+	if rec := uploadVideoFile(srv, id, "c.mp4", "video/mp4", "tiny", tok); rec.Code != http.StatusCreated {
+		t.Fatalf("upload = %d", rec.Code)
+	}
+	seedReadyHLS(t, tcRepo, blobs, id)
+	_ = repo
+	count := func() int {
+		var d podcastDocument
+		_ = xml.Unmarshal(get(t, srv, "/feeds/podcast/videos.xml?channel=ada").Body.Bytes(), &d)
+		return len(d.Channel.Items)
+	}
+	applySensitivePolicy(t, srv, "display")
+	if count() != 1 {
+		t.Fatal("display policy: flagged episode should be listed")
+	}
+	applySensitivePolicy(t, srv, "hide")
+	if count() != 0 {
+		t.Error("hide policy: flagged episode leaked into the podcast feed")
+	}
+}
+
+// One episode whose storage probe errors is dropped; the show still renders.
+func TestPodcastFeedToleratesPerItemStorageError(t *testing.T) {
+	srv, blobs, tcRepo, _, _ := videoServerFull(t, distributionCfg())
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	mk := func(title string) string {
+		id := createVideo(t, srv, tok, "ada", `{"title":"`+title+`","privacy":"public"}`)
+		_ = uploadVideoFile(srv, id, "c.mp4", "video/mp4", "tiny", tok)
+		seedReadyHLS(t, tcRepo, blobs, id)
+		return id
+	}
+	mk("Fine")
+	bad := mk("Broken")
+	// A traversal key makes the local backend's Path() fail: an error, not "absent".
+	bid := uuid.MustParse(bad)
+	pl := tcRepo.playlists[bid]
+	pl.MasterKey = "../../escape/master.m3u8"
+	tcRepo.playlists[bid] = pl
+
+	rec := get(t, srv, "/feeds/podcast/videos.xml?channel=ada")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("one broken item turned the feed into %d", rec.Code)
+	}
+	var d podcastDocument
+	if err := xml.Unmarshal(rec.Body.Bytes(), &d); err != nil || len(d.Channel.Items) != 1 || d.Channel.Items[0].Title != "Fine" {
+		t.Errorf("items = %+v (err %v), want only Fine", d.Channel.Items, err)
+	}
+}
+
+func TestPodcastFeedIsRateLimited(t *testing.T) {
+	cfg := distributionCfg()
+	srv := New(cfg, nil, nil,
+		WithRateLimiter(ratelimit.NewLimiter(&fakeCounter{}, 1, time.Minute)),
+		WithVideoService(video.NewService(nil, nil)),
+		WithChannelService(channel.NewService(nil)),
+	)
+	codes := make([]int, 0, 2)
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/feeds/podcast/videos.xml", nil))
+		codes = append(codes, rec.Code)
+	}
+	if codes[1] != http.StatusTooManyRequests {
+		t.Errorf("second request = %d (first %d), want 429", codes[1], codes[0])
 	}
 }
