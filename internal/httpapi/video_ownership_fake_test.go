@@ -70,8 +70,14 @@ func (f *ownershipFakeRepo) ListIncomingVideoOwnershipChanges(_ context.Context,
 		if r.NextOwnerID != a.NextOwnerID || !ok {
 			continue
 		}
-		row := sqlcgen.ListIncomingVideoOwnershipChangesRow{ID: r.ID, Status: r.Status, CreatedAt: r.CreatedAt,
-			UpdatedAt: r.UpdatedAt, VideoID: r.VideoID, VideoTitle: v.Title}
+		// The SQL: the title is the give-time snapshot, and a pending request
+		// the giver can no longer honour reads 'expired'.
+		status := r.Status
+		if status == "pending" && (v.OwnerID != r.InitiatorID || !r.CreatedAt.After(a.ExpiredBefore)) {
+			status = "expired"
+		}
+		row := sqlcgen.ListIncomingVideoOwnershipChangesRow{ID: r.ID, Status: status, CreatedAt: r.CreatedAt,
+			UpdatedAt: r.UpdatedAt, VideoID: r.VideoID, VideoTitle: r.VideoTitle}
 		for _, u := range f.v.users.users {
 			if u.ID == r.InitiatorID {
 				row.InitiatorUsername, row.InitiatorDisplayName = u.Username, u.DisplayName

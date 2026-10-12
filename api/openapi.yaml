@@ -8818,7 +8818,7 @@ paths:
       description: >-
         The video ownership changes addressed to the caller, newest first,
         whatever their status: pending ones are answered with the accept and
-        refuse routes, answered ones stay as history. Paginated via limit
+        refuse routes; answered, withdrawn and expired ones stay as history. Paginated via limit
         (1–100, default 20) and offset.
       tags: [videos]
       security:
@@ -20525,7 +20525,11 @@ components:
           format: uuid
         status:
           type: string
-          enum: [pending, accepted, refused]
+          enum: [pending, accepted, refused, cancelled, expired]
+          description: >-
+            pending is answerable; cancelled = the giver withdrew it; expired =
+            it can no longer be accepted (older than 30 days, or the giver no
+            longer owns the video).
         created_at:
           type: string
           format: date-time
@@ -20541,6 +20545,10 @@ components:
               format: uuid
             title:
               type: string
+              description: >-
+                The title when the video was offered. It does not follow later
+                renames, so an answered request never shows what the video has
+                become since.
         initiator:
           type: object
           description: The account that offered the video (its owner when it did).

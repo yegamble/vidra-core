@@ -181,6 +181,14 @@ func TestListIncomingOwnershipChanges(t *testing.T) {
 	if c.Status != "pending" || c.Video.ID != second || c.Video.Title != "Second" || c.Initiator.Username != "ada" || c.ID == "" {
 		t.Errorf("newest change = %+v", c)
 	}
+	// The title is the one offered: a later rename, or the video passing to
+	// someone else, does not reach an old request.
+	retitled := repo.videos[uuid.MustParse(second)]
+	retitled.Title = "Renamed Later"
+	repo.videos[uuid.MustParse(second)] = retitled
+	if got := listOwnershipChanges(t, srv, bobTok, "?limit=1"); got.Changes[0].Video.Title != "Second" {
+		t.Errorf("listed title after a rename = %q, want the offered title", got.Changes[0].Video.Title)
+	}
 	if mine := listOwnershipChanges(t, srv, adaTok, ""); mine.Total != 0 || len(mine.Changes) != 0 {
 		t.Errorf("the giver's incoming list = %+v, want empty", mine)
 	}
@@ -194,6 +202,13 @@ func TestListIncomingOwnershipChanges(t *testing.T) {
 	}
 	if got := listOwnershipChanges(t, srv, carolTok, ""); got.Total != 1 || got.Changes[0].Video.Title != "Third" {
 		t.Errorf("muter's list = %+v, want the request", got)
+	}
+	// A pending request the giver can no longer honour lists as expired.
+	gone := repo.videos[uuid.MustParse(third)]
+	gone.OwnerID = repo.users.users["bob@example.test"].ID
+	repo.videos[uuid.MustParse(third)] = gone
+	if got := listOwnershipChanges(t, srv, carolTok, ""); got.Changes[0].Status != "expired" {
+		t.Errorf("stale request status = %q, want expired", got.Changes[0].Status)
 	}
 	if n := ownershipNotices(t, srv, carolTok, "ada"); n != 0 {
 		t.Errorf("muter was notified %d times, want 0", n)
