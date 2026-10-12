@@ -170,3 +170,28 @@ func TestInternalVideoNeverOnAnonymousSurfaces(t *testing.T) {
 		t.Errorf("oEmbed = %d, want 401 (not publicly embeddable)", oembed.Code)
 	}
 }
+
+// A signed-in member finds an internal video where they browse — the main feed
+// in every sort, the channel page, and (following the channel) the
+// subscriptions feed — with totals that count it. An anonymous visitor finds
+// it on none of them. Search stays public-only for everyone.
+func TestInternalVideoListedToSignedInMembers(t *testing.T) {
+	env := newInternalPrivacyEnv(t)
+	if rec := postJSONAuth(env.srv, "/api/v1/channels/ada/follow", `{}`, env.userTok); rec.Code/100 != 2 {
+		t.Fatalf("follow = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	for _, path := range []string{"/api/v1/videos?sort=recent", "/api/v1/videos?sort=trending", "/api/v1/channels/ada/videos"} {
+		if listedVideoIDs(t, getWithAuth(env.srv, path, ""))[env.id] {
+			t.Errorf("anonymous %s lists the internal video", path)
+		}
+		if !listedVideoIDs(t, getWithAuth(env.srv, path, env.userTok))[env.id] {
+			t.Errorf("member %s does not list the internal video", path)
+		}
+	}
+	if !listedVideoIDs(t, getWithAuth(env.srv, "/api/v1/me/subscriptions/videos", env.userTok))[env.id] {
+		t.Error("subscriptions feed does not list the followed channel's internal video")
+	}
+	if listedVideoIDs(t, getWithAuth(env.srv, "/api/v1/videos/search?q=Members", env.userTok))[env.id] {
+		t.Error("member search lists the internal video; search stays public-only")
+	}
+}

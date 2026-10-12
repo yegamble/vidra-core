@@ -102,3 +102,120 @@ func TestInternalPrivacyIsStorableAndOffEveryPublicQueryOnRealPG(t *testing.T) {
 		}
 	}
 }
+
+// The member half: a signed-in viewer (a non-NULL viewer_id) finds an internal
+// video on the home/recent/trending feed, its channel page and — following the
+// channel — the subscriptions feed, with totals that agree with the pages. An
+// anonymous viewer (NULL) finds it on none of them. Search stays public-only
+// for everyone: vidra-search suppresses the tier, and the local fallback must
+// not answer differently from it.
+func TestInternalVideosListToSignedInViewersOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	seedUser := func(name string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+			name+suffix, name+suffix+"@example.test").Scan(&id); err != nil {
+			t.Fatalf("seed user %s: %v", name, err)
+		}
+		t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id) })
+		return id
+	}
+	owner, member := seedUser("intown-"), seedUser("intmem-")
+	var channelID, videoID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'Members') RETURNING id`,
+		owner, "intlist-"+suffix).Scan(&channelID); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, $2, 'internal', 'published') RETURNING id`,
+		channelID, "memberfeed"+suffix).Scan(&videoID); err != nil {
+		t.Fatalf("seed internal video: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO channel_follows (follower_id, channel_id) VALUES ($1, $2)`, member, channelID); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+
+	has := func(ids []uuid.UUID) bool {
+		for _, id := range ids {
+			if id == videoID {
+				return true
+			}
+		}
+		return false
+	}
+	surfaces := func(viewer pgtype.UUID) map[string]bool {
+		t.Helper()
+		out := map[string]bool{}
+		feed, err := q.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{ViewerID: viewer, Sort: "recent", ResultLimit: 1000})
+		if err != nil {
+			t.Fatalf("ListPublicVideosSorted: %v", err)
+		}
+		ids := make([]uuid.UUID, 0, len(feed))
+		for _, r := range feed {
+			ids = append(ids, r.ID)
+		}
+		out["feed"] = has(ids)
+		total, err := q.CountPublicVideosSorted(ctx, sqlcgen.CountPublicVideosSortedParams{ViewerID: viewer})
+		if err != nil {
+			t.Fatalf("CountPublicVideosSorted: %v", err)
+		}
+		if int(total) != len(feed) {
+			t.Errorf("feed total %d != page %d (viewer valid=%v)", total, len(feed), viewer.Valid)
+		}
+		chRows, err := q.ListPublicVideosByChannel(ctx, sqlcgen.ListPublicVideosByChannelParams{ChannelID: channelID, ViewerID: viewer, ResultLimit: 50})
+		if err != nil {
+			t.Fatalf("ListPublicVideosByChannel: %v", err)
+		}
+		out["channel page"] = len(chRows) == 1 && chRows[0].ID == videoID
+		chTotal, err := q.CountPublicVideosByChannelVisible(ctx, sqlcgen.CountPublicVideosByChannelVisibleParams{ChannelID: channelID, ViewerID: viewer})
+		if err != nil {
+			t.Fatalf("CountPublicVideosByChannelVisible: %v", err)
+		}
+		out["channel total"] = chTotal == 1
+		hits, err := q.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{Query: "memberfeed" + suffix, ViewerID: viewer, Sort: "relevance", ResultLimit: 50})
+		if err != nil {
+			t.Fatalf("SearchPublicVideos: %v", err)
+		}
+		out["search"] = len(hits) > 0
+		return out
+	}
+
+	for surface, seen := range surfaces(pgtype.UUID{}) {
+		if seen {
+			t.Errorf("anonymous viewer finds the internal video on the %s", surface)
+		}
+	}
+	signedIn := surfaces(pgtype.UUID{Bytes: member, Valid: true})
+	for _, surface := range []string{"feed", "channel page", "channel total"} {
+		if !signedIn[surface] {
+			t.Errorf("signed-in viewer does not find the internal video on the %s", surface)
+		}
+	}
+	if signedIn["search"] {
+		t.Error("search lists the internal video; it must stay public-only like vidra-search")
+	}
+
+	subs, err := q.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{FollowerID: member, ResultLimit: 50})
+	if err != nil {
+		t.Fatalf("ListSubscriptionVideos: %v", err)
+	}
+	subTotal, err := q.CountSubscriptionVideos(ctx, member)
+	if err != nil {
+		t.Fatalf("CountSubscriptionVideos: %v", err)
+	}
+	if len(subs) != 1 || subs[0].ID != videoID || subTotal != 1 {
+		t.Errorf("subscriptions = %d rows (total %d), want the internal video once", len(subs), subTotal)
+	}
+}
