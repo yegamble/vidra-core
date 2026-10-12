@@ -163,3 +163,22 @@ func TestAcceptedInstanceFollowerIsBackfilled(t *testing.T) {
 		t.Errorf("Announces after a re-Follow = %d, want still 2", n)
 	}
 }
+
+// The backfill goes only to the follower's own host: an inbox pointed at a
+// third party must not turn one Follow into a burst of POSTs at it.
+func TestBackfillIsNotReflectedToAnotherHost(t *testing.T) {
+	repo := newInstanceInboxRepo()
+	elsewhere := "https://victim.example/inbox"
+	ra := repo.remoteActors[ptInstance]
+	ra.SharedInboxUrl = &elsewhere
+	repo.remoteActors[ptInstance] = ra
+	repo.inst.outbox = []uuid.UUID{uuid.New(), uuid.New()}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.HandleInbox(context.Background(), ptInstance, instanceFollow(instanceFollowID)); err != nil {
+		t.Fatal(err)
+	}
+	got := sent(t, repo)
+	if len(got["Accept"]) != 1 || len(got["Announce"]) != 0 {
+		t.Errorf("sent Accept %d, Announce %d; want the Accept only", len(got["Accept"]), len(got["Announce"]))
+	}
+}

@@ -79,7 +79,11 @@ func (s *Service) backfillInstanceFollower(ctx context.Context, follower string)
 	if ra.SharedInboxUrl != nil && *ra.SharedInboxUrl != "" {
 		inbox = *ra.SharedInboxUrl
 	}
-	if inbox == "" {
+	// Only to the follower's own server. The inbox comes from a document the
+	// follower wrote, and one Follow turns into instanceBackfillLimit signed
+	// POSTs: pointed at somebody else's host, a Follow/Undo loop would make
+	// this instance an amplifier aimed at a third party.
+	if inbox == "" || !sameHost(inbox, follower) {
 		return nil
 	}
 	ids, err := s.inst.ListInstanceOutboxVideoIDs(ctx, sqlcgen.ListInstanceOutboxVideoIDsParams{ResultLimit: instanceBackfillLimit})
