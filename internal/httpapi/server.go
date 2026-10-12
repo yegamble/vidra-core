@@ -1790,6 +1790,8 @@ func (s *Server) routes() {
 		api.GET("/channels/:handle/videos", s.handleListChannelVideos, s.optionalAuth)
 		api.GET("/videos", s.handleListPublicVideos, s.optionalAuth)
 		api.GET("/me/subscriptions/videos", s.handleListSubscriptionVideos, s.requireAuth)
+		api.GET("/me/videos", s.handleListMyVideos, s.requireAuth)
+		api.POST("/me/videos/bulk", s.handleBulkMyVideos, s.requireAuth)
 		api.GET("/me/saved", s.handleListSavedVideos, s.requireAuth)
 		api.POST("/videos/:id/save", s.handleSaveVideo, s.requireAuth)
 		api.DELETE("/videos/:id/save", s.handleUnsaveVideo, s.requireAuth)

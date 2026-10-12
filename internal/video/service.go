@@ -149,6 +149,8 @@ type Repository interface {
 	ListVideosByChannel(ctx context.Context, arg sqlcgen.ListVideosByChannelParams) ([]sqlcgen.ListVideosByChannelRow, error)
 	CountVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error)
 	ListVideoIDsByChannel(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error)
+	ListOwnerVideos(ctx context.Context, arg sqlcgen.ListOwnerVideosParams) ([]sqlcgen.ListOwnerVideosRow, error)
+	CountOwnerVideos(ctx context.Context, arg sqlcgen.CountOwnerVideosParams) (int64, error)
 	ListPublicVideosByChannel(ctx context.Context, arg sqlcgen.ListPublicVideosByChannelParams) ([]sqlcgen.ListPublicVideosByChannelRow, error)
 	CountPublicVideosByChannelVisible(ctx context.Context, arg sqlcgen.CountPublicVideosByChannelVisibleParams) (int64, error)
 	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
@@ -2370,6 +2372,63 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, sort s
 		it.PublishAt = TimePtr(r.PublishAt) // studio view: badge scheduled videos
 		it.Blocked = r.Blocked              // studio view: badge blocked videos
 		it.BlockReason = r.BlockReason      // ...and why (A16 ruling)
+		items = append(items, it)
+	}
+	return items, total, nil
+}
+
+// OwnerListFilter narrows ListByOwner. A zero field is "no filter".
+type OwnerListFilter struct {
+	Query     string     // case-insensitive title substring (LIKE wildcards are literal)
+	Privacy   string     // exact privacy value
+	State     string     // exact lifecycle state
+	ChannelID *uuid.UUID // one of the owner's channels; a foreign id matches nothing
+}
+
+// likeEscaper makes %, _ and \ literal inside an ILIKE pattern.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// ListByOwner returns one page of EVERY video across the channels ownerID owns
+// (the studio "My videos" view: any state, drafts and private included) plus the
+// filtered total. Ownership is part of the query's WHERE, so a channel_id that
+// is not the caller's matches nothing instead of leaking another account's
+// rows. sort follows ListByChannel.
+func (s *Service) ListByOwner(ctx context.Context, ownerID uuid.UUID, f OwnerListFilter, sort string, limit, offset int32) ([]FeedItem, int64, error) {
+	var q, privacy, state *string
+	if t := strings.TrimSpace(f.Query); t != "" {
+		e := likeEscaper.Replace(t)
+		q = &e
+	}
+	if f.Privacy != "" {
+		privacy = &f.Privacy
+	}
+	if f.State != "" {
+		state = &f.State
+	}
+	var chID pgtype.UUID
+	if f.ChannelID != nil {
+		chID = pgtype.UUID{Bytes: *f.ChannelID, Valid: true}
+	}
+	rows, err := s.repo.ListOwnerVideos(ctx, sqlcgen.ListOwnerVideosParams{
+		OwnerID: ownerID, Q: q, Privacy: privacy, State: state, ChannelID: chID,
+		Sort: NormalizeChannelSort(sort), ResultLimit: limit, ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountOwnerVideos(ctx, sqlcgen.CountOwnerVideosParams{
+		OwnerID: ownerID, Q: q, Privacy: privacy, State: state, ChannelID: chID,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it.AuthorDisplayName = r.AuthorDisplayName
+		it.PublishAt = TimePtr(r.PublishAt)
+		it.Blocked = r.Blocked
+		it.BlockReason = r.BlockReason
 		items = append(items, it)
 	}
 	return items, total, nil

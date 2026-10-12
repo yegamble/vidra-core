@@ -369,6 +369,17 @@ func (f *fakeRepo) ListVideosByChannel(_ context.Context, a sqlcgen.ListVideosBy
 	return pageSlice(out, a.ResultLimit, a.ResultOffset), nil
 }
 
+// ListOwnerVideos / CountOwnerVideos: the owner-wide studio list is proven in the
+// httpapi fake and the store integration test; this fake only has to satisfy
+// Repository.
+func (f *fakeRepo) ListOwnerVideos(context.Context, sqlcgen.ListOwnerVideosParams) ([]sqlcgen.ListOwnerVideosRow, error) {
+	return nil, nil
+}
+
+func (f *fakeRepo) CountOwnerVideos(context.Context, sqlcgen.CountOwnerVideosParams) (int64, error) {
+	return 0, nil
+}
+
 func pageSlice[T any](rows []T, limit, offset int32) []T {
 	lo := min(int(offset), len(rows))
 	rows = rows[lo:]
