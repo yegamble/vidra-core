@@ -3,9 +3,11 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -285,6 +287,75 @@ func TestMovePlaylistItemConcurrent(t *testing.T) {
 	}
 	if got := itemPositions(t, st, playlistID); len(got) != n {
 		t.Fatalf("items after random moves = %d, want %d", len(got), n)
+	}
+}
+
+// TestReorderAndMoveDoNotDeadlock races the full-list PUT reorder against the
+// single-item move on one playlist. The move locks every item row in video_id
+// order; if the reorder locked in any other order (its plan's, or the client's
+// unnest order) the two could each hold a row the other needs, and PostgreSQL
+// would abort one with 40P01 — a 500 to whichever user lost. The reorder is fed
+// DESCENDING video_id order, the worst case against the move's ascending order.
+func TestReorderAndMoveDoNotDeadlock(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t), WithMaxConns(12))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	const n, rounds, perSide = 60, 6, 4
+	playlistID, vids := seedMovePlaylist(t, st, n, func(i int) int { return i + 1 })
+	desc := append([]uuid.UUID(nil), vids...)
+	sort.Slice(desc, func(i, j int) bool { return bytes.Compare(desc[i][:], desc[j][:]) > 0 })
+
+	var mu sync.Mutex
+	var failures []error
+	for round := 0; round < rounds; round++ {
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for w := 0; w < perSide; w++ {
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				<-start
+				if err := q.ReorderPlaylistItems(ctx, sqlcgen.ReorderPlaylistItemsParams{
+					PlaylistID: playlistID, VideoIds: desc,
+				}); err != nil {
+					mu.Lock()
+					failures = append(failures, fmt.Errorf("reorder: %w", err))
+					mu.Unlock()
+				}
+			}()
+			go func(w int) {
+				defer wg.Done()
+				<-start
+				if _, err := q.MovePlaylistItem(ctx, sqlcgen.MovePlaylistItemParams{
+					PlaylistID: playlistID, VideoID: vids[w],
+				}); err != nil {
+					mu.Lock()
+					failures = append(failures, fmt.Errorf("move: %w", err))
+					mu.Unlock()
+				}
+			}(round*perSide + w)
+		}
+		close(start)
+		wg.Wait()
+	}
+	deadlocks := 0
+	for _, err := range failures {
+		if pgconv.SQLState(err) == "40P01" {
+			deadlocks++
+		}
+	}
+	if len(failures) > 0 {
+		t.Fatalf("%d of %d racing statements failed (%d deadlocks); first: %v",
+			len(failures), rounds*perSide*2, deadlocks, failures[0])
+	}
+	if got := itemPositions(t, st, playlistID); len(got) != n {
+		t.Fatalf("items = %d, want %d", len(got), n)
 	}
 }
 

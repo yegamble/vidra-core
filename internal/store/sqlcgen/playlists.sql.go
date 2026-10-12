@@ -464,12 +464,20 @@ func (q *Queries) RemovePlaylistItem(ctx context.Context, arg RemovePlaylistItem
 }
 
 const reorderPlaylistItems = `-- name: ReorderPlaylistItems :exec
+WITH locked AS MATERIALIZED (
+    SELECT video_id
+    FROM playlist_items
+    WHERE playlist_id = $1
+    ORDER BY video_id
+    FOR UPDATE
+)
 UPDATE playlist_items pi
 SET position = src.rn
 FROM (
     SELECT vid, rn::int AS rn
     FROM unnest($2::uuid[]) WITH ORDINALITY AS t(vid, rn)
 ) src
+JOIN locked l ON l.video_id = src.vid
 WHERE pi.playlist_id = $1 AND pi.video_id = src.vid
 `
 
@@ -482,6 +490,12 @@ type ReorderPlaylistItemsParams struct {
 // 1-based index in video_ids. One atomic statement — items not listed keep their
 // position (callers pass the full set), and there is no UNIQUE(position) to
 // transiently collide with mid-update.
+//
+// `locked` takes the row locks in video_id order, the same order
+// MovePlaylistItem uses. Without it the UPDATE locked rows in plan or client
+// order, so a reorder racing a move could each hold a row the other needed and
+// PostgreSQL aborted one as a deadlock. Joining through `locked` means no row
+// is written before it — and every lower video_id — has been locked.
 func (q *Queries) ReorderPlaylistItems(ctx context.Context, arg ReorderPlaylistItemsParams) error {
 	_, err := q.db.Exec(ctx, reorderPlaylistItems, arg.PlaylistID, arg.VideoIds)
 	return err
