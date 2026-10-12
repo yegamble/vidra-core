@@ -129,6 +129,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var ssu *SessionStoreUnavailableError
 	var stg *storage.Error
 	var ale *ATProtoLoginError
+	var acr *AdminCreateRolledBackError
 	var oue *OAuthUpstreamError
 	var mtf *MailTestFailedError
 	var mskm *MailSecretsKeyMissingError
@@ -215,6 +216,10 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 			". Configure a transport on the admin email page — an SMTP relay or an API provider, which is the option that works on a host that blocks outbound 25/465/587 — and it takes effect without a restart. " +
 			"The deploy-time alternative is still MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM, which does need one"
 		code = "mail_not_configured"
+	case errors.As(err, &acr):
+		status = acr.Status
+		message = acr.Message
+		code = "admin_create_rolled_back"
 	case errors.As(err, &ale):
 		status = ale.Status
 		message = ale.Message
@@ -913,3 +918,15 @@ func (e *OAuthProviderLinkedError) Error() string { return "provider_already_lin
 type OAuthNotConfiguredError struct{}
 
 func (e *OAuthNotConfiguredError) Error() string { return "oauth_not_configured" }
+
+// AdminCreateRolledBackError renders a failed POST /admin/users whose account
+// had already been inserted. It carries its own message because the central
+// handler scrubs every 5xx without a stable code, and this message is the only
+// thing telling the admin whether the account was deactivated or may still be
+// active.
+type AdminCreateRolledBackError struct {
+	Status  int
+	Message string
+}
+
+func (e *AdminCreateRolledBackError) Error() string { return e.Message }

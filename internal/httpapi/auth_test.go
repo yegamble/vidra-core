@@ -46,10 +46,12 @@ type regReqRow struct {
 
 // authFakeRepo is a tiny in-memory auth.Repository for handler tests.
 type authFakeRepo struct {
-	users    map[string]sqlcgen.User // keyed by lowercased email
-	sessions map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow
-	resets   map[string]*sqlcgen.PasswordResetToken     // keyed by token hash
-	verifs   map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
+	users map[string]sqlcgen.User // keyed by lowercased email
+	// failDeactivate makes DeactivateUser fail, to test a rollback that cannot roll back.
+	failDeactivate bool
+	sessions       map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow
+	resets         map[string]*sqlcgen.PasswordResetToken     // keyed by token hash
+	verifs         map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
 	// emailChanges mirrors email_change_requests (0129), keyed by token hash.
 	// See auth_email_change_fake_test.go for the methods over it.
 	emailChanges map[string]*sqlcgen.EmailChangeRequest
@@ -218,6 +220,9 @@ func (f *authFakeRepo) SetUserEmailVerified(_ context.Context, id uuid.UUID) err
 }
 
 func (f *authFakeRepo) DeactivateUser(_ context.Context, id uuid.UUID) error {
+	if f.failDeactivate {
+		return errors.New("deactivate refused")
+	}
 	for k, u := range f.users {
 		if u.ID == id {
 			u.IsActive = false
@@ -423,6 +428,12 @@ func (f *authFakeRepo) CreateUser(_ context.Context, a sqlcgen.CreateUserParams)
 	key := strings.ToLower(a.Email)
 	if _, ok := f.users[key]; ok {
 		return sqlcgen.User{}, &pgconn.PgError{Code: "23505"}
+	}
+	// users.username is unique case-insensitively in SQL, like the email.
+	for _, other := range f.users {
+		if strings.EqualFold(other.Username, a.Username) {
+			return sqlcgen.User{}, &pgconn.PgError{Code: "23505"}
+		}
 	}
 	u := sqlcgen.User{
 		ID: uuid.New(), Username: a.Username, Email: a.Email,

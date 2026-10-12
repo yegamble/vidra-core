@@ -3,10 +3,13 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -69,6 +72,12 @@ func (s *Service) AdminIssueResetLink(ctx context.Context, adminID uuid.UUID, ad
 	case target.Role != "user":
 		return AdminResetLink{}, ErrResetTargetStaff
 	}
+	return s.mintResetLink(ctx, targetID)
+}
+
+// mintResetLink is the token half shared by AdminIssueResetLink and
+// AdminIssueSetPasswordLink: it supersedes every unused token and stores a new one.
+func (s *Service) mintResetLink(ctx context.Context, targetID uuid.UUID) (AdminResetLink, error) {
 	raw, hash, err := generateResetToken()
 	if err != nil {
 		return AdminResetLink{}, err
@@ -83,6 +92,74 @@ func (s *Service) AdminIssueResetLink(ctx context.Context, adminID uuid.UUID, ad
 		return AdminResetLink{}, err
 	}
 	return AdminResetLink{Token: raw, ExpiresAt: expires}, nil
+}
+
+// AdminCreateAccountInput is an administrator-created account. There is no
+// password: the account holder sets the first one through a set-password link.
+type AdminCreateAccountInput struct {
+	Username string
+	Email    string
+	Role     string
+}
+
+// AdminCreateAccount creates a password-less account for an administrator after
+// they re-confirm their own password (checked FIRST, like AdminIssueResetLink).
+// It goes through the same gates and the same CreateUser as signup, so the
+// owner-claim gate, the username/email/channel-handle uniqueness (ErrConflict /
+// ErrHandleReserved) and the new-user history default are identical. An empty
+// hash can never verify, so password login stays impossible until the link from
+// AdminIssueSetPasswordLink is redeemed. Signup creates no default channel
+// either (channels are created by the user), so none is created here.
+func (s *Service) AdminCreateAccount(ctx context.Context, adminID uuid.UUID, adminPassword string, in AdminCreateAccountInput) (sqlcgen.User, error) {
+	if err := s.confirmAdminPassword(ctx, adminID, adminPassword); err != nil {
+		return sqlcgen.User{}, err
+	}
+	if err := s.refuseIfOwnerUnclaimed(ctx); err != nil {
+		return sqlcgen.User{}, err
+	}
+	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
+		Username:       strings.TrimSpace(in.Username),
+		Email:          strings.TrimSpace(in.Email),
+		PasswordHash:   "",
+		Role:           in.Role,
+		HistoryEnabled: s.newUserHistoryEnabled(),
+	})
+	if err != nil {
+		if pgconv.IsUniqueViolation(err) {
+			return sqlcgen.User{}, nameConflict(err)
+		}
+		return sqlcgen.User{}, err
+	}
+	return user, nil
+}
+
+// AdminDiscardAccount deactivates an account AdminCreateAccount just made, for a
+// create that failed afterwards (no audit row, no link). It is the rollback:
+// the service has no transaction seam across the creation and the steps after
+// it, and an inactive account cannot sign in, holds no password, and no longer
+// counts toward the active-admin guard. Its unused tokens are withdrawn too.
+func (s *Service) AdminDiscardAccount(ctx context.Context, id uuid.UUID) error {
+	if err := s.repo.DeactivateUser(ctx, id); err != nil {
+		return err
+	}
+	return s.repo.DeleteUnusedPasswordResetTokens(ctx, id)
+}
+
+// AdminIssueSetPasswordLink mints the first-password link for an account the
+// caller just created. Unlike AdminIssueResetLink it has no role gate: the
+// caller is AdminCreateAccount's handler holding a brand-new account (possibly
+// staff), never an arbitrary id.
+func (s *Service) AdminIssueSetPasswordLink(ctx context.Context, targetID uuid.UUID) (AdminResetLink, error) {
+	return s.mintResetLink(ctx, targetID)
+}
+
+// AdminSendSetPasswordLink emails the set-password token through the ordinary
+// reset mail. A relay failure is ErrMailDelivery-wrapped.
+func (s *Service) AdminSendSetPasswordLink(ctx context.Context, email, token string) error {
+	if err := s.mailer.SendPasswordReset(ctx, email, token); err != nil {
+		return fmt.Errorf("%w: %w", ErrMailDelivery, err)
+	}
+	return nil
 }
 
 // AdminWithdrawResetLink deletes the target's unused reset tokens. The handler

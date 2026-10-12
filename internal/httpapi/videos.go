@@ -1900,6 +1900,13 @@ func (s *Server) handleBlockVideo(c echo.Context) error {
 	}
 	// Search: suppress the doc (search-service W4). Best-effort.
 	s.searchEvents.EnqueueVideoSuppress(c.Request().Context(), id, searchevents.SuppressBlocked)
+	// Federation: retract the video from remote followers (Delete + tombstone).
+	// Best-effort — the block has landed and a delivery failure never undoes it.
+	if s.videoFed != nil {
+		if ferr := s.videoFed.UnfederateBlockedVideo(c.Request().Context(), id); ferr != nil {
+			s.logger.WarnContext(c.Request().Context(), "federation unfederate on block failed", "error", ferr, "video_id", id)
+		}
+	}
 	s.purgeVideoEdgeCopies(c.Request().Context(), id, purge)
 	return c.NoContent(http.StatusNoContent)
 }
@@ -1958,7 +1965,28 @@ func (s *Server) handleUnblockVideo(c echo.Context) error {
 	// Search: re-index the doc; the service recomputes eligibility from it
 	// (search-service W4). Best-effort.
 	s.searchEvents.EnqueueVideoUpsert(c.Request().Context(), id)
+	// Federation: peers dropped the video on the block's Delete; re-announce it
+	// (only when a block was actually lifted). Best-effort.
+	if lifted && s.videoFed != nil {
+		if ferr := s.videoFed.RefederateUnblockedVideo(c.Request().Context(), id); ferr != nil {
+			s.logger.WarnContext(c.Request().Context(), "federation re-announce on unblock failed", "error", ferr, "video_id", id)
+		}
+	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+// videoFederator is the federation seam moderation blocks use: retract a blocked
+// video from followers, re-announce it on unblock. *federation.Service satisfies
+// it; nil (federation disabled) is a clean no-op.
+type videoFederator interface {
+	UnfederateBlockedVideo(ctx context.Context, videoID uuid.UUID) error
+	RefederateUnblockedVideo(ctx context.Context, videoID uuid.UUID) error
+}
+
+// WithVideoFederation wires block/unblock federation. Pass it only when
+// FEDERATION_ENABLED is on.
+func WithVideoFederation(f videoFederator) Option {
+	return func(s *Server) { s.videoFed = f }
 }
 
 // ipfsVideoSyncer is the mirror's re-evaluate-one-video seam, with the tally the

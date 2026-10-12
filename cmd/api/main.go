@@ -2235,6 +2235,9 @@ func run() error {
 	}
 	fedsvc = federation.NewService(db.Queries(), fedOpts...)
 	opts = append(opts, httpapi.WithFederationService(fedsvc))
+	if cfg.FederationEnabled {
+		opts = append(opts, httpapi.WithVideoFederation(fedsvc))
+	}
 
 	// ATProto / Bluesky extension (P10.2, .ralph/specs/atproto.md) — v1 outbound
 	// cross-posting only. Always constructed so the /me/atproto routes are a stable
