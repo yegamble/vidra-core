@@ -139,6 +139,12 @@ func TestAdminDecidesInstanceFollowers(t *testing.T) {
 			t.Errorf("no audit event %s", action)
 		}
 	}
+	// The refused attempts (a second accept, a second remove) are audited too.
+	for _, action := range []string{observability.ActionFederationInstanceFollowerAccept, observability.ActionFederationInstanceFollowerRemove} {
+		if e := findAudit(events, action, observability.ResultFailure); e == nil {
+			t.Errorf("no failure audit event %s", action)
+		}
+	}
 }
 
 func TestInstanceFollowersAreAdminOnly(t *testing.T) {

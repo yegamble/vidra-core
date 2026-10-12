@@ -20,7 +20,7 @@ func newAnnounceRepo(channelID, videoID uuid.UUID, privacy string, channelInboxe
 	shared := ptSharedInbox
 	repo.inst = &fakeInstance{reserved: true, followers: map[string]*sqlcgen.GetInstanceFollowerByActorRow{
 		ptInstance: {ID: uuid.New(), State: "accepted"},
-	}}
+	}, outbox: []uuid.UUID{videoID}} // listed: the outbox view would hold it
 	repo.remoteActors = map[string]sqlcgen.RemoteActor{
 		ptInstance: {ActorUrl: ptInstance, InboxUrl: ptInbox, SharedInboxUrl: &shared},
 	}
@@ -166,7 +166,8 @@ func TestAcceptedInstanceFollowerIsBackfilled(t *testing.T) {
 }
 
 // The backfill goes only to the follower's own host: an inbox pointed at a
-// third party must not turn one Follow into a burst of POSTs at it.
+// third party must not turn one Follow into a burst of POSTs at it. (The
+// follow gate already refuses such a follower; this is the second line.)
 func TestBackfillIsNotReflectedToAnotherHost(t *testing.T) {
 	repo := newInstanceInboxRepo()
 	elsewhere := "https://victim.example/inbox"
@@ -175,12 +176,11 @@ func TestBackfillIsNotReflectedToAnotherHost(t *testing.T) {
 	repo.remoteActors[ptInstance] = ra
 	repo.inst.outbox = []uuid.UUID{uuid.New(), uuid.New()}
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
-	if err := svc.HandleInbox(context.Background(), ptInstance, instanceFollow(instanceFollowID)); err != nil {
+	if err := svc.backfillInstanceFollower(context.Background(), ptInstance); err != nil {
 		t.Fatal(err)
 	}
-	got := sent(t, repo)
-	if len(got["Accept"]) != 1 || len(got["Announce"]) != 0 {
-		t.Errorf("sent Accept %d, Announce %d; want the Accept only", len(got["Accept"]), len(got["Announce"]))
+	if len(repo.deliveries) != 0 {
+		t.Errorf("%d deliveries toward another host, want none", len(repo.deliveries))
 	}
 }
 
@@ -212,7 +212,7 @@ func TestBackfillHasAPerActorCooldown(t *testing.T) {
 		t.Fatalf("sent Accept %d, Announce %d; want 2 Accepts and ONE backfill of 2", len(got["Accept"]), len(got["Announce"]))
 	}
 	// Once the window has passed, a new follow is backfilled again.
-	repo.inst.backfilledAt[ptInstance] = time.Now().Add(-instanceBackfillCooldown - time.Minute)
+	repo.inst.backfilledAt["pt.example"] = time.Now().Add(-instanceBackfillCooldown - time.Minute)
 	if err := svc.HandleInbox(ctx, ptInstance, undo("2")); err != nil {
 		t.Fatal(err)
 	}
@@ -221,5 +221,73 @@ func TestBackfillHasAPerActorCooldown(t *testing.T) {
 	}
 	if n := len(sent(t, repo)["Announce"]); n != 4 {
 		t.Errorf("Announces after the window = %d, want a second backfill (4)", n)
+	}
+}
+
+// The cooldown is per HOST: a second actor minted on the same server is the
+// same server, and gets no second backfill inside the window.
+func TestBackfillCooldownIsPerHost(t *testing.T) {
+	repo := newInstanceInboxRepo()
+	repo.inst.outbox = []uuid.UUID{uuid.New()}
+	second := "https://pt.example/accounts/another"
+	repo.remoteActors[second] = sqlcgen.RemoteActor{ActorUrl: second, ActorType: "Application", InboxUrl: second + "/inbox"}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	for i, actor := range []string{ptInstance, second} {
+		body := `{"id":"https://pt.example/follows/h` + string(rune('0'+i)) + `","type":"Follow","actor":"` + actor + `","object":"` + ourInstance + `"}`
+		if err := svc.HandleInbox(context.Background(), actor, []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := sent(t, repo); len(got["Accept"]) != 2 || len(got["Announce"]) != 1 {
+		t.Errorf("sent Accept %d, Announce %d; want both accepted and ONE backfill for the host", len(got["Accept"]), len(got["Announce"]))
+	}
+}
+
+// An owner who opted out of discovery is never announced to instances: not
+// live, and not their edits either. Channel followers are unaffected.
+func TestDiscoveryOptOutKeepsVideosOffInstances(t *testing.T) {
+	channelID, videoID := uuid.New(), uuid.New()
+	repo := newAnnounceRepo(channelID, videoID, "public", "https://a.example/inbox")
+	repo.inst.outbox = nil // the view excludes the opted-out owner's video
+	repo.inst.unlistedChannels = map[uuid.UUID]bool{channelID: true}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.AnnounceVideo(context.Background(), videoID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.UpdateVideo(context.Background(), videoID, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range repo.deliveries {
+		if d.enqueued.InboxUrl == ptSharedInbox {
+			t.Errorf("an opted-out owner's video reached an instance follower: %s", d.enqueued.Payload)
+		}
+	}
+	if got := sent(t, repo); len(got["Create"]) != 1 || len(got["Update"]) != 1 {
+		t.Errorf("channel followers: Create %d, Update %d; want 1 and 1", len(got["Create"]), len(got["Update"]))
+	}
+}
+
+// A queued instance Announce of a video a moderator has since blocked is
+// cancelled at the drain, like a queued Create.
+func TestQueuedAnnounceForBlockedVideoIsNotDelivered(t *testing.T) {
+	channelID, videoID := uuid.New(), uuid.New()
+	repo := newAnnounceRepo(channelID, videoID, "public")
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.AnnounceVideo(context.Background(), videoID); err != nil {
+		t.Fatal(err)
+	}
+	if len(sent(t, repo)["Announce"]) != 1 {
+		t.Fatal("no Announce queued")
+	}
+	v := repo.videosByID[videoID]
+	v.Blocked = true
+	repo.videosByID[videoID] = v
+	if n, err := svc.DrainDeliveries(context.Background(), 10); err != nil || n != 0 {
+		t.Fatalf("DrainDeliveries = %d, %v; want nothing delivered", n, err)
+	}
+	for _, d := range repo.deliveries {
+		if d.state != "failed" || d.lastError != "cancelled: video blocked" {
+			t.Errorf("queued %s: state %q (%q), want cancelled", d.enqueued.Payload[:20], d.state, d.lastError)
+		}
 	}
 }
