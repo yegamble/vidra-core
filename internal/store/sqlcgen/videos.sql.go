@@ -118,6 +118,39 @@ func (q *Queries) CountAdminVideos(ctx context.Context, arg CountAdminVideosPara
 	return column_1, err
 }
 
+const countOwnerVideos = `-- name: CountOwnerVideos :one
+SELECT count(*)::bigint
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE c.owner_id = $1
+  AND ($2::text IS NULL OR v.title ILIKE '%' || $2::text || '%')
+  AND ($3::text IS NULL OR v.privacy = $3::text)
+  AND ($4::text IS NULL OR v.state = $4::text)
+  AND ($5::uuid IS NULL OR v.channel_id = $5::uuid)
+`
+
+type CountOwnerVideosParams struct {
+	OwnerID   uuid.UUID   `json:"owner_id"`
+	Q         *string     `json:"q"`
+	Privacy   *string     `json:"privacy"`
+	State     *string     `json:"state"`
+	ChannelID pgtype.UUID `json:"channel_id"`
+}
+
+// How many rows ListOwnerVideos would return, ignoring pagination.
+func (q *Queries) CountOwnerVideos(ctx context.Context, arg CountOwnerVideosParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countOwnerVideos,
+		arg.OwnerID,
+		arg.Q,
+		arg.Privacy,
+		arg.State,
+		arg.ChannelID,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countPublicVideos = `-- name: CountPublicVideos :one
 SELECT count(*) FROM videos v WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
@@ -178,6 +211,43 @@ type CountPublicVideosByChannelVisibleParams struct {
 // list cannot serve. The channels JOIN exists only to reach c.owner_id.
 func (q *Queries) CountPublicVideosByChannelVisible(ctx context.Context, arg CountPublicVideosByChannelVisibleParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countPublicVideosByChannelVisible, arg.ChannelID, arg.ViewerID, arg.HideSensitive)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countPublicVideosByOwnerVisible = `-- name: CountPublicVideosByOwnerVisible :one
+SELECT count(*)::bigint
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE c.owner_id = $1::uuid AND (v.privacy = 'public' OR (v.privacy = 'internal' AND $2::uuid IS NOT NULL))
+  AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
+  )
+  AND (NOT $3::bool OR NOT v.is_sensitive)
+`
+
+type CountPublicVideosByOwnerVisibleParams struct {
+	OwnerID       uuid.UUID   `json:"owner_id"`
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+	HideSensitive bool        `json:"hide_sensitive"`
+}
+
+// How many rows ListPublicVideosByOwner would return, ignoring pagination.
+// The block predicate must stay identical: CountPublicVideosByChannel above
+// answers the AP outbox's question (it counts blocked videos too) and would
+// over-report this list. Same for the per-viewer mute/block clause added with
+// the A16 ruling — a total taken without it would promise the muter a page the
+// list cannot serve. The channels JOIN exists only to reach c.owner_id.
+func (q *Queries) CountPublicVideosByOwnerVisible(ctx context.Context, arg CountPublicVideosByOwnerVisibleParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countPublicVideosByOwnerVisible, arg.OwnerID, arg.ViewerID, arg.HideSensitive)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -1313,6 +1383,129 @@ func (q *Queries) ListDueScheduledVideos(ctx context.Context, limit int32) ([]Li
 	return items, nil
 }
 
+const listOwnerVideos = `-- name: ListOwnerVideos :many
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at, v.publish_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code,
+       EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
+       COALESCE(
+           (SELECT b.reason FROM video_blocks b WHERE b.video_id = v.id),
+           ''
+       )::text AS block_reason
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE c.owner_id = $1
+  AND ($2::text IS NULL OR v.title ILIKE '%' || $2::text || '%')
+  AND ($3::text IS NULL OR v.privacy = $3::text)
+  AND ($4::text IS NULL OR v.state = $4::text)
+  AND ($5::uuid IS NULL OR v.channel_id = $5::uuid)
+ORDER BY
+    CASE WHEN $6::text = 'published_at' THEN v.created_at END ASC,
+    CASE WHEN $6::text <> 'published_at' THEN v.created_at END DESC,
+    v.id DESC
+LIMIT $8 OFFSET $7
+`
+
+type ListOwnerVideosParams struct {
+	OwnerID      uuid.UUID   `json:"owner_id"`
+	Q            *string     `json:"q"`
+	Privacy      *string     `json:"privacy"`
+	State        *string     `json:"state"`
+	ChannelID    pgtype.UUID `json:"channel_id"`
+	Sort         string      `json:"sort"`
+	ResultOffset int32       `json:"result_offset"`
+	ResultLimit  int32       `json:"result_limit"`
+}
+
+type ListOwnerVideosRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	ChannelID          uuid.UUID          `json:"channel_id"`
+	Title              string             `json:"title"`
+	Description        string             `json:"description"`
+	Privacy            string             `json:"privacy"`
+	State              string             `json:"state"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	PublishAt          pgtype.Timestamptz `json:"publish_at"`
+	Views              int64              `json:"views"`
+	HasThumbnail       bool               `json:"has_thumbnail"`
+	ChannelHandle      string             `json:"channel_handle"`
+	ChannelDisplayName string             `json:"channel_display_name"`
+	AuthorDisplayName  string             `json:"author_display_name"`
+	DurationSeconds    *int32             `json:"duration_seconds"`
+	IsSensitive        bool               `json:"is_sensitive"`
+	SensitiveReason    string             `json:"sensitive_reason"`
+	ShortCode          string             `json:"short_code"`
+	Blocked            bool               `json:"blocked"`
+	BlockReason        string             `json:"block_reason"`
+}
+
+// Every video across ALL channels the caller OWNS (owner_id is the channel's
+// owner, so a foreign channel_id simply matches nothing — it can never widen
+// the scope). Optional filters, each NULL = off: q (case-insensitive title
+// substring, served by videos_title_trgm_idx; the caller escapes LIKE
+// wildcards), privacy, state, channel_id. Same row shape and ordering rules as
+// ListVideosByChannel so the studio list renders unchanged.
+func (q *Queries) ListOwnerVideos(ctx context.Context, arg ListOwnerVideosParams) ([]ListOwnerVideosRow, error) {
+	rows, err := q.db.Query(ctx, listOwnerVideos,
+		arg.OwnerID,
+		arg.Q,
+		arg.Privacy,
+		arg.State,
+		arg.ChannelID,
+		arg.Sort,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOwnerVideosRow
+	for rows.Next() {
+		var i ListOwnerVideosRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Title,
+			&i.Description,
+			&i.Privacy,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PublishAt,
+			&i.Views,
+			&i.HasThumbnail,
+			&i.ChannelHandle,
+			&i.ChannelDisplayName,
+			&i.AuthorDisplayName,
+			&i.DurationSeconds,
+			&i.IsSensitive,
+			&i.SensitiveReason,
+			&i.ShortCode,
+			&i.Blocked,
+			&i.BlockReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPublicVideosByChannel = `-- name: ListPublicVideosByChannel :many
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,
@@ -1506,6 +1699,130 @@ func (q *Queries) ListPublicVideosByIDs(ctx context.Context, arg ListPublicVideo
 	var items []ListPublicVideosByIDsRow
 	for rows.Next() {
 		var i ListPublicVideosByIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Title,
+			&i.Description,
+			&i.Privacy,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Views,
+			&i.HasThumbnail,
+			&i.ChannelHandle,
+			&i.ChannelDisplayName,
+			&i.AuthorDisplayName,
+			&i.DurationSeconds,
+			&i.IsSensitive,
+			&i.SensitiveReason,
+			&i.ShortCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPublicVideosByOwner = `-- name: ListPublicVideosByOwner :many
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE c.owner_id = $1::uuid AND (v.privacy = 'public' OR (v.privacy = 'internal' AND $2::uuid IS NOT NULL))
+  AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  -- A16 ruling: the per-viewer mute/block clause, verbatim from
+  -- ListPublicVideosSorted. It was missing here alone, so a muted account's own
+  -- channel page kept listing everything the mute hid everywhere else, and an
+  -- autosuggest channel hit linked straight to it. viewer_id is NULL for an
+  -- anonymous caller, which makes both NOT EXISTS trivially true.
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
+  )
+  -- Sensitive-content "hide" moved INTO the query (it used to be a Go-side skip
+  -- over the whole result set). With a LIMIT that filter has to be in SQL or a
+  -- page would silently return fewer rows than asked for and the total would
+  -- count rows the caller can never see.
+  AND (NOT $3::bool OR NOT v.is_sensitive)
+ORDER BY
+    CASE WHEN $4::text = 'published_at' THEN v.created_at END ASC,
+    CASE WHEN $4::text <> 'published_at' THEN v.created_at END DESC,
+    v.id DESC
+LIMIT $6 OFFSET $5
+`
+
+type ListPublicVideosByOwnerParams struct {
+	OwnerID       uuid.UUID   `json:"owner_id"`
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+	HideSensitive bool        `json:"hide_sensitive"`
+	Sort          string      `json:"sort"`
+	ResultOffset  int32       `json:"result_offset"`
+	ResultLimit   int32       `json:"result_limit"`
+}
+
+type ListPublicVideosByOwnerRow struct {
+	ID                 uuid.UUID `json:"id"`
+	ChannelID          uuid.UUID `json:"channel_id"`
+	Title              string    `json:"title"`
+	Description        string    `json:"description"`
+	Privacy            string    `json:"privacy"`
+	State              string    `json:"state"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	Views              int64     `json:"views"`
+	HasThumbnail       bool      `json:"has_thumbnail"`
+	ChannelHandle      string    `json:"channel_handle"`
+	ChannelDisplayName string    `json:"channel_display_name"`
+	AuthorDisplayName  string    `json:"author_display_name"`
+	DurationSeconds    *int32    `json:"duration_seconds"`
+	IsSensitive        bool      `json:"is_sensitive"`
+	SensitiveReason    string    `json:"sensitive_reason"`
+	ShortCode          string    `json:"short_code"`
+}
+
+// TWIN of ListPublicVideosByChannel scoped to an ACCOUNT (every channel its
+// owner has — the profile Videos tab): the only difference is the owner scope,
+// so any visibility predicate edited there must be edited here and in the
+// count below. An account's public, published videos with discovery-card data — plus its
+// 'internal' ones when the viewer is signed in (viewer_id non-NULL; 0160: the
+// tier is visible to any signed-in account of this instance, never anonymous).
+func (q *Queries) ListPublicVideosByOwner(ctx context.Context, arg ListPublicVideosByOwnerParams) ([]ListPublicVideosByOwnerRow, error) {
+	rows, err := q.db.Query(ctx, listPublicVideosByOwner,
+		arg.OwnerID,
+		arg.ViewerID,
+		arg.HideSensitive,
+		arg.Sort,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPublicVideosByOwnerRow
+	for rows.Next() {
+		var i ListPublicVideosByOwnerRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ChannelID,

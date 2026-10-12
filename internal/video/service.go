@@ -149,9 +149,13 @@ type Repository interface {
 	ListVideosByChannel(ctx context.Context, arg sqlcgen.ListVideosByChannelParams) ([]sqlcgen.ListVideosByChannelRow, error)
 	CountVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error)
 	ListVideoIDsByChannel(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error)
+	ListOwnerVideos(ctx context.Context, arg sqlcgen.ListOwnerVideosParams) ([]sqlcgen.ListOwnerVideosRow, error)
+	CountOwnerVideos(ctx context.Context, arg sqlcgen.CountOwnerVideosParams) (int64, error)
 	ListPublicVideosByChannel(ctx context.Context, arg sqlcgen.ListPublicVideosByChannelParams) ([]sqlcgen.ListPublicVideosByChannelRow, error)
 	ListDownloadEnabledVideoIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
 	CountPublicVideosByChannelVisible(ctx context.Context, arg sqlcgen.CountPublicVideosByChannelVisibleParams) (int64, error)
+	ListPublicVideosByOwner(ctx context.Context, arg sqlcgen.ListPublicVideosByOwnerParams) ([]sqlcgen.ListPublicVideosByOwnerRow, error)
+	CountPublicVideosByOwnerVisible(ctx context.Context, arg sqlcgen.CountPublicVideosByOwnerVisibleParams) (int64, error)
 	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
 	CountPublicVideosSorted(ctx context.Context, arg sqlcgen.CountPublicVideosSortedParams) (int64, error)
 	ListSubscriptionVideos(ctx context.Context, arg sqlcgen.ListSubscriptionVideosParams) ([]sqlcgen.ListSubscriptionVideosRow, error)
@@ -2376,6 +2380,63 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, sort s
 	return items, total, nil
 }
 
+// OwnerListFilter narrows ListByOwner. A zero field is "no filter".
+type OwnerListFilter struct {
+	Query     string     // case-insensitive title substring (LIKE wildcards are literal)
+	Privacy   string     // exact privacy value
+	State     string     // exact lifecycle state
+	ChannelID *uuid.UUID // one of the owner's channels; a foreign id matches nothing
+}
+
+// likeEscaper makes %, _ and \ literal inside an ILIKE pattern.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// ListByOwner returns one page of EVERY video across the channels ownerID owns
+// (the studio "My videos" view: any state, drafts and private included) plus the
+// filtered total. Ownership is part of the query's WHERE, so a channel_id that
+// is not the caller's matches nothing instead of leaking another account's
+// rows. sort follows ListByChannel.
+func (s *Service) ListByOwner(ctx context.Context, ownerID uuid.UUID, f OwnerListFilter, sort string, limit, offset int32) ([]FeedItem, int64, error) {
+	var q, privacy, state *string
+	if t := strings.TrimSpace(f.Query); t != "" {
+		e := likeEscaper.Replace(t)
+		q = &e
+	}
+	if f.Privacy != "" {
+		privacy = &f.Privacy
+	}
+	if f.State != "" {
+		state = &f.State
+	}
+	var chID pgtype.UUID
+	if f.ChannelID != nil {
+		chID = pgtype.UUID{Bytes: *f.ChannelID, Valid: true}
+	}
+	rows, err := s.repo.ListOwnerVideos(ctx, sqlcgen.ListOwnerVideosParams{
+		OwnerID: ownerID, Q: q, Privacy: privacy, State: state, ChannelID: chID,
+		Sort: NormalizeChannelSort(sort), ResultLimit: limit, ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountOwnerVideos(ctx, sqlcgen.CountOwnerVideosParams{
+		OwnerID: ownerID, Q: q, Privacy: privacy, State: state, ChannelID: chID,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it.AuthorDisplayName = r.AuthorDisplayName
+		it.PublishAt = TimePtr(r.PublishAt)
+		it.Blocked = r.Blocked
+		it.BlockReason = r.BlockReason
+		items = append(items, it)
+	}
+	return items, total, nil
+}
+
 // ListPublicByChannel returns one page of a channel's public, published videos
 // (the public view) with discovery-card data, plus the matching total. When
 // hideSensitive is true, sensitive videos are excluded for the instance-level
@@ -2403,6 +2464,38 @@ func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID, 
 	}
 	total, err := s.repo.CountPublicVideosByChannelVisible(ctx, sqlcgen.CountPublicVideosByChannelVisibleParams{
 		ChannelID: channelID, ViewerID: viewer, HideSensitive: hideSensitive,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it.AuthorDisplayName = r.AuthorDisplayName
+		items = append(items, it)
+	}
+	return items, total, nil
+}
+
+// ListPublicByOwner lists an account's public, published videos across all of
+// its channels (the profile Videos tab) with the same visibility filters as
+// ListPublicByChannel: no private/unlisted/blocked/quarantined/unpublished
+// video, the per-viewer mute/block clause, and sensitive-content hiding.
+func (s *Service) ListPublicByOwner(ctx context.Context, ownerID uuid.UUID, viewerID uuid.UUID, viewerAuthed bool, hideSensitive bool, sort string, limit, offset int32) ([]FeedItem, int64, error) {
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
+	rows, err := s.repo.ListPublicVideosByOwner(ctx, sqlcgen.ListPublicVideosByOwnerParams{
+		OwnerID:       ownerID,
+		ViewerID:      viewer,
+		HideSensitive: hideSensitive,
+		Sort:          NormalizeChannelSort(sort),
+		ResultLimit:   limit,
+		ResultOffset:  offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountPublicVideosByOwnerVisible(ctx, sqlcgen.CountPublicVideosByOwnerVisibleParams{
+		OwnerID: ownerID, ViewerID: viewer, HideSensitive: hideSensitive,
 	})
 	if err != nil {
 		return nil, 0, err

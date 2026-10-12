@@ -605,7 +605,7 @@ func (s *Service) commentStillPublishable(ctx context.Context, commentID uuid.UU
 		}
 		return false, err
 	}
-	if c.DeletedAt.Valid || !c.UserID.Valid {
+	if c.DeletedAt.Valid || !c.UserID.Valid || c.HeldForReview {
 		return false, nil
 	}
 	return s.videoStillPublishable(ctx, c.VideoID)

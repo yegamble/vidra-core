@@ -97,6 +97,48 @@ func (s *Server) handleGetUserProfile(c echo.Context) error {
 	return c.JSON(http.StatusOK, view)
 }
 
+// handleListUserVideos lists an account's public videos across ALL of its
+// channels (the profile Videos tab). Gated exactly like the profile itself: a
+// private, inactive or unknown profile is the same 404, and a signed-in owner
+// previewing their own profile resolves too. The videos are the public channel
+// list's own visibility filter scoped by owner (ListPublicByOwner): public and
+// published only, no moderator-blocked video, the per-viewer mute/block clause
+// and the viewer's sensitive-content setting. Paginated like every list here.
+func (s *Server) handleListUserVideos(c echo.Context) error {
+	ctx := c.Request().Context()
+	username := strings.TrimSpace(c.Param("username"))
+
+	var ownerID uuid.UUID
+	viewerID, _, viewerAuthed := principalFromContext(c)
+	if viewerAuthed {
+		if me, err := s.authsvc.UserByID(ctx, viewerID); err == nil && strings.EqualFold(me.Username, username) {
+			ownerID = me.ID
+		}
+	}
+	if ownerID == uuid.Nil {
+		profile, err := s.authsvc.PublicProfileByUsername(ctx, username)
+		if err != nil {
+			if errors.Is(err, auth.ErrAccountNotFound) {
+				return echo.NewHTTPError(http.StatusNotFound, "profile not found")
+			}
+			return err
+		}
+		ownerID = profile.ID
+	}
+
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, total, err := s.videosvc.ListPublicByOwner(ctx, ownerID, viewerID, viewerAuthed, s.effectiveHideSensitive(c), c.QueryParam("sort"), page.Limit32(), page.Offset32())
+	if err != nil {
+		return err
+	}
+	views := make([]videoView, 0, len(items))
+	for _, it := range items {
+		views = append(views, feedItemView(it))
+	}
+	s.attachIPFSPinned(ctx, views)
+	return c.JSON(http.StatusOK, videoListResponse{Videos: views, pageMeta: page.meta(total)})
+}
+
 // linkedBlueskyHandle returns the account's linked ATProto (Bluesky) handle, or
 // nil when none is linked or the OAuth service is not wired. Used only for the
 // owner's own-profile preview; the public path reads the handle from the profile
