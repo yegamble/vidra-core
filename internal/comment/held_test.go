@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 func TestCreateHeldStoresHeldAndFiresNoFederationHook(t *testing.T) {
@@ -113,6 +115,62 @@ func TestPinRefusesAHeldComment(t *testing.T) {
 }
 
 func author2(username string) author { return author{username, username} }
+
+// ListManagedVideoComments mirrors the review-queue SQL closely enough for the
+// service's mapping: the fake treats every comment as on a managed video
+// titled "Clip" and applies only the held filter (ownership is proven in
+// store.TestManagedCommentQueueOnRealPG).
+func (f *fakeRepo) ListManagedVideoComments(_ context.Context, a sqlcgen.ListManagedVideoCommentsParams) ([]sqlcgen.ListManagedVideoCommentsRow, error) {
+	var rows []sqlcgen.ListManagedVideoCommentsRow
+	for _, c := range f.comments {
+		if a.Held != nil && c.HeldForReview != *a.Held {
+			continue
+		}
+		au, meta := f.authors[uuid.UUID(c.UserID.Bytes)], f.remoteRows[c.ID]
+		rows = append(rows, sqlcgen.ListManagedVideoCommentsRow{
+			ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body, CreatedAt: c.CreatedAt,
+			HeldForReview: c.HeldForReview, AuthorUsername: au.username, AuthorDisplayName: au.displayName,
+			RemoteActorUrl: c.RemoteActorUrl, RemoteAuthorName: meta.name, AuthorDomain: meta.domain,
+			VideoTitle: "Clip",
+		})
+	}
+	return rows, nil
+}
+
+func (f *fakeRepo) CountManagedVideoComments(ctx context.Context, a sqlcgen.CountManagedVideoCommentsParams) (int64, error) {
+	rows, err := f.ListManagedVideoComments(ctx, sqlcgen.ListManagedVideoCommentsParams{UserID: a.UserID, Held: a.Held})
+	return int64(len(rows)), err
+}
+
+func TestListForManagerFiltersHeldAndMapsRows(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+	videoID, eve := uuid.New(), uuid.New()
+	repo.authors[eve] = author2("eve")
+	held, _ := svc.CreateHeld(ctx, videoID, eve, "waiting", nil)
+	_, _ = svc.Create(ctx, videoID, eve, "published", nil)
+	remote := seedRemoteComment(repo, videoID)
+	repo.remoteRows = map[uuid.UUID]remoteRowMeta{remote.ID: {"movies", "tube.example"}}
+
+	yes := true
+	items, total, err := svc.ListForManager(ctx, uuid.New(), &yes, 20, 0)
+	if err != nil || total != 1 || len(items) != 1 || items[0].Comment.ID != held.ID {
+		t.Fatalf("held queue = %+v total=%d err=%v, want only the held comment", items, total, err)
+	}
+	if !items[0].Comment.HeldForReview || items[0].AuthorUsername != "eve" || items[0].VideoTitle != "Clip" {
+		t.Errorf("queue entry = %+v", items[0])
+	}
+	all, total, err := svc.ListForManager(ctx, uuid.New(), nil, 20, 0)
+	if err != nil || total != 3 || len(all) != 3 {
+		t.Fatalf("unfiltered queue = %d rows total=%d err=%v, want 3", len(all), total, err)
+	}
+	for _, it := range all {
+		if it.Comment.ID == remote.ID && (!it.Remote || it.AuthorDomain != "tube.example" || it.AuthorUsername != "movies") {
+			t.Errorf("remote entry not projected as remote: %+v", it)
+		}
+	}
+}
 
 // TestEditForReviewReholdsAndRetracts: an approved comment edited where the
 // edit must be reviewed (a non-reviewer on a requires_approval video) goes
