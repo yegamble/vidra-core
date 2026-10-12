@@ -134,7 +134,6 @@ const (
 // done. Before the fix the job's media and playlist were promoted and the job row
 // was left 'running', blocking every subsequent enqueue for that video.
 func TestLongTranscodeStillCompletes(t *testing.T) {
-
 	repo := newBudgetRepo()
 	videoID := uuid.New()
 	tc := &slowTranscoder{
