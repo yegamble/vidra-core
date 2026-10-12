@@ -16,7 +16,10 @@ func TestMapRole(t *testing.T) {
 }
 
 func TestMapPrivacy(t *testing.T) {
-	cases := map[int]string{1: "public", 2: "unlisted", 3: "private", 4: "private", 0: "private"}
+	// 4 INTERNAL keeps its meaning (any signed-in member); 5 PASSWORD_PROTECTED
+	// arrives without its passwords, so it stays private (owner only) rather
+	// than becoming readable to anyone.
+	cases := map[int]string{1: "public", 2: "unlisted", 3: "private", 4: "internal", 5: "private", 0: "private"}
 	for in, want := range cases {
 		if got := mapPrivacy(in); got != want {
 			t.Errorf("mapPrivacy(%d) = %q, want %q", in, got, want)

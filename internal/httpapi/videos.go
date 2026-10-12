@@ -31,7 +31,8 @@ import (
 // validVideoPrivacy is the allowed privacy set; empty defaults to "private".
 // "password" (CORE-17) is accepted here, but the service additionally requires
 // the video to already hold >=1 password (else 400 password_required-style).
-var validVideoPrivacy = map[string]bool{"public": true, "unlisted": true, "private": true, "password": true}
+// "internal" is PeerTube's signed-in-accounts-only tier (video.PrivacyInternal).
+var validVideoPrivacy = map[string]bool{"public": true, "unlisted": true, "private": true, "password": true, video.PrivacyInternal: true}
 
 // maxSensitiveReasonLen caps the creator's content-warning text (§sensitive
 // content), measured on the trimmed value.
@@ -1797,7 +1798,8 @@ func (s *Server) videoVisibleForMedia(c echo.Context, videoID uuid.UUID) (sqlcge
 }
 
 // videoReadBase applies the base read visibility (unknown id → 404; private →
-// owner only; blocked → moderators only; quarantined → owner + moderators;
+// owner only; internal → any signed-in account, else 401 sign_in_required;
+// blocked → moderators only; quarantined → owner + moderators;
 // scheduled → owner) WITHOUT the password gate. GET /embed-privacy uses it so the
 // embed page can read a password video's embed policy pre-unlock; every other
 // read path wraps it via videoVisibleForRead (which adds the password gate).
@@ -1809,14 +1811,18 @@ func (s *Server) videoReadBase(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVi
 		}
 		return sqlcgen.GetVideoByIDRow{}, err
 	}
-	if v.Privacy == "private" || v.State != "published" {
+	if v.Privacy == "private" || v.Privacy == video.PrivacyInternal || v.State != "published" {
 		s.restoreVideoReadPrincipal(c)
 	}
-	if v.Privacy == "private" {
-		userID, _, ok := principalFromContext(c)
-		if !ok || userID != v.OwnerID {
+	// An internal video refused to an anonymous caller is answered LAST, after
+	// the moderation gates below: a blocked or held internal video must stay the
+	// same indistinguishable 404 as any other hidden one.
+	signInRequired := false
+	if userID, _, ok := principalFromContext(c); !video.PrivacyAdmits(v.Privacy, ok, userID == v.OwnerID) {
+		if v.Privacy != video.PrivacyInternal {
 			return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
 		}
+		signInRequired = true
 	}
 	if hidden, err := s.videoHiddenByBlock(c, videoID); err != nil {
 		return sqlcgen.GetVideoByIDRow{}, err
@@ -1834,6 +1840,9 @@ func (s *Server) videoReadBase(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVi
 	}
 	if rejectedHidesVideo(c, v.State, v.OwnerID) {
 		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if signInRequired {
+		return sqlcgen.GetVideoByIDRow{}, &SignInRequiredError{}
 	}
 	return v, nil
 }

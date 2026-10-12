@@ -3,6 +3,7 @@ package federation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -69,6 +70,7 @@ func TestAnnounceVideoSkips(t *testing.T) {
 		inboxes        []string
 	}{
 		{"private", "private", "published", []string{"https://a.example/inbox"}},
+		{"internal", "internal", "published", []string{"https://a.example/inbox"}},
 		{"not published", "public", "failed", []string{"https://a.example/inbox"}},
 		{"no followers", "public", "published", nil},
 	}
@@ -129,6 +131,31 @@ func TestUpdateVideoGonePublicSendsDelete(t *testing.T) {
 		_ = json.Unmarshal(d.row.Payload, &a)
 		if a.Type != "Delete" {
 			t.Errorf("private video should unfederate via Delete, got %q", a.Type)
+		}
+	}
+}
+
+// public → internal is a withdrawal from the fediverse exactly like public →
+// private: the video stays watchable here, but only to this instance's own
+// signed-in accounts, so every peer that holds a copy must be told to drop it.
+func TestUpdateVideoPublicToInternalSendsDelete(t *testing.T) {
+	channelID, videoID := uuid.New(), uuid.New()
+	repo := newOutboxRepo(channelID, videoID, "internal", "published", []string{"https://a.example/inbox"})
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.UpdateVideo(context.Background(), videoID, true); err != nil {
+		t.Fatalf("UpdateVideo: %v", err)
+	}
+	if len(repo.deliveries) != 1 {
+		t.Fatalf("deliveries = %d, want 1 (the federated copy is retracted)", len(repo.deliveries))
+	}
+	for _, d := range repo.deliveries {
+		var a struct {
+			Type   string `json:"type"`
+			Object string `json:"object"`
+		}
+		_ = json.Unmarshal(d.row.Payload, &a)
+		if a.Type != "Delete" || a.Object != "https://videos.example/videos/"+videoID.String() {
+			t.Errorf("activity = %+v, want Delete of the video", a)
 		}
 	}
 }
@@ -197,6 +224,7 @@ func TestUpdateVideoNeverFederatedSendsNothing(t *testing.T) {
 	}{
 		{"private published", "private", "published"},
 		{"unlisted published", "unlisted", "published"},
+		{"internal published", "internal", "published"},
 		{"public draft", "public", "draft"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -279,5 +307,16 @@ func TestRetractMovedVideoDeletesForOldOnlyFollowers(t *testing.T) {
 	}
 	if got, _ := inboxesOf(repo); len(got) != 2 || !got["https://both.example/inbox"] || !got["https://old.example/inbox"] {
 		t.Errorf("AP-disabled target: inboxes=%v, want both old followers", got)
+	}
+}
+
+// A peer dereferencing an internal video's object URL learns nothing: it is
+// answered exactly like a private one (404), never served as a Video object.
+func TestVideoObjectInternalIsNotFound(t *testing.T) {
+	channelID, videoID := uuid.New(), uuid.New()
+	repo := newOutboxRepo(channelID, videoID, "internal", "published", nil)
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if _, err := svc.VideoObject(context.Background(), videoID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("VideoObject(internal) err = %v, want ErrNotFound", err)
 	}
 }

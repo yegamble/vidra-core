@@ -32,15 +32,20 @@ func mapRole(ptRole int) string {
 }
 
 // mapPrivacy maps a PeerTube VideoPrivacy (1 PUBLIC, 2 UNLISTED, 3 PRIVATE,
-// 4 INTERNAL) to a Vidra privacy. INTERNAL has no Vidra equivalent and maps to
-// the safest option, private. Unknown values default to private.
+// 4 INTERNAL, 5 PASSWORD_PROTECTED) to a Vidra privacy. INTERNAL maps to Vidra's
+// own internal tier (any signed-in account); it used to fall back to private,
+// which hid every migrated "members only" video from its members.
+// PASSWORD_PROTECTED arrives without its passwords, so it — and any unknown
+// value — maps to the safest option, private.
 func mapPrivacy(ptPrivacy int) string {
 	switch ptPrivacy {
 	case 1:
 		return "public"
 	case 2:
 		return "unlisted"
-	default: // 3 PRIVATE, 4 INTERNAL, anything else
+	case 4:
+		return video.PrivacyInternal
+	default: // 3 PRIVATE, 5 PASSWORD_PROTECTED, anything else
 		return "private"
 	}
 }
