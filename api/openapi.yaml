@@ -3823,6 +3823,71 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/feed-token:
+    get:
+      operationId: getFeedToken
+      summary: Whether the caller has a private subscriptions-feed token
+      description: >-
+        Reports whether a private feed token exists and when it was issued. The
+        token itself is stored only as a hash and is never returned here; it is
+        shown once, by POST.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Token status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedTokenStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: rotateFeedToken
+      summary: Create or rotate the private subscriptions-feed token
+      description: >-
+        Mints a fresh random token, replacing any previous one (the old feed
+        URL stops working immediately), and returns it together with the
+        ready-made feed URL (GET /feeds/subscriptions.xml?token=…). This is the
+        only time the raw token is visible. The token grants read access to
+        that one feed and nothing else.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: The new token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedTokenIssued"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: revokeFeedToken
+      summary: Revoke the private subscriptions-feed token
+      description: Deletes the token (idempotent); the feed URL then answers 404.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Revoked (or none existed).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/subscriptions/videos:
     get:
       operationId: listSubscriptionVideos
@@ -7710,6 +7775,8 @@ paths:
         accounts are hidden from the list (mutes are per-viewer), while an
         anonymous viewer sees all comments. A non-public/unpublished or unknown
         video is 404. Paginated via limit (1–100, default 20) and offset.
+        Held comments appear only for their author and the video's reviewers
+        (owner, editor members, staff), in both the page and total.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7742,13 +7809,17 @@ paths:
       description: >-
         Adds a comment by the authenticated user to a public, published video.
         Posting requires the instance-wide comments_enabled setting AND the
-        video's comments_policy to be "enabled" (403 feature_disabled
+        video's comments_policy to not be "disabled" (403 feature_disabled
         otherwise, config-parity W9); reading comments stays open either way.
         Best-effort notifications follow: the video's owner gets a "comment"
         notification, and when parent_id names another user's comment its
         author gets a "comment_reply" one. A user who is both (the owner
         replying under their own video) receives comment_reply only — one
         reply, one notification.
+        On a "requires_approval" video a non-reviewer's comment is held
+        (held_for_review): seen only by its author and the reviewers, not
+        federated, and announcing nothing (comment, comment_reply, mentions)
+        until approved; a held parent is a 422 like an unknown one.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7811,6 +7882,83 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/comments/{commentId}/approve:
+    post:
+      operationId: approveComment
+      summary: Approve a comment held for review
+      description: >-
+        Publishes a held comment: reviewers only (owner, editor members,
+        staff; else 403), and the comment must be on this video (else 404).
+        Idempotent — only the first approval federates it, raises the
+        comment/comment_reply notifications (only while the video is public;
+        never to an approving owner) and is audited (content.comment.approve).
+        Reject with DELETE /comments/{id}. updated_at names the version the
+        reviewer saw: a held comment edited since answers 409, unpublished.
+      tags: [comments]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [updated_at]
+              properties:
+                updated_at:
+                  type: string
+                  format: date-time
+                  description: The comment's updated_at as the reviewer saw it.
+      responses:
+        "200":
+          description: The comment, no longer held.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller cannot review this video's comments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such comment on this video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The held comment changed since that version; review it again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: updated_at is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/comments/{id}:
     patch:
       operationId: updateComment
@@ -7819,6 +7967,8 @@ paths:
         Edits the caller's own comment body. Only the author may edit (moderators
         delete, not edit): another user's comment is 403, an unknown id is 404, and
         a blank or too-long body is 422. Bumps updated_at so `edited` becomes true.
+        On a requires_approval video, a changed body from anyone but the video's
+        reviewers sends the comment back to held_for_review until re-approved.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7871,8 +8021,9 @@ paths:
       summary: Delete a comment
       description: >-
         Deletes a comment. The comment's author may always delete it; a
-        moderator/admin may delete anyone's. An unknown id is 404; a non-author
-        non-moderator is 403.
+        moderator/admin may delete anyone's; the video's owner or an editor
+        member may delete a comment held for review (rejecting it, audited as
+        content.comment.reject). An unknown id is 404; anyone else is 403.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7913,7 +8064,8 @@ paths:
         YouTube-style creator pin). The caller must be able to manage the
         comment's video (its channel owner or an editor) or be a
         moderator/admin. Pinning replaces any existing pin. Only a top-level,
-        non-tombstoned comment can be pinned (422 otherwise). This is local
+        non-tombstoned comment that is not held for review can be pinned (422
+        otherwise). This is local
         metadata — it never edits the comment body and never federates.
       tags: [comments]
       security:
@@ -8745,8 +8897,9 @@ paths:
         Returns the caller's per-type notification switchboard: every known
         notification type (caption_ready, comment, comment_mention, comment_reply,
         federation_follower_request, follow, message, new_registration_request,
-        new_report, new_video, report_resolved, upload_quarantined,
-        video_blocked, video_rejected, video_unblocked) mapped to whether it
+        new_report, new_video, report_message, report_resolved,
+        upload_quarantined, video_blocked, video_rejected, video_unblocked)
+        mapped to whether it
         is delivered. Types never configured default to enabled. The new_report,
         new_registration_request, upload_quarantined and
         federation_follower_request types are only ever delivered to staff
@@ -9658,6 +9811,171 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Malformed report id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/reports:
+    get:
+      operationId: listMyReports
+      summary: List the caller's own abuse reports
+      description: >-
+        "My reports": the reports the caller filed, most recently active first
+        (filing, resolution, or the latest thread message), each with its
+        status, target and thread activity. The moderator's internal note is
+        never included. A video title is shown only while that video is still
+        public, published and not blocked.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of the caller's reports (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyReportListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/reports/{id}:
+    get:
+      operationId: getMyReport
+      summary: Get one of the caller's own abuse reports
+      description: >-
+        One report the caller filed. Anyone else's report (staff included —
+        this is the reporter's view) is the same 404 as an unknown one.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyReport"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such report among the caller's own.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/reports/{id}/messages:
+    get:
+      operationId: listReportMessages
+      summary: Read a report's message thread
+      description: >-
+        The reporter↔staff conversation, oldest first. Open to the report's
+        LOCAL reporter and to admins/moderators; anyone else gets the same 404
+        as an unknown report. A remote Flag report is readable by staff with
+        can_reply=false.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of the thread (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportMessageListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such report, or the caller is neither its reporter nor staff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createReportMessage
+      summary: Post to a report's message thread
+      description: >-
+        Same access as reading. Notifies the other side (report_message, never
+        the body); a staff message is audited by id. 409 on a remote Flag
+        report; posting is limited per user (20/hour by default).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportMessageRequest"
+      responses:
+        "201":
+          description: The message was added.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportMessage"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such report, or the caller is neither its reporter nor staff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The report was filed by another instance and has no local reporter to message.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (empty, over 3000 characters, or a NUL character).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: The caller has posted too many report messages recently.
           content:
             application/json:
               schema:
@@ -17376,6 +17694,28 @@ components:
           description: >-
             Present only when the ledger could not be read for some reason other
             than "not migrated yet". The response is still 200.
+    FeedTokenStatus:
+      type: object
+      required: [configured]
+      properties:
+        configured:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    FeedTokenIssued:
+      type: object
+      required: [token, created_at]
+      properties:
+        token:
+          type: string
+          description: The raw token; shown only once.
+        url:
+          type: string
+          description: Ready-to-paste feed URL; absent when the instance has no public origin configured.
+        created_at:
+          type: string
+          format: date-time
     ErrorResponse:
       type: object
       description: >-
@@ -17918,7 +18258,7 @@ components:
                   description: PT-compatible licence id; 0 = no default licence.
                 comment_policy:
                   type: string
-                  enum: [enabled, disabled]
+                  enum: [enabled, disabled, requires_approval]
                 download_enabled:
                   type: boolean
         broadcast:
@@ -19026,9 +19366,10 @@ components:
             unset.
         comments_policy:
           type: string
-          enum: [enabled, disabled]
+          enum: [enabled, disabled, requires_approval]
           description: >-
-            The per-video comment policy (config-parity W9). Present on the
+            The per-video comment policy (config-parity W9; requires_approval
+            holds comments for the video's reviewers to approve). Present on the
             create/update/detail views; omitted on list/feed views and remote
             cards.
         comments_enabled:
@@ -19036,7 +19377,8 @@ components:
           description: >-
             EFFECTIVE comment availability on the DETAIL view only: the
             instance-wide comments_enabled setting AND this video's
-            comments_policy. Reading existing comments stays open either way;
+            comments_policy (true for requires_approval, which still accepts
+            comments). Reading existing comments stays open either way;
             this reports whether posting is possible.
         download_enabled:
           type: boolean
@@ -19785,11 +20127,10 @@ components:
             is_sensitive; the frontend pairs them.
         comments_policy:
           type: string
-          enum: [enabled, disabled]
+          enum: [enabled, disabled, requires_approval]
           description: >-
             Per-video comment policy (config-parity W9). Omitted/empty seeds
-            the instance's default_comment_policy setting. PeerTube's
-            requires_approval tier is deliberately not supported -> 422.
+            the instance's default_comment_policy setting.
         download_enabled:
           type: boolean
           description: >-
@@ -19871,11 +20212,11 @@ components:
             422 over the cap.
         comments_policy:
           type: string
-          enum: [enabled, disabled]
+          enum: [enabled, disabled, requires_approval]
           description: >-
             Set the per-video comment policy (omit to leave unchanged).
             "disabled" makes new comments answer 403 feature_disabled while
-            reading existing comments stays open.
+            reading existing comments stays open; "requires_approval" holds them.
         download_enabled:
           type: boolean
           description: >-
@@ -19922,7 +20263,7 @@ components:
             $ref: "#/components/schemas/Caption"
     Comment:
       type: object
-      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, remote, created_at, updated_at, edited, deleted, pinned, hearted]
+      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, remote, created_at, updated_at, edited, deleted, pinned, hearted, held_for_review]
       properties:
         id:
           type: string
@@ -19983,6 +20324,11 @@ components:
           description: >-
             True when the video's creator has hearted this comment (a like
             from the uploader).
+        held_for_review:
+          type: boolean
+          description: >-
+            True while the comment awaits approval; only its author and the
+            video's reviewers ever receive it. It cannot be pinned or replied to.
     CommentListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -20875,8 +21221,8 @@ components:
           format: uuid
         type:
           type: string
-          enum: [follow, comment, comment_reply, comment_mention, message, new_video, new_report, new_registration_request, upload_quarantined, federation_follower_request, report_resolved, video_rejected, video_blocked, video_unblocked, caption_ready]
-          description: What happened. follow = someone followed your channel; comment = someone commented on your video (addressed to the video's OWNER); comment_reply = someone replied to a comment you wrote (addressed to the comment's AUTHOR, who is usually not the video's owner; actor = the replier, video_id/video_title = the video the thread lives on, comment_id = the reply). A reply to a comment written by the video's own owner delivers comment_reply only, never both; message = someone sent you a direct message; new_video = a channel you follow published a new public video (actor = the channel owner, channel_handle/channel_display_name = the channel, video_id/video_title = the video; sent only while your bell for that channel is "all"); new_report = a user filed an abuse report (delivered only to admins/moderators; actor = the reporter, report_id/report_status/report_target_type carry the report); new_registration_request = a registration request awaits approval (delivered only to admins/moderators; no actor, the applicant has no account yet); upload_quarantined = an upload entered the quarantine review queue (delivered only to admins/moderators; actor = the uploader, video_id/video_title/channel_handle carry which one); federation_follower_request = a remote actor asked to follow a channel while follower approval is on (delivered only to admins; channel_handle/channel_display_name = the followed channel); report_resolved = a moderator resolved an abuse report you filed; video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one, moderation_note carries the moderator's written reason when they gave one; the moderator's identity is never included); video_blocked = a moderator blocked one of your PUBLISHED videos, so it is no longer available to viewers (video_id/video_title carry which one; distinct from video_rejected, which is the quarantine outcome for an upload that never published — a block takes down live content and is reversible). The moderator's identity is never included, but moderation_note carries their block reason while the block stands (the A16 ruling made it creator-facing) and is absent once the block is lifted; video_unblocked = a moderator LIFTED the block on one of your videos, so it is available again (video_id/video_title carry which one; no moderator identity and no prose — there is nothing to explain about a restoration). It closes the loop video_blocked opens, and a repeated unblock of the same video delivers only one; caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one).
+          enum: [follow, comment, comment_reply, comment_mention, message, new_video, new_report, new_registration_request, upload_quarantined, federation_follower_request, report_resolved, report_message, video_rejected, video_blocked, video_unblocked, caption_ready]
+          description: What happened. follow = someone followed your channel; comment = someone commented on your video (addressed to the video's OWNER); comment_reply = someone replied to a comment you wrote (addressed to the comment's AUTHOR, who is usually not the video's owner; actor = the replier, video_id/video_title = the video the thread lives on, comment_id = the reply). A reply to a comment written by the video's own owner delivers comment_reply only, never both; message = someone sent you a direct message; new_video = a channel you follow published a new public video (actor = the channel owner, channel_handle/channel_display_name = the channel, video_id/video_title = the video; sent only while your bell for that channel is "all"); new_report = a user filed an abuse report (delivered only to admins/moderators; actor = the reporter, report_id/report_status/report_target_type carry the report); new_registration_request = a registration request awaits approval (delivered only to admins/moderators; no actor, the applicant has no account yet); upload_quarantined = an upload entered the quarantine review queue (delivered only to admins/moderators; actor = the uploader, video_id/video_title/channel_handle carry which one); federation_follower_request = a remote actor asked to follow a channel while follower approval is on (delivered only to admins; channel_handle/channel_display_name = the followed channel); report_resolved = a moderator resolved an abuse report you filed; report_message = a new message on an abuse report's thread (the reporter is told when staff write, with no actor — the moderator is never named; staff who receive new_report are told when the reporter writes, actor = the reporter; report_id/report_status/report_target_type carry the report, and the message body is never included); video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one, moderation_note carries the moderator's written reason when they gave one; the moderator's identity is never included); video_blocked = a moderator blocked one of your PUBLISHED videos, so it is no longer available to viewers (video_id/video_title carry which one; distinct from video_rejected, which is the quarantine outcome for an upload that never published — a block takes down live content and is reversible). The moderator's identity is never included, but moderation_note carries their block reason while the block stands (the A16 ruling made it creator-facing) and is absent once the block is lifted; video_unblocked = a moderator LIFTED the block on one of your videos, so it is available again (video_id/video_title carry which one; no moderator identity and no prose — there is nothing to explain about a restoration). It closes the loop video_blocked opens, and a repeated unblock of the same video delivers only one; caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one).
         read:
           type: boolean
         created_at:
@@ -20908,15 +21254,15 @@ components:
         report_id:
           type: string
           format: uuid
-          description: The report's id (new_report and report_resolved notifications). On report_resolved the resolving moderator's identity is never included (actor is absent); on new_report the actor is the reporter.
+          description: The report's id (new_report, report_resolved and report_message notifications). On report_resolved the resolving moderator's identity is never included (actor is absent); on new_report the actor is the reporter.
         report_status:
           type: string
           enum: [open, accepted, rejected]
-          description: The report's current status (new_report and report_resolved notifications).
+          description: The report's current status (new_report, report_resolved and report_message notifications).
         report_target_type:
           type: string
           enum: [video, comment, account, remote_video, message]
-          description: What the report targeted (new_report and report_resolved notifications).
+          description: What the report targeted (new_report, report_resolved and report_message notifications).
         moderation_note:
           type: string
           description: >
@@ -20960,7 +21306,7 @@ components:
             this user. Types with no stored preference default to true.
           additionalProperties:
             type: boolean
-          example: { caption_ready: true, comment: true, comment_mention: true, comment_reply: true, federation_follower_request: true, follow: false, message: true, new_registration_request: true, new_report: true, new_video: true, report_resolved: true, upload_quarantined: true, video_blocked: true, video_rejected: true, video_unblocked: true }
+          example: { caption_ready: true, comment: true, comment_mention: true, comment_reply: true, federation_follower_request: true, follow: false, message: true, new_registration_request: true, new_report: true, new_video: true, report_message: true, report_resolved: true, upload_quarantined: true, video_blocked: true, video_rejected: true, video_unblocked: true }
         email:
           type: object
           description: >-
@@ -20984,8 +21330,8 @@ components:
             Partial map of notification type -> enabled. Only the types present
             are changed. Known types: caption_ready, comment, comment_mention, comment_reply,
             federation_follower_request, follow, message,
-            new_registration_request, new_report, new_video, report_resolved,
-            upload_quarantined, video_blocked, video_rejected, video_unblocked. An unknown
+            new_registration_request, new_report, new_video, report_message,
+            report_resolved, upload_quarantined, video_blocked, video_rejected, video_unblocked. An unknown
             type rejects the whole update (422).
           additionalProperties:
             type: boolean
@@ -21407,6 +21753,106 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/Report"
+    ReportMessage:
+      type: object
+      description: One message in a report's thread.
+      required: [id, body, by_moderator, is_mine, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        body:
+          type: string
+          description: Plain text, as written. Never render it as HTML.
+        by_moderator:
+          type: boolean
+          description: True when written by staff rather than the report's reporter.
+        is_mine:
+          type: boolean
+          description: True when the caller wrote it.
+        author_username:
+          type: string
+          description: Who wrote it — staff viewers only; the reporter is never told which moderator.
+        created_at:
+          type: string
+          format: date-time
+    ReportMessageListResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [messages, can_reply]
+          properties:
+            messages:
+              type: array
+              items:
+                $ref: "#/components/schemas/ReportMessage"
+            can_reply:
+              type: boolean
+              description: False for a remote Flag report (no local reporter to write to).
+    CreateReportMessageRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 3000
+          description: The message, 1–3000 characters after trimming.
+    MyReport:
+      type: object
+      description: >-
+        One of the caller's own reports. There is deliberately no
+        moderator_note: it is staff-internal.
+      required: [id, target_type, status, reason, created_at, last_activity_at, message_count]
+      properties:
+        id:
+          type: string
+          format: uuid
+        target_type:
+          type: string
+          enum: [video, comment, account, remote_video, message]
+        status:
+          type: string
+          enum: [open, accepted, rejected]
+        reason:
+          type: string
+          description: The caller's own words when filing.
+        created_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+        last_activity_at:
+          type: string
+          format: date-time
+          description: The latest of filing, resolution and the newest thread message.
+        message_count:
+          type: integer
+          format: int64
+          minimum: 0
+        video_id:
+          type: string
+          format: uuid
+        video_title:
+          type: string
+          description: Omitted unless the video is still public, published and not blocked.
+        reported_username:
+          type: string
+          description: The reported account (account reports).
+        remote_video_title:
+          type: string
+          description: The reported federated video (remote_video reports).
+    MyReportListResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [reports]
+          properties:
+            reports:
+              type: array
+              items:
+                $ref: "#/components/schemas/MyReport"
     BlockedVideo:
       type: object
       description: A currently-blocked video, for the moderation block-list.

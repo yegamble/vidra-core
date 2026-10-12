@@ -151,6 +151,8 @@ func (f *accountFakeRepo) DeleteNotificationPrefsByUser(context.Context, uuid.UU
 func (f *accountFakeRepo) DeletePasswordResetTokensByUser(context.Context, uuid.UUID) error {
 	return nil
 }
+func (f *accountFakeRepo) DeleteUserFeedTokenByUser(context.Context, uuid.UUID) error { return nil }
+
 func (f *accountFakeRepo) DeleteEmailVerificationTokensByUser(context.Context, uuid.UUID) error {
 	return nil
 }

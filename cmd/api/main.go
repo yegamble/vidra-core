@@ -40,6 +40,7 @@ import (
 	"github.com/vidra/vidra-core/internal/drm"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/feedtoken"
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/instancemod"
@@ -362,6 +363,7 @@ func run() error {
 		return err
 	}
 	opts = append(opts, httpapi.WithInstanceDocumentsService(instancedocssvc))
+	opts = append(opts, httpapi.WithFeedTokenService(feedtoken.NewService(db.Queries())))
 
 	// vidra-search integration (search-service W4). Wired only when
 	// SEARCH_SERVICE_URL is set; otherwise every search surface degrades to local
@@ -587,6 +589,9 @@ func run() error {
 	// being set up. Ten still bounds a stuck tab to ten messages an hour, which
 	// is the failure the limiter exists for.
 	opts = append(opts, httpapi.WithMailTestRateLimiter(ratelimit.NewLimiter(contactCounter, 10, time.Hour)))
+	// Report-thread posts: 20 per USER per hour on the same counter — every
+	// reporter message notifies all staff.
+	opts = append(opts, httpapi.WithReportMessageRateLimiter(ratelimit.NewLimiter(contactCounter, 20, time.Hour)))
 	// Remote-URI search resolution (config-parity W13) is an outbound-fetch
 	// surface, so it carries its own per-caller budget — 10 resolutions per
 	// minute — on the shared Redis counter when rate limiting is on (multi-node
