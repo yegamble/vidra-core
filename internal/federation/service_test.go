@@ -830,6 +830,10 @@ func (f fakeRepo) CreateRemoteComment(_ context.Context, arg sqlcgen.CreateRemot
 	if arg.RemoteObjectUrl != nil {
 		for id, c := range f.commentsByID {
 			if c.RemoteObjectUrl != nil && *c.RemoteObjectUrl == *arg.RemoteObjectUrl {
+				if c.VideoID != arg.VideoID {
+					return sqlcgen.Comment{}, pgx.ErrNoRows // mirrors the conflict arm's WHERE
+				}
+				c.HeldForReview = c.HeldForReview || (arg.HeldForReview && c.Body != arg.Body)
 				c.Body = arg.Body
 				c.UpdatedAt = time.Now()
 				f.commentsByID[id] = c
@@ -841,7 +845,7 @@ func (f fakeRepo) CreateRemoteComment(_ context.Context, arg sqlcgen.CreateRemot
 		ID: uuid.New(), VideoID: arg.VideoID, Body: arg.Body, ParentID: arg.ParentID,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		RemoteActorUrl: arg.RemoteActorUrl, RemoteAuthorName: arg.RemoteAuthorName,
-		RemoteObjectUrl: arg.RemoteObjectUrl,
+		RemoteObjectUrl: arg.RemoteObjectUrl, HeldForReview: arg.HeldForReview,
 	}
 	f.commentsByID[c.ID] = c
 	return c, nil
@@ -852,6 +856,8 @@ func (f fakeRepo) UpdateComment(_ context.Context, arg sqlcgen.UpdateCommentPara
 	if !ok {
 		return sqlcgen.Comment{}, pgx.ErrNoRows
 	}
+	// Mirrors the SQL: a hold re-holds only when the body actually changes.
+	c.HeldForReview = c.HeldForReview || (arg.Hold && c.Body != arg.Body)
 	c.Body = arg.Body
 	c.UpdatedAt = time.Now()
 	f.commentsByID[arg.ID] = c
