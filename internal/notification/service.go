@@ -26,7 +26,11 @@ const (
 	// it. It is deliberately distinct from TypeComment: TypeComment addresses
 	// the VIDEO OWNER ("someone commented on your video") and says nothing to
 	// the person actually being answered, who may not own the video at all.
-	TypeCommentReply   = "comment_reply"
+	TypeCommentReply = "comment_reply"
+	// TypeCommentMention tells a local user that a comment @-mentioned them. It
+	// is created by a set-based fan-out (NotifyCommentMentions) and is skipped
+	// for a user already told about the same comment as a reply or video owner.
+	TypeCommentMention = "comment_mention"
 	TypeMessage        = "message"
 	TypeReportResolved = "report_resolved"
 	TypeVideoRejected  = "video_rejected"
@@ -69,7 +73,7 @@ const (
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeCaptionReady, TypeComment, TypeCommentReply, TypeFederationFollowerRequest, TypeFollow, TypeMessage, TypeNewRegistrationRequest, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeUploadQuarantined, TypeVideoBlocked, TypeVideoRejected, TypeVideoUnblocked}
+	return []string{TypeCaptionReady, TypeComment, TypeCommentMention, TypeCommentReply, TypeFederationFollowerRequest, TypeFollow, TypeMessage, TypeNewRegistrationRequest, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeUploadQuarantined, TypeVideoBlocked, TypeVideoRejected, TypeVideoUnblocked}
 }
 
 // EmailTypes lists, in stable order, the types a user may ALSO receive by email
@@ -91,7 +95,7 @@ func emailType(t string) bool {
 // knownType reports whether t is a recognised notification type.
 func knownType(t string) bool {
 	switch t {
-	case TypeFollow, TypeComment, TypeCommentReply, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeVideoUnblocked, TypeCaptionReady, TypeNewVideo, TypeNewReport,
+	case TypeFollow, TypeComment, TypeCommentReply, TypeCommentMention, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeVideoUnblocked, TypeCaptionReady, TypeNewVideo, TypeNewReport,
 		TypeNewRegistrationRequest, TypeUploadQuarantined, TypeFederationFollowerRequest:
 		return true
 	}
@@ -126,6 +130,7 @@ type Repository interface {
 	UpsertNotificationEmailPref(ctx context.Context, arg sqlcgen.UpsertNotificationEmailPrefParams) error
 	NotifyFollowersOfNewVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
 	NotifyStaffOfNewReport(ctx context.Context, reportID uuid.UUID) (int64, error)
+	NotifyCommentMentions(ctx context.Context, arg sqlcgen.NotifyCommentMentionsParams) (int64, error)
 	NotifyStaffOfNewRegistrationRequest(ctx context.Context, requestID uuid.UUID) (int64, error)
 	NotifyStaffOfQuarantinedUpload(ctx context.Context, videoID uuid.UUID) (int64, error)
 	NotifyStaffOfFederationFollowerRequest(ctx context.Context, remoteFollowID uuid.UUID) (int64, error)
@@ -318,6 +323,21 @@ func (s *Service) NotifyCommentReply(ctx context.Context, actorID, commentID uui
 		return uuid.Nil, err
 	}
 	return recipient, nil
+}
+
+// NotifyCommentMentions tells the local accounts named in usernames (already
+// parsed and lower-cased by internal/mention) that commentID mentioned them,
+// and returns how many were notified. Every selection rule — visibility, no
+// self-notification, mute/block, the recipient's comment_mention preference,
+// and "not already told about this comment" — lives in the SQL (see
+// NotifyCommentMentions), and a unique index makes a repeat a no-op, so an edit
+// that keeps an old mention only notifies the newly added ones. No usernames is
+// a no-op. Best-effort: the caller treats an error as non-fatal.
+func (s *Service) NotifyCommentMentions(ctx context.Context, commentID uuid.UUID, usernames []string) (int64, error) {
+	if len(usernames) == 0 {
+		return 0, nil
+	}
+	return s.repo.NotifyCommentMentions(ctx, sqlcgen.NotifyCommentMentionsParams{CommentID: commentID, Usernames: usernames})
 }
 
 // NotifyMessage records that actorID sent recipientID a direct message in a

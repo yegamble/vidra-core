@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/vidra/vidra-core/internal/mention"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -112,7 +113,7 @@ func (s *Service) federateComment(ctx context.Context, activityType string, comm
 	if err != nil {
 		return err
 	}
-	payload, err := s.buildNoteActivity(activityType, u.Username, c, inReplyTo)
+	payload, err := s.buildNoteActivity(activityType, u.Username, c, inReplyTo, s.mentionTags(ctx, c.Body))
 	if err != nil {
 		return err
 	}
@@ -142,23 +143,49 @@ func (s *Service) commentReplyTarget(ctx context.Context, c sqlcgen.Comment) (st
 // buildNoteActivity renders a Create or Update activity wrapping the comment as
 // an AS Note object, attributed to the commenter's account actor and addressed
 // to the public.
-func (s *Service) buildNoteActivity(activityType, username string, c sqlcgen.Comment, inReplyTo string) ([]byte, error) {
+func (s *Service) buildNoteActivity(activityType, username string, c sqlcgen.Comment, inReplyTo string, tags []map[string]any) ([]byte, error) {
 	accountActor := s.baseURL + "/accounts/" + username
+	note := map[string]any{
+		"id":           s.localCommentURL(c.ID),
+		"type":         "Note",
+		"content":      c.Body,
+		"inReplyTo":    inReplyTo,
+		"attributedTo": accountActor,
+		"to":           []string{publicAudience},
+	}
+	if len(tags) > 0 {
+		note["tag"] = tags
+	}
 	return json.Marshal(map[string]any{
 		"@context": "https://www.w3.org/ns/activitystreams",
 		"id":       accountActor + "/activities/" + strings.ToLower(activityType) + "/" + uuid.NewString(),
 		"type":     activityType,
 		"actor":    accountActor,
 		"to":       []string{publicAudience},
-		"object": map[string]any{
-			"id":           s.localCommentURL(c.ID),
-			"type":         "Note",
-			"content":      c.Body,
-			"inReplyTo":    inReplyTo,
-			"attributedTo": accountActor,
-			"to":           []string{publicAudience},
-		},
+		"object":   note,
 	})
+}
+
+// mentionTags renders the ActivityStreams Mention tags for the LOCAL accounts a
+// comment body @-mentions (PeerTube/Mastodon read these to notify the target).
+// A name that is not an active local account is skipped, so a tag only ever
+// points at a real actor. A remote @user@host mention gets no tag: resolving it
+// to an actor URL needs a WebFinger lookup we do not do on the delivery path.
+func (s *Service) mentionTags(ctx context.Context, body string) []map[string]any {
+	host := hostOf(s.baseURL)
+	var tags []map[string]any
+	for _, name := range mention.LocalUsernames(mention.Parse(body), host) {
+		u, err := s.repo.GetUserActorByUsername(ctx, name)
+		if err != nil {
+			continue
+		}
+		tags = append(tags, map[string]any{
+			"type": "Mention",
+			"href": s.baseURL + "/accounts/" + u.Username,
+			"name": "@" + u.Username + "@" + host,
+		})
+	}
+	return tags
 }
 
 // fanOutAsAccount enqueues one account-signed delivery of payload per distinct
