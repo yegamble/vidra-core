@@ -11,11 +11,15 @@
 -- `deliverable` re-asks at SEND time what creation could not settle for good.
 -- The recipient must still be an active, non-deleted account with a VERIFIED
 -- address: an unproven address may be someone else's inbox, the one way this
--- feature could be aimed at a third party. They must not have since turned the
--- type's email off, muted or blocked the actor, or been blocked by them. The
--- video must not be under a moderation block, a new_video must still be
--- published and public, and a comment must still exist. A row that fails any
--- of these is dropped, never retried.
+-- feature could be aimed at a third party. Their explicit email opt-in AND the
+-- in-app switch for the type must both still be on. They must not have since
+-- muted or blocked the actor, or been blocked by them. A new_video recipient
+-- must still follow the channel with the bell on 'all'. The video must still be
+-- published and public — every email type is raised only on a public video
+-- (comments are refused elsewhere), so anything else means it was hidden since
+-- and its title must not be mailed — and not under a moderation block, and a
+-- comment must still exist. A row that fails any of these is dropped, never
+-- retried.
 WITH due AS (
     SELECT ne.notification_id
     FROM notification_emails ne
@@ -37,9 +41,13 @@ SELECT c.notification_id, c.attempts, c.created_at AS queued_at, n.type, u.email
        n.video_id, COALESCE(v.title, '')::text AS video_title,
        COALESCE(
            u.is_active AND u.deleted_at IS NULL AND u.email_verified
-           AND np.email_enabled IS NOT FALSE
+           AND np.email_enabled IS TRUE AND np.enabled
            AND NOT EXISTS (SELECT 1 FROM video_blocks vb WHERE vb.video_id = n.video_id)
-           AND (n.type <> 'new_video' OR (v.state = 'published' AND v.privacy = 'public'))
+           AND (n.video_id IS NULL OR (v.state = 'published' AND v.privacy = 'public'))
+           AND (n.type <> 'new_video' OR EXISTS (
+               SELECT 1 FROM channel_follows cf
+               WHERE cf.follower_id = n.user_id AND cf.channel_id = n.channel_id
+                 AND cf.notification_setting = 'all'))
            AND (n.comment_id IS NULL OR EXISTS (
                SELECT 1 FROM comments cm WHERE cm.id = n.comment_id AND cm.deleted_at IS NULL))
            AND NOT EXISTS (
@@ -67,3 +75,10 @@ DELETE FROM notification_emails WHERE notification_id = $1;
 -- name: RescheduleNotificationEmail :exec
 -- A send failed: the row is due again after the caller's backoff.
 UPDATE notification_emails SET next_attempt_at = $2 WHERE notification_id = $1;
+
+-- name: DeleteStaleNotificationEmails :execrows
+-- Drop owed emails older than max_age_seconds without claiming them. Used while
+-- the instance has no mail path: the outbox waits untouched for one to be
+-- configured, but never longer than a day-old email is worth sending.
+DELETE FROM notification_emails
+WHERE created_at < now() - make_interval(secs => sqlc.arg('max_age_seconds')::double precision);

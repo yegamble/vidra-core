@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -70,7 +71,7 @@ func TestClaimDueNotificationEmailsOnRealPG(t *testing.T) {
 		}
 		return id
 	}
-	video, blockedVideo, privateVideo := mkVideo("public"), mkVideo("public"), mkVideo("private")
+	video, blockedVideo, privateVideo, unlistedVideo := mkVideo("public"), mkVideo("public"), mkVideo("private"), mkVideo("unlisted")
 	exec(`INSERT INTO video_blocks (video_id, reason) VALUES ($1, 'test')`, blockedVideo)
 
 	// owe queues a notification email for recipient, due long ago so this
@@ -113,6 +114,10 @@ func TestClaimDueNotificationEmailsOnRealPG(t *testing.T) {
 	add := func(name string, verified bool, typ string, videoID uuid.UUID, why string, prep func(u, n uuid.UUID)) uuid.UUID {
 		u := mkUser(name, verified)
 		optIn(u, typ)
+		if typ == "new_video" {
+			// A new_video recipient follows the channel with the bell on.
+			exec(`INSERT INTO channel_follows (follower_id, channel_id) VALUES ($1, $2)`, u, channelID)
+		}
 		n := owe(u, typ, videoID, typ != "new_video")
 		if prep != nil {
 			prep(u, n)
@@ -138,13 +143,33 @@ func TestClaimDueNotificationEmailsOnRealPG(t *testing.T) {
 	add("claim-blocked", true, "comment_reply", video, "blocked by the actor since", func(u, _ uuid.UUID) {
 		exec(`INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)`, actor, u)
 	})
+	add("claim-blocker", true, "comment_reply", video, "blocked the actor since", func(u, _ uuid.UUID) {
+		exec(`INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)`, u, actor)
+	})
+	add("claim-inappoff", true, "comment", video, "turned the in-app type off since", func(u, _ uuid.UUID) {
+		exec(`UPDATE notification_prefs SET enabled = FALSE WHERE user_id = $1`, u)
+	})
+	add("claim-nullemail", true, "comment", video, "no explicit email opt-in", func(u, _ uuid.UUID) {
+		exec(`UPDATE notification_prefs SET email_enabled = NULL WHERE user_id = $1`, u)
+	})
+	add("claim-unfollowed", true, "new_video", video, "unfollowed the channel since", func(u, _ uuid.UUID) {
+		exec(`DELETE FROM channel_follows WHERE follower_id = $1`, u)
+	})
+	add("claim-bellnone", true, "new_video", video, "set the channel bell to none since", func(u, _ uuid.UUID) {
+		exec(`UPDATE channel_follows SET notification_setting = 'none' WHERE follower_id = $1`, u)
+	})
+	add("claim-cprivate", true, "comment", privateVideo, "commented video made private since", nil)
+	add("claim-runlisted", true, "comment_reply", unlistedVideo, "thread's video made unlisted since", nil)
 	add("claim-gone", true, "comment", video, "comment deleted since", func(_, n uuid.UUID) {
 		exec(`UPDATE comments SET deleted_at = now() WHERE id = (SELECT comment_id FROM notifications WHERE id = $1)`, n)
 	})
 	add("claim-vblock", true, "comment", blockedVideo, "video under a moderation block", nil)
 	add("claim-private", true, "new_video", privateVideo, "new video no longer public", nil)
 
-	claim := func(limit int32) map[uuid.UUID]sqlcgen.ClaimDueNotificationEmailsRow {
+	// claim returns only THIS test's rows from one claim, plus how many rows it
+	// claimed in all: a shared database may hold other tests' due rows, which
+	// the claim may take but the assertions must never count.
+	claim := func(limit int32) (map[uuid.UUID]sqlcgen.ClaimDueNotificationEmailsRow, int) {
 		t.Helper()
 		rows, err := q.ClaimDueNotificationEmails(ctx, sqlcgen.ClaimDueNotificationEmailsParams{ClaimLimit: limit, LeaseSeconds: 600})
 		if err != nil {
@@ -159,20 +184,35 @@ func TestClaimDueNotificationEmailsOnRealPG(t *testing.T) {
 				got[r.NotificationID] = r
 			}
 		}
-		return got
+		return got, len(rows)
+	}
+	// claimOurs claims until every one of this test's due rows is in hand or
+	// the queue has nothing due left, however many foreign rows it wades through.
+	claimOurs := func(got map[uuid.UUID]sqlcgen.ClaimDueNotificationEmailsRow) {
+		t.Helper()
+		for len(got) < len(want) {
+			batch, total := claim(100)
+			for id, r := range batch {
+				got[id] = r
+			}
+			if total == 0 {
+				return
+			}
+		}
 	}
 
-	got := claim(4)
-	if len(got) != 4 {
-		t.Fatalf("first claim of 4 returned %d of this test's rows (they are due earliest)", len(got))
+	got, _ := claim(4)
+	if len(got) > 4 {
+		t.Fatalf("first claim of 4 returned %d of this test's rows", len(got))
 	}
-	for id, r := range claim(100) {
-		got[id] = r
-	}
+	claimOurs(got)
 	if len(got) != len(want) {
 		t.Fatalf("claimed %d of %d owed rows", len(got), len(want))
 	}
-	if again := claim(100); len(again) != 0 {
+	// Leased: nothing of ours comes back until the lease runs out.
+	again := map[uuid.UUID]sqlcgen.ClaimDueNotificationEmailsRow{}
+	claimOurs(again)
+	if len(again) != 0 {
 		t.Fatalf("leased rows were claimed again: %d", len(again))
 	}
 
@@ -200,7 +240,8 @@ func TestClaimDueNotificationEmailsOnRealPG(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RescheduleNotificationEmail: %v", err)
 	}
-	retried := claim(100)
+	retried := map[uuid.UUID]sqlcgen.ClaimDueNotificationEmailsRow{}
+	claimOurs(retried)
 	if r, ok := retried[okComment]; !ok || r.Attempts != 2 || len(retried) != 1 {
 		t.Fatalf("after reschedule: %+v, want only the rescheduled row at attempt 2", retried)
 	}
@@ -210,5 +251,115 @@ func TestClaimDueNotificationEmailsOnRealPG(t *testing.T) {
 	var left int
 	if err := st.Pool.QueryRow(ctx, `SELECT count(*) FROM notification_emails WHERE notification_id = $1`, okComment).Scan(&left); err != nil || left != 0 {
 		t.Fatalf("row after delete: %d (err %v), want 0", left, err)
+	}
+}
+
+// TestClaimDueNotificationEmailsIsExclusiveOnRealPG proves two drains claiming
+// at the same moment take DISJOINT rows — the property that stops two api
+// instances mailing the same notification twice. The first claim's transaction
+// is held open while the second runs, under a lock timeout: without SKIP LOCKED
+// the second claim would either block on the first's row locks (and time out)
+// or take the same rows.
+func TestClaimDueNotificationEmailsIsExclusiveOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+
+	suffix := uuid.NewString()[:8]
+	var user uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO users (username, email, password_hash, email_verified) VALUES ($1, $2, 'x', TRUE) RETURNING id`,
+		"claimx-"+suffix, "claimx-"+suffix+"@example.test",
+	).Scan(&user); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, user) })
+
+	// Six owed rows, due before anything else a shared database could hold.
+	ours := map[uuid.UUID]bool{}
+	for i := 0; i < 6; i++ {
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO notifications (user_id, type) VALUES ($1, 'comment') RETURNING id`, user,
+		).Scan(&id); err != nil {
+			t.Fatalf("seed notification: %v", err)
+		}
+		if _, err := st.Pool.Exec(ctx,
+			`INSERT INTO notification_emails (notification_id, next_attempt_at) VALUES ($1, '1970-01-01')`, id,
+		); err != nil {
+			t.Fatalf("seed outbox: %v", err)
+		}
+		ours[id] = true
+	}
+
+	claimIn := func(tx pgx.Tx) map[uuid.UUID]bool {
+		t.Helper()
+		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '3s'`); err != nil {
+			t.Fatalf("lock_timeout: %v", err)
+		}
+		rows, err := sqlcgen.New(tx).ClaimDueNotificationEmails(ctx,
+			sqlcgen.ClaimDueNotificationEmailsParams{ClaimLimit: 3, LeaseSeconds: 600})
+		if err != nil {
+			t.Fatalf("concurrent claim: %v", err)
+		}
+		got := map[uuid.UUID]bool{}
+		for _, r := range rows {
+			if ours[r.NotificationID] {
+				got[r.NotificationID] = true
+			}
+		}
+		return got
+	}
+	tx1, err := st.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin 1: %v", err)
+	}
+	defer func() { _ = tx1.Rollback(context.Background()) }()
+	tx2, err := st.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin 2: %v", err)
+	}
+	defer func() { _ = tx2.Rollback(context.Background()) }()
+
+	first := claimIn(tx1) // holds its row locks: tx1 stays open
+	second := claimIn(tx2)
+	if len(first) != 3 || len(second) != 3 {
+		t.Fatalf("claims took %d and %d of this test's rows, want 3 each", len(first), len(second))
+	}
+	for id := range first {
+		if second[id] {
+			t.Fatalf("notification %s was claimed by both drains", id)
+		}
+	}
+	if err := tx1.Commit(ctx); err != nil {
+		t.Fatalf("commit 1: %v", err)
+	}
+	if err := tx2.Commit(ctx); err != nil {
+		t.Fatalf("commit 2: %v", err)
+	}
+
+	// The prune used while the instance has no mail path takes only rows past
+	// the age limit, claimed or not.
+	var old []uuid.UUID
+	for id := range first {
+		old = append(old, id)
+	}
+	if _, err := st.Pool.Exec(ctx,
+		`UPDATE notification_emails SET created_at = now() - interval '25 hours' WHERE notification_id = ANY($1)`, old,
+	); err != nil {
+		t.Fatalf("age rows: %v", err)
+	}
+	if _, err := sqlcgen.New(st.Pool).DeleteStaleNotificationEmails(ctx, (24 * time.Hour).Seconds()); err != nil {
+		t.Fatalf("DeleteStaleNotificationEmails: %v", err)
+	}
+	var left int
+	if err := st.Pool.QueryRow(ctx, `SELECT count(*) FROM notification_emails ne
+		JOIN notifications n ON n.id = ne.notification_id WHERE n.user_id = $1`, user).Scan(&left); err != nil || left != 3 {
+		t.Fatalf("rows left after prune = %d (err %v), want the 3 younger than a day", left, err)
 	}
 }

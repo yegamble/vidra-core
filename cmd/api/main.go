@@ -3108,11 +3108,12 @@ func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsv
 	}.Run(ctx, logger)
 }
 
-// runNotificationEmailWorker drains the notification email outbox: one bounded
-// batch (notification.EmailBatchSize) per 5 s tick on every instance, whose
-// SKIP LOCKED claims are disjoint. That paces a large fan-out at the relay
-// instead of bursting it. Per-email failures are retried from the queue; only
-// the claim's own failure reaches the loop.
+// runNotificationEmailWorker drains the notification email outbox every 5 s on
+// every instance, whose SKIP LOCKED claims are disjoint. A tick keeps taking
+// bounded batches while they come back full, within a ~4 s budget, so a large
+// fan-out is paced by the relay rather than burst at it or starved by the tick.
+// Per-email failures are retried from the queue; only a claim's own failure
+// reaches the loop.
 func runNotificationEmailWorker(ctx context.Context, logger *slog.Logger, drain *notification.EmailDrain) {
 	jobloop.Loop{
 		Interval: 5 * time.Second,
@@ -3121,7 +3122,7 @@ func runNotificationEmailWorker(ctx context.Context, logger *slog.Logger, drain 
 			FailMsg:   "notification email drain failed",
 			DoneMsg:   "notification emails processed",
 			DoneLevel: slog.LevelDebug,
-			Run:       func(ctx context.Context, _ time.Time) (int, error) { return drain.DrainOnce(ctx) },
+			Run:       func(ctx context.Context, _ time.Time) (int, error) { return drain.Drain(ctx) },
 		}},
 	}.Run(ctx, logger)
 }
