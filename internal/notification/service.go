@@ -63,7 +63,7 @@ func KnownTypes() []string {
 }
 
 // EmailTypes lists, in stable order, the types a user may ALSO receive by email
-// (migration 0156): the three that bring someone back — a new video from a
+// (migration 0157): the three that bring someone back — a new video from a
 // channel they follow, a comment on their video, a reply to their comment. Email
 // is OPT-IN for each, mirroring PeerTube's defaults for the equivalent types
 // (newVideoFromSubscription, newCommentOnMyVideo, commentMention — all web-only
@@ -340,7 +340,7 @@ func (s *Service) NotifyMessage(ctx context.Context, recipientID, actorID, conve
 // to a large follower list a single bounded round trip instead of an N+1 storm.
 // A repeat call for the same video inserts nothing (the partial unique index in
 // migration 0101), so hooks that fire more than once are safe. The same
-// statement queues an email for each follower who opted in (migration 0156) —
+// statement queues an email for each follower who opted in (migration 0157) —
 // queued, never sent inline: an outbox drain mails them in the background.
 //
 // Best-effort, like the other Notify* methods: the caller treats an error as

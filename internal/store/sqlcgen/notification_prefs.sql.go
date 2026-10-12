@@ -44,7 +44,7 @@ type ListNotificationEmailPrefsRow struct {
 	EmailEnabled bool   `json:"email_enabled"`
 }
 
-// A user's EXPLICIT email choices (migration 0156). A NULL email_enabled is the
+// A user's EXPLICIT email choices (migration 0157). A NULL email_enabled is the
 // type's default and is not returned; the service overlays these rows onto it.
 func (q *Queries) ListNotificationEmailPrefs(ctx context.Context, userID uuid.UUID) ([]ListNotificationEmailPrefsRow, error) {
 	rows, err := q.db.Query(ctx, listNotificationEmailPrefs, userID)

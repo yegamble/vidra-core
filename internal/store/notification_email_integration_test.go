@@ -13,7 +13,7 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// TestNotificationEmailOutboxOnRealPG is the proof behind migration 0156: WHO is
+// TestNotificationEmailOutboxOnRealPG is the proof behind migration 0157: WHO is
 // owed a notification email is decided in the same SQL statement that creates
 // the in-app notification, so — like the 0101 fan-out it extends — only a live
 // schema can hold the rule. It asserts the queued set EXACTLY, because the
