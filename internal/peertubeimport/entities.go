@@ -374,6 +374,7 @@ func (im *Importer) importOneChannel(ctx context.Context, ch SourceChannel, r *R
 			DisplayName: ch.DisplayName,
 			Description: ch.Description,
 			CreatedAt:   ch.CreatedAt,
+			Support:     supportToText(ch.Support),
 		})
 		if err != nil {
 			return err
@@ -590,6 +591,7 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 			Privacy:         mapPrivacy(v.Privacy),
 			CommentsPolicy:  mapCommentPolicy(v.CommentsPolicy),
 			DownloadEnabled: v.DownloadEnabled,
+			Support:         supportToText(v.Support),
 			State:           mapVideoState(v.State),
 			Category:        intPtrToText(v.Category),
 			Language:        v.Language,

@@ -8568,7 +8568,7 @@ paths:
       summary: Get the caller's notification preferences
       description: >-
         Returns the caller's per-type notification switchboard: every known
-        notification type (caption_ready, comment, comment_reply,
+        notification type (caption_ready, comment, comment_mention, comment_reply,
         federation_follower_request, follow, message, new_registration_request,
         new_report, new_video, report_resolved, upload_quarantined,
         video_blocked, video_rejected, video_unblocked) mapped to whether it
@@ -11679,6 +11679,90 @@ paths:
                 $ref: "#/components/schemas/BlockedUserListResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/remote-interaction/resolve:
+    get:
+      operationId: resolveRemoteInteraction
+      summary: Find the subscribe URL on a visitor's home fediverse server
+      description: >-
+        The outbound half of remote interaction. A visitor who is not signed in
+        here gives their own fediverse handle (user@host) and an address on THIS
+        instance (a channel or video); the server WebFingers the handle's host
+        through the SSRF-guarded federation fetch and returns that host's
+        subscribe template (rel http://ostatus.org/schema/1.0/subscribe) with
+        {uri} replaced by the escaped target. The client navigates to the
+        returned https URL. Optional auth; signed-out callers need the operator's
+        search_remote_uri_anonymous setting. Rate-limited (fail closed) on the
+        same budget as remote-URI search resolution. Mounted with the federation
+        service; 503 while federation is disabled.
+      tags: [federation]
+      security: []
+      parameters:
+        - name: handle
+          in: query
+          required: true
+          description: The visitor's fediverse handle, user@host (a leading @ is accepted).
+          schema:
+            type: string
+        - name: target
+          in: query
+          required: true
+          description: >-
+            The ActivityPub id of the channel or video on this instance the
+            visitor wants to follow or interact with.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The home-server URL to send the visitor to.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteInteractionResolution"
+        "403":
+          description: >-
+            The caller is signed out and the operator has not enabled remote
+            lookups for anonymous visitors (search_remote_uri_anonymous). The
+            client may fall back to looking the handle up from the browser.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The handle's server advertises no usable subscribe template.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Malformed handle, a target that is not on this instance, or a handle
+            that is a literal non-public address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many lookups from this client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: >-
+            The handle's server could not be reached (or may not be contacted;
+            the two are deliberately indistinguishable).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            Federation is disabled on this instance, or the rate budget is
+            temporarily unavailable.
           content:
             application/json:
               schema:
@@ -18199,6 +18283,13 @@ components:
           example: Ada Makes
         description:
           type: string
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            PeerTube-style free-text (markdown) "support" message, e.g.
+            "Support me on Liberapay: <link>". Omitted when unset. New videos
+            inherit it unless they supply their own.
         created_at:
           type: string
           format: date-time
@@ -18281,6 +18372,12 @@ components:
         description:
           type: string
           maxLength: 1000
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            Markdown support message. An empty string clears it; absent leaves
+            it unchanged.
         activitypub_enabled:
           type: boolean
           description: >-
@@ -18680,6 +18777,12 @@ components:
             moderator prose about a named account and never appears on any public
             surface, on another viewer's read of the same channel, or on the
             video detail endpoint (which stays 404 while the block stands).
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            PeerTube-style free-text (markdown) "support" message for this
+            video. Present on the detail and create/update views when set.
         originally_published_at:
           type: string
           format: date-time
@@ -19471,6 +19574,12 @@ components:
             Optional content-license id (see GET /videos/config); unknown
             value -> 422. Omitted/empty seeds the instance's
             default_video_licence setting (0 = no default, left unset).
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            Markdown support message. Omitted/null inherits the channel's
+            support text at create time; an empty string means none.
         tags:
           type: array
           description: >-
@@ -19545,6 +19654,12 @@ components:
         license:
           type: string
           description: Set the content-license id (see GET /videos/config). Unknown/empty value -> 422.
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            Set the markdown support message; an empty string clears it, absent
+            leaves it unchanged.
         tags:
           type: array
           description: >-
@@ -20181,6 +20296,14 @@ components:
         blocked_at:
           type: string
           format: date-time
+    RemoteInteractionResolution:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: https URL on the visitor's home server to navigate to.
     RemoteBlockListResponse:
       type: object
       required: [actors, total, limit, offset]
@@ -20531,7 +20654,7 @@ components:
           format: uuid
         type:
           type: string
-          enum: [follow, comment, comment_reply, message, new_video, new_report, new_registration_request, upload_quarantined, federation_follower_request, report_resolved, video_rejected, video_blocked, video_unblocked, caption_ready]
+          enum: [follow, comment, comment_reply, comment_mention, message, new_video, new_report, new_registration_request, upload_quarantined, federation_follower_request, report_resolved, video_rejected, video_blocked, video_unblocked, caption_ready]
           description: What happened. follow = someone followed your channel; comment = someone commented on your video (addressed to the video's OWNER); comment_reply = someone replied to a comment you wrote (addressed to the comment's AUTHOR, who is usually not the video's owner; actor = the replier, video_id/video_title = the video the thread lives on, comment_id = the reply). A reply to a comment written by the video's own owner delivers comment_reply only, never both; message = someone sent you a direct message; new_video = a channel you follow published a new public video (actor = the channel owner, channel_handle/channel_display_name = the channel, video_id/video_title = the video; sent only while your bell for that channel is "all"); new_report = a user filed an abuse report (delivered only to admins/moderators; actor = the reporter, report_id/report_status/report_target_type carry the report); new_registration_request = a registration request awaits approval (delivered only to admins/moderators; no actor, the applicant has no account yet); upload_quarantined = an upload entered the quarantine review queue (delivered only to admins/moderators; actor = the uploader, video_id/video_title/channel_handle carry which one); federation_follower_request = a remote actor asked to follow a channel while follower approval is on (delivered only to admins; channel_handle/channel_display_name = the followed channel); report_resolved = a moderator resolved an abuse report you filed; video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one, moderation_note carries the moderator's written reason when they gave one; the moderator's identity is never included); video_blocked = a moderator blocked one of your PUBLISHED videos, so it is no longer available to viewers (video_id/video_title carry which one; distinct from video_rejected, which is the quarantine outcome for an upload that never published — a block takes down live content and is reversible). The moderator's identity is never included, but moderation_note carries their block reason while the block stands (the A16 ruling made it creator-facing) and is absent once the block is lifted; video_unblocked = a moderator LIFTED the block on one of your videos, so it is available again (video_id/video_title carry which one; no moderator identity and no prose — there is nothing to explain about a restoration). It closes the loop video_blocked opens, and a repeated unblock of the same video delivers only one; caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one).
         read:
           type: boolean
@@ -20549,14 +20672,14 @@ components:
         video_id:
           type: string
           format: uuid
-          description: Commented video's id (comment and comment_reply notifications).
+          description: Commented video's id (comment, comment_reply and comment_mention notifications).
         video_title:
           type: string
-          description: Commented video's title (comment and comment_reply notifications).
+          description: Commented video's title (comment, comment_reply and comment_mention notifications).
         comment_id:
           type: string
           format: uuid
-          description: The comment's id — the new comment for comment, the reply for comment_reply.
+          description: The comment's id — the new comment for comment, the reply for comment_reply, the mentioning comment for comment_mention.
         conversation_id:
           type: string
           format: uuid
@@ -20616,7 +20739,7 @@ components:
             this user. Types with no stored preference default to true.
           additionalProperties:
             type: boolean
-          example: { caption_ready: true, comment: true, comment_reply: true, federation_follower_request: true, follow: false, message: true, new_registration_request: true, new_report: true, new_video: true, report_resolved: true, upload_quarantined: true, video_blocked: true, video_rejected: true, video_unblocked: true }
+          example: { caption_ready: true, comment: true, comment_mention: true, comment_reply: true, federation_follower_request: true, follow: false, message: true, new_registration_request: true, new_report: true, new_video: true, report_resolved: true, upload_quarantined: true, video_blocked: true, video_rejected: true, video_unblocked: true }
         email:
           type: object
           description: >-
@@ -20638,7 +20761,7 @@ components:
           type: object
           description: >-
             Partial map of notification type -> enabled. Only the types present
-            are changed. Known types: caption_ready, comment, comment_reply,
+            are changed. Known types: caption_ready, comment, comment_mention, comment_reply,
             federation_follower_request, follow, message,
             new_registration_request, new_report, new_video, report_resolved,
             upload_quarantined, video_blocked, video_rejected, video_unblocked. An unknown

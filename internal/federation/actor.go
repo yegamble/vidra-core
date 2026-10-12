@@ -36,22 +36,24 @@ var apContext = []string{
 // Actor is an ActivityPub actor document (Person for accounts, Group for
 // channels). Only public data — never the private key.
 type Actor struct {
-	Context           []string         `json:"@context"`
-	ID                string           `json:"id"`
-	Type              string           `json:"type"`
-	PreferredUsername string           `json:"preferredUsername"`
-	Name              string           `json:"name,omitempty"`
-	Summary           string           `json:"summary,omitempty"`
-	URL               string           `json:"url,omitempty"`
-	Icon              *Image           `json:"icon,omitempty"`
-	Image             *Image           `json:"image,omitempty"`
-	Inbox             string           `json:"inbox"`
-	Outbox            string           `json:"outbox"`
-	Followers         string           `json:"followers"`
-	Following         string           `json:"following"`
-	Endpoints         *Endpoints       `json:"endpoints,omitempty"`
-	AttributedTo      []AttributedItem `json:"attributedTo,omitempty"`
-	PublicKey         PublicKey        `json:"publicKey"`
+	Context           []string `json:"@context"`
+	ID                string   `json:"id"`
+	Type              string   `json:"type"`
+	PreferredUsername string   `json:"preferredUsername"`
+	Name              string   `json:"name,omitempty"`
+	Summary           string   `json:"summary,omitempty"`
+	// Support is PeerTube's channel "support" text (Group actors only).
+	Support      string           `json:"support,omitempty"`
+	URL          string           `json:"url,omitempty"`
+	Icon         *Image           `json:"icon,omitempty"`
+	Image        *Image           `json:"image,omitempty"`
+	Inbox        string           `json:"inbox"`
+	Outbox       string           `json:"outbox"`
+	Followers    string           `json:"followers"`
+	Following    string           `json:"following"`
+	Endpoints    *Endpoints       `json:"endpoints,omitempty"`
+	AttributedTo []AttributedItem `json:"attributedTo,omitempty"`
+	PublicKey    PublicKey        `json:"publicKey"`
 }
 
 // Image is an ActivityStreams Image object: an actor's avatar (icon) or banner
@@ -93,9 +95,16 @@ type JRD struct {
 // JRDLink is a single WebFinger link relation.
 type JRDLink struct {
 	Rel  string `json:"rel"`
-	Type string `json:"type"`
-	Href string `json:"href"`
+	Type string `json:"type,omitempty"`
+	Href string `json:"href,omitempty"`
+	// Template carries an RFC 7033 link template ({uri} placeholder) instead
+	// of an href — the remote-interaction subscribe link uses it.
+	Template string `json:"template,omitempty"`
 }
+
+// SubscribeRel is the OStatus rel a WebFinger document uses to advertise
+// "send your users here to follow/interact from their home instance".
+const SubscribeRel = "http://ostatus.org/schema/1.0/subscribe"
 
 // AccountActor returns the ActivityPub Person document for a local account,
 // minting its keypair on first request. Unknown/inactive username → ErrNotFound.
@@ -162,6 +171,7 @@ func (s *Service) ChannelActor(ctx context.Context, handle string) (*Actor, erro
 	}
 	base := s.baseURL + "/video-channels/" + s.channelActorHandle(ctx, ch)
 	actor := buildActor(base, "Group", ch.Handle, ch.DisplayName, ch.Description, pub)
+	actor.Support = federatedSupport(ch.Support)
 	actor.AttributedTo = []AttributedItem{{
 		Type: "Person",
 		ID:   s.baseURL + "/accounts/" + owner.Username,
@@ -299,7 +309,11 @@ func (s *Service) WebFinger(ctx context.Context, resource string) (*JRD, error) 
 	if accountURL == "" && channelURL == "" {
 		return nil, ErrNotFound
 	}
-	return jrd(resource, accountURL, channelURL), nil
+	out := jrd(resource, accountURL, channelURL)
+	// Advertise the inbound remote-interaction page so other servers can send
+	// their users here to follow this content while signed in on vidra.
+	out.Links = append(out.Links, JRDLink{Rel: SubscribeRel, Template: s.baseURL + "/remote-interaction?uri={uri}"})
+	return out, nil
 }
 
 // jrd renders the JRD for one resource. Either URL may be empty; when only the

@@ -1657,7 +1657,7 @@ func run() error {
 	ratingsvc := rating.NewService(db.Queries())
 	opts = append(opts, httpapi.WithRatingService(ratingsvc))
 
-	notifsvc = notification.NewService(db.Queries())
+	notifsvc = notification.NewService(db.NotificationRepository())
 	opts = append(opts, httpapi.WithNotificationService(notifsvc))
 
 	playersettingssvc := playersettings.NewService(db.Queries(),
@@ -2247,6 +2247,9 @@ func run() error {
 		// comment or account) lands in the local moderation queue and fans
 		// out new_report to staff, exactly as a local report does.
 		federation.WithFlagReporting(moderationsvc.ReportFromRemote, notifsvc.NotifyNewReport),
+		// A federated comment whose Mention tag names one of our users raises
+		// the same comment_mention notification as a local @mention.
+		federation.WithCommentMentionNotifier(notifsvc.NotifyCommentMentions),
 		// A follow that lands in the approval queue pings the admins who
 		// approve it (migration 0156).
 		federation.WithFollowerRequestHook(staffQueueHook("federation_follower_request",

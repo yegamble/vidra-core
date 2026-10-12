@@ -465,8 +465,8 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		Category: a.Category, Language: a.Language, License: a.License,
 		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive, SensitiveReason: a.SensitiveReason,
 		CommentsPolicy: a.CommentsPolicy, DownloadEnabled: a.DownloadEnabled,
-		PublishAfterTranscode: a.PublishAfterTranscode,
-		CreatedAt:             time.Now(), UpdatedAt: time.Now(),
+		PublishAfterTranscode: a.PublishAfterTranscode, Support: a.Support,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.videos[v.ID] = sqlcgen.GetVideoByIDRow{
 		ID: v.ID, ShortCode: v.ShortCode, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
@@ -474,8 +474,8 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		Category: v.Category, Language: v.Language, License: v.License,
 		PublishAt: v.PublishAt, IsSensitive: v.IsSensitive, SensitiveReason: v.SensitiveReason,
 		CommentsPolicy: v.CommentsPolicy, DownloadEnabled: v.DownloadEnabled,
-		PublishAfterTranscode: v.PublishAfterTranscode,
-		OwnerID:               owner,
+		PublishAfterTranscode: v.PublishAfterTranscode, Support: v.Support,
+		OwnerID: owner,
 	}
 	return v, nil
 }
@@ -553,7 +553,7 @@ func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 		OriginallyPublishedAt: r.OriginallyPublishedAt,
 		IsSensitive:           r.IsSensitive, SensitiveReason: r.SensitiveReason,
 		CommentsPolicy: r.CommentsPolicy, DownloadEnabled: r.DownloadEnabled,
-		PublishAfterTranscode: r.PublishAfterTranscode,
+		PublishAfterTranscode: r.PublishAfterTranscode, Support: r.Support,
 	}
 }
 
@@ -739,6 +739,12 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 	}
 	if a.PublishAfterTranscode != nil {
 		r.PublishAfterTranscode = *a.PublishAfterTranscode
+	}
+	if a.Support != nil { // NULL leaves it; '' clears it to NULL (NULLIF in the query)
+		r.Support = nil
+		if *a.Support != "" {
+			r.Support = a.Support
+		}
 	}
 	if a.ChannelID.Valid {
 		// COALESCE(narg('channel_id'), channel_id); the owner follows the channel

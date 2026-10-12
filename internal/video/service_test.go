@@ -265,7 +265,7 @@ func (f *fakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoParams) (
 		ID: uuid.New(), ShortCode: fakeShortCode(), ChannelID: a.ChannelID, Title: a.Title,
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
 		Category: a.Category, Language: a.Language, License: a.License,
-		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive,
+		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive, Support: a.Support,
 		PublishAfterTranscode: a.PublishAfterTranscode,
 		CreatedAt:             time.Now(), UpdatedAt: time.Now(),
 	}

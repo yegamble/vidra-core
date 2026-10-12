@@ -77,6 +77,22 @@ func mapVideoState(ptState int) string {
 // intPtrToText renders an optional PeerTube numeric taxonomy id (category /
 // licence) as the text form Vidra stores (migration 0025: "PeerTube-compatible
 // numeric ids, as text"). nil stays nil (unset).
+// supportToText maps a source support string to the nullable column value:
+// trimmed, NULL when blank, capped at video.MaxSupportLen characters so one
+// over-long source value (PeerTube's own limit is 1000, but a hand-edited
+// database is not bound by it) cannot trip the column CHECK and fail a whole
+// channel or video.
+func supportToText(s string) *string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	if r := []rune(s); len(r) > video.MaxSupportLen {
+		s = string(r[:video.MaxSupportLen])
+	}
+	return &s
+}
+
 func intPtrToText(v *int) *string {
 	if v == nil {
 		return nil

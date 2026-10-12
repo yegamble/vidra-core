@@ -626,9 +626,9 @@ func (q *Queries) CountVideosByChannel(ctx context.Context, channelID uuid.UUID)
 }
 
 const createVideo = `-- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason, support)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support
 `
 
 type CreateVideoParams struct {
@@ -645,6 +645,7 @@ type CreateVideoParams struct {
 	DownloadEnabled       bool               `json:"download_enabled"`
 	PublishAfterTranscode bool               `json:"publish_after_transcode"`
 	SensitiveReason       string             `json:"sensitive_reason"`
+	Support               *string            `json:"support"`
 }
 
 func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video, error) {
@@ -662,6 +663,7 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		arg.DownloadEnabled,
 		arg.PublishAfterTranscode,
 		arg.SensitiveReason,
+		arg.Support,
 	)
 	var i Video
 	err := row.Scan(
@@ -689,6 +691,7 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		&i.ShortCode,
 		&i.PeertubeUuid,
 		&i.TranscodeGeneration,
+		&i.Support,
 	)
 	return i, err
 }
@@ -705,7 +708,7 @@ func (q *Queries) DeleteVideo(ctx context.Context, id uuid.UUID) error {
 const getVideoByID = `-- name: GetVideoByID :one
 SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license, v.publish_at, v.originally_published_at,
-       v.is_sensitive, v.sensitive_reason,
+       v.is_sensitive, v.sensitive_reason, v.support,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
        c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
@@ -756,6 +759,7 @@ type GetVideoByIDRow struct {
 	OriginallyPublishedAt   pgtype.Timestamptz `json:"originally_published_at"`
 	IsSensitive             bool               `json:"is_sensitive"`
 	SensitiveReason         string             `json:"sensitive_reason"`
+	Support                 *string            `json:"support"`
 	CommentsPolicy          string             `json:"comments_policy"`
 	DownloadEnabled         bool               `json:"download_enabled"`
 	PublishAfterTranscode   bool               `json:"publish_after_transcode"`
@@ -790,6 +794,7 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 		&i.OriginallyPublishedAt,
 		&i.IsSensitive,
 		&i.SensitiveReason,
+		&i.Support,
 		&i.CommentsPolicy,
 		&i.DownloadEnabled,
 		&i.PublishAfterTranscode,
@@ -1106,7 +1111,7 @@ func (q *Queries) ListAdminVideos(ctx context.Context, arg ListAdminVideosParams
 }
 
 const listChannelOutboxVideos = `-- name: ListChannelOutboxVideos :many
-SELECT v.id, v.title, v.description, v.short_code,
+SELECT v.id, v.title, v.description, v.short_code, v.support,
        v.created_at, v.updated_at, v.publish_at, v.originally_published_at,
        vm.duration_seconds,
        EXISTS (
@@ -1164,6 +1169,7 @@ type ListChannelOutboxVideosRow struct {
 	Title                 string             `json:"title"`
 	Description           string             `json:"description"`
 	ShortCode             string             `json:"short_code"`
+	Support               *string            `json:"support"`
 	CreatedAt             time.Time          `json:"created_at"`
 	UpdatedAt             time.Time          `json:"updated_at"`
 	PublishAt             pgtype.Timestamptz `json:"publish_at"`
@@ -1210,6 +1216,7 @@ func (q *Queries) ListChannelOutboxVideos(ctx context.Context, arg ListChannelOu
 			&i.Title,
 			&i.Description,
 			&i.ShortCode,
+			&i.Support,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.PublishAt,
@@ -2625,7 +2632,7 @@ UPDATE videos
 SET state      = $1,
     updated_at = now()
 WHERE id = $2
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support
 `
 
 type SetVideoStateParams struct {
@@ -2661,6 +2668,7 @@ func (q *Queries) SetVideoState(ctx context.Context, arg SetVideoStateParams) (V
 		&i.ShortCode,
 		&i.PeertubeUuid,
 		&i.TranscodeGeneration,
+		&i.Support,
 	)
 	return i, err
 }
@@ -2680,13 +2688,15 @@ SET title       = COALESCE($1, title),
     download_enabled = COALESCE($11, download_enabled),
     publish_after_transcode = COALESCE($12, publish_after_transcode),
     originally_published_at = COALESCE($13, originally_published_at),
+    -- support (0159): NULL leaves it; '' clears it to NULL (the column's "unset").
+    support     = CASE WHEN $14::text IS NULL THEN support ELSE NULLIF($14::text, '') END,
     -- Move to another channel (T20). channel_id is the only ownership column a
     -- video has (owner is derived through channels), so this one assignment IS
     -- the move; authorization on both channels is the HTTP layer's job.
-    channel_id  = COALESCE($14, channel_id),
+    channel_id  = COALESCE($15, channel_id),
     updated_at  = now()
-WHERE id = $15
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation
+WHERE id = $16
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support
 `
 
 type UpdateVideoParams struct {
@@ -2703,6 +2713,7 @@ type UpdateVideoParams struct {
 	DownloadEnabled       *bool              `json:"download_enabled"`
 	PublishAfterTranscode *bool              `json:"publish_after_transcode"`
 	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
+	Support               *string            `json:"support"`
 	ChannelID             pgtype.UUID        `json:"channel_id"`
 	ID                    uuid.UUID          `json:"id"`
 }
@@ -2722,6 +2733,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		arg.DownloadEnabled,
 		arg.PublishAfterTranscode,
 		arg.OriginallyPublishedAt,
+		arg.Support,
 		arg.ChannelID,
 		arg.ID,
 	)
@@ -2751,6 +2763,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		&i.ShortCode,
 		&i.PeertubeUuid,
 		&i.TranscodeGeneration,
+		&i.Support,
 	)
 	return i, err
 }
