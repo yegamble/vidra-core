@@ -8,8 +8,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/admin"
@@ -49,6 +51,21 @@ type adminUserView struct {
 	// returns at all. A pending enrollment reads as false, exactly as the
 	// account's own status endpoint reports it.
 	MFAEnabled bool `json:"mfa_enabled"`
+	// The ban explanation (0154): why, when and by whom an inactive account was
+	// banned. Null on an account that was never banned or was reinstated.
+	BanReason *string    `json:"ban_reason"`
+	BannedAt  *time.Time `json:"banned_at"`
+	BannedBy  *string    `json:"banned_by"`
+}
+
+// withBan attaches the ban explanation to a view.
+func (v adminUserView) withBan(reason *string, at *time.Time, by pgtype.UUID) adminUserView {
+	v.BanReason, v.BannedAt = reason, at
+	if by.Valid {
+		id := uuid.UUID(by.Bytes).String()
+		v.BannedBy = &id
+	}
+	return v
 }
 
 func newAdminUserView(u sqlcgen.User, usedBytes int64, mfaEnabled bool) adminUserView {
@@ -79,7 +96,7 @@ func newAdminUserViewFromRow(r sqlcgen.ListUsersRow) adminUserView {
 		BypassQuarantine: r.BypassQuarantine,
 		DisplayName:      r.DisplayName, StorageQuotaBytes: r.StorageQuotaBytes,
 		CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt, IsOwner: r.IsOwner,
-	}, r.StorageUsedBytes, r.MfaEnabled)
+	}, r.StorageUsedBytes, r.MfaEnabled).withBan(r.BanReason, pgconv.TimeOrNil(r.BannedAt), r.BannedBy)
 }
 
 // Page bounds for the admin user list. These are the user list's OWN limits:
@@ -137,6 +154,9 @@ type updateUserRequest struct {
 	EmailVerified     *bool           `json:"email_verified"`
 	BypassQuarantine  *bool           `json:"bypass_quarantine"`
 	StorageQuotaBytes json.RawMessage `json:"storage_quota_bytes"`
+	// BanReason accompanies is_active=false: stored, shown to staff, and mailed
+	// to the user. Required from a moderator, optional from an admin.
+	BanReason *string `json:"ban_reason"`
 }
 
 // quotaField decodes the tri-state storage_quota_bytes field: set=false when
@@ -169,6 +189,12 @@ func (r updateUserRequest) Validate() []FieldError {
 	if r.Role != nil && !admin.ValidRole(*r.Role) {
 		return []FieldError{{Field: "role", Message: "must be one of user, moderator, admin"}}
 	}
+	if r.BanReason != nil && (r.IsActive == nil || *r.IsActive) {
+		return []FieldError{{Field: "ban_reason", Message: "is only valid together with is_active=false"}}
+	}
+	if r.BanReason != nil && utf8.RuneCountInString(*r.BanReason) > admin.MaxBanReasonLen {
+		return []FieldError{{Field: "ban_reason", Message: "must be at most 500 characters"}}
+	}
 	return nil
 }
 
@@ -176,7 +202,7 @@ func (r updateUserRequest) Validate() []FieldError {
 // Behind requireRole(admin). Self-demotion/self-deactivation is rejected; an
 // unknown id is 404. Emits an audit event.
 func (s *Server) handleUpdateUser(c echo.Context) error {
-	callerID, _, err := mustPrincipal(c)
+	callerID, callerRole, err := mustPrincipal(c)
 	if err != nil {
 		return err
 	}
@@ -188,6 +214,11 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
+	// A moderator's ban must say why: the reason is the user's statement of reasons.
+	if callerRole == admin.RoleModerator && in.IsActive != nil && !*in.IsActive &&
+		(in.BanReason == nil || strings.TrimSpace(*in.BanReason) == "") {
+		return &ValidationError{Fields: []FieldError{{Field: "ban_reason", Message: "is required when banning"}}}
+	}
 	quotaSet, quotaValue, _ := in.quotaField() // already validated
 
 	res, err := s.adminsvc.UpdateUserDetailed(c.Request().Context(), callerID, targetID, admin.UpdateUserInput{
@@ -197,9 +228,14 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 		BypassQuarantine:  in.BypassQuarantine,
 		SetStorageQuota:   quotaSet,
 		StorageQuotaBytes: quotaValue,
+		ActorRole:         callerRole,
+		BanReason:         in.BanReason,
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, admin.ErrModeratorForbidden):
+			s.auditAdminUserRefusal(c, observability.ActionAdminUserUpdate, callerID, targetID, "moderator_forbidden")
+			return echo.NewHTTPError(http.StatusForbidden, "moderators can only ban or unban ordinary accounts")
 		case errors.Is(err, admin.ErrNotFound):
 			return echo.NewHTTPError(http.StatusNotFound, "user not found")
 		case errors.Is(err, admin.ErrSelfChange):
@@ -225,6 +261,7 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	s.notifyBanChange(c, res, in)
 	// The ledger carries BOTH: the structured field list a consumer can read
 	// without parsing, and the human line the admin audit view already renders.
 	s.auditEvent(c, audit.Event{
@@ -233,7 +270,36 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 		ResourceType: auditResourceUser, ResourceID: targetID.String(),
 		Changes: adminUserChanges(res, in),
 	})
-	return c.JSON(http.StatusOK, newAdminUserView(res.After, used, mfaEnabled))
+	view := newAdminUserView(res.After, used, mfaEnabled)
+	if ban, ok := s.adminsvc.Ban(c.Request().Context(), targetID); ok && !res.After.IsActive {
+		at := ban.BannedAt
+		view = view.withBan(&ban.Reason, &at, ban.BannedBy)
+	}
+	return c.JSON(http.StatusOK, view)
+}
+
+// notifyBanChange mails the user when their ban state flips: the suspension
+// notice carries the stated reason (the DSA statement of reasons), unban a short
+// reinstatement. Best-effort: a mail failure is logged without the address or
+// reason and never fails the action.
+func (s *Server) notifyBanChange(c echo.Context, res admin.UpdateResult, in updateUserRequest) {
+	if in.IsActive == nil || res.Before.IsActive == res.After.IsActive {
+		return
+	}
+	ctx := c.Request().Context()
+	var err error
+	if !res.After.IsActive {
+		reason := ""
+		if in.BanReason != nil {
+			reason = strings.TrimSpace(*in.BanReason)
+		}
+		err = s.authsvc.NotifyAccountSuspended(ctx, res.After.Email, reason)
+	} else {
+		err = s.authsvc.NotifyAccountReinstated(ctx, res.After.Email)
+	}
+	if err != nil {
+		s.logger.WarnContext(ctx, "ban notice not delivered", "error", err, "target", res.After.ID.String())
+	}
 }
 
 // auditResourceUser is the audit envelope's resource type for an account.
@@ -299,6 +365,10 @@ func adminChangeReason(targetID uuid.UUID, in updateUserRequest) string {
 	}
 	if in.IsActive != nil {
 		parts = append(parts, "is_active="+strconv.FormatBool(*in.IsActive))
+	}
+	if in.BanReason != nil {
+		// The length only: the text is prose written for the user, not the ledger.
+		parts = append(parts, "ban_reason_len="+strconv.Itoa(utf8.RuneCountInString(*in.BanReason)))
 	}
 	if in.EmailVerified != nil {
 		parts = append(parts, "email_verified="+strconv.FormatBool(*in.EmailVerified))

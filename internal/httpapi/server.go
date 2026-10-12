@@ -1661,9 +1661,9 @@ func (s *Server) routes() {
 
 		// Registration approval queue (admin-only). Present whenever auth is wired;
 		// only meaningful when REGISTRATION_REQUIRE_APPROVAL is on.
-		api.GET("/admin/registration-requests", s.handleListRegistrationRequests, s.requireAuth, s.requireRole(admin.RoleAdmin))
-		api.POST("/admin/registration-requests/:id/approve", s.handleApproveRegistration, s.requireAuth, s.requireRole(admin.RoleAdmin))
-		api.POST("/admin/registration-requests/:id/reject", s.handleRejectRegistration, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.GET("/admin/registration-requests", s.handleListRegistrationRequests, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/registration-requests/:id/approve", s.handleApproveRegistration, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/registration-requests/:id/reject", s.handleRejectRegistration, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
 	// Account lifecycle (P4 export/import + §1 hard delete). The self-delete
@@ -2170,14 +2170,17 @@ func (s *Server) routes() {
 		api.POST("/admin/watched-word-matches/:id/resolve", s.handleResolveWatchedWordMatch, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
-	// Admin user management is admin-only (not moderators).
+	// Admin user management is admin-only, except listing and ban/unban of
+	// ordinary accounts, which moderators share (per-action rule in the service).
 	if s.adminsvc != nil {
-		api.GET("/admin/users", s.handleListUsers, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.GET("/admin/users", s.handleListUsers, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		// Admin-created account (PeerTube POST /users): no admin-chosen password,
 		// the holder gets a set-password link. Caller-password step-up + strict
 		// limiter, exactly like the reset-link route below.
 		api.POST("/admin/users", s.handleAdminCreateUser, s.adminPasswordStepUpMW()...)
-		api.PATCH("/admin/users/:id", s.handleUpdateUser, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// Moderators reach PATCH too, but only to ban/unban ordinary accounts:
+		// the service enforces that per action (PeerTube MANAGE_USERS).
+		api.PATCH("/admin/users/:id", s.handleUpdateUser, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		// Administrator removal of a user's second factor (A05 ruling 2): the
 		// operator answer to a lost authenticator AND lost recovery codes,
 		// which self-service cannot reach by construction. Admin-only, and it

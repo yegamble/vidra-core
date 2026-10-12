@@ -8,8 +8,11 @@ package admin
 import (
 	"context"
 	"errors"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -53,7 +56,16 @@ var (
 	// does not apply. The recovery from zero admins is a database edit, so this
 	// is refused rather than warned about.
 	ErrLastAdmin = errors.New("admin: this is the last active admin; the instance would have none")
+	// ErrModeratorForbidden means a moderator tried something beyond banning or
+	// unbanning an ordinary account (PeerTube MANAGE_USERS: regular users only,
+	// no role changes). Enforced per action in the service, not per route.
+	ErrModeratorForbidden = errors.New("admin: moderators can only ban or unban ordinary accounts")
+	// ErrBanReasonTooLong: the reason is stored and mailed to the user, capped at MaxBanReasonLen.
+	ErrBanReasonTooLong = errors.New("admin: ban reason is too long")
 )
+
+// MaxBanReasonLen bounds a ban reason in characters (also a CHECK in 0154).
+const MaxBanReasonLen = 500
 
 // Repository is the data access the admin service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
@@ -79,6 +91,10 @@ type Repository interface {
 	// factor (a pending enrollment does not count). The list carries the same
 	// fact inline; this is for the single-user views.
 	UserHasMFAEnabled(ctx context.Context, userID uuid.UUID) (bool, error)
+	// The ban explanation (0154): written with a deactivation, cleared with a reactivation.
+	UpsertUserBan(ctx context.Context, arg sqlcgen.UpsertUserBanParams) error
+	DeleteUserBan(ctx context.Context, userID uuid.UUID) error
+	GetUserBan(ctx context.Context, userID uuid.UUID) (sqlcgen.UserBan, error)
 }
 
 // Service holds the admin application logic.
@@ -133,6 +149,17 @@ type UpdateUserInput struct {
 	BypassQuarantine  *bool
 	SetStorageQuota   bool
 	StorageQuotaBytes *int64
+	// ActorRole is the caller's role. Empty means admin (internal callers); a
+	// moderator is restricted to ban/unban of ordinary accounts.
+	ActorRole string
+	// BanReason is stored with a deactivation (nil/empty = none given).
+	BanReason *string
+}
+
+// Ban returns the explanation stored with a deactivation (ok=false when none).
+func (s *Service) Ban(ctx context.Context, userID uuid.UUID) (sqlcgen.UserBan, bool) {
+	b, err := s.repo.GetUserBan(ctx, userID)
+	return b, err == nil
 }
 
 // UpdateResult carries both sides of an admin edit. The audit envelope's
@@ -162,6 +189,15 @@ func (s *Service) UpdateUserDetailed(ctx context.Context, callerID, targetID uui
 	target, err := s.repo.GetUserByID(ctx, targetID)
 	if err != nil {
 		return UpdateResult{}, ErrNotFound
+	}
+	if in.ActorRole == RoleModerator {
+		onlyBan := in.Role == nil && in.EmailVerified == nil && in.BypassQuarantine == nil && !in.SetStorageQuota
+		if !onlyBan || target.Role != RoleUser || target.IsOwner || callerID == targetID {
+			return UpdateResult{}, ErrModeratorForbidden
+		}
+	}
+	if in.BanReason != nil && utf8.RuneCountInString(*in.BanReason) > MaxBanReasonLen {
+		return UpdateResult{}, ErrBanReasonTooLong
 	}
 	// A tombstone accepts NO admin write. Reactivation is refused because
 	// deletion is the one admin action with no inverse — it anonymises the row
@@ -207,6 +243,19 @@ func (s *Service) UpdateUserDetailed(ctx context.Context, callerID, targetID uui
 	if in.IsActive != nil && !*in.IsActive {
 		// Best-effort: a disabled account's tokens stop resolving anyway.
 		_ = s.repo.RevokeAllUserSessions(ctx, targetID)
+		reason := ""
+		if in.BanReason != nil {
+			reason = strings.TrimSpace(*in.BanReason)
+		}
+		if err := s.repo.UpsertUserBan(ctx, sqlcgen.UpsertUserBanParams{
+			UserID: targetID, Reason: reason, BannedBy: pgtype.UUID{Bytes: callerID, Valid: true},
+		}); err != nil {
+			return UpdateResult{}, err
+		}
+	} else if in.IsActive != nil {
+		if err := s.repo.DeleteUserBan(ctx, targetID); err != nil {
+			return UpdateResult{}, err
+		}
 	}
 	return UpdateResult{Before: target, After: updated}, nil
 }
