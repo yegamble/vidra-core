@@ -16476,10 +16476,11 @@ paths:
         it). Signup creates no default channel, so neither does this. When a
         mail path is configured the link is emailed and `link_emailed` is true
         with no `reset_url`; otherwise `reset_url` is returned once (no-store),
-        only after the audit row `admin.user.create` is written (a failed write
-        withdraws the token and answers 503; the account then exists and the
-        link can be re-issued by the reset-link route if its role is `user`). The
-        audit payload never carries the address, a password or the token.
+        only after the audit row `admin.user.create` is written. The row is required
+        on both delivery paths: if it, the update or the delivery fails after the
+        account was made, the account is DEACTIVATED (it cannot sign in and does
+        not count as an active admin) and 502/503 is returned; the username and
+        email stay reserved until an admin deletes it. The audit payload never carries the address, a password or the token.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -16515,10 +16516,10 @@ paths:
           description: "Too many attempts (strict auth limiter)."
           content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
         "502":
-          description: "Account created but the set-password email failed and there is no origin to return a link on."
+          description: "The set-password email failed and there is no origin to return a link on; the account was deactivated."
           content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
         "503":
-          description: "Account created but the audit write failed, so no link was issued."
+          description: "The audit write failed; the account was deactivated and no link was issued."
           content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
   /api/v1/admin/users/{id}:
     patch:

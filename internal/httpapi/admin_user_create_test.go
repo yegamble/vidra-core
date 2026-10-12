@@ -109,15 +109,67 @@ func TestAdminCreateUserRefusals(t *testing.T) {
 	}
 }
 
-func TestAdminCreateUserFailsClosedWithoutAudit(t *testing.T) {
-	failing := &failingAuditRepo{}
-	env, ownerTok, _ := resetLinkFixture(t, failing)
-	failing.fail = true
-	rec := createUser(env, `{"username":"nina","email":"nina@example.test","role":"user","password":"supersecret"}`, ownerTok)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("create with a dead ledger = %d, want 503; body=%s", rec.Code, rec.Body.String())
+// leftAccount reports the (active?) state of an account named name, and how many
+// active admins the instance has.
+func leftAccount(t *testing.T, env *accountEnv, tok, name string) (found, active bool, activeAdmins int) {
+	t.Helper()
+	for _, u := range adminUsers(t, env.srv, "", tok).Users {
+		if u.Role == "admin" && u.IsActive {
+			activeAdmins++
+		}
+		if u.Username == name {
+			found, active = true, u.IsActive
+		}
 	}
-	if strings.Contains(rec.Body.String(), "reset-password") {
-		t.Error("a link was returned although the audit write failed")
+	return found, active, activeAdmins
+}
+
+// A dead ledger must refuse on EVERY delivery path (link returned or emailed),
+// and must not leave a usable account behind, least of all a staff one.
+func TestAdminCreateUserFailsClosedWithoutAudit(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		extra []Option
+	}{
+		{"link returned", nil},
+		{"link emailed", []Option{WithContactMailer(auth.NewCaptureMailer())}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failing := &failingAuditRepo{}
+			env, ownerTok, _ := resetLinkFixture(t, failing, tc.extra...)
+			_, _, adminsBefore := leftAccount(t, env, ownerTok, "nina")
+			failing.fail = true
+			rec := createUser(env, `{"username":"nina","email":"nina@example.test","role":"admin","password":"supersecret"}`, ownerTok)
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("create with a dead ledger = %d, want 503; body=%s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "reset-password") {
+				t.Error("a link was returned although the audit write failed")
+			}
+			failing.fail = false
+			found, active, admins := leftAccount(t, env, ownerTok, "nina")
+			if found && active {
+				t.Error("the refused account is still active")
+			}
+			if admins != adminsBefore {
+				t.Errorf("active admins = %d, want %d", admins, adminsBefore)
+			}
+			// It can never sign in: no password was ever set and it is inactive.
+			if rec := postTo(env.srv, "/api/v1/auth/login", `{"email":"nina@example.test","password":"supersecret"}`); rec.Code == http.StatusOK {
+				t.Error("the refused account can sign in")
+			}
+		})
+	}
+}
+
+func TestAdminCreateUserRefusesModerators(t *testing.T) {
+	env, ownerTok, userID := resetLinkFixture(t, &httpAuditFakeRepo{})
+	if rec := sendJSONAuth(env.srv, http.MethodPatch, "/api/v1/admin/users/"+userID, `{"role":"moderator"}`, ownerTok); rec.Code != http.StatusOK {
+		t.Fatalf("promote = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	modTok := loginToken(t, env.srv, "uma@example.test", "supersecret")
+	rec := createUser(env, `{"username":"nina","email":"nina@example.test","role":"user","password":"supersecret"}`, modTok)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("moderator create = %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
 }

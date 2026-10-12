@@ -2175,10 +2175,6 @@ func (s *Server) routes() {
 		// the holder gets a set-password link. Caller-password step-up + strict
 		// limiter, exactly like the reset-link route below.
 		api.POST("/admin/users", s.handleAdminCreateUser, s.adminPasswordStepUpMW()...)
-		// Admin-created account (PeerTube POST /users): no admin-chosen password,
-		// the holder gets a set-password link. Caller-password step-up + strict
-		// limiter, exactly like the reset-link route below.
-		api.POST("/admin/users", s.handleAdminCreateUser, s.adminPasswordStepUpMW()...)
 		api.PATCH("/admin/users/:id", s.handleUpdateUser, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		// Administrator removal of a user's second factor (A05 ruling 2): the
 		// operator answer to a lost authenticator AND lost recovery codes,

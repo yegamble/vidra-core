@@ -133,6 +133,18 @@ func (s *Service) AdminCreateAccount(ctx context.Context, adminID uuid.UUID, adm
 	return user, nil
 }
 
+// AdminDiscardAccount deactivates an account AdminCreateAccount just made, for a
+// create that failed afterwards (no audit row, no link). It is the rollback:
+// the service has no transaction seam across the creation and the steps after
+// it, and an inactive account cannot sign in, holds no password, and no longer
+// counts toward the active-admin guard. Its unused tokens are withdrawn too.
+func (s *Service) AdminDiscardAccount(ctx context.Context, id uuid.UUID) error {
+	if err := s.repo.DeactivateUser(ctx, id); err != nil {
+		return err
+	}
+	return s.repo.DeleteUnusedPasswordResetTokens(ctx, id)
+}
+
 // AdminIssueSetPasswordLink mints the first-password link for an account the
 // caller just created. Unlike AdminIssueResetLink it has no role gate: the
 // caller is AdminCreateAccount's handler holding a brand-new account (possibly
