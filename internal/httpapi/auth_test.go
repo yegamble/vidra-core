@@ -21,6 +21,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -1384,6 +1385,10 @@ func (m *captureResetMailer) SendEmailChanged(_ context.Context, oldEmail, newEm
 	m.changeNotices++
 	m.noticeOld = oldEmail
 	m.noticeNew = newEmail
+	return nil
+}
+
+func (m *captureResetMailer) SendNotificationEmail(context.Context, string, mail.NotificationEmail) error {
 	return nil
 }
 

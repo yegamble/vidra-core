@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/comment"
+	"github.com/vidra/vidra-core/internal/mention"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
@@ -219,7 +221,7 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 		return err
 	}
 	if !held {
-		s.notifyCommentPublished(ctx, userID, created.ID, v.OwnerID, false)
+		s.notifyCommentPublished(ctx, userID, created.ID, created.Body, v.OwnerID, false)
 	}
 	// Flag the comment against the moderation watched-words list (best-effort;
 	// records matches for the admin review queue — never blocks the post).
@@ -233,7 +235,7 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 
 // notifyCommentPublished raises a comment's notifications once it is public (on
 // create, or on approval — 0161; ownerKnows: the owner approved it). Best-effort.
-func (s *Server) notifyCommentPublished(ctx context.Context, authorID, commentID, ownerID uuid.UUID, ownerKnows bool) {
+func (s *Server) notifyCommentPublished(ctx context.Context, authorID, commentID uuid.UUID, body string, ownerID uuid.UUID, ownerKnows bool) {
 	// Tell the PARENT COMMENT'S AUTHOR that they were replied to (best-effort).
 	// This is a different recipient from the video owner below: the person being
 	// answered usually does not own the video, and before this existed a reply
@@ -262,6 +264,29 @@ func (s *Server) notifyCommentPublished(ctx context.Context, authorID, commentID
 		if _, nerr := s.notifsvc.NotifyComment(ctx, authorID, commentID); nerr != nil {
 			s.logger.WarnContext(ctx, "notify comment failed", "error", nerr, "comment_id", commentID)
 		}
+	}
+	// Tell the local accounts @-mentioned in the body (best-effort). Runs after
+	// the two notifications above on purpose: the fan-out skips anyone already
+	// told about this comment, so a reply to the owner stays one notification.
+	// Like them it waits until the comment is public (0161).
+	s.notifyCommentMentions(ctx, commentID, body)
+}
+
+// notifyCommentMentions raises comment_mention notifications for the local
+// accounts a comment body @-mentions. Best-effort: a failure is logged (never
+// the body) and never fails the comment. All gating — visibility, mute/block,
+// prefs, "already notified" — is in the fan-out's SQL.
+func (s *Server) notifyCommentMentions(ctx context.Context, commentID uuid.UUID, body string) {
+	if s.notifsvc == nil {
+		return
+	}
+	host := ""
+	if u, err := url.Parse(strings.TrimSpace(s.cfg.PublicBaseURL)); err == nil {
+		host = u.Host
+	}
+	names := mention.LocalUsernames(mention.Parse(body), host)
+	if _, err := s.notifsvc.NotifyCommentMentions(ctx, commentID, names); err != nil {
+		s.logger.WarnContext(ctx, "notify comment mentions failed", "error", err, "comment_id", commentID)
 	}
 }
 
@@ -406,6 +431,10 @@ func (s *Server) handleUpdateComment(c echo.Context) error {
 		}
 		return err
 	}
+	// An edit can add mentions. Re-running the fan-out on the whole body is
+	// safe: notifications_comment_mention_unique_idx makes an already-notified
+	// (comment, user) a no-op, so only NEWLY added mentions notify.
+	s.notifyCommentMentions(ctx, updated.ID, updated.Body)
 	// Re-flag the edited body against the moderation watched-words list
 	// (best-effort; an edit can newly introduce a flagged term).
 	if s.watchwordsvc != nil {
@@ -539,7 +568,7 @@ func (s *Server) handleApproveComment(c echo.Context) error {
 	if released {
 		// Third parties hear only about a video they can see right now.
 		if wa.Comment.UserID.Valid && v.Privacy == "public" && v.State == "published" && !v.Blocked {
-			s.notifyCommentPublished(ctx, uuid.UUID(wa.Comment.UserID.Bytes), commentID, v.OwnerID, v.OwnerID == userID)
+			s.notifyCommentPublished(ctx, uuid.UUID(wa.Comment.UserID.Bytes), commentID, wa.Comment.Body, v.OwnerID, v.OwnerID == userID)
 		}
 		s.auditEvent(c, audit.Event{
 			Action: observability.ActionCommentApprove, Result: observability.ResultSuccess,

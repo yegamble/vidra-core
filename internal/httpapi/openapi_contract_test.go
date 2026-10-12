@@ -271,6 +271,10 @@ var knownNonContractRoutes = map[string]string{
 	// the frontend's generated client. See .ralph/specs/federation.md §4-5.
 	"GET /.well-known/nodeinfo":              "fediverse discovery",
 	"GET /.well-known/webfinger":             "fediverse discovery",
+	"GET /.well-known/host-meta":             "fediverse discovery",
+	"GET /.well-known/host-meta.json":        "fediverse discovery",
+	"GET /.well-known/security.txt":          "RFC 9116 well-known document",
+	"GET /.well-known/change-password":       "W3C well-known redirect",
 	"GET /nodeinfo/2.1":                      "fediverse discovery",
 	"GET /accounts/{handle}":                 "ActivityPub actor",
 	"GET /video-channels/{handle}":           "ActivityPub actor",
@@ -298,9 +302,10 @@ var knownNonContractRoutes = map[string]string{
 	// PUBLIC_BASE_URL (+ wired video/channel services). Syndication formats
 	// answering XML/oEmbed JSON to feed readers, crawlers and embed resolvers,
 	// built from absolute public URLs. See internal/httpapi/distribution.go.
-	"GET /feeds/videos.xml": "syndication feed",
-	"GET /services/oembed":  "oEmbed provider",
-	"GET /sitemap.xml":      "crawler sitemap",
+	"GET /feeds/videos.xml":         "syndication feed",
+	"GET /feeds/podcast/videos.xml": "podcast syndication feed",
+	"GET /services/oembed":          "oEmbed provider",
+	"GET /sitemap.xml":              "crawler sitemap",
 
 	// DEV_MAIL_CAPTURE_ENABLED, and refused outright when Environment is
 	// "production". A development seam for reading account-security tokens

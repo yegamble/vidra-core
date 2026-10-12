@@ -85,9 +85,11 @@ type videoFakeRepo struct {
 	// Seeded REMOTE cards, mirroring the UNION branches of the subscription /
 	// feed / search queries (remote-content §3-4). Tests append rows with
 	// Remote:true + domain/watch_url/stream_url set.
-	remoteSubs   []sqlcgen.ListSubscriptionVideosRow
-	remoteFeed   []sqlcgen.ListPublicVideosSortedRow
-	remoteSearch []sqlcgen.SearchPublicVideosRow
+	remoteSubs []sqlcgen.ListSubscriptionVideosRow
+	// downloadLookups counts batched download-flag reads (podcast feed N+1 fence).
+	downloadLookups int
+	remoteFeed      []sqlcgen.ListPublicVideosSortedRow
+	remoteSearch    []sqlcgen.SearchPublicVideosRow
 	// rejections mirrors video_rejections (0130): video ID -> the moderator's
 	// rejection note. Empty means "never rejected", which is what the query's
 	// COALESCE(..., '') returns.
@@ -384,6 +386,12 @@ func (f *videoFakeRepo) ClearWatchHistory(_ context.Context, userID uuid.UUID) e
 	return nil
 }
 
+// fakeListedPrivacy mirrors the browse queries' privacy predicate (0160):
+// public for everyone, plus 'internal' when a viewer is signed in.
+func fakeListedPrivacy(privacy string, viewer pgtype.UUID) bool {
+	return privacy == "public" || (privacy == video.PrivacyInternal && viewer.Valid)
+}
+
 // ListSubscriptionVideos mirrors the SQL by consulting the real follow data in
 // the channel fake (videos whose channel the FollowerID follows).
 func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.ListSubscriptionVideosParams) ([]sqlcgen.ListSubscriptionVideosRow, error) {
@@ -394,7 +402,8 @@ func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.List
 		if f.blockedFromFeed(r.ID) {
 			continue
 		}
-		if r.Privacy == "public" && r.State == "published" && follows && !hidden {
+		// 0160: the follower is signed in by definition, so 'internal' rides along.
+		if (r.Privacy == "public" || r.Privacy == video.PrivacyInternal) && r.State == "published" && follows && !hidden {
 			rows = append(rows, sqlcgen.ListSubscriptionVideosRow{
 				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
@@ -458,8 +467,8 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		Category: a.Category, Language: a.Language, License: a.License,
 		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive, SensitiveReason: a.SensitiveReason,
 		CommentsPolicy: a.CommentsPolicy, DownloadEnabled: a.DownloadEnabled,
-		PublishAfterTranscode: a.PublishAfterTranscode,
-		CreatedAt:             time.Now(), UpdatedAt: time.Now(),
+		PublishAfterTranscode: a.PublishAfterTranscode, Support: a.Support,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.videos[v.ID] = sqlcgen.GetVideoByIDRow{
 		ID: v.ID, ShortCode: v.ShortCode, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
@@ -467,8 +476,8 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		Category: v.Category, Language: v.Language, License: v.License,
 		PublishAt: v.PublishAt, IsSensitive: v.IsSensitive, SensitiveReason: v.SensitiveReason,
 		CommentsPolicy: v.CommentsPolicy, DownloadEnabled: v.DownloadEnabled,
-		PublishAfterTranscode: v.PublishAfterTranscode,
-		OwnerID:               owner,
+		PublishAfterTranscode: v.PublishAfterTranscode, Support: v.Support,
+		OwnerID: owner,
 	}
 	return v, nil
 }
@@ -546,7 +555,7 @@ func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 		OriginallyPublishedAt: r.OriginallyPublishedAt,
 		IsSensitive:           r.IsSensitive, SensitiveReason: r.SensitiveReason,
 		CommentsPolicy: r.CommentsPolicy, DownloadEnabled: r.DownloadEnabled,
-		PublishAfterTranscode: r.PublishAfterTranscode,
+		PublishAfterTranscode: r.PublishAfterTranscode, Support: r.Support,
 	}
 }
 
@@ -587,6 +596,61 @@ func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, a sqlcgen.ListVid
 	}
 	// "published_at" is oldest-first, anything else newest-first — the query's
 	// two CASE branches.
+	sort.SliceStable(out, func(i, j int) bool {
+		if a.Sort == "published_at" {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return pageRows(out, a.ResultLimit, a.ResultOffset), nil
+}
+
+// ownerMatches mirrors ListOwnerVideos' WHERE clause: owner, then each NULL-able
+// filter. q arrives LIKE-escaped (\\, \%, \_), so it is unescaped and matched as a
+// case-insensitive substring, which is what ILIKE '%q%' means.
+func (f *videoFakeRepo) ownerMatches(r sqlcgen.GetVideoByIDRow, owner uuid.UUID, q, privacy, state *string, ch pgtype.UUID) bool {
+	if r.OwnerID != owner {
+		return false
+	}
+	if q != nil {
+		needle := strings.ToLower(strings.NewReplacer(`\\`, `\`, `\%`, `%`, `\_`, `_`).Replace(*q))
+		if !strings.Contains(strings.ToLower(r.Title), needle) {
+			return false
+		}
+	}
+	if privacy != nil && r.Privacy != *privacy {
+		return false
+	}
+	if state != nil && r.State != *state {
+		return false
+	}
+	return !ch.Valid || r.ChannelID == uuid.UUID(ch.Bytes)
+}
+
+func (f *videoFakeRepo) CountOwnerVideos(_ context.Context, a sqlcgen.CountOwnerVideosParams) (int64, error) {
+	var n int64
+	for _, r := range f.videos {
+		if f.ownerMatches(r, a.OwnerID, a.Q, a.Privacy, a.State, a.ChannelID) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *videoFakeRepo) ListOwnerVideos(_ context.Context, a sqlcgen.ListOwnerVideosParams) ([]sqlcgen.ListOwnerVideosRow, error) {
+	var out []sqlcgen.ListOwnerVideosRow
+	for _, r := range f.videos {
+		if !f.ownerMatches(r, a.OwnerID, a.Q, a.Privacy, a.State, a.ChannelID) {
+			continue
+		}
+		out = append(out, sqlcgen.ListOwnerVideosRow{
+			ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			PublishAt: r.PublishAt, IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
+			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			Blocked: f.blockedFromFeed(r.ID), BlockReason: f.blockReasonFromFeed(r.ID),
+		})
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if a.Sort == "published_at" {
 			return out[i].CreatedAt.Before(out[j].CreatedAt)
@@ -669,7 +733,7 @@ func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, a sqlcgen.L
 		if f.mutedFromFeed(a.ViewerID, r.ChannelID) {
 			continue
 		}
-		if r.ChannelID == channelID && r.Privacy == "public" && r.State == "published" {
+		if r.ChannelID == channelID && fakeListedPrivacy(r.Privacy, a.ViewerID) && r.State == "published" {
 			out = append(out, sqlcgen.ListPublicVideosByChannelRow{
 				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
@@ -685,6 +749,42 @@ func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, a sqlcgen.L
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
 	return pageRows(out, a.ResultLimit, a.ResultOffset), nil
+}
+
+// ListPublicVideosByOwner mirrors the account-scoped twin of the channel query:
+// the same predicates as ListPublicVideosByChannel, scoped by channel owner.
+func (f *videoFakeRepo) ListPublicVideosByOwner(ctx context.Context, a sqlcgen.ListPublicVideosByOwnerParams) ([]sqlcgen.ListPublicVideosByOwnerRow, error) {
+	var out []sqlcgen.ListPublicVideosByOwnerRow
+	for _, r := range f.videos {
+		if r.OwnerID != a.OwnerID {
+			continue
+		}
+		rows, err := f.ListPublicVideosByChannel(ctx, sqlcgen.ListPublicVideosByChannelParams{
+			ChannelID: r.ChannelID, ViewerID: a.ViewerID, HideSensitive: a.HideSensitive, ResultLimit: 1 << 30,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if row.ID == r.ID {
+				out = append(out, sqlcgen.ListPublicVideosByOwnerRow(row))
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if a.Sort == "published_at" {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return pageRows(out, a.ResultLimit, a.ResultOffset), nil
+}
+
+func (f *videoFakeRepo) CountPublicVideosByOwnerVisible(ctx context.Context, a sqlcgen.CountPublicVideosByOwnerVisibleParams) (int64, error) {
+	rows, err := f.ListPublicVideosByOwner(ctx, sqlcgen.ListPublicVideosByOwnerParams{
+		OwnerID: a.OwnerID, ViewerID: a.ViewerID, HideSensitive: a.HideSensitive, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
 }
 
 func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoParams) (sqlcgen.Video, error) {
@@ -732,6 +832,12 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 	}
 	if a.PublishAfterTranscode != nil {
 		r.PublishAfterTranscode = *a.PublishAfterTranscode
+	}
+	if a.Support != nil { // NULL leaves it; '' clears it to NULL (NULLIF in the query)
+		r.Support = nil
+		if *a.Support != "" {
+			r.Support = a.Support
+		}
 	}
 	if a.ChannelID.Valid {
 		// COALESCE(narg('channel_id'), channel_id); the owner follows the channel
@@ -1265,7 +1371,7 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 		if f.blockedFromFeed(r.ID) {
 			continue
 		}
-		if r.Privacy == "public" && r.State == "published" && !f.mutedFromFeed(a.ViewerID, r.ChannelID) &&
+		if fakeListedPrivacy(r.Privacy, a.ViewerID) && r.State == "published" && !f.mutedFromFeed(a.ViewerID, r.ChannelID) &&
 			!f.ownerUnlisted(r.ChannelID) {
 			ch, cn := f.channelInfo(r.ChannelID)
 			rows = append(rows, sqlcgen.ListPublicVideosSortedRow{
@@ -2888,6 +2994,17 @@ func (f *videoFakeRepo) CountPublicVideosSorted(ctx context.Context, a sqlcgen.C
 		Sort: "recent", ResultLimit: 1 << 30,
 	})
 	return int64(len(rows)), err
+}
+
+func (f *videoFakeRepo) ListDownloadEnabledVideoIDs(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	f.downloadLookups++
+	var out []uuid.UUID
+	for _, id := range ids {
+		if r, ok := f.videos[id]; ok && r.DownloadEnabled {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 func (f *videoFakeRepo) CountSubscriptionVideos(ctx context.Context, followerID uuid.UUID) (int64, error) {

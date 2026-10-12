@@ -265,7 +265,7 @@ func (f *fakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoParams) (
 		ID: uuid.New(), ShortCode: fakeShortCode(), ChannelID: a.ChannelID, Title: a.Title,
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
 		Category: a.Category, Language: a.Language, License: a.License,
-		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive,
+		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive, Support: a.Support,
 		PublishAfterTranscode: a.PublishAfterTranscode,
 		CreatedAt:             time.Now(), UpdatedAt: time.Now(),
 	}
@@ -367,6 +367,17 @@ func (f *fakeRepo) ListVideosByChannel(_ context.Context, a sqlcgen.ListVideosBy
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
 	return pageSlice(out, a.ResultLimit, a.ResultOffset), nil
+}
+
+// ListOwnerVideos / CountOwnerVideos: the owner-wide studio list is proven in the
+// httpapi fake and the store integration test; this fake only has to satisfy
+// Repository.
+func (f *fakeRepo) ListOwnerVideos(context.Context, sqlcgen.ListOwnerVideosParams) ([]sqlcgen.ListOwnerVideosRow, error) {
+	return nil, nil
+}
+
+func (f *fakeRepo) CountOwnerVideos(context.Context, sqlcgen.CountOwnerVideosParams) (int64, error) {
+	return 0, nil
 }
 
 func pageSlice[T any](rows []T, limit, offset int32) []T {
@@ -1943,6 +1954,10 @@ func (f *fakeRepo) CountPublicVideosSorted(ctx context.Context, a sqlcgen.CountP
 	return int64(len(rows)), err
 }
 
+func (f *fakeRepo) ListDownloadEnabledVideoIDs(context.Context, []uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
 func (f *fakeRepo) CountSubscriptionVideos(ctx context.Context, followerID uuid.UUID) (int64, error) {
 	rows, err := f.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{FollowerID: followerID, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
@@ -2122,4 +2137,15 @@ func TestReplaceSourceFailsWhenThePriorDigestCannotBeRead(t *testing.T) {
 // in internal/httpapi (TestMoveVideoSameOwnerOnly).
 func (f *fakeRepo) GetChannelByID(_ context.Context, _ uuid.UUID) (sqlcgen.Channel, error) {
 	return sqlcgen.Channel{}, errors.New("not found")
+}
+
+// The account-scoped list is exercised end to end by the httpapi handler tests
+// and the store integration test; the service unit fake only has to satisfy
+// the Repository interface.
+func (f *fakeRepo) ListPublicVideosByOwner(context.Context, sqlcgen.ListPublicVideosByOwnerParams) ([]sqlcgen.ListPublicVideosByOwnerRow, error) {
+	return nil, nil
+}
+
+func (f *fakeRepo) CountPublicVideosByOwnerVisible(context.Context, sqlcgen.CountPublicVideosByOwnerVisibleParams) (int64, error) {
+	return 0, nil
 }

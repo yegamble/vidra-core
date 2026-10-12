@@ -38,6 +38,10 @@ func TestRouteTable(t *testing.T) {
 		{"private+published+unlisted-owner", "private", "published", true, NetworkPrivate},
 		{"unlisted+published", "unlisted", "published", false, NetworkPrivate},
 		{"unlisted+published+unlisted-owner", "unlisted", "published", true, NetworkPrivate},
+		// internal (signed-in members only) follows the private rule: a permanent
+		// public CID would hand it to anonymous viewers.
+		{"internal+published", "internal", "published", false, NetworkPrivate},
+		{"internal+draft", "internal", "draft", false, NetworkNone},
 		// quarantined → nowhere (unvetted content stays out of EVERY mirror).
 		{"quarantined", "public", "quarantined", false, NetworkNone},
 		{"private+quarantined", "private", "quarantined", false, NetworkNone},
