@@ -16273,7 +16273,7 @@ paths:
       description: >-
         Returns registration requests, newest first, with the reviewing admin's
         username, plus a `total` counting the requests that match the same status
-        filter. Restricted to admins. The stored password hash is never exposed.
+        filter. Admins and moderators. The stored password hash is never exposed.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -16316,7 +16316,7 @@ paths:
       summary: Approve a registration request
       description: >-
         Approves a pending request, creating the account from the stored
-        credentials (atomically). Admin only. An unknown/already-resolved id is
+        credentials (atomically). Admins and moderators. An unknown/already-resolved id is
         404; a username/email taken since the request was filed is 409.
       tags: [admin]
       security:
@@ -16361,7 +16361,7 @@ paths:
       summary: Reject a registration request
       description: >-
         Rejects a pending request with an optional internal moderator note.
-        Admin only. An unknown/already-resolved id is 404.
+        Admins and moderators. An unknown/already-resolved id is 404.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -16544,7 +16544,7 @@ paths:
       summary: List accounts (admin)
       description: >-
         Returns accounts, newest first, optionally filtered by a username/email
-        substring (q). Restricted to admins. Paginated via limit (1–200, default
+        substring (q). Admins and moderators. Paginated via limit (1–200, default
         50) and offset; `total` counts the accounts matching the same q, so a
         client can tell how many pages exist.
       tags: [admin]
@@ -16659,7 +16659,13 @@ paths:
         token — so a demoted staff member loses the staff routes at once while
         keeping their ordinary session. storage_quota_bytes is tri-state —
         omitted: unchanged; null: reset to the instance default; a non-negative
-        integer: per-user override (0 = unlimited).
+        integer: per-user override (0 = unlimited). Moderators share ONLY ban
+        and unban (`is_active`, with a required `ban_reason` when banning) and
+        only for accounts whose role is `user`: any other field, a staff or
+        owner target, or themselves is 403. Banning stores the reason, time
+        and actor, and emails the user the reason (best-effort); unbanning
+        clears them and emails a reinstatement. The audit row records the
+        reason's length, never its text.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -21489,7 +21495,7 @@ components:
     AdminUser:
       type: object
       description: Admin projection of an account (never includes the password hash).
-      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, created_at, deleted_at, is_owner, mfa_enabled]
+      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, created_at, deleted_at, is_owner, mfa_enabled, ban_reason, banned_at, banned_by]
       properties:
         id:
           type: string
@@ -21539,6 +21545,9 @@ components:
             permanent: PATCH with `is_active: true` on such a row is refused
             with 422, and the console offers no reactivate action for it. Every
             other admin write to a tombstone is refused the same way.
+        ban_reason: {type: [string, "null"], description: "Why the account was banned; null when not banned."}
+        banned_at: {type: [string, "null"], format: date-time}
+        banned_by: {type: [string, "null"], format: uuid, description: "The staff account that banned it."}
         is_owner:
           type: boolean
           description: >-
@@ -25216,6 +25225,12 @@ components:
           enum: [user, moderator, admin]
         is_active:
           type: boolean
+        ban_reason:
+          type: string
+          maxLength: 500
+          description: >-
+            Why the account is being banned; only valid with `is_active=false`.
+            Required from a moderator, optional from an admin.
         email_verified:
           type: boolean
           description: >-

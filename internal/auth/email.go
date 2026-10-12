@@ -74,6 +74,12 @@ type Mailer interface {
 	// removes it (byAdmin), the one case where the account holder took no
 	// action at all and every session they had was signed out.
 	SendTwoFactorRemoved(ctx context.Context, email string, byAdmin bool) error
+	// SendAccountSuspended tells a user a moderator or administrator banned the
+	// account, with the stated reason (the DSA statement of reasons). The reason
+	// is staff prose written for this one reader; it is never audited or logged.
+	SendAccountSuspended(ctx context.Context, email, reason string) error
+	// SendAccountReinstated tells a user a ban was lifted. No credential.
+	SendAccountReinstated(ctx context.Context, email string) error
 }
 
 // noopMailer is the default mailer. With no email provider configured it drops
@@ -106,4 +112,6 @@ func (noopMailer) SendRegistrationRejected(context.Context, string, string, stri
 	return nil
 }
 
-func (noopMailer) SendTwoFactorRemoved(context.Context, string, bool) error { return nil }
+func (noopMailer) SendTwoFactorRemoved(context.Context, string, bool) error   { return nil }
+func (noopMailer) SendAccountSuspended(context.Context, string, string) error { return nil }
+func (noopMailer) SendAccountReinstated(context.Context, string) error        { return nil }

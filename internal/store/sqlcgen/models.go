@@ -1115,6 +1115,13 @@ type User struct {
 	IsOwner                            bool               `json:"is_owner"`
 }
 
+type UserBan struct {
+	UserID   uuid.UUID   `json:"user_id"`
+	Reason   string      `json:"reason"`
+	BannedAt time.Time   `json:"banned_at"`
+	BannedBy pgtype.UUID `json:"banned_by"`
+}
+
 type UserBlock struct {
 	BlockerID uuid.UUID `json:"blocker_id"`
 	BlockedID uuid.UUID `json:"blocked_id"`
