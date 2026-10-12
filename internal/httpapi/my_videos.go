@@ -1,13 +1,16 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -22,6 +25,9 @@ const maxBulkVideos = 100
 
 // maxMyVideosQueryLen caps ?q. Titles are capped at 200 characters, so a longer
 // needle can never match.
+// bulkRunTimeout bounds one detached bulk run (100 items of delete/update work).
+const bulkRunTimeout = 5 * time.Minute
+
 const maxMyVideosQueryLen = 200
 
 // videoLifecycleStates is the videos.state set (migration 0006 + 0045 + the
@@ -162,6 +168,14 @@ func (s *Server) handleBulkMyVideos(c echo.Context) error {
 		}
 		ids = append(ids, id)
 	}
+	// Once the gate has passed, the batch must not be cut in half by a client
+	// that disconnects: a committed item whose hooks (federation Delete, search
+	// suppress, IPFS unpin, storage cleanup) were dropped by a cancelled context
+	// is an orphan nothing will repair. So the loop runs detached from the
+	// request's cancellation, bounded by a timeout.
+	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bulkRunTimeout)
+	defer cancel()
+	c.SetRequest(c.Request().WithContext(runCtx))
 	out := bulkVideosResponse{Results: make([]bulkVideoResult, 0, len(ids))}
 	for _, id := range ids {
 		var ierr error
@@ -175,6 +189,18 @@ func (s *Server) handleBulkMyVideos(c echo.Context) error {
 		res := bulkVideoResult{VideoID: id.String(), OK: ierr == nil, Status: http.StatusOK}
 		if ierr != nil {
 			res.Status, res.Error = bulkItemError(ierr)
+			if res.Status >= http.StatusInternalServerError {
+				// The client only sees a generic message; the operator gets the
+				// redacted cause, as the central error handler does for the
+				// single routes. Never the request body, token or any address.
+				s.logger.Error("bulk video item failed",
+					"error", jobstatus.RedactDetail(ierr.Error()),
+					"action", in.Action,
+					"video_id", id.String(),
+					"status", res.Status,
+					"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
+				)
+			}
 			out.Failed++
 		} else {
 			out.Succeeded++

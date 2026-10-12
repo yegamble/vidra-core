@@ -285,3 +285,50 @@ func TestBulkCapAndShape(t *testing.T) {
 		t.Errorf("anonymous bulk = %d, want 401", r.Code)
 	}
 }
+
+// A client that disconnects mid-batch must not strip the hooks from items the
+// batch commits: the loop runs detached from the request's cancellation.
+func TestBulkDeleteSurvivesClientCancel(t *testing.T) {
+	var mu sync.Mutex
+	var hooked, hookCtxErrs int
+	srv := videoServerCfg(t, testConfig(), video.WithDeleteHook(func(ctx context.Context, _, _ uuid.UUID, _ bool) {
+		mu.Lock()
+		hooked++
+		if ctx.Err() != nil {
+			hookCtxErrs++
+		}
+		mu.Unlock()
+	}))
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	a := createVideo(t, srv, tok, "ada", `{"title":"a","privacy":"public"}`)
+	b := createVideo(t, srv, tok, "ada", `{"title":"b","privacy":"public"}`)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the client is already gone
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/me/videos/bulk", bytes.NewBufferString(bulkBody([]string{a, b}, "delete", ""))).WithContext(ctx)
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("authorization", "Bearer "+tok)
+	srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+
+	if hooked != 2 || hookCtxErrs != 0 {
+		t.Errorf("hooks fired %d times with %d cancelled contexts, want 2 and 0", hooked, hookCtxErrs)
+	}
+}
+
+func TestBulkIsRateLimitedPerUser(t *testing.T) {
+	srv := videoServer(t)
+	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bobTok := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	body := bulkBody([]string{uuid.NewString()}, "delete", "")
+	for i := 0; i < defaultBulkVideosRateLimit; i++ {
+		if r, _ := bulk(srv, adaTok, body); r.Code != http.StatusNotFound {
+			t.Fatalf("request %d = %d, want 404 (within budget)", i+1, r.Code)
+		}
+	}
+	if r, _ := bulk(srv, adaTok, body); r.Code != http.StatusTooManyRequests {
+		t.Errorf("over budget = %d, want 429", r.Code)
+	}
+	if r, _ := bulk(srv, bobTok, body); r.Code != http.StatusNotFound {
+		t.Errorf("another user = %d, want their own budget", r.Code)
+	}
+}
