@@ -460,7 +460,7 @@ func run() error {
 			}
 			// Best-effort: a notification failure never fails the action.
 			if _, err := fan(ctx, id); err != nil {
-				logger.Warn("staff queue notification failed", "queue", what, "subject_id", id, "error", err)
+				logger.Warn("staff queue notification failed", "queue", what, "queue_item_id", id, "error", err)
 			}
 		}
 	}
