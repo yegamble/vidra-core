@@ -1108,6 +1108,10 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     download_enabled = COALESCE(sqlc.narg('download_enabled'), download_enabled),
     publish_after_transcode = COALESCE(sqlc.narg('publish_after_transcode'), publish_after_transcode),
     originally_published_at = COALESCE(sqlc.narg('originally_published_at'), originally_published_at),
+    -- Move to another channel (T20). channel_id is the only ownership column a
+    -- video has (owner is derived through channels), so this one assignment IS
+    -- the move; authorization on both channels is the HTTP layer's job.
+    channel_id  = COALESCE(sqlc.narg('channel_id'), channel_id),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
 RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation;

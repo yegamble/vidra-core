@@ -2671,8 +2671,12 @@ SET title       = COALESCE($1, title),
     download_enabled = COALESCE($11, download_enabled),
     publish_after_transcode = COALESCE($12, publish_after_transcode),
     originally_published_at = COALESCE($13, originally_published_at),
+    -- Move to another channel (T20). channel_id is the only ownership column a
+    -- video has (owner is derived through channels), so this one assignment IS
+    -- the move; authorization on both channels is the HTTP layer's job.
+    channel_id  = COALESCE($14, channel_id),
     updated_at  = now()
-WHERE id = $14
+WHERE id = $15
 RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation
 `
 
@@ -2690,6 +2694,7 @@ type UpdateVideoParams struct {
 	DownloadEnabled       *bool              `json:"download_enabled"`
 	PublishAfterTranscode *bool              `json:"publish_after_transcode"`
 	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
+	ChannelID             pgtype.UUID        `json:"channel_id"`
 	ID                    uuid.UUID          `json:"id"`
 }
 
@@ -2708,6 +2713,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		arg.DownloadEnabled,
 		arg.PublishAfterTranscode,
 		arg.OriginallyPublishedAt,
+		arg.ChannelID,
 		arg.ID,
 	)
 	var i Video

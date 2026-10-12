@@ -227,3 +227,57 @@ func TestUpdateVideoStillPublicIgnoresWasFederated(t *testing.T) {
 		t.Fatalf("deliveries = %d, want 1 — a public+published video updates regardless of the flag", len(repo.deliveries))
 	}
 }
+
+// A video moved between channels is announced to the NEW channel's followers by
+// the metadata Update, but a peer following only the OLD channel would keep a
+// stale copy that later deletes never reach. RetractMovedVideo sends the old
+// followers a Delete — except inboxes the new channel's Update already reaches.
+func TestRetractMovedVideoDeletesForOldOnlyFollowers(t *testing.T) {
+	oldCh, newCh, videoID := uuid.New(), uuid.New(), uuid.New()
+	mk := func(newAP bool) fakeRepo {
+		repo := newOutboxRepo(newCh, videoID, "public", "published", []string{"https://both.example/inbox", "https://new.example/inbox"})
+		repo.channelsByID[oldCh] = sqlcgen.Channel{ID: oldCh, Handle: "old"}
+		if !newAP {
+			repo.apDisabled = map[uuid.UUID]bool{newCh: true}
+		}
+		repo.followerInboxes[oldCh] = []string{"https://both.example/inbox", "https://old.example/inbox"}
+		return repo
+	}
+	inboxesOf := func(repo fakeRepo) (map[string]bool, string) {
+		got, typ := map[string]bool{}, ""
+		for _, d := range repo.deliveries {
+			got[d.row.InboxUrl] = true
+			var a struct {
+				Type  string `json:"type"`
+				Actor string `json:"actor"`
+			}
+			_ = json.Unmarshal(d.row.Payload, &a)
+			typ = a.Type
+			if a.Actor != "https://videos.example/video-channels/old" {
+				t.Errorf("Delete actor = %q, want the OLD channel", a.Actor)
+			}
+		}
+		return got, typ
+	}
+
+	repo := mk(true)
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.RetractMovedVideo(context.Background(), videoID, oldCh); err != nil {
+		t.Fatalf("RetractMovedVideo: %v", err)
+	}
+	got, typ := inboxesOf(repo)
+	if typ != "Delete" || len(got) != 1 || !got["https://old.example/inbox"] {
+		t.Errorf("AP-enabled target: inboxes=%v type=%q, want only old.example", got, typ)
+	}
+
+	// Target channel opted out of AP: its Update never goes out, so NO old
+	// follower is covered and all of them get the Delete.
+	repo = mk(false)
+	svc = NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.RetractMovedVideo(context.Background(), videoID, oldCh); err != nil {
+		t.Fatalf("RetractMovedVideo: %v", err)
+	}
+	if got, _ := inboxesOf(repo); len(got) != 2 || !got["https://both.example/inbox"] || !got["https://old.example/inbox"] {
+		t.Errorf("AP-disabled target: inboxes=%v, want both old followers", got)
+	}
+}

@@ -1358,6 +1358,15 @@ func run() error {
 					}
 				}
 			}),
+			video.WithMoveHook(func(ctx context.Context, videoID, fromChannelID uuid.UUID, wasFederated bool) {
+				// Peers following only the channel the video LEFT hold a copy the
+				// metadata Update (new channel's followers) never reaches.
+				if fedsvc != nil && wasFederated {
+					if err := fedsvc.RetractMovedVideo(ctx, videoID, fromChannelID); err != nil {
+						logger.Warn("federation move retract failed", "video_id", videoID, "error", err)
+					}
+				}
+			}),
 			video.WithDeleteHook(func(ctx context.Context, videoID, channelID uuid.UUID, wasPublic bool) {
 				if fedsvc != nil {
 					if err := fedsvc.DeleteVideo(ctx, videoID, channelID, wasPublic); err != nil {

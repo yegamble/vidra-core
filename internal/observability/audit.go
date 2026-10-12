@@ -156,10 +156,13 @@ const (
 	ActionAdminInstanceAssetDelete = "admin.instance_asset.delete"
 	ActionVideoUpdate              = "content.video.update"
 	ActionVideoDelete              = "content.video.delete"
-	ActionVideoTranscode           = "content.video.transcode"
-	ActionVideoCaptionGenerate     = "content.video.caption_generate"
-	ActionChannelDelete            = "content.channel.delete"
-	ActionMediaGC                  = "admin.media.gc"
+	// ActionVideoMove records a video moving between channels (T20). Reason
+	// carries ids only: video, source channel, target channel.
+	ActionVideoMove            = "content.video.move"
+	ActionVideoTranscode       = "content.video.transcode"
+	ActionVideoCaptionGenerate = "content.video.caption_generate"
+	ActionChannelDelete        = "content.channel.delete"
+	ActionMediaGC              = "admin.media.gc"
 	// ActionAuditRetentionPrune is the audit trail recording its own retention
 	// sweep. It is written once per run that actually deleted something, with
 	// the row count in the `count` metadata field — audit_log carries no prose,
