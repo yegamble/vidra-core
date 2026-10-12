@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -314,7 +315,8 @@ func (s *Server) handleDeleteComment(c echo.Context) error {
 	ctx := c.Request().Context()
 	// Rejecting someone else's HELD comment (0161) is deleting it: reviewers
 	// may, audited like an approval. Published ones stay author/staff-only.
-	cmt, _, reviewer, ok := s.commentVideo(ctx, userID, role, id)
+	cmt, _, reviewer, lookupErr := s.commentVideo(ctx, userID, role, id)
+	ok := lookupErr == nil
 	isAuthor := cmt.UserID.Valid && uuid.UUID(cmt.UserID.Bytes) == userID
 	rejecting := ok && cmt.HeldForReview && reviewer && !isAuthor
 	if err := s.commentsvc.Delete(ctx, id, userID, isStaff(role) || rejecting); err != nil {
@@ -335,17 +337,19 @@ func (s *Server) handleDeleteComment(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// commentVideo loads a comment, its video, and whether the caller reviews it (0161).
-func (s *Server) commentVideo(ctx context.Context, userID uuid.UUID, role string, id uuid.UUID) (sqlcgen.Comment, sqlcgen.GetVideoByIDRow, bool, bool) {
+// commentVideo loads a comment, its video, and whether the caller reviews it
+// (0161). An unknown comment is comment.ErrNotFound; a failed video lookup is
+// returned as is, so callers can fail closed.
+func (s *Server) commentVideo(ctx context.Context, userID uuid.UUID, role string, id uuid.UUID) (sqlcgen.Comment, sqlcgen.GetVideoByIDRow, bool, error) {
 	cmt, err := s.commentsvc.Get(ctx, id)
 	if err != nil {
-		return cmt, sqlcgen.GetVideoByIDRow{}, false, false
+		return cmt, sqlcgen.GetVideoByIDRow{}, false, err
 	}
 	v, err := s.videosvc.GetByID(ctx, cmt.VideoID)
 	if err != nil {
-		return cmt, v, false, false
+		return cmt, v, false, fmt.Errorf("comment video lookup: %w", err)
 	}
-	return cmt, v, s.canReviewComments(ctx, userID, role, v), true
+	return cmt, v, s.canReviewComments(ctx, userID, role, v), nil
 }
 
 // updateCommentRequest is the PATCH /comments/{id} body.
@@ -391,9 +395,13 @@ func (s *Server) handleUpdateComment(c echo.Context) error {
 		return err
 	}
 	// requires_approval (0161): a non-reviewer's changed body is re-held.
+	// Fails closed: if the policy cannot be read, the edit is refused (5xx).
 	edit := s.commentsvc.Edit
-	if _, v, reviewer, ok := s.commentVideo(ctx, userID, role, id); ok && !reviewer &&
-		v.CommentsPolicy == video.CommentsPolicyRequiresApproval {
+	_, v, reviewer, lookupErr := s.commentVideo(ctx, userID, role, id)
+	if lookupErr != nil && !errors.Is(lookupErr, comment.ErrNotFound) {
+		return lookupErr
+	}
+	if lookupErr == nil && !reviewer && v.CommentsPolicy == video.CommentsPolicyRequiresApproval {
 		edit = s.commentsvc.EditForReview
 	}
 	updated, err := edit(ctx, id, userID, strings.TrimSpace(in.Body))
@@ -505,6 +513,18 @@ func (s *Server) handleUnheartComment(c echo.Context) error {
 	return s.commentCreatorAction(c, s.commentsvc.Unheart)
 }
 
+// approveCommentRequest names the version of the held comment the reviewer saw.
+type approveCommentRequest struct {
+	UpdatedAt *time.Time `json:"updated_at"`
+}
+
+func (r approveCommentRequest) Validate() []FieldError {
+	if r.UpdatedAt == nil {
+		return []FieldError{{Field: "updated_at", Message: "is required"}}
+	}
+	return nil
+}
+
 // handleApproveComment releases a held comment (0161): reviewers only (403), on
 // THIS video (404). Only the held -> published transition notifies, federates
 // (the create hook) and is audited; a repeat is a silent 200.
@@ -522,17 +542,26 @@ func (s *Server) handleApproveComment(c echo.Context) error {
 		return err
 	}
 	ctx := c.Request().Context()
-	cmt, v, reviewer, ok := s.commentVideo(ctx, userID, role, commentID)
-	if !ok || cmt.VideoID != videoID {
+	cmt, v, reviewer, err := s.commentVideo(ctx, userID, role, commentID)
+	if errors.Is(err, comment.ErrNotFound) || (err == nil && cmt.VideoID != videoID) {
 		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+	} else if err != nil {
+		return err
 	}
 	if !reviewer {
 		return echo.NewHTTPError(http.StatusForbidden, "not allowed to manage this video's comments")
 	}
-	wa, released, err := s.commentsvc.Approve(ctx, commentID)
+	var in approveCommentRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	wa, released, err := s.commentsvc.Approve(ctx, commentID, *in.UpdatedAt)
 	if err != nil {
-		if errors.Is(err, comment.ErrNotFound) {
+		switch {
+		case errors.Is(err, comment.ErrNotFound):
 			return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+		case errors.Is(err, comment.ErrStale):
+			return echo.NewHTTPError(http.StatusConflict, "the comment changed since you reviewed it")
 		}
 		return err
 	}

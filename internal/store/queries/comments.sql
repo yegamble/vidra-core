@@ -174,9 +174,11 @@ RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
 -- Release a held comment (0161). Conditional on the row STILL being held, so
 -- repeated or concurrent approvals have exactly one winner (no row = nothing to
 -- do) and the withheld side effects fire once. Never bumps updated_at.
+-- expected_updated_at is the version the reviewer saw: an edit since then
+-- (updated_at moved) is not approved.
 UPDATE comments
 SET held_for_review = false
-WHERE id = sqlc.arg('id') AND held_for_review
+WHERE id = sqlc.arg('id') AND held_for_review AND updated_at = sqlc.arg('expected_updated_at')
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
           remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review;
 
