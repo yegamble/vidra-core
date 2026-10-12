@@ -7529,10 +7529,8 @@ paths:
         accounts are hidden from the list (mutes are per-viewer), while an
         anonymous viewer sees all comments. A non-public/unpublished or unknown
         video is 404. Paginated via limit (1–100, default 20) and offset.
-        Comments held for review (held_for_review, a requires_approval video)
-        appear only for their author and for the video's reviewers — its
-        owner, editor members and staff; for everyone else they are absent
-        from both the page and total.
+        Held comments appear only for their author and the video's reviewers
+        (owner, editor members, staff), in both the page and total.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7568,17 +7566,13 @@ paths:
         video's comments_policy to not be "disabled" (403 feature_disabled
         otherwise, config-parity W9); reading comments stays open either way.
         On a "requires_approval" video a comment from anyone but the video's
-        reviewers (owner, editor members, staff) is created with
-        held_for_review true: visible only to its author and the reviewers,
-        never federated, and announced to nobody until approved
-        (POST /videos/{id}/comments/{commentId}/approve). A held comment
-        cannot be replied to (422 on parent_id).
+        reviewers (owner, editor members, staff) is held (held_for_review):
+        visible only to its author and the reviewers, not federated, and not
+        announced until approved; a held parent is a 422 like an unknown one.
         Best-effort notifications follow a PUBLISHED comment: the video's
-        owner gets a "comment" notification, and when parent_id names another
-        user's comment its author gets a "comment_reply" one. A user who is
-        both (the owner replying under their own video) receives
-        comment_reply only — one reply, one notification. A held comment
-        raises them only when it is approved.
+        owner gets "comment", and when parent_id names another user's comment
+        its author gets "comment_reply" (an owner who is both gets
+        comment_reply only).
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7646,15 +7640,11 @@ paths:
       operationId: approveComment
       summary: Approve a comment held for review
       description: >-
-        Releases a comment held for review on a requires_approval video. The
-        caller must be one of the video's reviewers — its channel owner, an
-        editor member, or staff (403 otherwise); the comment must be on this
-        video (404 otherwise). Idempotent: approving a comment that is no
-        longer held answers 200 with no side effects. The first approval
-        publishes the comment — it becomes visible to every reader, is
-        federated, and raises the comment/comment_reply notifications it
-        would have raised when posted (the owner's own approval does not
-        notify the owner) — and is audited as content.comment.approve.
+        Publishes a held comment: reviewers only (owner, editor members,
+        staff; else 403), and the comment must be on this video (else 404).
+        Idempotent — only the first approval federates it, raises the
+        comment/comment_reply notifications (only while the video is public;
+        never to an approving owner) and is audited (content.comment.approve).
         Reject with DELETE /comments/{id}.
       tags: [comments]
       security:
@@ -7705,6 +7695,8 @@ paths:
         Edits the caller's own comment body. Only the author may edit (moderators
         delete, not edit): another user's comment is 403, an unknown id is 404, and
         a blank or too-long body is 422. Bumps updated_at so `edited` becomes true.
+        On a requires_approval video, a changed body from anyone but the video's
+        reviewers sends the comment back to held_for_review until re-approved.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7758,8 +7750,8 @@ paths:
       description: >-
         Deletes a comment. The comment's author may always delete it; a
         moderator/admin may delete anyone's; the video's owner or an editor
-        member may delete a comment held for review (rejecting it). An unknown
-        id is 404; anyone else is 403.
+        member may delete a comment held for review (rejecting it, audited as
+        content.comment.reject). An unknown id is 404; anyone else is 403.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -19565,9 +19557,7 @@ components:
           enum: [enabled, disabled, requires_approval]
           description: >-
             Per-video comment policy (config-parity W9). Omitted/empty seeds
-            the instance's default_comment_policy setting. requires_approval
-            holds comments from anyone but the video's reviewers until one of
-            them approves it.
+            the instance's default_comment_policy setting.
         download_enabled:
           type: boolean
           description: >-
@@ -19647,9 +19637,7 @@ components:
           description: >-
             Set the per-video comment policy (omit to leave unchanged).
             "disabled" makes new comments answer 403 feature_disabled while
-            reading existing comments stays open; "requires_approval" holds
-            new comments for review. Comments already held stay held if the
-            policy is changed away from requires_approval.
+            reading existing comments stays open; "requires_approval" holds them.
         download_enabled:
           type: boolean
           description: >-
@@ -19760,10 +19748,8 @@ components:
         held_for_review:
           type: boolean
           description: >-
-            True while the comment awaits approval on a requires_approval
-            video. Only its author and the video's reviewers (owner, editor
-            members, staff) ever receive a held comment; it cannot be pinned
-            or replied to until approved.
+            True while the comment awaits approval; only its author and the
+            video's reviewers ever receive it. It cannot be pinned or replied to.
     CommentListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

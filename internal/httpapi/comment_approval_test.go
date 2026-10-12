@@ -3,8 +3,10 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -285,5 +287,99 @@ func TestReviewersRejectAHeldCommentByDeletingIt(t *testing.T) {
 	}
 	if code := del(c.bob, published.ID); code != http.StatusForbidden {
 		t.Errorf("owner delete of a PUBLISHED comment = %d, want 403 (unchanged)", code)
+	}
+}
+
+// TestEditsOnApprovalVideoReholdForNonReviewers: on a requires_approval video
+// an approved comment whose author is not a reviewer goes back to held when
+// its body changes (and leaves public view); an unchanged body does not, and a
+// reviewer's own edit never does.
+func TestEditsOnApprovalVideoReholdForNonReviewers(t *testing.T) {
+	c := newApprovalCast(t)
+	edit := func(tok, id, body string) commentView {
+		t.Helper()
+		rec := sendJSONAuth(c.srv, http.MethodPatch, "/api/v1/comments/"+id, `{"body":"`+body+`"}`, tok)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("edit = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		var cv commentView
+		_ = json.Unmarshal(rec.Body.Bytes(), &cv)
+		return cv
+	}
+	eve := c.post(t, c.eve, `{"body":"approved"}`)
+	if r := c.approve(c.bob, eve.ID); r.code != http.StatusOK {
+		t.Fatalf("approve = %d", r.code)
+	}
+	if edit(c.eve, eve.ID, "approved").HeldForReview {
+		t.Error("an unchanged body re-held the comment")
+	}
+	if !edit(c.eve, eve.ID, "changed after approval").HeldForReview {
+		t.Fatal("a non-reviewer's edit of an approved comment stayed published")
+	}
+	if _, ok := hasComment(c.list(t, ""), eve.ID); ok {
+		t.Error("the re-held comment is still visible to anonymous readers")
+	}
+	for name, tok := range map[string]string{"owner": c.bob, "editor": c.ed, "moderator": c.mia} {
+		own := c.post(t, tok, `{"body":"mine"}`)
+		if edit(tok, own.ID, "mine, edited").HeldForReview {
+			t.Errorf("%s's own edit was held", name)
+		}
+	}
+}
+
+// TestApprovalOnANonPublicVideoNotifiesNoThirdParty: a comment approved after
+// its video stopped being public must not tell the parent's author (a third
+// party) about a video they can no longer see.
+func TestApprovalOnANonPublicVideoNotifiesNoThirdParty(t *testing.T) {
+	c := newApprovalCast(t)
+	parent := c.post(t, c.ed, `{"body":"editor says hi"}`)
+	reply := c.post(t, c.eve, `{"body":"eve answers","parent_id":"`+parent.ID+`"}`)
+	if rec := sendJSONAuth(c.srv, http.MethodPatch, "/api/v1/videos/"+c.vid, `{"privacy":"private"}`, c.bob); rec.Code != http.StatusOK {
+		t.Fatalf("make private = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if r := c.approve(c.bob, reply.ID); r.code != http.StatusOK {
+		t.Fatalf("approve = %d; body=%s", r.code, r.body)
+	}
+	for _, nv := range notifTypes(t, c.srv, c.ed) {
+		if nv.CommentID == reply.ID {
+			t.Errorf("parent author notified (%s) about a reply on a private video", nv.Type)
+		}
+	}
+}
+
+// TestRejectIsAuditedAndAHeldParentLooksUnknown: a reviewer's delete of a held
+// comment is audited like an approval (the author withdrawing their own is
+// not), and replying to a held parent answers exactly like an unknown parent.
+func TestRejectIsAuditedAndAHeldParentLooksUnknown(t *testing.T) {
+	c := newApprovalCast(t)
+	reply := func(parentID string) string {
+		rec := sendJSONAuth(c.srv, http.MethodPost, "/api/v1/videos/"+c.vid+"/comments",
+			`{"body":"re","parent_id":"`+parentID+`"}`, c.carl)
+		var e struct {
+			Error struct {
+				Fields []FieldError `json:"fields"`
+			} `json:"error"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &e)
+		return strconv.Itoa(rec.Code) + " " + fmt.Sprint(e.Error.Fields)
+	}
+	held := c.post(t, c.eve, `{"body":"reject me"}`)
+	if got, want := reply(held.ID), reply("00000000-0000-0000-0000-000000000009"); got != want {
+		t.Errorf("held parent answers %q, unknown parent %q — want identical", got, want)
+	}
+	withdrawn := c.post(t, c.eve, `{"body":"never mind"}`)
+	for _, del := range []struct{ tok, id string }{{c.bob, held.ID}, {c.eve, withdrawn.ID}} {
+		if rec := sendJSONAuth(c.srv, http.MethodDelete, "/api/v1/comments/"+del.id, "", del.tok); rec.Code != http.StatusNoContent {
+			t.Fatalf("delete = %d", rec.Code)
+		}
+	}
+	var rows []sqlcgen.ListAuditLogRow
+	for _, r := range c.ledger.rows {
+		if r.Action == observability.ActionCommentReject {
+			rows = append(rows, r)
+		}
+	}
+	if len(rows) != 1 || rows[0].ResourceType != "comment" || rows[0].ResourceID != held.ID {
+		t.Errorf("reject audit rows = %+v, want exactly the reviewer's reject of %s", rows, held.ID)
 	}
 }
