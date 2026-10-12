@@ -8,7 +8,7 @@ import (
 )
 
 // NotificationEmail is one in-app notification rendered as an email, for a user
-// who turned email on for its type (migration 0156). It carries names and ids
+// who turned email on for its type (migration 0157). It carries names and ids
 // only, never comment text: the in-app notification stores none, and an email
 // may transit third-party relays.
 type NotificationEmail struct {

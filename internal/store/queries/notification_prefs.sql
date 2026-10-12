@@ -22,7 +22,7 @@ SELECT COALESCE(
 )::bool;
 
 -- name: ListNotificationEmailPrefs :many
--- A user's EXPLICIT email choices (migration 0156). A NULL email_enabled is the
+-- A user's EXPLICIT email choices (migration 0157). A NULL email_enabled is the
 -- type's default and is not returned; the service overlays these rows onto it.
 SELECT type, email_enabled::bool AS email_enabled
 FROM notification_prefs

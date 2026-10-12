@@ -50,10 +50,8 @@ ON CONFLICT (reporter_id, message_id) WHERE message_id IS NOT NULL DO NOTHING
 RETURNING id;
 
 -- name: CreateRemoteFlagReport :one
--- A report filed by another instance via an inbound ActivityPub Flag (0153):
--- the remote actor + domain instead of a local reporter. Idempotent per (Flag,
--- target) — a redelivery yields no row, so staff are told once. An unknown
--- target raises a foreign-key violation ("invalid target").
+-- A remote Flag report (0153). No row for a repeat (Flag, target) or while the
+-- domain has an open report on the target; an unknown target violates the FK.
 INSERT INTO reports (target_type, video_id, comment_id, reported_user_id, reason,
                      remote_reporter_actor_url, remote_reporter_domain, remote_flag_activity_id)
 VALUES (sqlc.arg('target_type'), sqlc.narg('video_id'), sqlc.narg('comment_id'), sqlc.narg('reported_user_id'),

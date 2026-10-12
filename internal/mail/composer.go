@@ -342,6 +342,27 @@ func (s *Composer) SendPasswordChanged(ctx context.Context, email string) error 
 	return s.send(ctx, email, "", subject, body)
 }
 
+// SendAccountSuspended tells a user their account was banned, with the stated
+// reason (the DSA statement of reasons). It carries no token or link.
+func (s *Composer) SendAccountSuspended(ctx context.Context, email, reason string) error {
+	subject := "Your " + s.cfg.InstanceName + " account was suspended"
+	body := "Hi,\n\nYour " + s.cfg.InstanceName + " account was suspended by the people who run it, " +
+		"and you have been signed out.\n\n"
+	if reason != "" {
+		body += "The reason given:\n\n    " + reason + "\n\n"
+	}
+	body += "If you think this is a mistake, reply to whoever runs this instance.\n"
+	return s.send(ctx, email, "", subject, body)
+}
+
+// SendAccountReinstated tells a user a ban was lifted.
+func (s *Composer) SendAccountReinstated(ctx context.Context, email string) error {
+	subject := "Your " + s.cfg.InstanceName + " account was reinstated"
+	body := "Hi,\n\nThe suspension on your " + s.cfg.InstanceName +
+		" account was lifted. You can sign in again.\n"
+	return s.send(ctx, email, "", subject, body)
+}
+
 // SendTwoFactorRemoved tells an account that two-factor authentication is no
 // longer protecting it. Like SendPasswordChanged it is an after-the-fact notice
 // with no token and no link that could change anything. byAdmin selects the

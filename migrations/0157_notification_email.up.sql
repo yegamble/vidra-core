@@ -1,4 +1,4 @@
--- 0156: notification EMAIL — the per-type email switch and the outbox that
+-- 0157: notification EMAIL — the per-type email switch and the outbox that
 -- delivers it. PeerTube gives every notification type independent web and email
 -- settings, and email is its main channel for bringing a user back; until now
 -- vidra's notifications were in-app only.

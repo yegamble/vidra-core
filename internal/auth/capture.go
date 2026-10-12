@@ -49,6 +49,8 @@ type CaptureMailer struct {
 	// the flag saying whether an administrator did it — the acceptance harness
 	// asserts both the recipient and which of the two messages they got.
 	twoFactorRemoved []CapturedTwoFactorRemoval
+	suspensions      []CapturedSuspension
+	reinstated       []string
 	// notificationEmails are the notification emails the outbox drain sent.
 	notificationEmails []CapturedNotificationEmail
 }
@@ -105,6 +107,32 @@ func (c *CaptureMailer) PasswordChangedNotices() []string {
 	out := make([]string, len(c.passwordChanged))
 	copy(out, c.passwordChanged)
 	return out
+}
+
+// CapturedSuspension is one account-suspended notice recorded by the capture mailer.
+type CapturedSuspension struct{ Email, Reason string }
+
+// SendAccountSuspended records the suspension notice instead of mailing it.
+func (c *CaptureMailer) SendAccountSuspended(_ context.Context, email, reason string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.suspensions = append(c.suspensions, CapturedSuspension{Email: email, Reason: reason})
+	return nil
+}
+
+// SendAccountReinstated records the reinstatement notice.
+func (c *CaptureMailer) SendAccountReinstated(_ context.Context, email string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reinstated = append(c.reinstated, email)
+	return nil
+}
+
+// Suspensions returns the suspension notices, oldest first.
+func (c *CaptureMailer) Suspensions() []CapturedSuspension {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]CapturedSuspension(nil), c.suspensions...)
 }
 
 // SendTwoFactorRemoved records that a two-factor-removed notice was "sent".

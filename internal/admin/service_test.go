@@ -17,6 +17,7 @@ type fakeRepo struct {
 	users   map[uuid.UUID]sqlcgen.User
 	used    map[uuid.UUID]int64
 	revoked map[uuid.UUID]bool
+	bans    map[uuid.UUID]sqlcgen.UserBan
 	// Instance-wide aggregate stubs for Stats.
 	publicVideos int64
 	comments     int64
@@ -31,6 +32,7 @@ func newFakeRepo() *fakeRepo {
 		users:   map[uuid.UUID]sqlcgen.User{},
 		used:    map[uuid.UUID]int64{},
 		revoked: map[uuid.UUID]bool{},
+		bans:    map[uuid.UUID]sqlcgen.UserBan{},
 		mfa:     map[uuid.UUID]bool{},
 	}
 }
@@ -56,7 +58,21 @@ func (f *fakeRepo) CountUsersMatching(_ context.Context, query string) (int64, e
 func (f *fakeRepo) CountPublicVideos(_ context.Context) (int64, error) {
 	return f.publicVideos, nil
 }
-func (f *fakeRepo) CountComments(_ context.Context) (int64, error)      { return f.comments, nil }
+func (f *fakeRepo) CountComments(_ context.Context) (int64, error) { return f.comments, nil }
+func (f *fakeRepo) UpsertUserBan(_ context.Context, a sqlcgen.UpsertUserBanParams) error {
+	f.bans[a.UserID] = sqlcgen.UserBan{UserID: a.UserID, Reason: a.Reason, BannedBy: a.BannedBy}
+	return nil
+}
+func (f *fakeRepo) DeleteUserBan(_ context.Context, id uuid.UUID) error {
+	delete(f.bans, id)
+	return nil
+}
+func (f *fakeRepo) GetUserBan(_ context.Context, id uuid.UUID) (sqlcgen.UserBan, error) {
+	if b, ok := f.bans[id]; ok {
+		return b, nil
+	}
+	return sqlcgen.UserBan{}, errors.New("no ban")
+}
 func (f *fakeRepo) SumAllStorageUsage(_ context.Context) (int64, error) { return f.storedBytes, nil }
 func (f *fakeRepo) UserHasMFAEnabled(_ context.Context, userID uuid.UUID) (bool, error) {
 	return f.mfa[userID], nil
@@ -504,5 +520,84 @@ func TestUpdateUserRefusesEveryWriteToATombstone(t *testing.T) {
 	}
 	if got := repo.users[gone]; got != before {
 		t.Errorf("tombstone changed:\n got %+v\nwant %+v", got, before)
+	}
+}
+
+func TestModeratorMayOnlyBanOrdinaryAccounts(t *testing.T) {
+	repo := newFakeRepo()
+	mod := repo.add("mo", RoleModerator)
+	user := repo.add("uma", RoleUser)
+	otherMod := repo.add("mo2", RoleModerator)
+	adm := repo.add("ada", RoleAdmin)
+	svc := NewService(repo)
+	off, on, role, verified := false, true, RoleAdmin, true
+	reason := "spam"
+	ctx := context.Background()
+
+	for name, tc := range map[string]struct {
+		target uuid.UUID
+		in     UpdateUserInput
+	}{
+		"ban a moderator": {otherMod, UpdateUserInput{IsActive: &off}},
+		"ban an admin":    {adm, UpdateUserInput{IsActive: &off}},
+		"ban self":        {mod, UpdateUserInput{IsActive: &off}},
+		"change a role":   {user, UpdateUserInput{Role: &role}},
+		"verify email":    {user, UpdateUserInput{EmailVerified: &verified}},
+		"set a quota":     {user, UpdateUserInput{SetStorageQuota: true}},
+		"ban + role":      {user, UpdateUserInput{IsActive: &off, Role: &role}},
+		"set bypass":      {user, UpdateUserInput{BypassQuarantine: &verified}},
+	} {
+		tc.in.ActorRole = RoleModerator
+		if _, err := svc.UpdateUser(ctx, mod, tc.target, tc.in); !errors.Is(err, ErrModeratorForbidden) {
+			t.Errorf("%s = %v, want ErrModeratorForbidden", name, err)
+		}
+	}
+
+	if _, err := svc.UpdateUser(ctx, mod, user, UpdateUserInput{IsActive: &off, BanReason: &reason, ActorRole: RoleModerator}); err != nil {
+		t.Fatalf("moderator bans a user: %v", err)
+	}
+	if b, ok := svc.Ban(ctx, user); !ok || b.Reason != "spam" || !b.BannedBy.Valid {
+		t.Errorf("stored ban = %+v ok=%v", b, ok)
+	}
+	if _, err := svc.UpdateUser(ctx, mod, user, UpdateUserInput{IsActive: &on, ActorRole: RoleModerator}); err != nil {
+		t.Fatalf("moderator unbans: %v", err)
+	}
+	if _, ok := svc.Ban(ctx, user); ok {
+		t.Error("unban left the ban explanation behind")
+	}
+	long := strings.Repeat("x", MaxBanReasonLen+1)
+	if _, err := svc.UpdateUser(ctx, adm, user, UpdateUserInput{IsActive: &off, BanReason: &long}); !errors.Is(err, ErrBanReasonTooLong) {
+		t.Errorf("501-char reason = %v, want ErrBanReasonTooLong", err)
+	}
+}
+
+func TestBanKeepsTheOriginalAndModeratorsOnlyLiftRealBans(t *testing.T) {
+	repo := newFakeRepo()
+	mod := repo.add("mo", RoleModerator)
+	mod2 := repo.add("mo2", RoleModerator)
+	user := repo.add("uma", RoleUser)
+	closed := repo.add("clo", RoleUser) // closed by its OWNER: inactive, no ban row
+	c := repo.users[closed]
+	c.IsActive = false
+	repo.users[closed] = c
+	svc := NewService(repo)
+	off, on := false, true
+	first, second := "first reason", "second reason"
+	ctx := context.Background()
+
+	if _, err := svc.UpdateUser(ctx, mod, closed, UpdateUserInput{IsActive: &on, ActorRole: RoleModerator}); !errors.Is(err, ErrModeratorForbidden) {
+		t.Errorf("moderator reactivating a self-closed account = %v, want ErrModeratorForbidden", err)
+	}
+	if _, err := svc.UpdateUser(ctx, mod, user, UpdateUserInput{IsActive: &off, BanReason: &first, ActorRole: RoleModerator}); err != nil {
+		t.Fatalf("ban: %v", err)
+	}
+	if _, err := svc.UpdateUser(ctx, mod2, user, UpdateUserInput{IsActive: &off, BanReason: &second, ActorRole: RoleModerator}); err != nil {
+		t.Fatalf("re-ban: %v", err)
+	}
+	if b, _ := svc.Ban(ctx, user); b.Reason != first || b.BannedBy.Bytes != mod {
+		t.Errorf("re-ban overwrote the original: %+v", b)
+	}
+	if _, err := svc.UpdateUser(ctx, mod2, user, UpdateUserInput{IsActive: &on, ActorRole: RoleModerator}); err != nil {
+		t.Errorf("moderator lifting a real ban: %v", err)
 	}
 }

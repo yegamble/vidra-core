@@ -31,6 +31,9 @@ func (m *captureMailer) SendNotificationEmail(context.Context, string, mail.Noti
 	return nil
 }
 
+func (m *captureMailer) SendAccountSuspended(context.Context, string, string) error { return nil }
+func (m *captureMailer) SendAccountReinstated(context.Context, string) error        { return nil }
+
 func (m *captureMailer) SendTwoFactorRemoved(_ context.Context, email string, byAdmin bool) error {
 	m.twoFactorRemoved = append(m.twoFactorRemoved, CapturedTwoFactorRemoval{Email: email, ByAdmin: byAdmin})
 	return nil

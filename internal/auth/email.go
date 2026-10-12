@@ -78,8 +78,14 @@ type Mailer interface {
 	// removes it (byAdmin), the one case where the account holder took no
 	// action at all and every session they had was signed out.
 	SendTwoFactorRemoved(ctx context.Context, email string, byAdmin bool) error
+	// SendAccountSuspended tells a user a moderator or administrator banned the
+	// account, with the stated reason (the DSA statement of reasons). The reason
+	// is staff prose written for this one reader; it is never audited or logged.
+	SendAccountSuspended(ctx context.Context, email, reason string) error
+	// SendAccountReinstated tells a user a ban was lifted. No credential.
+	SendAccountReinstated(ctx context.Context, email string) error
 	// SendNotificationEmail mails one in-app notification to a user who turned
-	// email on for its type (migration 0156). It carries names and ids, never
+	// email on for its type (migration 0157). It carries names and ids, never
 	// comment text, and links only to PUBLIC_BASE_URL. It is the one message
 	// here sent from a background drain rather than a request, so a failure is
 	// retried by the outbox, never surfaced to anyone.
@@ -116,7 +122,9 @@ func (noopMailer) SendRegistrationRejected(context.Context, string, string, stri
 	return nil
 }
 
-func (noopMailer) SendTwoFactorRemoved(context.Context, string, bool) error { return nil }
+func (noopMailer) SendTwoFactorRemoved(context.Context, string, bool) error   { return nil }
+func (noopMailer) SendAccountSuspended(context.Context, string, string) error { return nil }
+func (noopMailer) SendAccountReinstated(context.Context, string) error        { return nil }
 func (noopMailer) SendNotificationEmail(context.Context, string, mail.NotificationEmail) error {
 	return nil
 }

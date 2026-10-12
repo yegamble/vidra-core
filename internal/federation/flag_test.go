@@ -13,9 +13,9 @@ import (
 )
 
 // fakeFlagReports stands in for *moderation.Service on the inbound-Flag path.
-// It mirrors the SQL's idempotency: one report per (Flag id, target type,
-// target), a repeat returning uuid.Nil with no error — exactly what the partial
-// unique index + ON CONFLICT DO NOTHING produce (migration 0153).
+// It mirrors the SQL's two partial unique indexes (migration 0153) — one report
+// per (Flag id, target) and one OPEN report per (domain, target) — a repeat
+// returning uuid.Nil with no error, as ON CONFLICT DO NOTHING does.
 type fakeFlagReports struct {
 	filed   []moderation.RemoteReport
 	seen    map[string]bool
@@ -31,13 +31,14 @@ func (f *fakeFlagReports) ReportFromRemote(_ context.Context, r moderation.Remot
 		return uuid.Nil, moderation.ErrInvalidTarget
 	}
 	key := r.FlagActivityID + "|" + r.TargetType + "|" + r.TargetID.String()
+	open := r.Domain + "|" + r.TargetType + "|" + r.TargetID.String() // every fake report stays open
 	if f.seen == nil {
 		f.seen = map[string]bool{}
 	}
-	if f.seen[key] {
+	if f.seen[key] || f.seen[open] {
 		return uuid.Nil, nil
 	}
-	f.seen[key] = true
+	f.seen[key], f.seen[open] = true, true
 	f.filed = append(f.filed, r)
 	return uuid.New(), nil
 }
@@ -153,10 +154,12 @@ func TestHandleInboxFlagMastodonAccountAndStatuses(t *testing.T) {
 	}
 
 	// A channel actor names the account that owns it; reported twice in one
-	// Flag (as the channel AND the account) it is still ONE report.
-	body = `{"id":"` + mastoFlagID + `/2","type":"Flag","actor":"` + mastoActor + `","content":"x",` +
+	// Flag (as the channel AND the account) it is still ONE report. (From a
+	// second instance: mastodon.example already has an open report on alice.)
+	const otherActor = "https://other.example/actor"
+	body = `{"id":"https://other.example/f/2","type":"Flag","actor":"` + otherActor + `","content":"x",` +
 		`"object":["` + filmsActor + `","` + aliceAccount + `"]}`
-	if err := svc.HandleInbox(context.Background(), mastoActor, []byte(body)); err != nil {
+	if err := svc.HandleInbox(context.Background(), otherActor, []byte(body)); err != nil {
 		t.Fatalf("HandleInbox(channel Flag): %v", err)
 	}
 	last := reports.filed[len(reports.filed)-1]
@@ -299,5 +302,57 @@ func TestHandleInboxFlagWithoutReporterIsIgnored(t *testing.T) {
 	body := []byte(`{"id":"` + ptFlagID + `","type":"Flag","actor":"` + ptActor + `","content":"x","object":"` + aliceAccount + `"}`)
 	if err := svc.HandleInbox(context.Background(), ptActor, body); err != nil {
 		t.Fatalf("HandleInbox(Flag): %v", err)
+	}
+}
+
+// A Flag's id must live on the signer's host, like every other activity id the
+// inbox accepts, and must fit the length the store indexes. Either failure is
+// ErrBadResource (400) before anything is filed or marked processed.
+func TestHandleInboxFlagIDBoundToSigner(t *testing.T) {
+	for name, tc := range map[string]struct {
+		id   string
+		want error
+	}{
+		"other host":     {"https://elsewhere.example/abuses/7", ErrBadResource},
+		"lookalike host": {"https://peertube.example.evil/abuses/7", ErrBadResource},
+		"too long":       {ptFlagID + "/" + strings.Repeat("a", maxFlagIDLen-len(ptFlagID)), ErrBadResource},
+		"at the cap":     {ptFlagID + "/" + strings.Repeat("a", maxFlagIDLen-len(ptFlagID)-1), nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, reports, notifier, svc, _ := newFlagFixture()
+			body := `{"id":"` + tc.id + `","type":"Flag","actor":"` + ptActor + `","content":"x","object":"` + aliceAccount + `"}`
+			err := svc.HandleInbox(context.Background(), ptActor, []byte(body))
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("HandleInbox err = %v, want %v", err, tc.want)
+			}
+			if tc.want == nil {
+				if len(reports.filed) != 1 {
+					t.Errorf("an id at the cap filed %d reports, want 1", len(reports.filed))
+				}
+				return
+			}
+			if len(reports.filed) != 0 || len(notifier.notified) != 0 || repo.processed[tc.id] {
+				t.Errorf("rejected Flag filed %d / notified %d / processed %v, want nothing",
+					len(reports.filed), len(notifier.notified), repo.processed[tc.id])
+			}
+		})
+	}
+}
+
+// One open report per (reporting instance, target): a second Flag from the
+// same instance about a target it already has an open report on files nothing
+// and tells staff nothing.
+func TestHandleInboxFlagSameInstanceSameTargetWhileOpen(t *testing.T) {
+	_, reports, notifier, svc, _ := newFlagFixture()
+	for i := 1; i <= 2; i++ {
+		body := `{"id":"` + ptFlagID + `/` + string(rune('0'+i)) + `","type":"Flag","actor":"` + ptActor +
+			`","content":"x","object":"` + aliceAccount + `"}`
+		if err := svc.HandleInbox(context.Background(), ptActor, []byte(body)); err != nil {
+			t.Fatalf("Flag %d: %v", i, err)
+		}
+	}
+	if len(reports.filed) != 1 || len(notifier.notified) != 1 {
+		t.Errorf("two Flags from one instance on one open target filed %d / notified %d, want 1 / 1",
+			len(reports.filed), len(notifier.notified))
 	}
 }

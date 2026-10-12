@@ -135,8 +135,10 @@ SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.i
        -- enrollment (enabled=FALSE) is not two-factor protection and must not
        -- be shown as one. EXISTS keeps the list one query: an admin console
        -- that asked per row would issue a query per account on every page.
-       EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = u.id AND m.enabled) AS mfa_enabled
+       EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = u.id AND m.enabled) AS mfa_enabled,
+       b.reason AS ban_reason, b.banned_at AS banned_at, b.banned_by AS banned_by
 FROM users u
+LEFT JOIN user_bans b ON b.user_id = u.id
 WHERE (sqlc.arg('query')::text = ''
        OR u.username ILIKE '%' || sqlc.arg('query')::text || '%'
        OR u.email ILIKE '%' || sqlc.arg('query')::text || '%')
