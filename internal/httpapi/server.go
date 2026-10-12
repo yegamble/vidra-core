@@ -2043,6 +2043,10 @@ func (s *Server) routes() {
 		api.POST("/videos/:id/report", s.handleReportVideo, s.requireAuth)
 		api.POST("/comments/:id/report", s.handleReportComment, s.requireAuth)
 		api.POST("/users/:id/report", s.handleReportAccount, s.requireAuth)
+		// A report's message thread: its local reporter and staff (404 to anyone
+		// else, so a report's existence never leaks).
+		api.GET("/reports/:id/messages", s.handleListReportMessages, s.requireAuth)
+		api.POST("/reports/:id/messages", s.handleCreateReportMessage, s.requireAuth)
 		api.GET("/admin/reports", s.handleListReports, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/reports/:id/resolve", s.handleResolveReport, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		// Hard-delete is admin-only: moderators resolve, admins can purge.

@@ -9488,6 +9488,106 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/reports/{id}/messages:
+    get:
+      operationId: listReportMessages
+      summary: Read a report's message thread
+      description: >-
+        The conversation between a report's reporter and the moderation team,
+        oldest first. Open to the report's LOCAL reporter and to admins and
+        moderators; any other caller gets the same 404 as an unknown report, so
+        a report's existence never leaks. The reporter is never told which
+        moderator wrote a message (author_username is filled for staff only).
+        A report another instance filed (a remote Flag) has no local reporter:
+        staff can read its thread, which is empty and reports can_reply=false.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of the thread (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportMessageListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such report, or the caller is neither its reporter nor staff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createReportMessage
+      summary: Post to a report's message thread
+      description: >-
+        Adds a message to the thread. Same access as reading it. A staff
+        member's message notifies the reporter (report_message, with no actor);
+        the reporter's notifies the staff who receive new_report. Notifications
+        never carry the body. A staff message is audited as
+        moderation.report.message by id only. A report another instance filed
+        has no local reporter to write to: 409.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportMessageRequest"
+      responses:
+        "201":
+          description: The message was added.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportMessage"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such report, or the caller is neither its reporter nor staff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The report was filed by another instance and has no local reporter to message.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (empty body, or over 3000 characters).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/search/suggestion-bans:
     get:
       operationId: listSuggestionBans
@@ -21187,6 +21287,55 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/Report"
+    ReportMessage:
+      type: object
+      description: One message in a report's thread.
+      required: [id, body, by_moderator, is_mine, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        body:
+          type: string
+          description: Plain text, as written. Never render it as HTML.
+        by_moderator:
+          type: boolean
+          description: True when written by staff rather than the report's reporter.
+        is_mine:
+          type: boolean
+          description: True when the caller wrote it.
+        author_username:
+          type: string
+          description: >-
+            Who wrote it. Sent to staff only — the reporter is never told which
+            moderator wrote — and omitted once the author's account is deleted.
+        created_at:
+          type: string
+          format: date-time
+    ReportMessageListResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [messages, can_reply]
+          properties:
+            messages:
+              type: array
+              items:
+                $ref: "#/components/schemas/ReportMessage"
+            can_reply:
+              type: boolean
+              description: >-
+                False for a report another instance filed: there is no local
+                reporter, so nobody can post to its thread.
+    CreateReportMessageRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 3000
+          description: The message, 1–3000 characters after trimming.
     BlockedVideo:
       type: object
       description: A currently-blocked video, for the moderation block-list.
