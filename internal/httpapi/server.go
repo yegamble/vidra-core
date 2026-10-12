@@ -159,6 +159,7 @@ type Server struct {
 	channelsyncsvc    *channelsync.Service
 	captionjobsvc     *captionjob.Service
 	fedsvc            *federation.Service
+	videoFed          videoFederator
 	atprotosvc        *atproto.Service
 	remotevideosvc    *remotevideo.Service
 	authoredrcsvc     *authoredremotecomment.Service

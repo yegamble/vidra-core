@@ -89,3 +89,50 @@ func TestBlockSucceedsOnAnInstanceWithNoMirror(t *testing.T) {
 		t.Fatalf("unblock with no mirror wired = %d", rec.Code)
 	}
 }
+
+// capturingVideoFed records the federation calls a moderation block makes.
+type capturingVideoFed struct {
+	unfederated, refederated []uuid.UUID
+	err                      error
+}
+
+func (f *capturingVideoFed) UnfederateBlockedVideo(_ context.Context, id uuid.UUID) error {
+	f.unfederated = append(f.unfederated, id)
+	return f.err
+}
+
+func (f *capturingVideoFed) RefederateUnblockedVideo(_ context.Context, id uuid.UUID) error {
+	f.refederated = append(f.refederated, id)
+	return f.err
+}
+
+// T13: a block retracts the video from followers (Delete), an unblock that
+// lifted a block re-announces it, and a federation failure never fails the
+// moderation action.
+func TestBlockUnfederatesAndUnblockRefederates(t *testing.T) {
+	fed := &capturingVideoFed{err: context.DeadlineExceeded}
+	srv, _, _, _, _ := videoServerFullWith(t, testConfig(), []Option{WithVideoFederation(fed)})
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	owner := createChannelFor(t, srv, "bob", "bob@example.test", "bobtube")
+	vid := createPublishedVideo(t, srv, owner, "bobtube", `{"title":"Clip","privacy":"public"}`)
+
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+vid+"/block", `{"reason":"tos"}`, admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("block = %d (a federation failure must not fail the block); body=%s", rec.Code, rec.Body.String())
+	}
+	if len(fed.unfederated) != 1 || fed.unfederated[0].String() != vid {
+		t.Fatalf("block unfederated %v, want exactly the blocked video", fed.unfederated)
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/videos/"+vid+"/block", "", admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("unblock = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(fed.refederated) != 1 || fed.refederated[0].String() != vid {
+		t.Fatalf("unblock refederated %v, want the video once", fed.refederated)
+	}
+	// Idempotent: a second DELETE lifted nothing, so it re-announces nothing.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/videos/"+vid+"/block", "", admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("second unblock = %d", rec.Code)
+	}
+	if len(fed.refederated) != 1 {
+		t.Errorf("a no-op unblock re-announced: %d", len(fed.refederated))
+	}
+}

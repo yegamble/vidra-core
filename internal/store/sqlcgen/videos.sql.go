@@ -119,7 +119,8 @@ func (q *Queries) CountAdminVideos(ctx context.Context, arg CountAdminVideosPara
 }
 
 const countPublicVideos = `-- name: CountPublicVideos :one
-SELECT count(*) FROM videos WHERE privacy = 'public' AND state = 'published'
+SELECT count(*) FROM videos v WHERE v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 `
 
 // Public, published videos — the "local posts" count NodeInfo advertises. Only
@@ -132,10 +133,12 @@ func (q *Queries) CountPublicVideos(ctx context.Context) (int64, error) {
 }
 
 const countPublicVideosByChannel = `-- name: CountPublicVideosByChannel :one
-SELECT count(*) FROM videos WHERE channel_id = $1 AND privacy = 'public' AND state = 'published'
+SELECT count(*) FROM videos v WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 `
 
 // Public, published videos for one channel — the totalItems of its AP outbox.
+// A moderator-blocked video is not federated (T13), so it is not counted.
 func (q *Queries) CountPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countPublicVideosByChannel, channelID)
 	var count int64
@@ -723,7 +726,10 @@ SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.st
        EXISTS (
            SELECT 1 FROM streaming_playlists sp
            WHERE sp.video_id = v.id AND sp.state = 'ready' AND sp.master_key <> ''
-       ) AS has_hls
+       ) AS has_hls,
+       -- Federation must not serve or push a moderator-blocked video (T13); the
+       -- flag rides this row so the check cannot disagree with the read.
+       EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -759,6 +765,7 @@ type GetVideoByIDRow struct {
 	HasThumbnail            bool               `json:"has_thumbnail"`
 	ThumbnailContentType    string             `json:"thumbnail_content_type"`
 	HasHls                  bool               `json:"has_hls"`
+	Blocked                 bool               `json:"blocked"`
 }
 
 func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDRow, error) {
@@ -792,6 +799,7 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 		&i.HasThumbnail,
 		&i.ThumbnailContentType,
 		&i.HasHls,
+		&i.Blocked,
 	)
 	return i, err
 }
@@ -1138,6 +1146,7 @@ LEFT JOIN LATERAL (
     ORDER BY f.created_at DESC LIMIT 1
 ) th ON true
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 ORDER BY v.created_at DESC, v.id DESC
 LIMIT $2 OFFSET $3
 `
