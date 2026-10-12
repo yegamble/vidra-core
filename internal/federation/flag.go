@@ -38,10 +38,8 @@ func WithFollowerRequestHook(fn func(context.Context, uuid.UUID)) Option {
 	return func(s *Service) { s.onFollowerRequest = fn }
 }
 
-// WithHeldCommentHook registers a best-effort callback fired with the comment
-// id when an inbound Note is stored HELD on a requires_approval video (0161) —
-// the seam the video managers' comment_held notification uses. A re-delivered
-// held Note fires it again; the fan-out behind it is idempotent.
+// WithHeldCommentHook registers a best-effort callback fired with the comment id
+// whenever an inbound Note leaves a comment HELD (0161) — the comment_held seam.
 func WithHeldCommentHook(fn func(context.Context, uuid.UUID)) Option {
 	return func(s *Service) { s.onHeldComment = fn }
 }

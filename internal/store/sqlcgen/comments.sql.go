@@ -712,12 +712,10 @@ type ListManagedVideoCommentsRow struct {
 	VideoTitle        string             `json:"video_title"`
 }
 
-// The review queue (0161): comments on every video the caller manages — the
-// channels they own plus those they edit — newest first, with author identity
-// and the video title. held = true lists only comments awaiting approval,
-// false only published ones, NULL both. Deliberately NO viewer mute/block
-// filtering: this is a moderation surface, and a held comment hidden from the
-// only people who can release it would wait forever.
+// The review queue (0161): comments on every video the caller manages (owned or
+// edited channels), newest first, with author + video title; held filters
+// (NULL = both). Deliberately NO viewer mute/block filtering: a held comment
+// hidden from its only reviewers would wait forever.
 func (q *Queries) ListManagedVideoComments(ctx context.Context, arg ListManagedVideoCommentsParams) ([]ListManagedVideoCommentsRow, error) {
 	rows, err := q.db.Query(ctx, listManagedVideoComments,
 		arg.UserID,

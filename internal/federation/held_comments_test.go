@@ -204,3 +204,32 @@ func TestInboundNoteOnDisabledVideoIsDropped(t *testing.T) {
 		}
 	}
 }
+
+// TestRemoteReholdFiresTheHeldHook: an approved remote comment re-held by a
+// changed Update{Note} pings the video's reviewers again.
+func TestRemoteReholdFiresTheHeldHook(t *testing.T) {
+	videoID := uuid.New()
+	repo := newNotesRepo(videoID)
+	v := repo.videosByID[videoID]
+	v.CommentsPolicy = "requires_approval"
+	repo.videosByID[videoID] = v
+	var fired []uuid.UUID
+	svc := NewService(repo, WithBaseURL(noteBase),
+		WithHeldCommentHook(func(_ context.Context, id uuid.UUID) { fired = append(fired, id) }))
+	ctx := context.Background()
+	const noteID = "https://remote.example/comments/rh1"
+	if err := svc.HandleInbox(ctx, remoteBob, []byte(createNote("https://remote.example/act/rh1", remoteBob, noteID, remoteBob,
+		noteBase+"/videos/"+videoID.String(), "v1"))); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	c := onlyComment(t, repo)
+	c.HeldForReview = false
+	repo.commentsByID[c.ID] = c
+	fired = nil
+	if err := svc.HandleInbox(ctx, remoteBob, []byte(updateNote("https://remote.example/act/rh2", remoteBob, noteID, "v2"))); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if len(fired) != 1 || fired[0] != c.ID {
+		t.Errorf("held hook after a re-holding Update = %v, want [%s]", fired, c.ID)
+	}
+}

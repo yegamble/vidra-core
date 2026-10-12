@@ -216,19 +216,23 @@ func TestManagedCommentQueueOnRealPG(t *testing.T) {
 		return id
 	}
 	owner, editor, muter, commenter, stranger := mkUser("q-owner"), mkUser("q-editor"), mkUser("q-muter"), mkUser("q-commenter"), mkUser("q-stranger")
+	blocker := mkUser("q-blocker") // an editor who BLOCKED the commenter
 	var channelID, videoID, otherVideo uuid.UUID
 	if err := st.Pool.QueryRow(ctx,
 		`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'Queue') RETURNING id`,
 		owner, "queue-"+suffix).Scan(&channelID); err != nil {
 		t.Fatalf("seed channel: %v", err)
 	}
-	for _, m := range []uuid.UUID{editor, muter} {
+	for _, m := range []uuid.UUID{editor, muter, blocker} {
 		if _, err := st.Pool.Exec(ctx, `INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)`, channelID, m); err != nil {
 			t.Fatalf("seed member: %v", err)
 		}
 	}
 	if _, err := st.Pool.Exec(ctx, `INSERT INTO muted_accounts (muter_id, muted_id) VALUES ($1, $2)`, muter, commenter); err != nil {
 		t.Fatalf("seed mute: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)`, blocker, commenter); err != nil {
+		t.Fatalf("seed block: %v", err)
 	}
 	for _, dst := range []*uuid.UUID{&videoID, &otherVideo} {
 		if err := st.Pool.QueryRow(ctx,
@@ -305,7 +309,21 @@ func TestManagedCommentQueueOnRealPG(t *testing.T) {
 	}
 	got := notified()
 	if len(got) != 2 || got[owner] != 1 || got[editor] != 1 {
-		t.Errorf("comment_held recipients = %v, want owner and editor once each (not the muting editor, commenter or stranger)", got)
+		t.Errorf("comment_held recipients = %v, want owner and editor once each (not the muting or blocking editor, commenter or stranger)", got)
+	}
+	// Once read, a re-fire (a re-held edit) re-surfaces each notice unread —
+	// still one row per reviewer — and an immediate repeat changes nothing.
+	if _, err := st.Pool.Exec(ctx, `UPDATE notifications SET read_at = now() WHERE comment_id = $1`, held); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+	for i, want := range []int64{2, 0} {
+		if n, err := q.NotifyManagersOfHeldComment(ctx, held); err != nil || n != want {
+			t.Errorf("re-fire #%d after read = %d, %v; want %d", i+1, n, err, want)
+		}
+	}
+	var unread int
+	if err := st.Pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE comment_id = $1 AND read_at IS NULL`, held).Scan(&unread); err != nil || unread != 2 {
+		t.Errorf("unread comment_held rows after re-surface = %d, %v; want 2", unread, err)
 	}
 	// An approved comment no longer pings anyone.
 	if _, err := q.ApproveComment(ctx, held); err != nil {

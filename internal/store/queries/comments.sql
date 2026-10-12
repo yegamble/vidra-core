@@ -229,12 +229,10 @@ WHERE (sqlc.narg('user_id')::uuid IS NOT NULL AND user_id = sqlc.narg('user_id')
 RETURNING id, video_id, user_id;
 
 -- name: ListManagedVideoComments :many
--- The review queue (0161): comments on every video the caller manages — the
--- channels they own plus those they edit — newest first, with author identity
--- and the video title. held = true lists only comments awaiting approval,
--- false only published ones, NULL both. Deliberately NO viewer mute/block
--- filtering: this is a moderation surface, and a held comment hidden from the
--- only people who can release it would wait forever.
+-- The review queue (0161): comments on every video the caller manages (owned or
+-- edited channels), newest first, with author + video title; held filters
+-- (NULL = both). Deliberately NO viewer mute/block filtering: a held comment
+-- hidden from its only reviewers would wait forever.
 SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at, c.deleted_at, c.hearted,
        c.held_for_review,
        (c.id IS NOT DISTINCT FROM v.pinned_comment_id)::boolean AS pinned,

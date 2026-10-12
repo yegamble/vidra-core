@@ -1167,9 +1167,17 @@ func (f *notifFakeRepo) NotifyManagersOfHeldComment(_ context.Context, commentID
 			f.comments.userBlocks.isBlocked(r, commenter) || f.comments.userBlocks.isBlocked(commenter, r)) {
 			continue
 		}
+		// One row per (recipient, comment); a READ one is re-surfaced (a
+		// re-held edit), an unread one is left alone — mirrors the SQL.
 		duplicate := false
-		for _, n := range f.notifs {
-			duplicate = duplicate || (n.UserID == r && n.Type == notification.TypeCommentHeld && n.CommentID.Bytes == commentID)
+		for i, n := range f.notifs {
+			if n.UserID == r && n.Type == notification.TypeCommentHeld && n.CommentID.Bytes == commentID {
+				duplicate = true
+				if n.ReadAt.Valid {
+					f.notifs[i].ReadAt, f.notifs[i].CreatedAt = pgtype.Timestamptz{}, time.Now()
+					notified++
+				}
+			}
 		}
 		if duplicate {
 			continue

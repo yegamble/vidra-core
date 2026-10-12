@@ -503,11 +503,9 @@ type ManagedComment struct {
 	VideoTitle string
 }
 
-// ListForManager returns the comments on every video userID manages — channels
-// they own plus those they edit — newest first. held narrows to comments
-// awaiting approval (true), published ones (false), or neither (nil). No
-// viewer mute filtering: a held comment hidden from the only people who can
-// release it would wait forever. The caller clamps limit/offset.
+// ListForManager returns the comments on every video userID manages (owned or
+// edited channels), newest first; held filters (nil = all). No mute filtering:
+// a held comment hidden from its only reviewers would wait forever.
 func (s *Service) ListForManager(ctx context.Context, userID uuid.UUID, held *bool, limit, offset int32) ([]ManagedComment, int64, error) {
 	rows, err := s.repo.ListManagedVideoComments(ctx, sqlcgen.ListManagedVideoCommentsParams{
 		UserID: userID, Held: held, ResultLimit: limit, ResultOffset: offset,

@@ -411,6 +411,11 @@ func (s *Server) handleUpdateComment(c echo.Context) error {
 		}
 		return err
 	}
+	if updated.HeldForReview && s.notifsvc != nil { // re-held: ping the reviewers
+		if _, nerr := s.notifsvc.NotifyCommentHeld(ctx, updated.ID); nerr != nil {
+			s.logger.WarnContext(ctx, "notify comment held failed", "error", nerr, "comment_id", updated.ID)
+		}
+	}
 	// Re-flag the edited body against the moderation watched-words list
 	// (best-effort; an edit can newly introduce a flagged term).
 	if s.watchwordsvc != nil {

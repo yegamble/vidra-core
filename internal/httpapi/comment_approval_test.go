@@ -459,3 +459,29 @@ func TestRejectIsAuditedAndAHeldParentLooksUnknown(t *testing.T) {
 		t.Errorf("reject audit rows = %+v, want exactly the reviewer's reject of %s", rows, held.ID)
 	}
 }
+
+// TestReheldEditResurfacesTheReviewersNotice: when an approved comment is
+// re-held by its author's edit, the reviewers' comment_held notice for it
+// comes back unread — one row per reviewer and comment, never a pile.
+func TestReheldEditResurfacesTheReviewersNotice(t *testing.T) {
+	c := newApprovalCast(t)
+	eve := c.post(t, c.eve, `{"body":"first"}`)
+	if rec := sendJSONAuth(c.srv, http.MethodPost, "/api/v1/me/notifications/read-all", "", c.bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("read-all = %d", rec.Code)
+	}
+	if r := c.approve(c.bob, eve.ID); r.code != http.StatusOK {
+		t.Fatalf("approve = %d", r.code)
+	}
+	if rec := sendJSONAuth(c.srv, http.MethodPatch, "/api/v1/comments/"+eve.ID, `{"body":"changed"}`, c.eve); rec.Code != http.StatusOK {
+		t.Fatalf("edit = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var held []notificationView
+	for _, nv := range notifTypes(t, c.srv, c.bob) {
+		if nv.Type == "comment_held" && nv.CommentID == eve.ID {
+			held = append(held, nv)
+		}
+	}
+	if len(held) != 1 || held[0].Read {
+		t.Errorf("owner's comment_held notices for the re-held comment = %+v, want one, unread", held)
+	}
+}

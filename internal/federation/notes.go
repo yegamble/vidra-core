@@ -168,6 +168,9 @@ func (s *Service) handleUpdateNote(ctx context.Context, act inboxActivity, signe
 	if err != nil {
 		return err
 	}
+	if updated.HeldForReview && s.onHeldComment != nil {
+		s.onHeldComment(ctx, updated.ID)
+	}
 	s.flagRemoteComment(ctx, updated.ID, updated.Body)
 	return nil
 }
