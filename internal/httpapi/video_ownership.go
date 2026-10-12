@@ -191,7 +191,7 @@ func ownershipError(err error) error {
 	case errors.Is(err, video.ErrNotSettled):
 		return echo.NewHTTPError(http.StatusConflict, "the video is still uploading or processing")
 	case errors.Is(err, video.ErrOwnershipCooldown):
-		return echo.NewHTTPError(http.StatusConflict, "this user recently refused an offer from you; try again later")
+		return echo.NewHTTPError(http.StatusConflict, "an offer from you to this user ended recently; try again later")
 	case errors.Is(err, video.ErrOwnershipNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "ownership change not found")
 	case errors.Is(err, video.ErrOwnershipAnswered):

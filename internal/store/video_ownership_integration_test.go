@@ -192,8 +192,9 @@ func TestVideoOwnershipChangeLifecycle(t *testing.T) {
 
 // TestVideoOwnershipChangeGuards: what the recipient sees never follows the
 // video after the request; stale and expired requests neither block the current
-// owner nor accept; the giver can withdraw; a refusal starts a cooldown for the
-// pair; and no transfer happens while media work on the video is unfinished.
+// owner nor accept; the giver can withdraw; a refusal or a withdrawal starts a
+// cooldown for the pair; and no transfer happens while media work on the video
+// is unfinished.
 func TestVideoOwnershipChangeGuards(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -271,6 +272,13 @@ func TestVideoOwnershipChangeGuards(t *testing.T) {
 	if !cool(giver, taker, time.Now().Add(-24*time.Hour)) || cool(giver, taker, time.Now().Add(time.Hour)) || cool(giver, other, time.Now().Add(-24*time.Hour)) {
 		t.Error("refusal cooldown is not per pair and per window")
 	}
+	// A withdrawal starts the cooldown too: offer, withdraw, offer again must
+	// not re-notify the recipient without limit.
+	exec(`UPDATE video_ownership_changes SET updated_at = now() - interval '2 days' WHERE id = $1`, refused.ID)
+	if !cool(giver, taker, time.Now().Add(-24*time.Hour)) {
+		t.Error("a withdrawn offer does not start the cooldown")
+	}
+	exec(`UPDATE video_ownership_changes SET updated_at = now() WHERE id = $1`, refused.ID)
 
 	// The list shows the title AT GIVE TIME, whatever the video is called now.
 	exec(`UPDATE videos SET title = 'Renamed Later' WHERE id = $1`, vid)
@@ -278,6 +286,12 @@ func TestVideoOwnershipChangeGuards(t *testing.T) {
 		if r.VideoTitle != "Original Title" {
 			t.Errorf("list title for a %s request = %q, want the snapshot", r.Status, r.VideoTitle)
 		}
+	}
+
+	// Withdrawn reads exactly like expired to the recipient: "no longer
+	// available", never which.
+	if got := statusOf(first.ID); got != "expired" {
+		t.Errorf("a withdrawn request lists as %q, want expired", got)
 	}
 
 	// Expired by the offer window: listed as expired, and never accepted.

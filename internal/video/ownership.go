@@ -25,9 +25,10 @@ var (
 	// unknown, banned, deleted, blocked either way, or the giver themselves.
 	// One error for all of them, so the give route cannot tell them apart.
 	ErrRecipientNotFound = errors.New("video: no such recipient")
-	// ErrOwnershipCooldown means the recipient refused an offer from this giver
-	// within OwnershipRefusalCooldown.
-	ErrOwnershipCooldown = errors.New("video: the recipient recently refused an offer")
+	// ErrOwnershipCooldown means an offer from this giver to this recipient
+	// ended — refused, or withdrawn by the giver — within
+	// OwnershipRefusalCooldown.
+	ErrOwnershipCooldown = errors.New("video: an offer to this recipient ended too recently")
 	// ErrOwnershipNotFound means no such request exists for the caller: none
 	// addressed to them (accept/refuse), or no pending one they made (cancel).
 	ErrOwnershipNotFound = errors.New("video: ownership change not found")
@@ -69,9 +70,10 @@ const (
 	// pending request is expired: it cannot be accepted, and it no longer
 	// blocks a new offer of the same video.
 	OwnershipOfferWindow = 30 * 24 * time.Hour
-	// OwnershipRefusalCooldown is how long after a refusal the same giver may
-	// not offer the same recipient another video, so a "no" is not answered by
-	// a fresh push notification straight away.
+	// OwnershipRefusalCooldown is how long after an offer ends — refused by the
+	// recipient, or withdrawn by the giver — the same giver may not offer the
+	// same recipient another video, so neither a "no" nor offer → withdraw →
+	// offer again pushes the recipient a fresh notification straight away.
 	OwnershipRefusalCooldown = 24 * time.Hour
 )
 

@@ -8765,8 +8765,9 @@ paths:
           description: >-
             A request for this video is already pending; the video is still
             uploading or processing (state draft or processing, or any upload,
-            replacement, import or transcode of it unfinished); or the
-            recipient refused an offer from the caller in the last 24 hours.
+            replacement, import or transcode of it unfinished); or an offer from
+            the caller to the same recipient ended — refused, or withdrawn by
+            the caller — in the last 24 hours.
           content:
             application/json:
               schema:
@@ -8788,8 +8789,10 @@ paths:
       summary: Withdraw your pending offer of a video
       description: >-
         Cancels the caller's pending ownership change for this video; the
-        recipient's list shows it as cancelled. Only the giver may cancel, and
-        only while it is pending. Anything else — an unknown video, someone
+        recipient's list shows it as no longer available (expired). Only the
+        giver may cancel, and only while it is pending. Like a refusal, a
+        withdrawal starts the 24-hour cooldown before the caller can offer the
+        same recipient another video. Anything else — an unknown video, someone
         else's offer, nothing pending — is the same 404.
       tags: [videos]
       security:
@@ -8819,7 +8822,8 @@ paths:
       description: >-
         The video ownership changes addressed to the caller, newest first,
         whatever their status: pending ones are answered with the accept and
-        refuse routes; answered, withdrawn and expired ones stay as history. Paginated via limit
+        refuse routes; answered ones and ones no longer available (expired)
+        stay as history. Paginated via limit
         (1–100, default 20) and offset.
       tags: [videos]
       security:
@@ -20649,11 +20653,12 @@ components:
           format: uuid
         status:
           type: string
-          enum: [pending, accepted, refused, cancelled, expired]
+          enum: [pending, accepted, refused, expired]
           description: >-
-            pending is answerable; cancelled = the giver withdrew it; expired =
-            it can no longer be accepted (older than 30 days, or the giver no
-            longer owns the video).
+            pending is answerable; expired = no longer available. A request the
+            giver withdrew, one older than 30 days and one that can no longer be
+            honoured all read expired, deliberately alike: the recipient is not
+            told which.
         created_at:
           type: string
           format: date-time

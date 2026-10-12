@@ -210,13 +210,24 @@ func TestListIncomingOwnershipChanges(t *testing.T) {
 	if got := listOwnershipChanges(t, srv, carolTok, ""); got.Changes[0].Status != "expired" {
 		t.Errorf("stale request status = %q, want expired", got.Changes[0].Status)
 	}
+	// A withdrawn request reads exactly like that one: the recipient learns
+	// "no longer available", never whether it was withdrawn or went stale.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/videos/"+first+"/give-ownership", "", adaTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("withdraw = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	for _, c := range listOwnershipChanges(t, srv, bobTok, "").Changes {
+		if c.Video.ID == first && c.Status != "expired" {
+			t.Errorf("withdrawn request status = %q, want expired", c.Status)
+		}
+	}
 	if n := ownershipNotices(t, srv, carolTok, "ada"); n != 0 {
 		t.Errorf("muter was notified %d times, want 0", n)
 	}
 }
 
 // TestCancelVideoOwnership: the giver withdraws a pending offer; nobody else
-// can, and a withdrawn offer can be made again.
+// can, and the video can be offered again — to the same person only after the
+// re-offer cooldown.
 func TestCancelVideoOwnership(t *testing.T) {
 	srv, _, own := ownershipServer(t)
 	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
@@ -246,8 +257,16 @@ func TestCancelVideoOwnership(t *testing.T) {
 	if code := cancelGive(adaTok, vid); code != http.StatusNotFound {
 		t.Errorf("second cancel = %d, want 404", code)
 	}
-	if rec := giveOwnership(srv, adaTok, vid, "bob"); rec.Code != http.StatusNoContent {
-		t.Errorf("give again after cancelling = %d, want 204", rec.Code)
+	// Withdrawing starts the same cooldown as a refusal: offer → withdraw →
+	// offer again to the same person is refused and pushes no new notice.
+	if rec := giveOwnership(srv, adaTok, vid, "bob"); rec.Code != http.StatusConflict {
+		t.Errorf("re-offer to the same person right after withdrawing = %d, want 409", rec.Code)
+	}
+	if n := ownershipNotices(t, srv, bobTok, "ada"); n != 1 {
+		t.Errorf("bob's ownership notifications = %d, want 1", n)
+	}
+	if rec := giveOwnership(srv, adaTok, vid, "carol"); rec.Code != http.StatusNoContent {
+		t.Errorf("offer to someone else after withdrawing = %d, want 204", rec.Code)
 	}
 }
 
