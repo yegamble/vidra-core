@@ -150,7 +150,8 @@ const countPublicVideosByChannelVisible = `-- name: CountPublicVideosByChannelVi
 SELECT count(*)::bigint
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
-WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+WHERE v.channel_id = $1 AND (v.privacy = 'public' OR (v.privacy = 'internal' AND $2::uuid IS NOT NULL))
+  AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND NOT EXISTS (
       SELECT 1 FROM muted_accounts m
@@ -208,7 +209,8 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE (v.privacy = 'public' OR (v.privacy = 'internal' AND $1::uuid IS NOT NULL))
+      AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -534,7 +536,7 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE v.privacy IN ('public', 'internal') AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -1300,7 +1302,8 @@ JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
-WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+WHERE v.channel_id = $1 AND (v.privacy = 'public' OR (v.privacy = 'internal' AND $2::uuid IS NOT NULL))
+  AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   -- A16 ruling: the per-viewer mute/block clause, verbatim from
   -- ListPublicVideosSorted. It was missing here alone, so a muted account's own
@@ -1356,7 +1359,9 @@ type ListPublicVideosByChannelRow struct {
 	ShortCode          string    `json:"short_code"`
 }
 
-// A channel's public, published videos with discovery-card data.
+// A channel's public, published videos with discovery-card data — plus its
+// 'internal' ones when the viewer is signed in (viewer_id non-NULL; 0160: the
+// tier is visible to any signed-in account of this instance, never anonymous).
 func (q *Queries) ListPublicVideosByChannel(ctx context.Context, arg ListPublicVideosByChannelParams) ([]ListPublicVideosByChannelRow, error) {
 	rows, err := q.db.Query(ctx, listPublicVideosByChannel,
 		arg.ChannelID,
@@ -1535,7 +1540,8 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE (v.privacy = 'public' OR (v.privacy = 'internal' AND $1::uuid IS NOT NULL))
+      AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -1669,6 +1675,8 @@ type ListPublicVideosSortedRow struct {
 // tag/category/language filter excludes them; they have no local views, so
 // popular/trending sort them after viewed local videos. Blocked instances hide
 // remote rows for everyone; a signed-in viewer's muted instances hide them too.
+// A signed-in viewer (viewer_id non-NULL) also gets local 'internal' videos
+// (0160); an anonymous one, and every federated/RSS/sitemap caller, does not.
 func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVideosSortedParams) ([]ListPublicVideosSortedRow, error) {
 	rows, err := q.db.Query(ctx, listPublicVideosSorted,
 		arg.ViewerID,
@@ -1969,7 +1977,7 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE v.privacy IN ('public', 'internal') AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -2069,7 +2077,8 @@ type ListSubscriptionVideosRow struct {
 	ShortCode          string    `json:"short_code"`
 }
 
-// The "subscriptions" feed (remote-content §3): a UNION of public, published
+// The "subscriptions" feed (remote-content §3): a UNION of public (and, the
+// follower being signed in by definition, 'internal' — 0160), published
 // videos from the LOCAL channels the user follows and the ingested remote
 // videos of their ACCEPTED remote-channel follows, newest first, with the same
 // discovery-card shape as the main feed. Remote cards are flagged remote and

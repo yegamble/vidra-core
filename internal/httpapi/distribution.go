@@ -434,7 +434,7 @@ func (s *Server) handleOEmbed(c echo.Context) error {
 	switch v.Privacy {
 	case "public", "unlisted":
 		// embeddable
-	case "private", video.PrivacyPassword:
+	case "private", video.PrivacyPassword, video.PrivacyInternal:
 		return echo.NewHTTPError(http.StatusUnauthorized, "video is not publicly embeddable")
 	default:
 		return echo.NewHTTPError(http.StatusNotFound, "no video matches the url")

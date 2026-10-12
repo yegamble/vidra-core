@@ -384,6 +384,12 @@ func (f *videoFakeRepo) ClearWatchHistory(_ context.Context, userID uuid.UUID) e
 	return nil
 }
 
+// fakeListedPrivacy mirrors the browse queries' privacy predicate (0160):
+// public for everyone, plus 'internal' when a viewer is signed in.
+func fakeListedPrivacy(privacy string, viewer pgtype.UUID) bool {
+	return privacy == "public" || (privacy == video.PrivacyInternal && viewer.Valid)
+}
+
 // ListSubscriptionVideos mirrors the SQL by consulting the real follow data in
 // the channel fake (videos whose channel the FollowerID follows).
 func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.ListSubscriptionVideosParams) ([]sqlcgen.ListSubscriptionVideosRow, error) {
@@ -394,7 +400,8 @@ func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.List
 		if f.blockedFromFeed(r.ID) {
 			continue
 		}
-		if r.Privacy == "public" && r.State == "published" && follows && !hidden {
+		// 0160: the follower is signed in by definition, so 'internal' rides along.
+		if (r.Privacy == "public" || r.Privacy == video.PrivacyInternal) && r.State == "published" && follows && !hidden {
 			rows = append(rows, sqlcgen.ListSubscriptionVideosRow{
 				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
@@ -669,7 +676,7 @@ func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, a sqlcgen.L
 		if f.mutedFromFeed(a.ViewerID, r.ChannelID) {
 			continue
 		}
-		if r.ChannelID == channelID && r.Privacy == "public" && r.State == "published" {
+		if r.ChannelID == channelID && fakeListedPrivacy(r.Privacy, a.ViewerID) && r.State == "published" {
 			out = append(out, sqlcgen.ListPublicVideosByChannelRow{
 				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
@@ -1271,7 +1278,7 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 		if f.blockedFromFeed(r.ID) {
 			continue
 		}
-		if r.Privacy == "public" && r.State == "published" && !f.mutedFromFeed(a.ViewerID, r.ChannelID) &&
+		if fakeListedPrivacy(r.Privacy, a.ViewerID) && r.State == "published" && !f.mutedFromFeed(a.ViewerID, r.ChannelID) &&
 			!f.ownerUnlisted(r.ChannelID) {
 			ch, cn := f.channelInfo(r.ChannelID)
 			rows = append(rows, sqlcgen.ListPublicVideosSortedRow{

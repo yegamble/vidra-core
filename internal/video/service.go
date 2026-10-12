@@ -1518,16 +1518,16 @@ func (s *Service) PublishDue(ctx context.Context, limit int32) (int, error) {
 }
 
 // FileForView authorises serving a stored file of the given kind ("original",
-// "thumbnail", …) for a video and returns it. Visibility mirrors GetByID:
-// public/unlisted to anyone, private only to its owner; everyone else — and any
-// video without a stored file of that kind — gets ErrNotFound so existence is
-// not leaked.
+// "thumbnail", …) for a video and returns it. Visibility is PrivacyAdmits:
+// public/unlisted to anyone, internal to any signed-in account, private only to
+// its owner; everyone else — and any video without a stored file of that kind —
+// gets ErrNotFound so existence is not leaked.
 func (s *Service) FileForView(ctx context.Context, videoID, viewerID uuid.UUID, authed bool, kind string) (sqlcgen.VideoFile, error) {
 	v, err := s.GetByID(ctx, videoID)
 	if err != nil {
 		return sqlcgen.VideoFile{}, err // ErrNotFound
 	}
-	if v.Privacy == "private" && (!authed || viewerID != v.OwnerID) {
+	if !PrivacyAdmits(v.Privacy, authed, viewerID == v.OwnerID) {
 		return sqlcgen.VideoFile{}, ErrNotFound
 	}
 	f, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: kind})
@@ -1538,8 +1538,8 @@ func (s *Service) FileForView(ctx context.Context, videoID, viewerID uuid.UUID, 
 }
 
 // RecordView counts a view of a published video, deduping per viewer within a
-// window when a deduper is configured. Visibility mirrors GetByID (private →
-// owner only, else ErrNotFound). viewerKey identifies the viewer (already
+// window when a deduper is configured. Visibility is PrivacyAdmits (private →
+// owner only, internal → signed-in only, else ErrNotFound). viewerKey identifies the viewer (already
 // hashed by the caller). Non-published videos are a silent no-op (no error) so
 // owner previews do not inflate counts. The deduper is best-effort: an error is
 // treated as "count it".
@@ -1548,7 +1548,7 @@ func (s *Service) RecordView(ctx context.Context, videoID, viewerID uuid.UUID, a
 	if err != nil {
 		return err // ErrNotFound
 	}
-	if v.Privacy == "private" && (!authed || viewerID != v.OwnerID) {
+	if !PrivacyAdmits(v.Privacy, authed, viewerID == v.OwnerID) {
 		return ErrNotFound
 	}
 	if v.State != "published" {
@@ -3053,10 +3053,10 @@ var adminSorts = []string{
 func AdminSorts() []string { return append([]string(nil), adminSorts...) }
 
 // adminStates is the videos.state CHECK constraint's value set (migrations
-// 0006/0045/0048/0098), and adminPrivacies is videos.privacy's (0006/0074).
+// 0006/0045/0048/0098), and adminPrivacies is videos.privacy's (0006/0074/0160).
 var (
 	adminStates    = []string{"draft", "processing", "scheduled", "quarantined", "transcoding", "published", "failed"}
-	adminPrivacies = []string{"public", "unlisted", "private", "password"}
+	adminPrivacies = []string{"public", "unlisted", "private", "password", PrivacyInternal}
 )
 
 // AdminStates and AdminPrivacies are the accepted ?state / ?privacy filter
