@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/shortid"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -96,7 +98,7 @@ func (s *Server) instanceName() string {
 }
 
 // ---------------------------------------------------------------------------
-// E1 — RSS 2.0 feed: GET /feeds/videos.xml[?channel={handle}]
+// E1 — RSS 2.0 feed: GET /feeds/videos.xml[?channel={handle}|videoChannelName|accountName]
 // ---------------------------------------------------------------------------
 
 type rssDocument struct {
@@ -140,6 +142,113 @@ type mediaThumbnail struct {
 	URL string `xml:"url,attr"`
 }
 
+// feedScope is the channel(s) a filtered feed covers: one channel, or every
+// channel an account owns.
+type feedScope struct {
+	channels []sqlcgen.Channel
+	title    string
+	link     string
+	query    string // the canonical filter query for the feed's self link
+}
+
+// feedLocalName turns a PeerTube-style "name" or "name@host" into a bare local
+// name. A host other than this instance's means a REMOTE actor, which this feed
+// never serves, so it reports false rather than quietly matching a local
+// namesake.
+func (s *Server) feedLocalName(raw string) (string, bool) {
+	name, host, hasHost := strings.Cut(strings.TrimSpace(raw), "@")
+	if name == "" {
+		return "", false
+	}
+	if hasHost {
+		u, err := url.Parse(s.webOrigin())
+		if err != nil || !strings.EqualFold(host, u.Host) {
+			return "", false
+		}
+	}
+	return name, true
+}
+
+// resolveFeedScope reads the channel/account filters of /feeds/videos.xml:
+// vidra's own ?channel=, and PeerTube's ?videoChannelName=, ?videoChannelId=,
+// ?accountName= and ?accountId= — the URLs an RSS or podcast subscriber already
+// holds after a PeerTube migration. nil scope means NO filter was given.
+//
+// Any filter that is present but cannot be resolved is a 404, never the
+// instance-wide feed: serving everyone's videos to a subscriber of one channel
+// is the silent wrong answer. That includes PeerTube's numeric ids, which
+// vidra does not preserve.
+func (s *Server) resolveFeedScope(c echo.Context) (*feedScope, error) {
+	ctx := c.Request().Context()
+	notFound := func(what string) error { return echo.NewHTTPError(http.StatusNotFound, what+" not found") }
+
+	if c.QueryParam("videoChannelId") != "" {
+		return nil, notFound("channel")
+	}
+	if c.QueryParam("accountId") != "" {
+		return nil, notFound("account")
+	}
+	chRaw := strings.TrimSpace(c.QueryParam("channel"))
+	if chRaw == "" {
+		chRaw = strings.TrimSpace(c.QueryParam("videoChannelName"))
+	}
+	accRaw := strings.TrimSpace(c.QueryParam("accountName"))
+	if chRaw == "" && accRaw == "" {
+		return nil, nil
+	}
+
+	var account *sqlcgen.GetPublicUserProfileByUsernameRow
+	if accRaw != "" {
+		name, ok := s.feedLocalName(accRaw)
+		if !ok || s.authsvc == nil {
+			return nil, notFound("account")
+		}
+		p, err := s.authsvc.PublicProfileByUsername(ctx, name)
+		if err != nil {
+			return nil, notFound("account")
+		}
+		account = &p
+	}
+
+	if chRaw != "" {
+		handle, ok := s.feedLocalName(chRaw)
+		if !ok {
+			return nil, notFound("channel")
+		}
+		ch, err := s.channelsvc.GetByHandle(ctx, handle)
+		if err != nil {
+			if errors.Is(err, channel.ErrNotFound) {
+				return nil, notFound("channel")
+			}
+			return nil, err
+		}
+		if account != nil && ch.OwnerID != account.ID {
+			return nil, notFound("channel")
+		}
+		return &feedScope{
+			channels: []sqlcgen.Channel{ch},
+			title:    ch.DisplayName,
+			link:     s.channelURL(ch.Handle),
+			query:    "channel=" + url.QueryEscape(ch.Handle),
+		}, nil
+	}
+
+	owned, err := s.channelsvc.ListOwn(ctx, account.ID)
+	if err != nil {
+		return nil, err
+	}
+	title := account.DisplayName
+	if title == "" {
+		title = account.Username
+	}
+	return &feedScope{
+		channels: owned,
+		title:    title,
+		link:     s.webOrigin() + "/users/" + url.PathEscape(account.Username),
+		query:    "accountName=" + url.QueryEscape(account.Username),
+	}, nil
+}
+
 // handleVideosFeed renders the public RSS 2.0 feed of the newest published
 // public LOCAL videos. With ?channel={handle} it filters to one channel (unknown
 // handle → 404). It NEVER surfaces private/password/unlisted/remote videos.
@@ -158,26 +267,32 @@ func (s *Server) handleVideosFeed(c echo.Context) error {
 		err      error
 	)
 
-	if handle := strings.TrimSpace(c.QueryParam("channel")); handle != "" {
-		ch, cerr := s.channelsvc.GetByHandle(ctx, handle)
-		if cerr != nil {
-			if errors.Is(cerr, channel.ErrNotFound) {
-				return echo.NewHTTPError(http.StatusNotFound, "channel not found")
-			}
-			return cerr
-		}
+	scope, serr := s.resolveFeedScope(c)
+	if serr != nil {
+		return serr
+	}
+	if scope != nil {
 		// Anonymous surface: honour the INSTANCE sensitive-content policy (0100).
 		// Under "hide", flagged videos never leak into the public feed.
 		// The feed cap is the query's LIMIT now, so the RSS route never pulls a
 		// whole channel into memory to throw most of it away.
-		items, _, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, uuid.Nil, false, s.hideSensitiveVideos(), "", feedItemLimit, 0)
-		if err != nil {
-			return err
+		for _, ch := range scope.channels {
+			chItems, _, lerr := s.videosvc.ListPublicByChannel(ctx, ch.ID, uuid.Nil, false, s.hideSensitiveVideos(), "", feedItemLimit, 0)
+			if lerr != nil {
+				return lerr
+			}
+			items = append(items, chItems...)
 		}
-		title = ch.DisplayName + " — " + instance
-		link = s.channelURL(ch.Handle)
-		selfURL = origin + "/feeds/videos.xml?channel=" + url.QueryEscape(ch.Handle)
-		descText = "Latest public videos from " + ch.DisplayName + " on " + instance
+		if len(scope.channels) > 1 {
+			sort.SliceStable(items, func(i, j int) bool { return items[i].Video.CreatedAt.After(items[j].Video.CreatedAt) })
+			if len(items) > feedItemLimit {
+				items = items[:feedItemLimit]
+			}
+		}
+		title = scope.title + " — " + instance
+		link = scope.link
+		selfURL = origin + "/feeds/videos.xml?" + scope.query
+		descText = "Latest public videos from " + scope.title + " on " + instance
 	} else {
 		// Anonymous surface: honour the INSTANCE sensitive-content policy (0100).
 		items, _, err = s.videosvc.ListPublic(ctx, "recent", "local",
