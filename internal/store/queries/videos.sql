@@ -568,7 +568,8 @@ FROM (
            ''::text AS short_code
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
-    WHERE EXISTS (
+    WHERE sqlc.arg('include_remote')::bool
+      AND EXISTS (
           SELECT 1 FROM remote_channel_follows rcf
           WHERE rcf.user_id = sqlc.arg('follower_id')
             AND rcf.remote_actor_url = rv.remote_actor_url

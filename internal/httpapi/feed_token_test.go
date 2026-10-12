@@ -105,6 +105,9 @@ func TestPrivateSubscriptionsFeed(t *testing.T) {
 	if len(doc.Channel.Items) != 1 || doc.Channel.Items[0].Title != "Bob Public" {
 		t.Errorf("items = %+v, want only Bob Public (no private, no remote)", doc.Channel.Items)
 	}
+	if rp := rec.Header().Get("Referrer-Policy"); rp != "no-referrer" {
+		t.Errorf("Referrer-Policy = %q, want no-referrer", rp)
+	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "private, no-store" {
 		t.Errorf("Cache-Control = %q", cc)
 	}
@@ -134,4 +137,65 @@ func TestPrivateSubscriptionsFeed(t *testing.T) {
 	if rec := get(t, srv, "/feeds/subscriptions.xml?token="+second.Token); rec.Code != http.StatusNotFound {
 		t.Errorf("revoked token = %d, want 404", rec.Code)
 	}
+}
+
+// The feed applies the TOKEN OWNER's effective sensitive policy (override, else
+// instance), and a reader cannot blur/warn, so only "display" keeps the video.
+func TestSubscriptionsFeedHonoursOwnersSensitivePolicy(t *testing.T) {
+	frepo := &fakeFeedTokenRepo{hashByUser: map[uuid.UUID]string{}}
+	srv, _, _, _, repo := videoServerFullWith(t, distributionCfg(), []Option{WithFeedTokenService(feedtoken.NewService(frepo))})
+	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	bob, _ := repo.channels.GetChannelByHandle(context.Background(), "bob")
+	id := seedVideo(repo, bob, "Spicy", "d", "public", "published", 5)
+	row := repo.videos[id]
+	row.IsSensitive = true
+	repo.videos[id] = row
+	if f := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels/bob/follow", "", adaTok); f.Code != http.StatusNoContent {
+		t.Fatalf("follow = %d", f.Code)
+	}
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/feed-token", "", adaTok)
+	var issued feedTokenIssued
+	_ = json.Unmarshal(rec.Body.Bytes(), &issued)
+	shows := func() bool {
+		r := get(t, srv, "/feeds/subscriptions.xml?token="+issued.Token)
+		return strings.Contains(r.Body.String(), "Spicy")
+	}
+	setUser := func(p string) {
+		if r := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me", `{"sensitive_content_policy":"`+p+`"}`, adaTok); r.Code != http.StatusOK {
+			t.Fatalf("set policy = %d", r.Code)
+		}
+	}
+	for _, instance := range []string{"hide", "warn", "blur"} {
+		applySensitivePolicy(t, srv, instance)
+		if shows() {
+			t.Errorf("instance %q: flagged video must not reach a feed reader", instance)
+		}
+	}
+	applySensitivePolicy(t, srv, "display")
+	if !shows() {
+		t.Error("instance display + no override: flagged video should show")
+	}
+	setUser("hide")
+	if shows() {
+		t.Error("owner override hide must beat instance display")
+	}
+	applySensitivePolicy(t, srv, "hide")
+	setUser("display")
+	if !shows() {
+		t.Error("owner override display must beat instance hide")
+	}
+}
+
+// Remote cards are excluded in SQL, so they cannot consume the LIMIT window.
+func TestSubscriptionsFeedLocalOnlyInQuery(t *testing.T) {
+	frepo := &fakeFeedTokenRepo{hashByUser: map[uuid.UUID]string{}}
+	srv, _, _, _, repo := videoServerFullWith(t, distributionCfg(), []Option{WithFeedTokenService(feedtoken.NewService(frepo))})
+	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	repo.remoteSubs = append(repo.remoteSubs, sqlcgen.ListSubscriptionVideosRow{ID: uuid.New(), Remote: true, Title: "R", CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	items, err := srv.videosvc.ListLocalSubscriptions(context.Background(), uuid.New(), 50)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("local-only query returned %d items, err=%v", len(items), err)
+	}
+	_ = adaTok
 }

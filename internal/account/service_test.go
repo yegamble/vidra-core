@@ -260,6 +260,8 @@ func (f *fakeRepo) DeleteNotificationPrefsByUser(context.Context, uuid.UUID) err
 func (f *fakeRepo) DeletePasswordResetTokensByUser(context.Context, uuid.UUID) error {
 	return f.purge("reset_tokens")
 }
+func (f *fakeRepo) DeleteUserFeedTokenByUser(context.Context, uuid.UUID) error { return nil }
+
 func (f *fakeRepo) DeleteEmailVerificationTokensByUser(context.Context, uuid.UUID) error {
 	return f.purge("verify_tokens")
 }

@@ -11,7 +11,8 @@ import (
 )
 
 // Rotation replaces (never accumulates), revoke is idempotent, a deactivated
-// account's token stops resolving, and deleting the user cascades the row.
+// account's token stops resolving, and the account-deletion purge (which anonymises the users row, so the
+// ON DELETE CASCADE never fires) removes the row explicitly.
 func TestFeedTokenLifecycleAgainstSQL(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -43,6 +44,15 @@ func TestFeedTokenLifecycleAgainstSQL(t *testing.T) {
 	}
 	if _, ok, _ := svc.Owner(ctx, b); ok {
 		t.Error("deactivated account's token still resolves")
+	}
+	if _, err := svc.Rotate(ctx, userID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Queries().DeleteUserFeedTokenByUser(ctx, userID); err != nil {
+		t.Fatalf("account purge: %v", err)
+	}
+	if _, ok, _ := svc.CreatedAt(ctx, userID); ok {
+		t.Error("account purge left the token row")
 	}
 	_ = svc.Revoke(ctx, userID)
 	if err := svc.Revoke(ctx, userID); err != nil {

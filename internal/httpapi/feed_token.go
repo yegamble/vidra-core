@@ -8,6 +8,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/feedtoken"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 )
 
@@ -106,7 +107,7 @@ func (s *Server) handleSubscriptionsFeed(c echo.Context) error {
 	if !ok {
 		return notFound
 	}
-	items, _, err := s.videosvc.ListSubscriptions(ctx, userID, feedItemLimit, 0)
+	items, err := s.videosvc.ListLocalSubscriptions(ctx, userID, feedItemLimit)
 	if err != nil {
 		return err
 	}
@@ -120,11 +121,14 @@ func (s *Server) handleSubscriptionsFeed(c echo.Context) error {
 			// No self link: it would embed the secret in the document body.
 		},
 	}
-	hide := s.hideSensitiveVideos()
+	// A feed reader cannot blur or warn, so under the OWNER's effective policy
+	// (their per-user override, else the instance's) anything but "display"
+	// means the flagged video is left out.
+	hide := s.sensitivePolicyForUser(ctx, userID) != instancesettings.SensitiveContentPolicyDisplay
 	for _, it := range items {
 		// Local public videos only: remote cards have no local watch page, and
 		// the public-only rule is the same one the anonymous feed holds.
-		if it.Remote || it.Video.Privacy != "public" || it.Video.State != "published" || (hide && it.Video.IsSensitive) {
+		if it.Video.Privacy != "public" || it.Video.State != "published" || (hide && it.Video.IsSensitive) {
 			continue
 		}
 		doc.Channel.Items = append(doc.Channel.Items, s.rssItemFor(it))

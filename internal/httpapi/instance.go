@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"context"
+
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/google/uuid"
 	"net/http"
 	"strings"
 
@@ -600,9 +602,17 @@ func (s *Server) hideSensitiveVideos() bool {
 // policy. An anonymous request (optionalAuth with no token) resolves to the
 // instance policy, so its behaviour is unchanged.
 func (s *Server) effectiveSensitivePolicy(c echo.Context) string {
-	if userID, _, ok := principalFromContext(c); ok && s.authsvc != nil {
-		if u, err := s.authsvc.UserByID(c.Request().Context(), userID); err == nil &&
-			u.SensitiveContentPolicy != nil {
+	if userID, _, ok := principalFromContext(c); ok {
+		return s.sensitivePolicyForUser(c.Request().Context(), userID)
+	}
+	return s.sensitiveContentPolicy()
+}
+
+// sensitivePolicyForUser is effectiveSensitivePolicy for a user known by id
+// rather than by request principal (the token-gated feed has no session).
+func (s *Server) sensitivePolicyForUser(ctx context.Context, userID uuid.UUID) string {
+	if s.authsvc != nil {
+		if u, err := s.authsvc.UserByID(ctx, userID); err == nil && u.SensitiveContentPolicy != nil {
 			if p := strings.TrimSpace(*u.SensitiveContentPolicy); p != "" {
 				return p
 			}
