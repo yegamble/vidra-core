@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"golang.org/x/net/idna"
 
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/instancesettings"
@@ -151,6 +153,28 @@ type feedScope struct {
 	query    string // the canonical filter query for the feed's self link
 }
 
+// feedHostKey canonicalises host[:port] for comparison: lower-case, IDN in its
+// punycode form, and the scheme-default ports (:80/:443) dropped, so an
+// operator's PUBLIC_BASE_URL spelled with an explicit default port, or a
+// Unicode host, still matches the plain form a PeerTube URL carries.
+func feedHostKey(hostport string) string {
+	h, p, err := net.SplitHostPort(hostport)
+	if err != nil {
+		h, p = hostport, ""
+	}
+	if p == "80" || p == "443" {
+		p = ""
+	}
+	if a, err := idna.Lookup.ToASCII(h); err == nil {
+		h = a
+	}
+	h = strings.ToLower(h)
+	if p != "" {
+		return net.JoinHostPort(h, p)
+	}
+	return h
+}
+
 // feedLocalName turns a PeerTube-style "name" or "name@host" into a bare local
 // name. A host other than this instance's means a REMOTE actor, which this feed
 // never serves, so it reports false rather than quietly matching a local
@@ -162,7 +186,7 @@ func (s *Server) feedLocalName(raw string) (string, bool) {
 	}
 	if hasHost {
 		u, err := url.Parse(s.webOrigin())
-		if err != nil || !strings.EqualFold(host, u.Host) {
+		if err != nil || feedHostKey(host) != feedHostKey(u.Host) {
 			return "", false
 		}
 	}
@@ -233,6 +257,10 @@ func (s *Server) resolveFeedScope(c echo.Context) (*feedScope, error) {
 		}, nil
 	}
 
+	// Visibility rule: an ACCOUNT feed requires profile_public (it resolves
+	// through the public-profile lookup, so private and unknown accounts are
+	// indistinguishable 404s), whereas a CHANNEL feed does not — a channel is
+	// public by existing, as its page and ?channel= feed always were.
 	owned, err := s.channelsvc.ListOwn(ctx, account.ID)
 	if err != nil {
 		return nil, err
@@ -284,7 +312,15 @@ func (s *Server) handleVideosFeed(c echo.Context) error {
 			items = append(items, chItems...)
 		}
 		if len(scope.channels) > 1 {
-			sort.SliceStable(items, func(i, j int) bool { return items[i].Video.CreatedAt.After(items[j].Video.CreatedAt) })
+			// id DESC breaks timestamp ties, matching the per-channel query's
+			// ORDER BY created_at DESC, v.id DESC, so the merged order is stable.
+			sort.SliceStable(items, func(i, j int) bool {
+				a, b := items[i].Video, items[j].Video
+				if !a.CreatedAt.Equal(b.CreatedAt) {
+					return a.CreatedAt.After(b.CreatedAt)
+				}
+				return a.ID.String() > b.ID.String()
+			})
 			if len(items) > feedItemLimit {
 				items = items[:feedItemLimit]
 			}

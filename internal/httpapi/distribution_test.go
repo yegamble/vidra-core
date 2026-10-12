@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -662,5 +664,66 @@ func TestVideosFeedPeerTubeFilterParams(t *testing.T) {
 		if rec := get(t, srv, path); rec.Code != http.StatusNotFound {
 			t.Errorf("%s = %d, want 404 (never the instance-wide feed)", path, rec.Code)
 		}
+	}
+}
+
+func TestFeedLocalNameNormalisesHost(t *testing.T) {
+	for _, tc := range []struct {
+		base, raw, want string
+		ok              bool
+	}{
+		{"https://videos.example", "ada@videos.example", "ada", true},
+		{"https://videos.example:443", "ada@videos.example", "ada", true},
+		{"https://videos.example", "ada@videos.example:443", "ada", true},
+		{"http://videos.example:80", "ada@VIDEOS.example", "ada", true},
+		{"https://videos.example:8443", "ada@videos.example", "", false},
+		{"https://videos.example:8443", "ada@videos.example:8443", "ada", true},
+		{"https://bücher.example", "ada@xn--bcher-kva.example", "ada", true},
+		{"https://xn--bcher-kva.example", "ada@bücher.example", "ada", true},
+		{"https://videos.example", "ada@other.example", "", false},
+	} {
+		s := &Server{cfg: &config.Config{PublicBaseURL: tc.base}}
+		got, ok := s.feedLocalName(tc.raw)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("feedLocalName(%q) under %q = %q,%v; want %q,%v", tc.raw, tc.base, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+// The account feed merges several channels; equal timestamps must order by id
+// DESC, the same tie-break as the per-channel query, so the feed is stable.
+func TestAccountFeedTieBreaksByIDDesc(t *testing.T) {
+	srv, repo, _ := distributionServer(t)
+	tok := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	if rec := postJSONAuth(srv, "/api/v1/channels", `{"handle":"bob2","display_name":"bob2"}`, tok); rec.Code != http.StatusCreated {
+		t.Fatalf("second channel = %d", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me", `{"profile_public":true}`, tok); rec.Code != http.StatusOK {
+		t.Fatalf("public = %d", rec.Code)
+	}
+	bob, _ := repo.channels.GetChannelByHandle(context.Background(), "bob")
+	bob2, _ := repo.channels.GetChannelByHandle(context.Background(), "bob2")
+	ts := time.Now().Add(-time.Hour).UTC()
+	ids := map[uuid.UUID]bool{}
+	for i, ch := range []sqlcgen.Channel{bob, bob2, bob, bob2} {
+		id := seedVideo(repo, ch, fmt.Sprintf("v%d", i), "d", "public", "published", 10)
+		row := repo.videos[id]
+		row.CreatedAt = ts
+		repo.videos[id] = row
+		ids[id] = true
+	}
+	rec := get(t, srv, "/feeds/videos.xml?accountName=bob")
+	var doc rssDocument
+	if err := xml.Unmarshal(rec.Body.Bytes(), &doc); err != nil || len(doc.Channel.Items) != 4 {
+		t.Fatalf("feed: err=%v items=%d", err, len(doc.Channel.Items))
+	}
+	var got []string
+	for _, it := range doc.Channel.Items {
+		got = append(got, it.GUID.Value)
+	}
+	want := append([]string(nil), got...)
+	sort.Sort(sort.Reverse(sort.StringSlice(want)))
+	if !sort.SliceIsSorted(got, func(i, j int) bool { return got[i] > got[j] }) {
+		t.Errorf("equal-timestamp items not ordered by id DESC:\n got %v\nwant %v", got, want)
 	}
 }
