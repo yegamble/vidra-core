@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -19,17 +22,23 @@ type internalPrivacyEnv struct {
 	srv                         *Server
 	adminTok, ownerTok, userTok string
 	id                          string
+	blobs                       storage.Backend
+	tcRepo                      *transcodeFakeRepo
+	repo                        *videoFakeRepo
 }
 
-func newInternalPrivacyEnv(t *testing.T) internalPrivacyEnv {
+func newInternalPrivacyEnv(t *testing.T, opts ...video.Option) internalPrivacyEnv {
 	t.Helper()
-	srv, _, _, _, _ := videoServerFull(t, distributionCfg())
+	srv, blobs, tcRepo, _, repo := videoServerFull(t, distributionCfg(), opts...)
 	// The first registered account becomes the admin.
 	adminTok := registerAndToken(t, srv, `{"username":"root","email":"root@example.test","password":"supersecret"}`)
 	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	userTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
 	id := createPublishedVideo(t, srv, ownerTok, "ada", `{"title":"Members only","privacy":"internal"}`)
-	return internalPrivacyEnv{srv: srv, adminTok: adminTok, ownerTok: ownerTok, userTok: userTok, id: id}
+	return internalPrivacyEnv{
+		srv: srv, adminTok: adminTok, ownerTok: ownerTok, userTok: userTok, id: id,
+		blobs: blobs, tcRepo: tcRepo, repo: repo,
+	}
 }
 
 func listedVideoIDs(t *testing.T, rec *httptest.ResponseRecorder) map[string]bool {
@@ -193,5 +202,85 @@ func TestInternalVideoListedToSignedInMembers(t *testing.T) {
 	}
 	if listedVideoIDs(t, getWithAuth(env.srv, "/api/v1/videos/search?q=Members", env.userTok))[env.id] {
 		t.Error("member search lists the internal video; search stays public-only")
+	}
+}
+
+// F4 (T18 security review): the rest of the media surface — HLS master, variant
+// playlist and segment, the poster, the caption list and the storyboard — sits
+// behind the same gate. Every one of them is seeded so a member gets a real 200,
+// which proves the refusal an anonymous caller gets is the privacy gate and not
+// a missing object.
+func TestInternalVideoMediaSurfacesMatrix(t *testing.T) {
+	env := newInternalPrivacyEnv(t,
+		video.WithThumbnailer(fakeThumbnailer{jpg: []byte("\xff\xd8jpg")}),
+		video.WithStoryboarder(storyboarderStub{}))
+	seedReadyHLS(t, env.tcRepo, env.blobs, env.id)
+	for _, p := range []string{
+		"/hls/master.m3u8", "/hls/240p/playlist.m3u8", "/hls/240p/seg_00000.ts",
+		"/thumbnail", "/captions", "/storyboard.jpg",
+	} {
+		path := "/api/v1/videos/" + env.id + p
+		t.Run(p, func(t *testing.T) {
+			rec := getWithAuth(env.srv, path, "")
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("anonymous = %d, want 401; body=%s", rec.Code, rec.Body.String())
+			}
+			if b := errBodyOf(t, rec); b.Code != "sign_in_required" {
+				t.Errorf("anonymous code = %q, want sign_in_required", b.Code)
+			}
+			if rec := getWithAuth(env.srv, path, env.userTok); rec.Code != http.StatusOK {
+				t.Errorf("member = %d, want 200; body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// F3 (T18 security review): the sign-in 401 admits that a video exists, so it is
+// answered only AFTER the moderation and lifecycle gates. A blocked, quarantined,
+// scheduled, transcoding-held or rejected internal video is the same
+// indistinguishable 404 to an anonymous caller as any other hidden video — on the
+// detail route and on media.
+func TestHiddenInternalVideoIs404NotSignInToAnonymous(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		hide func(t *testing.T, env internalPrivacyEnv)
+	}{
+		{"blocked", func(t *testing.T, env internalPrivacyEnv) {
+			rec := postJSONAuth(env.srv, "/api/v1/admin/videos/"+env.id+"/block", `{"reason":"tos"}`, env.adminTok)
+			if rec.Code/100 != 2 {
+				t.Fatalf("block = %d; body=%s", rec.Code, rec.Body.String())
+			}
+		}},
+		{"quarantined", setFakeVideoState("quarantined")},
+		{"scheduled", setFakeVideoState("scheduled")},
+		{"transcoding", setFakeVideoState("transcoding")},
+		{"rejected", setFakeVideoState("failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newInternalPrivacyEnv(t)
+			tc.hide(t, env)
+			for _, p := range []string{"", "/original", "/embed-privacy"} {
+				rec := getWithAuth(env.srv, "/api/v1/videos/"+env.id+p, "")
+				if rec.Code != http.StatusNotFound {
+					t.Errorf("anonymous GET %q = %d, want 404 (a hidden video's existence is not admitted); body=%s",
+						p, rec.Code, rec.Body.String())
+				}
+			}
+		})
+	}
+}
+
+// setFakeVideoState moves the env's video to a lifecycle state directly in the
+// video fake, the way the transitions that own those states would leave it.
+func setFakeVideoState(state string) func(t *testing.T, env internalPrivacyEnv) {
+	return func(t *testing.T, env internalPrivacyEnv) {
+		t.Helper()
+		id := uuid.MustParse(env.id)
+		r, ok := env.repo.videos[id]
+		if !ok {
+			t.Fatalf("video %s not in the fake", env.id)
+		}
+		r.State = state
+		env.repo.videos[id] = r
 	}
 }
