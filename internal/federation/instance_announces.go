@@ -36,6 +36,12 @@ const instanceBackfillLimit = 50
 // (instance_follower_backfills), so a restart does not reset it.
 const instanceBackfillCooldown = 24 * time.Hour
 
+// instanceBackfillDailyCap bounds how many hosts this instance backfills in
+// any one day, whoever asks: the per-host cooldown does not stop one server
+// that mints many host names. A follower over the cap is still accepted; it
+// gets the live Announces and can crawl the outbox.
+const instanceBackfillDailyCap = 50
+
 // buildInstanceAnnounce renders the instance actor's Announce of one local
 // video, addressed as PeerTube addresses a share (to Public, cc its followers).
 func (s *Service) buildInstanceAnnounce(id string, videoID uuid.UUID) map[string]any {
@@ -92,11 +98,10 @@ func (s *Service) backfillInstanceFollower(ctx context.Context, follower string)
 	if ra.SharedInboxUrl != nil && *ra.SharedInboxUrl != "" {
 		inbox = *ra.SharedInboxUrl
 	}
-	// Only to the follower's own server. The inbox comes from a document the
-	// follower wrote, and one Follow turns into instanceBackfillLimit signed
-	// POSTs: pointed at somebody else's host, a Follow/Undo loop would make
-	// this instance an amplifier aimed at a third party.
-	if inbox == "" || !sameHost(inbox, follower) {
+	// Only to the follower's own server — both inboxes, read from the actor
+	// row as it is NOW. The inboxes come from a document the follower wrote,
+	// and one Follow turns into instanceBackfillLimit signed POSTs.
+	if inbox == "" || !sameHost(ra.ActorUrl, follower) || !inboxesOnOwnHost(ra) {
 		return nil
 	}
 	ids, err := s.inst.ListInstanceOutboxVideoIDs(ctx, sqlcgen.ListInstanceOutboxVideoIDsParams{ResultLimit: instanceBackfillLimit})
@@ -106,6 +111,7 @@ func (s *Service) backfillInstanceFollower(ctx context.Context, follower string)
 	claimed, err := s.inst.ClaimInstanceFollowerBackfill(ctx, sqlcgen.ClaimInstanceFollowerBackfillParams{
 		Host:            hostOf(follower), // per host: one host can mint any number of actors
 		CooldownSeconds: int32(instanceBackfillCooldown / time.Second),
+		DailyCap:        instanceBackfillDailyCap,
 	})
 	if err != nil || claimed == 0 {
 		return err // backfilled inside the window: nothing this time

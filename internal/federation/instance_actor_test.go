@@ -59,6 +59,15 @@ func (f fakeRepo) ClaimInstanceFollowerBackfill(_ context.Context, a sqlcgen.Cla
 	if at, ok := f.inst.backfilledAt[a.Host]; ok && time.Since(at) < time.Duration(a.CooldownSeconds)*time.Second {
 		return 0, nil
 	}
+	recent := 0
+	for _, at := range f.inst.backfilledAt {
+		if time.Since(at) < 24*time.Hour {
+			recent++
+		}
+	}
+	if recent >= int(a.DailyCap) {
+		return 0, nil // the instance-wide daily cap
+	}
 	f.inst.backfilledAt[a.Host] = time.Now()
 	return 1, nil
 }
