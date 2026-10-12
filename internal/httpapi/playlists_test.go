@@ -74,6 +74,9 @@ func (f *playlistFakeRepo) channelVisible(a sqlcgen.CountPlaylistsByChannelParam
 		if !p.ChannelID.Valid || uuid.UUID(p.ChannelID.Bytes) != a.ChannelID {
 			continue
 		}
+		if f.videos.mutedFromFeed(a.ViewerID, uuid.UUID(p.ChannelID.Bytes)) {
+			continue
+		}
 		if p.Visibility == "public" || (a.ViewerID.Valid && uuid.UUID(a.ViewerID.Bytes) == p.OwnerID) {
 			out = append(out, p)
 		}
@@ -596,6 +599,17 @@ func TestChannelPlaylists(t *testing.T) {
 		t.Errorf("unknown channel = %d, want 404", code)
 	}
 
+	// A viewer who blocked the owner sees none of their playlists.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/blocks/"+ownerIDOf(t, srv, ada), "", bob); rec.Code >= 300 {
+		t.Fatalf("block owner = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got, _ := listChannelPlaylists(t, srv, "ada", "", bob); len(got.Playlists) != 0 || got.Total != 0 {
+		t.Errorf("a viewer who blocked the owner sees %+v", got.Playlists)
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/me/blocks/"+ownerIDOf(t, srv, ada), "", bob); rec.Code >= 300 {
+		t.Fatalf("unblock owner = %d", rec.Code)
+	}
+
 	// Another user cannot attach a playlist to my channel (create or update);
 	// the answer is the same 404 as a channel that does not exist.
 	if rec := postJSONAuth(srv, "/api/v1/playlists", `{"title":"Hijack","visibility":"public","channel_id":"`+adaCh+`"}`, bob); rec.Code != http.StatusNotFound {
@@ -634,4 +648,17 @@ func TestChannelPlaylists(t *testing.T) {
 	if got, _ := listChannelPlaylists(t, srv, "bob", "", ""); len(got.Playlists) != 0 {
 		t.Errorf("cleared playlist still listed: %+v", got.Playlists)
 	}
+}
+
+func ownerIDOf(t *testing.T, srv *Server, token string) string {
+	t.Helper()
+	rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/auth/me", "", token)
+	var u struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &u)
+	if u.ID == "" {
+		t.Fatalf("auth/me = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	return u.ID
 }

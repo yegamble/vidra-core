@@ -66,6 +66,14 @@ const countPlaylistsByChannel = `-- name: CountPlaylistsByChannel :one
 SELECT count(*)::bigint FROM playlists p
 WHERE p.channel_id = $1::uuid
   AND (p.visibility = 'public' OR p.owner_id = $2)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = p.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = p.owner_id
+  )
 `
 
 type CountPlaylistsByChannelParams struct {
@@ -301,6 +309,16 @@ SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, 
 FROM playlists p
 WHERE p.channel_id = $1::uuid
   AND (p.visibility = 'public' OR p.owner_id = $2)
+  -- The per-viewer mute/block clause the channel-videos list carries (A16
+  -- ruling): a viewer who muted or blocked the owner sees none of their playlists.
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = p.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = p.owner_id
+  )
 ORDER BY p.created_at DESC, p.id DESC
 LIMIT $4 OFFSET $3
 `

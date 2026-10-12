@@ -90,6 +90,20 @@ func TestChannelPlaylistsVisibilityAndSetNull(t *testing.T) {
 		t.Errorf("last page = %d rows total %d, want the oldest (public) of 3", len(page), n)
 	}
 
+	// A viewer who blocked or muted the owner sees none of their playlists.
+	blocker, muter := mkUser("plch-blocker"), mkUser("plch-muter")
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)`, blocker, owner); err != nil {
+		t.Fatalf("block: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO muted_accounts (muter_id, muted_id) VALUES ($1, $2)`, muter, owner); err != nil {
+		t.Fatalf("mute: %v", err)
+	}
+	for name, v := range map[string]*uuid.UUID{"blocking": &blocker, "muting": &muter} {
+		if rows, n := list(v, 20, 0); len(rows) != 0 || n != 0 {
+			t.Errorf("%s viewer sees %d rows (total %d), want none", name, len(rows), n)
+		}
+	}
+
 	// Unlink (set_channel=true, NULL) then relink.
 	cleared, err := q.UpdatePlaylist(ctx, sqlcgen.UpdatePlaylistParams{ID: ids["public"], SetChannel: true})
 	if err != nil || cleared.ChannelID.Valid {

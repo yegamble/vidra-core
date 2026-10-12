@@ -40,6 +40,16 @@ SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, 
 FROM playlists p
 WHERE p.channel_id = sqlc.arg('channel_id')::uuid
   AND (p.visibility = 'public' OR p.owner_id = sqlc.narg('viewer_id'))
+  -- The per-viewer mute/block clause the channel-videos list carries (A16
+  -- ruling): a viewer who muted or blocked the owner sees none of their playlists.
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = p.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = p.owner_id
+  )
 ORDER BY p.created_at DESC, p.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
@@ -48,7 +58,15 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 -- visibility predicate must stay identical to it.
 SELECT count(*)::bigint FROM playlists p
 WHERE p.channel_id = sqlc.arg('channel_id')::uuid
-  AND (p.visibility = 'public' OR p.owner_id = sqlc.narg('viewer_id'));
+  AND (p.visibility = 'public' OR p.owner_id = sqlc.narg('viewer_id'))
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = p.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = p.owner_id
+  );
 
 -- name: ListPlaylistsByOwnerForExport :many
 -- Every playlist a user owns, UNPAGINATED. The account data export is the one
