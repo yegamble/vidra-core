@@ -118,6 +118,39 @@ func (q *Queries) CountAdminVideos(ctx context.Context, arg CountAdminVideosPara
 	return column_1, err
 }
 
+const countOwnerVideos = `-- name: CountOwnerVideos :one
+SELECT count(*)::bigint
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE c.owner_id = $1
+  AND ($2::text IS NULL OR v.title ILIKE '%' || $2::text || '%')
+  AND ($3::text IS NULL OR v.privacy = $3::text)
+  AND ($4::text IS NULL OR v.state = $4::text)
+  AND ($5::uuid IS NULL OR v.channel_id = $5::uuid)
+`
+
+type CountOwnerVideosParams struct {
+	OwnerID   uuid.UUID   `json:"owner_id"`
+	Q         *string     `json:"q"`
+	Privacy   *string     `json:"privacy"`
+	State     *string     `json:"state"`
+	ChannelID pgtype.UUID `json:"channel_id"`
+}
+
+// How many rows ListOwnerVideos would return, ignoring pagination.
+func (q *Queries) CountOwnerVideos(ctx context.Context, arg CountOwnerVideosParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countOwnerVideos,
+		arg.OwnerID,
+		arg.Q,
+		arg.Privacy,
+		arg.State,
+		arg.ChannelID,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countPublicVideos = `-- name: CountPublicVideos :one
 SELECT count(*) FROM videos v WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
@@ -1303,6 +1336,129 @@ func (q *Queries) ListDueScheduledVideos(ctx context.Context, limit int32) ([]Li
 	for rows.Next() {
 		var i ListDueScheduledVideosRow
 		if err := rows.Scan(&i.ID, &i.StorageKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOwnerVideos = `-- name: ListOwnerVideos :many
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at, v.publish_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code,
+       EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
+       COALESCE(
+           (SELECT b.reason FROM video_blocks b WHERE b.video_id = v.id),
+           ''
+       )::text AS block_reason
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE c.owner_id = $1
+  AND ($2::text IS NULL OR v.title ILIKE '%' || $2::text || '%')
+  AND ($3::text IS NULL OR v.privacy = $3::text)
+  AND ($4::text IS NULL OR v.state = $4::text)
+  AND ($5::uuid IS NULL OR v.channel_id = $5::uuid)
+ORDER BY
+    CASE WHEN $6::text = 'published_at' THEN v.created_at END ASC,
+    CASE WHEN $6::text <> 'published_at' THEN v.created_at END DESC,
+    v.id DESC
+LIMIT $8 OFFSET $7
+`
+
+type ListOwnerVideosParams struct {
+	OwnerID      uuid.UUID   `json:"owner_id"`
+	Q            *string     `json:"q"`
+	Privacy      *string     `json:"privacy"`
+	State        *string     `json:"state"`
+	ChannelID    pgtype.UUID `json:"channel_id"`
+	Sort         string      `json:"sort"`
+	ResultOffset int32       `json:"result_offset"`
+	ResultLimit  int32       `json:"result_limit"`
+}
+
+type ListOwnerVideosRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	ChannelID          uuid.UUID          `json:"channel_id"`
+	Title              string             `json:"title"`
+	Description        string             `json:"description"`
+	Privacy            string             `json:"privacy"`
+	State              string             `json:"state"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	PublishAt          pgtype.Timestamptz `json:"publish_at"`
+	Views              int64              `json:"views"`
+	HasThumbnail       bool               `json:"has_thumbnail"`
+	ChannelHandle      string             `json:"channel_handle"`
+	ChannelDisplayName string             `json:"channel_display_name"`
+	AuthorDisplayName  string             `json:"author_display_name"`
+	DurationSeconds    *int32             `json:"duration_seconds"`
+	IsSensitive        bool               `json:"is_sensitive"`
+	SensitiveReason    string             `json:"sensitive_reason"`
+	ShortCode          string             `json:"short_code"`
+	Blocked            bool               `json:"blocked"`
+	BlockReason        string             `json:"block_reason"`
+}
+
+// Every video across ALL channels the caller OWNS (owner_id is the channel's
+// owner, so a foreign channel_id simply matches nothing — it can never widen
+// the scope). Optional filters, each NULL = off: q (case-insensitive title
+// substring, served by videos_title_trgm_idx; the caller escapes LIKE
+// wildcards), privacy, state, channel_id. Same row shape and ordering rules as
+// ListVideosByChannel so the studio list renders unchanged.
+func (q *Queries) ListOwnerVideos(ctx context.Context, arg ListOwnerVideosParams) ([]ListOwnerVideosRow, error) {
+	rows, err := q.db.Query(ctx, listOwnerVideos,
+		arg.OwnerID,
+		arg.Q,
+		arg.Privacy,
+		arg.State,
+		arg.ChannelID,
+		arg.Sort,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOwnerVideosRow
+	for rows.Next() {
+		var i ListOwnerVideosRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Title,
+			&i.Description,
+			&i.Privacy,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PublishAt,
+			&i.Views,
+			&i.HasThumbnail,
+			&i.ChannelHandle,
+			&i.ChannelDisplayName,
+			&i.AuthorDisplayName,
+			&i.DurationSeconds,
+			&i.IsSensitive,
+			&i.SensitiveReason,
+			&i.ShortCode,
+			&i.Blocked,
+			&i.BlockReason,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

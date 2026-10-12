@@ -192,6 +192,55 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 -- How many rows ListVideosByChannel would return, ignoring pagination.
 SELECT count(*)::bigint FROM videos v WHERE v.channel_id = sqlc.arg('channel_id');
 
+-- name: ListOwnerVideos :many
+-- Every video across ALL channels the caller OWNS (owner_id is the channel's
+-- owner, so a foreign channel_id simply matches nothing — it can never widen
+-- the scope). Optional filters, each NULL = off: q (case-insensitive title
+-- substring, served by videos_title_trgm_idx; the caller escapes LIKE
+-- wildcards), privacy, state, channel_id. Same row shape and ordering rules as
+-- ListVideosByChannel so the studio list renders unchanged.
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at, v.publish_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code,
+       EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
+       COALESCE(
+           (SELECT b.reason FROM video_blocks b WHERE b.video_id = v.id),
+           ''
+       )::text AS block_reason
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE c.owner_id = sqlc.arg('owner_id')
+  AND (sqlc.narg('q')::text IS NULL OR v.title ILIKE '%' || sqlc.narg('q')::text || '%')
+  AND (sqlc.narg('privacy')::text IS NULL OR v.privacy = sqlc.narg('privacy')::text)
+  AND (sqlc.narg('state')::text IS NULL OR v.state = sqlc.narg('state')::text)
+  AND (sqlc.narg('channel_id')::uuid IS NULL OR v.channel_id = sqlc.narg('channel_id')::uuid)
+ORDER BY
+    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN v.created_at END ASC,
+    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN v.created_at END DESC,
+    v.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountOwnerVideos :one
+-- How many rows ListOwnerVideos would return, ignoring pagination.
+SELECT count(*)::bigint
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE c.owner_id = sqlc.arg('owner_id')
+  AND (sqlc.narg('q')::text IS NULL OR v.title ILIKE '%' || sqlc.narg('q')::text || '%')
+  AND (sqlc.narg('privacy')::text IS NULL OR v.privacy = sqlc.narg('privacy')::text)
+  AND (sqlc.narg('state')::text IS NULL OR v.state = sqlc.narg('state')::text)
+  AND (sqlc.narg('channel_id')::uuid IS NULL OR v.channel_id = sqlc.narg('channel_id')::uuid);
+
 -- name: ListVideoIDsByChannel :many
 -- Every video id in a channel, UNPAGINATED — the account-deletion sweep, which
 -- must visit all of them (a delete that stopped at the UI page size would leave
