@@ -19,15 +19,32 @@ import (
 type ownershipFakeRepo struct {
 	v    *videoFakeRepo
 	rows []sqlcgen.VideoOwnershipChange
+	// inFlight mirrors VideoMediaWorkInFlight over the harness's own upload
+	// and transcode services (replace sessions, live transcode jobs); the full
+	// predicate is proven against PostgreSQL in internal/store.
+	inFlight func(uuid.UUID) bool
 }
 
 // ownershipServer is videoServerFull with ownership changes wired.
 func ownershipServer(t *testing.T, opts ...video.Option) (*Server, *videoFakeRepo, *ownershipFakeRepo) {
 	t.Helper()
-	own := &ownershipFakeRepo{}
-	srv, _, _, _, repo := videoServerFull(t, testConfig(), append(opts, video.WithOwnershipRepository(own))...)
-	own.v = repo
+	srv, repo, own, _ := ownershipServerTC(t, opts...)
 	return srv, repo, own
+}
+
+// ownershipServerTC is ownershipServer plus the transcode fake, for seeding
+// live transcode jobs.
+func ownershipServerTC(t *testing.T, opts ...video.Option) (*Server, *videoFakeRepo, *ownershipFakeRepo, *transcodeFakeRepo) {
+	t.Helper()
+	own := &ownershipFakeRepo{}
+	srv, _, tc, _, repo := videoServerFull(t, testConfig(), append(opts, video.WithOwnershipRepository(own))...)
+	own.v = repo
+	own.inFlight = func(id uuid.UUID) bool {
+		ctx := context.Background()
+		return (srv.uploadsvc != nil && srv.uploadsvc.HasActiveReplaceSession(ctx, id)) ||
+			(srv.transcodesvc != nil && srv.transcodesvc.HasLiveJob(ctx, id))
+	}
+	return srv, repo, own, tc
 }
 
 func (f *ownershipFakeRepo) ResolveOwnershipRecipient(_ context.Context, a sqlcgen.ResolveOwnershipRecipientParams) (sqlcgen.ResolveOwnershipRecipientRow, error) {
@@ -124,7 +141,8 @@ func (f *ownershipFakeRepo) AcceptVideoOwnershipChange(_ context.Context, a sqlc
 		}
 		v, ok := f.v.videos[r.VideoID]
 		target, tok := f.v.channelByID(a.ChannelID)
-		if !ok || !tok || v.OwnerID != r.InitiatorID || target.OwnerID != r.NextOwnerID {
+		if !ok || !tok || v.OwnerID != r.InitiatorID || target.OwnerID != r.NextOwnerID ||
+			!r.CreatedAt.After(a.ExpiredBefore) || f.inFlight(r.VideoID) {
 			break
 		}
 		from := v.ChannelID
@@ -198,4 +216,8 @@ func (f *ownershipFakeRepo) CancelVideoOwnershipChange(_ context.Context, a sqlc
 		}
 	}
 	return 0, nil
+}
+
+func (f *ownershipFakeRepo) VideoMediaWorkInFlight(_ context.Context, videoID uuid.UUID) (bool, error) {
+	return f.inFlight(videoID), nil
 }

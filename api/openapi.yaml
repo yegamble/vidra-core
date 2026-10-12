@@ -8763,8 +8763,9 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: >-
-            A request for this video is already pending, the video is still
-            uploading or processing (state draft or processing), or the
+            A request for this video is already pending; the video is still
+            uploading or processing (state draft or processing, or any upload,
+            replacement, import or transcode of it unfinished); or the
             recipient refused an offer from the caller in the last 24 hours.
           content:
             application/json:
@@ -8854,7 +8855,8 @@ paths:
         video into one of the caller's channels. The video's stored bytes must
         fit the caller's storage quota (and daily upload quota), exactly as an
         upload would. The move happens in the same statement that marks the
-        request accepted, and only while the giver still owns the video. It has
+        request accepted, and only while the giver still owns the video and
+        nothing about its media is still being uploaded or processed. It has
         the side effects of any channel move: search reindex, a federation
         Update to the new channel's followers and a Delete to followers of only
         the old one, and a content.video.move audit event.
@@ -8900,8 +8902,10 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: >-
-            The request was already accepted or refused, the giver no longer
-            owns the video, or the video is still uploading or processing.
+            The request was already answered, withdrawn or expired (older than
+            30 days); the giver no longer owns the video; or the video is still
+            being uploaded or processed (any upload, replacement, import or
+            transcode of it unfinished).
           content:
             application/json:
               schema:

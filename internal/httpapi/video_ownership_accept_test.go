@@ -3,14 +3,17 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -145,5 +148,110 @@ func TestRefuseVideoOwnership(t *testing.T) {
 	}
 	if rec := giveOwnership(srv, adaTok, id, "carol"); rec.Code != http.StatusNoContent {
 		t.Errorf("offer to someone else after a refusal = %d, want 204", rec.Code)
+	}
+}
+
+// TestOwnershipWaitsForMediaWork: neither a give nor an accept goes through
+// while media work on the video is unfinished — an open replacement session or
+// a live transcode job — so that work always completes under the owner who
+// started it. Both go through once it has finished.
+func TestOwnershipWaitsForMediaWork(t *testing.T) {
+	srv, repo, own, tc := ownershipServerTC(t)
+	adminTok := createChannelFor(t, srv, "root", "root@example.test", "root") // first user = admin
+	patchSettings(t, srv, adminTok, `{"video_replace_enabled":true}`)
+	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bobTok := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	bob := channelIDOf(t, srv, "bob")
+	id := publishVideoWithFile(t, srv, adaTok, "ada", "Clip", "v0 bytes")
+	vid := uuid.MustParse(id)
+	openReplace := func() string {
+		t.Helper()
+		rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/replace-session", `{"size":8,"filename":"v2.mp4"}`, adaTok)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("open replace session = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		var sess uploadSessionResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &sess)
+		return sess.UploadID
+	}
+	closeReplace := func(upload string) {
+		t.Helper()
+		if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/uploads/"+upload, "", adaTok); rec.Code >= 300 {
+			t.Fatalf("cancel replace session = %d; body=%s", rec.Code, rec.Body.String())
+		}
+	}
+
+	upload := openReplace()
+	if rec := giveOwnership(srv, adaTok, id, "bob"); rec.Code != http.StatusConflict {
+		t.Errorf("give during an open replacement = %d, want 409", rec.Code)
+	}
+	closeReplace(upload)
+	if rec := giveOwnership(srv, adaTok, id, "bob"); rec.Code != http.StatusNoContent {
+		t.Fatalf("give = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	change := own.rows[len(own.rows)-1].ID.String()
+	accept := func() *httptest.ResponseRecorder {
+		return answerOwnership(srv, bobTok, change, "accept", `{"channel_id":"`+bob+`"}`)
+	}
+
+	upload = openReplace()
+	if rec := accept(); rec.Code != http.StatusConflict {
+		t.Errorf("accept during an open replacement = %d, want 409", rec.Code)
+	}
+	closeReplace(upload)
+	tc.jobs[uuid.New()] = &sqlcgen.TranscodeJob{VideoID: vid, State: "running"}
+	if rec := accept(); rec.Code != http.StatusConflict {
+		t.Errorf("accept during a live transcode = %d, want 409", rec.Code)
+	}
+	if got := repo.videos[vid].OwnerID; got == repo.users.users["bob@example.test"].ID || own.rows[len(own.rows)-1].Status != "pending" {
+		t.Fatal("a refused accept moved the video or answered the request")
+	}
+	for _, j := range tc.jobs {
+		j.State = "done"
+	}
+	if rec := accept(); rec.Code != http.StatusNoContent {
+		t.Fatalf("accept once the work finished = %d; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAcceptIsTheRecipientsAlone: staff get no reach over someone else's
+// request, a channel the recipient only EDITS is not theirs to receive into,
+// and a request past the offer window cannot be accepted.
+func TestAcceptIsTheRecipientsAlone(t *testing.T) {
+	srv, _, own := ownershipServer(t)
+	adminTok := createChannelFor(t, srv, "root", "root@example.test", "root") // first user = admin
+	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bobTok := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	carolTok := createChannelFor(t, srv, "carol", "carol@example.test", "carol")
+	if rec := postJSONAuth(srv, "/api/v1/channels/carol/members", `{"handle":"bob"}`, carolTok); rec.Code != http.StatusCreated {
+		t.Fatalf("invite bob to carol = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	bob, carol, root := channelIDOf(t, srv, "bob"), channelIDOf(t, srv, "carol"), channelIDOf(t, srv, "root")
+	id := createPublishedVideo(t, srv, adaTok, "ada", `{"title":"Gift"}`)
+	if rec := giveOwnership(srv, adaTok, id, "bob"); rec.Code != http.StatusNoContent {
+		t.Fatalf("give = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	change := own.rows[0].ID.String()
+	for _, c := range []struct {
+		name, tok, channel string
+		want               int
+	}{
+		{"admin accepting bob's request", adminTok, root, http.StatusNotFound},
+		{"admin accepting into bob's channel", adminTok, bob, http.StatusNotFound},
+		{"bob accepting into a channel he only edits", bobTok, carol, http.StatusNotFound},
+	} {
+		if rec := answerOwnership(srv, c.tok, change, "accept", `{"channel_id":"`+c.channel+`"}`); rec.Code != c.want {
+			t.Errorf("%s = %d, want %d", c.name, rec.Code, c.want)
+		}
+	}
+	if rec := answerOwnership(srv, adminTok, change, "refuse", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("admin refusing bob's request = %d, want 404", rec.Code)
+	}
+	own.rows[0].CreatedAt = time.Now().Add(-31 * 24 * time.Hour)
+	if rec := answerOwnership(srv, bobTok, change, "accept", `{"channel_id":"`+bob+`"}`); rec.Code != http.StatusConflict {
+		t.Errorf("accepting an expired request = %d, want 409", rec.Code)
+	}
+	if own.rows[0].Status != "pending" {
+		t.Errorf("status = %q after refused accepts, want pending", own.rows[0].Status)
 	}
 }

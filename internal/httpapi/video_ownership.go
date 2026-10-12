@@ -198,6 +198,10 @@ func ownershipError(err error) error {
 		return echo.NewHTTPError(http.StatusConflict, "this ownership change was already answered")
 	case errors.Is(err, video.ErrOwnershipStale):
 		return echo.NewHTTPError(http.StatusConflict, "the video is no longer owned by the user who offered it")
+	case errors.Is(err, video.ErrOwnershipExpired):
+		return echo.NewHTTPError(http.StatusConflict, "this ownership change has expired")
+	case errors.Is(err, video.ErrMediaWorkInFlight):
+		return echo.NewHTTPError(http.StatusConflict, "the video is still being uploaded or processed; try again once that finishes")
 	}
 	return videoError(err)
 }
