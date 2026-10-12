@@ -612,7 +612,14 @@ func (s *Server) effectiveSensitivePolicy(c echo.Context) string {
 // rather than by request principal (the token-gated feed has no session).
 func (s *Server) sensitivePolicyForUser(ctx context.Context, userID uuid.UUID) string {
 	if s.authsvc != nil {
-		if u, err := s.authsvc.UserByID(ctx, userID); err == nil && u.SensitiveContentPolicy != nil {
+		u, err := s.authsvc.UserByID(ctx, userID)
+		if err != nil {
+			// Fail CLOSED: if the user's own (possibly stricter) override cannot
+			// be read, falling back to a laxer instance policy could show them
+			// content they asked not to see.
+			return instancesettings.SensitiveContentPolicyHide
+		}
+		if u.SensitiveContentPolicy != nil {
 			if p := strings.TrimSpace(*u.SensitiveContentPolicy); p != "" {
 				return p
 			}

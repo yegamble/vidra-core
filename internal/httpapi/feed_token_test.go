@@ -221,3 +221,12 @@ func TestSubscriptionsFeedIsRateLimited(t *testing.T) {
 		t.Errorf("codes = %v, want [404 429]", codes)
 	}
 }
+
+// If the owner's row cannot be read, their stricter override is unknown: hide.
+func TestSensitivePolicyForUserFailsClosed(t *testing.T) {
+	srv, _, _, _, _ := videoServerFullWith(t, distributionCfg(), nil)
+	applySensitivePolicy(t, srv, "display")
+	if got := srv.sensitivePolicyForUser(context.Background(), uuid.New()); got != "hide" {
+		t.Errorf("policy for unreadable user = %q, want hide", got)
+	}
+}
