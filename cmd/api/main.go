@@ -40,6 +40,7 @@ import (
 	"github.com/vidra/vidra-core/internal/drm"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/feedtoken"
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/instancemod"
@@ -362,6 +363,7 @@ func run() error {
 		return err
 	}
 	opts = append(opts, httpapi.WithInstanceDocumentsService(instancedocssvc))
+	opts = append(opts, httpapi.WithFeedTokenService(feedtoken.NewService(db.Queries())))
 
 	// vidra-search integration (search-service W4). Wired only when
 	// SEARCH_SERVICE_URL is set; otherwise every search surface degrades to local
