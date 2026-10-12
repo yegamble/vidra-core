@@ -8764,8 +8764,9 @@ paths:
         "409":
           description: >-
             A request for this video is already pending, the video is still
-            uploading or processing (state draft or processing), or the
-            recipient refused an offer from the caller in the last 24 hours.
+            uploading or processing (state draft or processing), or an offer
+            from the caller to the same recipient ended — refused, or withdrawn
+            by the caller — in the last 24 hours.
           content:
             application/json:
               schema:
@@ -8787,8 +8788,10 @@ paths:
       summary: Withdraw your pending offer of a video
       description: >-
         Cancels the caller's pending ownership change for this video; the
-        recipient's list shows it as cancelled. Only the giver may cancel, and
-        only while it is pending. Anything else — an unknown video, someone
+        recipient's list shows it as no longer available (expired). Only the
+        giver may cancel, and only while it is pending. Like a refusal, a
+        withdrawal starts the 24-hour cooldown before the caller can offer the
+        same recipient another video. Anything else — an unknown video, someone
         else's offer, nothing pending — is the same 404.
       tags: [videos]
       security:

@@ -227,7 +227,7 @@ SELECT EXISTS (
     SELECT 1 FROM video_ownership_changes
     WHERE initiator_id = $1
       AND next_owner_id = $2
-      AND status = 'refused'
+      AND status IN ('refused', 'cancelled')
       AND updated_at > $3
 )
 `
@@ -238,9 +238,10 @@ type HasRecentOwnershipRefusalParams struct {
 	RefusedAfter time.Time `json:"refused_after"`
 }
 
-// Whether next_owner_id refused an offer from initiator_id after refused_after
-// (any video): the re-offer cooldown, so a refusal is not answered by another
-// push notification straight away.
+// Whether an offer from initiator_id to next_owner_id (any video) ENDED after
+// refused_after — refused by the recipient, or withdrawn by the giver: the
+// re-offer cooldown. Counting withdrawals too is what stops offer → withdraw →
+// offer again from pushing the recipient a fresh notification each time.
 func (q *Queries) HasRecentOwnershipRefusal(ctx context.Context, arg HasRecentOwnershipRefusalParams) (bool, error) {
 	row := q.db.QueryRow(ctx, hasRecentOwnershipRefusal, arg.InitiatorID, arg.NextOwnerID, arg.RefusedAfter)
 	var exists bool
@@ -250,8 +251,9 @@ func (q *Queries) HasRecentOwnershipRefusal(ctx context.Context, arg HasRecentOw
 
 const listIncomingVideoOwnershipChanges = `-- name: ListIncomingVideoOwnershipChanges :many
 SELECT oc.id,
-       (CASE WHEN oc.status = 'pending'
-                  AND (c.owner_id <> oc.initiator_id OR oc.created_at <= $1)
+       (CASE WHEN oc.status IN ('cancelled', 'expired')
+                  OR (oc.status = 'pending'
+                      AND (c.owner_id <> oc.initiator_id OR oc.created_at <= $1))
              THEN 'expired' ELSE oc.status END)::text AS status,
        oc.created_at, oc.updated_at,
        oc.video_id, oc.video_title,
@@ -287,9 +289,10 @@ type ListIncomingVideoOwnershipChangesRow struct {
 // to decide: which video, and who is offering it. The title is the snapshot
 // taken at give time, never the video's live one: once a request is answered
 // the video may pass to someone else, and the old recipient must not keep a
-// window onto it. A pending request that can no longer be accepted (its giver
-// no longer owns the video, or it is older than the offer window) reads
-// 'expired' even before a give has marked it so.
+// window onto it. Every request that can no longer be answered — withdrawn by
+// the giver, older than the offer window, or one whose giver no longer owns the
+// video, even before a give has marked it — reads the same 'expired', so the
+// recipient learns "no longer available" and never which of those it was.
 func (q *Queries) ListIncomingVideoOwnershipChanges(ctx context.Context, arg ListIncomingVideoOwnershipChangesParams) ([]ListIncomingVideoOwnershipChangesRow, error) {
 	rows, err := q.db.Query(ctx, listIncomingVideoOwnershipChanges,
 		arg.ExpiredBefore,
