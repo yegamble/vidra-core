@@ -7,14 +7,17 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 // createChannelRequest is the POST /api/v1/channels body.
@@ -46,11 +49,14 @@ func (r createChannelRequest) Validate() []FieldError {
 
 // channelView is the public projection of a channel.
 type channelView struct {
-	ID            string    `json:"id"`
-	OwnerID       string    `json:"owner_id"`
-	Handle        string    `json:"handle"`
-	DisplayName   string    `json:"display_name"`
-	Description   string    `json:"description"`
+	ID          string `json:"id"`
+	OwnerID     string `json:"owner_id"`
+	Handle      string `json:"handle"`
+	DisplayName string `json:"display_name"`
+	Description string `json:"description"`
+	// Support is PeerTube's free-text "support" field (markdown, migration
+	// 0160) — "Support me on Liberapay: <link>". Omitted when unset.
+	Support       string    `json:"support,omitempty"`
 	FollowerCount int64     `json:"follower_count"`
 	CreatedAt     time.Time `json:"created_at"`
 	// HasAvatar/HasBanner are set when the profile-image service is wired
@@ -90,6 +96,7 @@ func newChannelView(c sqlcgen.Channel, followerCount int64) channelView {
 		Handle:             c.Handle,
 		DisplayName:        c.DisplayName,
 		Description:        c.Description,
+		Support:            pgconv.Deref(c.Support),
 		FollowerCount:      followerCount,
 		CreatedAt:          c.CreatedAt,
 		ActivitypubEnabled: c.ActivitypubEnabled,
@@ -222,6 +229,9 @@ func (s *Server) handleListFollowedChannels(c echo.Context) error {
 type updateChannelRequest struct {
 	DisplayName *string `json:"display_name"`
 	Description *string `json:"description"`
+	// Support: markdown support text, at most video.MaxSupportLen characters;
+	// "" clears it. Absent = unchanged.
+	Support *string `json:"support"`
 	// Per-channel protocol distribution flags (migration 0096). Owner-only, as
 	// with the rest of PATCH. Absent = unchanged.
 	ActivitypubEnabled *bool `json:"activitypub_enabled"`
@@ -230,8 +240,8 @@ type updateChannelRequest struct {
 
 func (r updateChannelRequest) Validate() []FieldError {
 	var fes []FieldError
-	if r.DisplayName == nil && r.Description == nil && r.ActivitypubEnabled == nil && r.AtprotoEnabled == nil {
-		fes = append(fes, FieldError{Field: "display_name", Message: "at least one of display_name, description, activitypub_enabled, atproto_enabled is required"})
+	if r.DisplayName == nil && r.Description == nil && r.Support == nil && r.ActivitypubEnabled == nil && r.AtprotoEnabled == nil {
+		fes = append(fes, FieldError{Field: "display_name", Message: "at least one of display_name, description, support, activitypub_enabled, atproto_enabled is required"})
 		return fes
 	}
 	if r.DisplayName != nil {
@@ -244,6 +254,9 @@ func (r updateChannelRequest) Validate() []FieldError {
 	}
 	if r.Description != nil && len(*r.Description) > 1000 {
 		fes = append(fes, FieldError{Field: "description", Message: "must be at most 1000 characters"})
+	}
+	if r.Support != nil && utf8.RuneCountInString(*r.Support) > video.MaxSupportLen {
+		fes = append(fes, FieldError{Field: "support", Message: "must be at most 1000 characters"})
 	}
 	return fes
 }
@@ -262,6 +275,7 @@ func (s *Server) handleUpdateChannel(c echo.Context) error {
 	ch, err := s.channelsvc.Update(ctx, userID, c.Param("handle"), channel.UpdateInput{
 		DisplayName:        in.DisplayName,
 		Description:        in.Description,
+		Support:            in.Support,
 		ActivitypubEnabled: in.ActivitypubEnabled,
 		AtprotoEnabled:     in.AtprotoEnabled,
 	})

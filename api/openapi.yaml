@@ -18180,6 +18180,13 @@ components:
           example: Ada Makes
         description:
           type: string
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            PeerTube-style free-text (markdown) "support" message, e.g.
+            "Support me on Liberapay: <link>". Omitted when unset. New videos
+            inherit it unless they supply their own.
         created_at:
           type: string
           format: date-time
@@ -18262,6 +18269,12 @@ components:
         description:
           type: string
           maxLength: 1000
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            Markdown support message. An empty string clears it; absent leaves
+            it unchanged.
         activitypub_enabled:
           type: boolean
           description: >-
@@ -18657,6 +18670,12 @@ components:
             moderator prose about a named account and never appears on any public
             surface, on another viewer's read of the same channel, or on the
             video detail endpoint (which stays 404 while the block stands).
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            PeerTube-style free-text (markdown) "support" message for this
+            video. Present on the detail and create/update views when set.
         originally_published_at:
           type: string
           format: date-time
@@ -19448,6 +19467,12 @@ components:
             Optional content-license id (see GET /videos/config); unknown
             value -> 422. Omitted/empty seeds the instance's
             default_video_licence setting (0 = no default, left unset).
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            Markdown support message. Omitted/null inherits the channel's
+            support text at create time; an empty string means none.
         tags:
           type: array
           description: >-
@@ -19522,6 +19547,12 @@ components:
         license:
           type: string
           description: Set the content-license id (see GET /videos/config). Unknown/empty value -> 422.
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            Set the markdown support message; an empty string clears it, absent
+            leaves it unchanged.
         tags:
           type: array
           description: >-

@@ -594,6 +594,12 @@ type CreateInput struct {
 	Category string
 	Language string
 	License  string
+	// Support is PeerTube's free-text "support" field (markdown, <= MaxSupportLen
+	// characters; the HTTP layer enforces it). nil = not provided, so the new
+	// video INHERITS its channel's support text at create time (PeerTube's
+	// behaviour); a non-nil value, even "", is the creator's explicit choice
+	// and wins ("" = deliberately none).
+	Support *string
 	// Tags is the video's free-form tag set (the HTTP layer validates count and
 	// length limits; normalization happens here via NormalizeTags).
 	Tags []string
@@ -722,6 +728,20 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 	if in.DownloadEnabled != nil {
 		downloadEnabled = *in.DownloadEnabled
 	}
+	support := in.Support
+	if support == nil {
+		// Inherit the channel's text as a snapshot. Best-effort: a failed
+		// lookup must not block creating the video (the creator can still set
+		// it by hand), so it is logged, never returned.
+		ch, cerr := s.repo.GetChannelByID(ctx, channelID)
+		switch {
+		case cerr == nil:
+			support = ch.Support
+		case !errors.Is(cerr, pgx.ErrNoRows):
+			slog.WarnContext(ctx, "could not read the channel's support text to inherit; creating without it",
+				"channel_id", channelID, "error", cerr)
+		}
+	}
 	v, err := s.repo.CreateVideo(ctx, sqlcgen.CreateVideoParams{
 		ChannelID:       channelID,
 		Title:           strings.TrimSpace(in.Title),
@@ -733,6 +753,7 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 		PublishAt:       timestamptz(in.PublishAt),
 		IsSensitive:     in.IsSensitive,
 		SensitiveReason: strings.TrimSpace(in.SensitiveReason),
+		Support:         nilIfEmpty(pgconv.Deref(support)),
 		CommentsPolicy:  commentsPolicy,
 		DownloadEnabled: downloadEnabled,
 
@@ -752,6 +773,10 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 // MaxTagsPerVideo and MaxTagLen are the free-form tag limits (product-decisions
 // §18): at most 5 tags of at most 50 characters each (after normalization).
 const (
+	// MaxSupportLen is PeerTube's SUPPORT max (1000 characters) for both the
+	// channel and the video support text; migration 0160 CHECKs the same.
+	MaxSupportLen = 1000
+
 	MaxTagsPerVideo = 5
 	MaxTagLen       = 50
 )
@@ -2082,6 +2107,9 @@ type UpdateInput struct {
 	Category *string
 	Language *string
 	License  *string
+	// Support: nil leaves the support text unchanged; a non-nil value sets it
+	// ("" clears it). The HTTP layer caps its length (MaxSupportLen).
+	Support *string
 	// Tags: nil leaves the tag set unchanged; a non-nil slice replaces it in
 	// full (an empty slice clears all tags).
 	Tags *[]string
@@ -2176,6 +2204,7 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 		PublishAt:       timestamptz(in.PublishAt),
 		IsSensitive:     in.IsSensitive,
 		SensitiveReason: pgconv.TrimPtr(in.SensitiveReason),
+		Support:         pgconv.TrimPtr(in.Support),
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
 		ChannelID:       pgconv.UUIDPtr(in.ChannelID),

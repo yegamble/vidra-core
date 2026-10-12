@@ -36,20 +36,22 @@ var apContext = []string{
 // Actor is an ActivityPub actor document (Person for accounts, Group for
 // channels). Only public data — never the private key.
 type Actor struct {
-	Context           []string         `json:"@context"`
-	ID                string           `json:"id"`
-	Type              string           `json:"type"`
-	PreferredUsername string           `json:"preferredUsername"`
-	Name              string           `json:"name,omitempty"`
-	Summary           string           `json:"summary,omitempty"`
-	URL               string           `json:"url,omitempty"`
-	Inbox             string           `json:"inbox"`
-	Outbox            string           `json:"outbox"`
-	Followers         string           `json:"followers"`
-	Following         string           `json:"following"`
-	Endpoints         *Endpoints       `json:"endpoints,omitempty"`
-	AttributedTo      []AttributedItem `json:"attributedTo,omitempty"`
-	PublicKey         PublicKey        `json:"publicKey"`
+	Context           []string `json:"@context"`
+	ID                string   `json:"id"`
+	Type              string   `json:"type"`
+	PreferredUsername string   `json:"preferredUsername"`
+	Name              string   `json:"name,omitempty"`
+	Summary           string   `json:"summary,omitempty"`
+	// Support is PeerTube's channel "support" text (Group actors only).
+	Support      string           `json:"support,omitempty"`
+	URL          string           `json:"url,omitempty"`
+	Inbox        string           `json:"inbox"`
+	Outbox       string           `json:"outbox"`
+	Followers    string           `json:"followers"`
+	Following    string           `json:"following"`
+	Endpoints    *Endpoints       `json:"endpoints,omitempty"`
+	AttributedTo []AttributedItem `json:"attributedTo,omitempty"`
+	PublicKey    PublicKey        `json:"publicKey"`
 }
 
 // PublicKey is the actor's HTTP-signature public key block.
@@ -134,6 +136,7 @@ func (s *Service) ChannelActor(ctx context.Context, handle string) (*Actor, erro
 	}
 	base := s.baseURL + "/video-channels/" + s.channelActorHandle(ctx, ch)
 	actor := buildActor(base, "Group", ch.Handle, ch.DisplayName, ch.Description, pub)
+	actor.Support = federatedSupport(ch.Support)
 	actor.AttributedTo = []AttributedItem{{
 		Type: "Person",
 		ID:   s.baseURL + "/accounts/" + owner.Username,
