@@ -2082,6 +2082,8 @@ func (s *Server) routes() {
 		// else, so a report's existence never leaks).
 		api.GET("/reports/:id/messages", s.handleListReportMessages, s.requireAuth)
 		api.POST("/reports/:id/messages", s.handleCreateReportMessage, s.requireAuth, s.reportMessageRateLimit())
+		api.GET("/me/reports", s.handleListMyReports, s.requireAuth)
+		api.GET("/me/reports/:id", s.handleGetMyReport, s.requireAuth)
 		api.GET("/admin/reports", s.handleListReports, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/reports/:id/resolve", s.handleResolveReport, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		// Hard-delete is admin-only: moderators resolve, admins can purge.
