@@ -26,10 +26,10 @@ func (s *Service) AnnounceVideo(ctx context.Context, videoID uuid.UUID) error {
 	if !ch.ActivitypubEnabled {
 		return nil // channel opted out of ActivityPub (migration 0096)
 	}
-	if v.Privacy != "public" || v.State != "published" {
-		return nil
+	if v.Privacy != "public" || v.State != "published" || v.Blocked {
+		return nil // a moderator-blocked video is never (re)federated (T13)
 	}
-	payload, err := s.buildVideoActivity("Create", ch.Handle, v)
+	payload, err := s.buildVideoActivity(ctx, "Create", ch.Handle, v)
 	if err != nil {
 		return err
 	}
@@ -63,8 +63,13 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID uuid.UUID, wasFederat
 	}
 	var payload []byte
 	switch {
+	case v.Blocked:
+		// The Delete went out when the block landed; an edit or a transcode
+		// completion on a blocked video must neither Update it back into
+		// existence nor repeat the retraction (T13).
+		return nil
 	case v.Privacy == "public" && v.State == "published":
-		payload, err = s.buildVideoActivity("Update", ch.Handle, v)
+		payload, err = s.buildVideoActivity(ctx, "Update", ch.Handle, v)
 	case wasFederated:
 		payload, err = s.buildDeleteVideo(ch.Handle, v.ID)
 	default:
@@ -109,6 +114,29 @@ func (s *Service) DeleteVideo(ctx context.Context, videoID, channelID uuid.UUID,
 	return s.fanOutToFollowers(ctx, channelID, ch.Handle, payload)
 }
 
+// UnfederateBlockedVideo retracts a video a moderator just blocked: a Delete to
+// every remote follower (PeerTube does the same on block) and the tombstone that
+// lets the object id answer 410. Only a public+published video was ever
+// federated, so anything else is a no-op rather than a Delete naming a uuid no
+// peer was shown. Callers treat a failure as best-effort — the block stands.
+func (s *Service) UnfederateBlockedVideo(ctx context.Context, videoID uuid.UUID) error {
+	v, ch, ok, err := s.loadVideoAndChannel(ctx, videoID)
+	if err != nil || !ok {
+		return err
+	}
+	if v.Privacy != "public" || v.State != "published" {
+		return nil
+	}
+	return s.DeleteVideo(ctx, videoID, ch.ID, true)
+}
+
+// RefederateUnblockedVideo re-announces a video whose block was lifted, as the
+// Create{Video} a private->public flip sends, so peers that dropped it on the
+// block's Delete re-ingest it.
+func (s *Service) RefederateUnblockedVideo(ctx context.Context, videoID uuid.UUID) error {
+	return s.AnnounceVideo(ctx, videoID)
+}
+
 // loadVideoAndChannel loads a video and its channel; ok is false (nil error) when
 // either is absent (a no-op for federation).
 func (s *Service) loadVideoAndChannel(ctx context.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, sqlcgen.Channel, bool, error) {
@@ -149,15 +177,19 @@ func (s *Service) fanOutToFollowers(ctx context.Context, channelID uuid.UUID, ch
 
 // buildVideoActivity renders a Create or Update activity wrapping the video as an
 // AS Video object, attributed to the channel actor and addressed to the public.
-func (s *Service) buildVideoActivity(activityType, channelHandle string, v sqlcgen.GetVideoByIDRow) ([]byte, error) {
+func (s *Service) buildVideoActivity(ctx context.Context, activityType, channelHandle string, v sqlcgen.GetVideoByIDRow) ([]byte, error) {
 	channelActor := s.baseURL + "/video-channels/" + channelHandle
+	obj, err := s.videoObjectFromDetail(ctx, channelActor, v)
+	if err != nil {
+		return nil, err
+	}
 	activity := map[string]any{
 		"@context": "https://www.w3.org/ns/activitystreams",
 		"id":       channelActor + "/activities/" + strings.ToLower(activityType) + "/" + uuid.NewString(),
 		"type":     activityType,
 		"actor":    channelActor,
 		"to":       []string{publicAudience},
-		"object":   s.videoObjectFromDetail(channelActor, v),
+		"object":   obj,
 	}
 	return json.Marshal(activity)
 }

@@ -49,6 +49,7 @@ func remoteVideoServer(t *testing.T) (*Server, uuid.UUID) {
 		WatchUrl:       "https://remote.example/w/x",
 		StreamUrl:      &stream,
 		ThumbnailKey:   &key,
+		IsSensitive:    true,
 	}}
 	srv := New(testConfig(), nil, nil, WithRemoteVideoService(remotevideo.NewService(repo, blobs)))
 	return srv, id
@@ -78,6 +79,11 @@ func TestGetRemoteVideo(t *testing.T) {
 	}
 	if !view.HasThumbnail {
 		t.Error("has_thumbnail = false, want true")
+	}
+	// Direct watch-by-id is never filtered (as for a local video); the flag is
+	// what lets the viewer's warn/blur policy apply to a remote video (T05).
+	if !view.IsSensitive {
+		t.Error("is_sensitive = false, want true")
 	}
 }
 

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -146,6 +147,33 @@ func (f *playlistFakeRepo) ListPlaylistItemVideoIDs(_ context.Context, playlistI
 func (f *playlistFakeRepo) ReorderPlaylistItems(_ context.Context, a sqlcgen.ReorderPlaylistItemsParams) error {
 	f.items[a.PlaylistID] = append([]uuid.UUID(nil), a.VideoIds...)
 	return nil
+}
+
+// MovePlaylistItem mirrors the SQL over ALL items (visible or not): 0 rows when
+// the video or the anchor is not an item; otherwise the video lands directly
+// after the anchor, or at the front when the anchor is NULL.
+func (f *playlistFakeRepo) MovePlaylistItem(_ context.Context, a sqlcgen.MovePlaylistItemParams) (int64, error) {
+	cur, after := f.items[a.PlaylistID], uuid.UUID(a.AfterVideoID.Bytes)
+	var out []uuid.UUID
+	if !a.AfterVideoID.Valid {
+		out = append(out, a.VideoID)
+	}
+	found, anchored := false, !a.AfterVideoID.Valid
+	for _, v := range cur {
+		if v == a.VideoID {
+			found = true
+			continue
+		}
+		out = append(out, v)
+		if a.AfterVideoID.Valid && v == after {
+			out, anchored = append(out, a.VideoID), true
+		}
+	}
+	if !found || !anchored {
+		return 0, nil
+	}
+	f.items[a.PlaylistID] = out
+	return int64(len(out)), nil
 }
 
 func (f *playlistFakeRepo) SetPlaylistThumbnail(_ context.Context, a sqlcgen.SetPlaylistThumbnailParams) error {
@@ -309,6 +337,7 @@ func TestPlaylistValidationAndAuth(t *testing.T) {
 		{http.MethodPost, "/api/v1/playlists/" + someID + "/videos", `{"video_id":"` + someID + `"}`},
 		{http.MethodPut, "/api/v1/playlists/" + someID + "/videos", `{"video_ids":["` + someID + `"]}`},
 		{http.MethodDelete, "/api/v1/playlists/" + someID + "/videos/" + someID, ""},
+		{http.MethodPost, "/api/v1/playlists/" + someID + "/videos/" + someID + "/move", `{"after_video_id":null}`},
 	}
 	for _, tc := range cases {
 		if rec := sendJSONAuth(srv, tc.method, tc.path, tc.body, ""); rec.Code != http.StatusUnauthorized {
@@ -361,6 +390,115 @@ func TestPlaylistReorder(t *testing.T) {
 	// Anonymous → 401.
 	if rec := reorder(`{"video_ids":["`+v1+`"]}`, ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("anon = %d, want 401", rec.Code)
+	}
+}
+
+// TestPlaylistMoveItem proves the single-item move: it needs no copy of the
+// full list, anchors on a neighbour (or the front), and answers 409 for a stale
+// video/anchor, 422 for a malformed or self anchor, 404 for a non-owner.
+func TestPlaylistMoveItem(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	v1 := createPublishedVideo(t, srv, tok, "ada", `{"title":"One","privacy":"public"}`)
+	v2 := createPublishedVideo(t, srv, tok, "ada", `{"title":"Two","privacy":"public"}`)
+	v3 := createPublishedVideo(t, srv, tok, "ada", `{"title":"Three","privacy":"public"}`)
+	pl := createPlaylist(t, srv, tok, `{"title":"Mix","visibility":"private"}`)
+	for _, v := range []string{v1, v2, v3} {
+		if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/playlists/"+pl.ID+"/videos", `{"video_id":"`+v+`"}`, tok); rec.Code != http.StatusNoContent {
+			t.Fatalf("add %s = %d", v, rec.Code)
+		}
+	}
+	move := func(video, body, token string) *httptest.ResponseRecorder {
+		return sendJSONAuth(srv, http.MethodPost, "/api/v1/playlists/"+pl.ID+"/videos/"+video+"/move", body, token)
+	}
+	order := func() []string {
+		var d playlistDetailResponse
+		_ = json.Unmarshal(getPlaylist(srv, pl.ID, tok).Body.Bytes(), &d)
+		ids := make([]string, 0, len(d.Videos))
+		for _, v := range d.Videos {
+			ids = append(ids, v.ID)
+		}
+		return ids
+	}
+	expectOrder := func(step string, want ...string) {
+		t.Helper()
+		if got := order(); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("%s: order = %v, want %v", step, got, want)
+		}
+	}
+
+	if rec := move(v3, `{"after_video_id":null}`, tok); rec.Code != http.StatusNoContent {
+		t.Fatalf("move to front = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	expectOrder("to front", v3, v1, v2)
+	if rec := move(v3, `{"after_video_id":"`+v2+`"}`, tok); rec.Code != http.StatusNoContent {
+		t.Fatalf("move after v2 = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	expectOrder("after v2", v1, v2, v3)
+	if rec := move(v2, `{}`, tok); rec.Code != http.StatusNoContent {
+		t.Fatalf("omitted anchor = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	expectOrder("omitted anchor moves to front", v2, v1, v3)
+
+	stray := uuid.NewString()
+	for name, tc := range map[string]struct {
+		video, body string
+		want        int
+	}{
+		"stray video":    {stray, `{"after_video_id":null}`, http.StatusConflict},
+		"stray anchor":   {v1, `{"after_video_id":"` + stray + `"}`, http.StatusConflict},
+		"self anchor":    {v1, `{"after_video_id":"` + v1 + `"}`, http.StatusUnprocessableEntity},
+		"bad anchor":     {v1, `{"after_video_id":"nope"}`, http.StatusUnprocessableEntity},
+		"bad video path": {"nope", `{}`, http.StatusNotFound},
+	} {
+		if rec := move(tc.video, tc.body, tok); rec.Code != tc.want {
+			t.Errorf("%s = %d, want %d; body=%s", name, rec.Code, tc.want, rec.Body.String())
+		}
+	}
+	expectOrder("after rejected moves", v2, v1, v3)
+
+	// A non-owner of the private playlist sees 404, the same as a missing one.
+	otherTok := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	if rec := move(v1, `{}`, otherTok); rec.Code != http.StatusNotFound {
+		t.Errorf("non-owner = %d, want 404", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/playlists/"+uuid.NewString()+"/videos/"+v1+"/move", `{}`, tok); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown playlist = %d, want 404", rec.Code)
+	}
+	expectOrder("after non-owner move", v2, v1, v3)
+}
+
+// TestPlaylistCarriesOwnerID proves every playlist shape names its owner, so a
+// client decides owner controls from the playlist itself rather than by
+// searching one page of its own playlists.
+func TestPlaylistCarriesOwnerID(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	var me struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(sendJSONAuth(srv, http.MethodGet, "/api/v1/auth/me", "", tok).Body.Bytes(), &me)
+	if me.ID == "" {
+		t.Fatal("could not read the caller's id")
+	}
+	pl := createPlaylist(t, srv, tok, `{"title":"Mine","visibility":"public"}`)
+	if pl.OwnerID != me.ID {
+		t.Errorf("create owner_id = %q, want %q", pl.OwnerID, me.ID)
+	}
+	var detail playlistDetailResponse
+	_ = json.Unmarshal(getPlaylist(srv, pl.ID, "").Body.Bytes(), &detail)
+	if detail.OwnerID != me.ID {
+		t.Errorf("anonymous get owner_id = %q, want %q", detail.OwnerID, me.ID)
+	}
+	var list playlistListResponse
+	_ = json.Unmarshal(sendJSONAuth(srv, http.MethodGet, "/api/v1/me/playlists", "", tok).Body.Bytes(), &list)
+	if len(list.Playlists) != 1 || list.Playlists[0].OwnerID != me.ID {
+		t.Errorf("list owner_id = %+v, want %q", list.Playlists, me.ID)
+	}
+	var updated playlistView
+	_ = json.Unmarshal(sendJSONAuth(srv, http.MethodPatch, "/api/v1/playlists/"+pl.ID, `{"title":"Renamed"}`, tok).Body.Bytes(), &updated)
+	if updated.OwnerID != me.ID {
+		t.Errorf("update owner_id = %q, want %q", updated.OwnerID, me.ID)
 	}
 }
 

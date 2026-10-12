@@ -295,7 +295,7 @@ func TestRedeliverAfterUnblock(t *testing.T) {
 
 	build := func(t *testing.T, kind string, v sqlcgen.GetVideoByIDRow) []byte {
 		t.Helper()
-		payload, err := svc.buildVideoActivity(kind, "films", v)
+		payload, err := svc.buildVideoActivity(t.Context(), kind, "films", v)
 		if err != nil {
 			t.Fatalf("buildVideoActivity(%s): %v", kind, err)
 		}
@@ -309,6 +309,13 @@ func TestRedeliverAfterUnblock(t *testing.T) {
 	// instance could re-check, and its absence strands a granted follow.
 	acceptPayload := []byte(`{"@context":"https://www.w3.org/ns/activitystreams","type":"Accept","actor":"https://videos.example/video-channels/films","object":"https://blocked.example/activities/follow/1"}`)
 
+	// The gone video's Create was built while it existed; it is deleted by the
+	// time the delivery is retried (the object builder reads the live row).
+	gone := sqlcgen.GetVideoByIDRow{ID: deletedVideoID, ChannelID: channelID, Privacy: "public", State: "published"}
+	repo.videosByID[deletedVideoID] = gone
+	gonePayload := build(t, "Create", gone)
+	delete(repo.videosByID, deletedVideoID)
+
 	inbox := "https://" + blockedHost + "/inbox"
 	cases := []struct {
 		name    string
@@ -319,7 +326,7 @@ func TestRedeliverAfterUnblock(t *testing.T) {
 		{"Create of a still-public video", inbox, build(t, "Create", publicVideo), true},
 		{"Update of a still-public video", inbox, build(t, "Update", publicVideo), true},
 		{"Create of a video that went private", inbox, build(t, "Create", privatedVideo), false},
-		{"Create of a video that is gone", inbox, build(t, "Create", sqlcgen.GetVideoByIDRow{ID: deletedVideoID, ChannelID: channelID, Privacy: "public", State: "published"}), false},
+		{"Create of a video that is gone", inbox, gonePayload, false},
 		{"Delete, which can only reduce what the remote holds", inbox, deletePayload, true},
 		{"Accept, which strands a granted follow if dropped", inbox, acceptPayload, true},
 		{"an Announce, which is not in the resumed set", inbox, []byte(`{"type":"Announce","object":"https://videos.example/videos/x"}`), false},
@@ -454,7 +461,7 @@ func TestRedeliverAfterUnblockIsNotStarvedByOtherDomains(t *testing.T) {
 		deliveries:   map[uuid.UUID]*fakeDelivery{},
 	}
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
-	payload, err := svc.buildVideoActivity("Create", "films", v)
+	payload, err := svc.buildVideoActivity(t.Context(), "Create", "films", v)
 	if err != nil {
 		t.Fatalf("buildVideoActivity: %v", err)
 	}

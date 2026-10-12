@@ -91,6 +91,11 @@ func (s *Service) ResetPassword(ctx context.Context, rawToken, newPassword strin
 	if row.UsedAt.Valid || !row.ExpiresAt.After(s.now()) {
 		return ErrInvalidResetToken
 	}
+	// Same rule as RequestPasswordReset: a token must not revive or arm a
+	// deactivated account (defence in depth for a refused admin-created one).
+	if u, err := s.repo.GetUserByID(ctx, row.UserID); err != nil || !u.IsActive {
+		return ErrInvalidResetToken
+	}
 	hash, err := HashPassword(newPassword)
 	if err != nil {
 		return err

@@ -41,6 +41,19 @@ type apVideoObject struct {
 	Duration     string          `json:"duration"`
 	URL          json.RawMessage `json:"url"`
 	Icon         json.RawMessage `json:"icon"`
+	// Sensitive is RAW: PeerTube accepts "true"/"false" strings too
+	// (misc.ts:77-79), and a typed bool would fail the whole object's decode.
+	Sensitive json.RawMessage `json:"sensitive"`
+}
+
+// apSensitive reads AS `sensitive` the way PeerTube's isBooleanValid does:
+// true, "true" or "1"; anything else (absent included) is not sensitive.
+func apSensitive(raw json.RawMessage) bool {
+	switch strings.TrimSpace(string(raw)) {
+	case "true", `"true"`, `"1"`:
+		return true
+	}
+	return false
 }
 
 // handleCreateVideo ingests an inbound Create{Video} (remote-content §2).
@@ -159,6 +172,7 @@ func (s *Service) storeRemoteVideo(ctx context.Context, ownerActorURL string, ob
 		PublishedAt:     published,
 		WatchUrl:        watchURL,
 		StreamUrl:       streamURL,
+		IsSensitive:     apSensitive(obj.Sensitive),
 	})
 	if err != nil {
 		return sqlcgen.UpsertRemoteVideoRow{}, err

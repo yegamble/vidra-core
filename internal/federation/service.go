@@ -9,6 +9,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/google/uuid"
 
@@ -41,6 +42,7 @@ type Repository interface {
 	DeleteRemoteFollow(ctx context.Context, arg sqlcgen.DeleteRemoteFollowParams) error
 	// Outbox fan-out (Slice 5b).
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
+	GetVideoFederationFacts(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoFederationFactsRow, error)
 	GetChannelByID(ctx context.Context, id uuid.UUID) (sqlcgen.Channel, error)
 	ListRemoteFollowerInboxes(ctx context.Context, channelID uuid.UUID) ([]string, error)
 	// Actor collections (Slice 5c).
@@ -173,6 +175,9 @@ type Service struct {
 	// media stores best-effort cached remote thumbnails
 	// (remote-thumbnails/<id>.jpg). Nil = thumbnails are not cached.
 	media storage.Backend
+	// posterSizes caches outbound poster sizes by thumbnail row id.
+	posterMu    sync.Mutex
+	posterSizes map[string][2]int
 	// flagger runs watched-words flagging over inbound federated comments
 	// (remote-content §6). Nil = no flagging.
 	flagger CommentFlagger

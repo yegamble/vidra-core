@@ -119,6 +119,43 @@ func (f *fakeRepo) ReorderPlaylistItems(_ context.Context, a sqlcgen.ReorderPlay
 	return nil
 }
 
+// MovePlaylistItem mirrors the SQL: 0 rows when the video or the anchor is not
+// an item; otherwise the video lands directly after the anchor (front when the
+// anchor is NULL) and every item is rewritten.
+func (f *fakeRepo) MovePlaylistItem(_ context.Context, a sqlcgen.MovePlaylistItemParams) (int64, error) {
+	return moveInSlice(f.items, a), nil
+}
+
+func moveInSlice(items map[uuid.UUID][]uuid.UUID, a sqlcgen.MovePlaylistItemParams) int64 {
+	cur := items[a.PlaylistID]
+	has := func(id uuid.UUID) bool {
+		for _, v := range cur {
+			if v == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(a.VideoID) || (a.AfterVideoID.Valid && !has(uuid.UUID(a.AfterVideoID.Bytes))) {
+		return 0
+	}
+	out := make([]uuid.UUID, 0, len(cur))
+	if !a.AfterVideoID.Valid {
+		out = append(out, a.VideoID)
+	}
+	for _, v := range cur {
+		if v == a.VideoID {
+			continue
+		}
+		out = append(out, v)
+		if a.AfterVideoID.Valid && v == uuid.UUID(a.AfterVideoID.Bytes) {
+			out = append(out, a.VideoID)
+		}
+	}
+	items[a.PlaylistID] = out
+	return int64(len(out))
+}
+
 func (f *fakeRepo) SetPlaylistThumbnail(_ context.Context, a sqlcgen.SetPlaylistThumbnailParams) error {
 	p := f.playlists[a.ID]
 	p.ThumbnailExt = a.ThumbnailExt
@@ -259,6 +296,63 @@ func TestReorderItems(t *testing.T) {
 	empty, _ := svc.Create(ctx, owner, CreateInput{Title: "Empty", Visibility: "private"})
 	if err := svc.ReorderItems(ctx, owner, empty.ID, nil); err != nil {
 		t.Errorf("empty reorder = %v, want nil", err)
+	}
+}
+
+func TestMoveItem(t *testing.T) {
+	svc := NewService(newFakeRepo())
+	ctx := context.Background()
+	owner, other := uuid.New(), uuid.New()
+
+	p, _ := svc.Create(ctx, owner, CreateInput{Title: "Long", Visibility: "public"})
+	vids := make([]uuid.UUID, 25) // more than one 20-item page
+	for i := range vids {
+		vids[i] = uuid.New()
+		if err := svc.AddItem(ctx, owner, p.ID, vids[i]); err != nil {
+			t.Fatalf("AddItem: %v", err)
+		}
+	}
+	order := func() []uuid.UUID {
+		ids, _ := svc.repo.ListPlaylistItemVideoIDs(ctx, p.ID)
+		return ids
+	}
+
+	// An item only page 2 holds moves to the front without the full list.
+	if err := svc.MoveItem(ctx, owner, p.ID, vids[22], nil); err != nil {
+		t.Fatalf("MoveItem to front: %v", err)
+	}
+	if got := order(); got[0] != vids[22] || len(got) != 25 {
+		t.Fatalf("after move to front: first = %v, len %d", got[0], len(got))
+	}
+	// ...and to directly after another item.
+	if err := svc.MoveItem(ctx, owner, p.ID, vids[24], &vids[0]); err != nil {
+		t.Fatalf("MoveItem after anchor: %v", err)
+	}
+	if got := order(); got[1] != vids[0] || got[2] != vids[24] {
+		t.Fatalf("after anchored move: %v", got[:3])
+	}
+
+	// Ownership + existence.
+	if err := svc.MoveItem(ctx, other, p.ID, vids[1], nil); !errors.Is(err, ErrForbidden) {
+		t.Errorf("non-owner = %v, want ErrForbidden", err)
+	}
+	if err := svc.MoveItem(ctx, owner, uuid.New(), vids[1], nil); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown playlist = %v, want ErrNotFound", err)
+	}
+	// A video or anchor that is not an item; an item anchored on itself.
+	stray := uuid.New()
+	if err := svc.MoveItem(ctx, owner, p.ID, stray, nil); !errors.Is(err, ErrItemNotFound) {
+		t.Errorf("stray video = %v, want ErrItemNotFound", err)
+	}
+	if err := svc.MoveItem(ctx, owner, p.ID, vids[1], &stray); !errors.Is(err, ErrItemNotFound) {
+		t.Errorf("stray anchor = %v, want ErrItemNotFound", err)
+	}
+	if err := svc.MoveItem(ctx, owner, p.ID, vids[1], &vids[1]); !errors.Is(err, ErrInvalidMove) {
+		t.Errorf("self anchor = %v, want ErrInvalidMove", err)
+	}
+	// A non-owner learns nothing from a self-anchored body either.
+	if err := svc.MoveItem(ctx, other, p.ID, vids[1], &vids[1]); !errors.Is(err, ErrForbidden) {
+		t.Errorf("non-owner self anchor = %v, want ErrForbidden", err)
 	}
 }
 

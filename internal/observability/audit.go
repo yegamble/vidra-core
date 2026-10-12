@@ -50,11 +50,17 @@ const (
 	ActionAccountDeactivate  = "auth.account.deactivate"
 	ActionAccountDelete      = "auth.account.delete"
 	ActionAdminUserDelete    = "admin.user.delete"
-	ActionOAuthLink          = "auth.oauth.link"
-	ActionOAuthUnlink        = "auth.oauth.unlink"
-	ActionMFAEnable          = "auth.mfa.enable"
-	ActionMFADisable         = "auth.mfa.disable"
-	ActionMFAChallenge       = "auth.mfa.challenge"
+	// ActionAdminUserCreate: an administrator created an account. The address,
+	// password and set-password token are never recorded.
+	ActionAdminUserCreate = "admin.user.create"
+	// ActionAdminUserCreateDiscarded: a create failed after the account existed
+	// and the account was deactivated. No address or credential is recorded.
+	ActionAdminUserCreateDiscarded = "admin.user.create_discarded"
+	ActionOAuthLink                = "auth.oauth.link"
+	ActionOAuthUnlink              = "auth.oauth.unlink"
+	ActionMFAEnable                = "auth.mfa.enable"
+	ActionMFADisable               = "auth.mfa.disable"
+	ActionMFAChallenge             = "auth.mfa.challenge"
 	// ActionAdminMFAReset records an administrator removing a user's second
 	// factor (A05 ruling 2) — the operator answer to a lost authenticator. It
 	// is an ADMIN-domain action against a target account, distinct from
@@ -81,6 +87,10 @@ const (
 	// actually removed.
 	ActionAdminWatchedWordCreate = "admin.watched_word.create"
 	ActionAdminWatchedWordDelete = "admin.watched_word.delete"
+	// ActionAdminCommentBulkRemove records a moderator removing every comment of
+	// one account in one request. The resource is the account (id, or a
+	// fingerprint for a remote actor URL); metadata carries only the count.
+	ActionAdminCommentBulkRemove = "moderation.comment.bulk_remove"
 	ActionReportDelete           = "moderation.report.delete"
 	ActionVideoBlock             = "moderation.video.block"
 	ActionVideoUnblock           = "moderation.video.unblock"

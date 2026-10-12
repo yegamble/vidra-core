@@ -117,17 +117,19 @@ func (s *Server) startRemoteSearch(c echo.Context, q string) <-chan []remoteSear
 		return nil
 	}
 	ch := make(chan []remoteSearchResultView, 1)
+	hideSensitive := s.effectiveHideSensitive(c) // resolved before the goroutine: it reads c
 	ctx, cancel := context.WithTimeout(c.Request().Context(), remoteSearchResolveTimeout)
 	go func() {
 		defer cancel()
-		ch <- s.resolveRemoteSearch(ctx, q)
+		ch <- s.resolveRemoteSearch(ctx, q, hideSensitive)
 	}()
 	return ch
 }
 
 // resolveRemoteSearch resolves one shaped query and shapes the typed result
-// items. Every failure returns nil (silent local-only degradation).
-func (s *Server) resolveRemoteSearch(ctx context.Context, q string) []remoteSearchResultView {
+// items. Every failure returns nil (silent local-only degradation). Under the
+// "hide" policy a sensitive remote video is excluded, as local search does.
+func (s *Server) resolveRemoteSearch(ctx context.Context, q string, hideSensitive bool) []remoteSearchResultView {
 	resolved, err := s.fedsvc.ResolveSearchTarget(ctx, q)
 	if err != nil {
 		return nil
@@ -150,7 +152,7 @@ func (s *Server) resolveRemoteSearch(ctx context.Context, q string) []remoteSear
 		// instance blocklist and the per-video hide, so a blocked origin's
 		// video never surfaces even right after resolution.
 		rv, err := s.remotevideosvc.Get(ctx, resolved.VideoID)
-		if err != nil {
+		if err != nil || (hideSensitive && rv.IsSensitive) {
 			return nil
 		}
 		view := newRemoteVideoView(rv)

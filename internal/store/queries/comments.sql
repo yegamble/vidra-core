@@ -173,6 +173,25 @@ RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
 DELETE FROM comments
 WHERE id = $1;
 
+-- name: GetCommentAuthorIDByUsername :one
+-- Resolve a username to its account id for the bulk comment removal. Unlike
+-- GetUserByUsername this does NOT filter on is_active: a moderator cleaning up
+-- after a spam wave is usually doing so for an account already disabled.
+SELECT id FROM users WHERE lower(username) = lower($1);
+
+-- name: DeleteCommentsByAuthor :many
+-- Set-based form of DeleteComment for the moderator bulk removal: every comment
+-- authored by one local account (user_id) OR one remote actor
+-- (remote_actor_url), in one statement. It is the same hard DELETE as
+-- DeleteComment, so the same FKs fire per row: replies (parent_id), reports,
+-- notifications and watched-word matches CASCADE, and videos.pinned_comment_id
+-- is SET NULL. RETURNING hands the caller the ids the rows no longer hold, so
+-- LOCAL authors' deletions can still be federated.
+DELETE FROM comments
+WHERE (sqlc.narg('user_id')::uuid IS NOT NULL AND user_id = sqlc.narg('user_id')::uuid)
+   OR (sqlc.narg('remote_actor_url')::text IS NOT NULL AND remote_actor_url = sqlc.narg('remote_actor_url')::text)
+RETURNING id, video_id, user_id;
+
 -- name: CountComments :one
 -- LOCAL comments only — the "local comments" count NodeInfo advertises.
 -- Federated (remote-authored) comments are excluded.

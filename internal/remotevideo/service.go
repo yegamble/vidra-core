@@ -64,6 +64,9 @@ type RemoteVideo struct {
 	HasThumbnail    bool
 	FetchedAt       time.Time
 	UpdatedAt       time.Time
+
+	// IsSensitive is the origin's `sensitive` flag (migration 0152).
+	IsSensitive bool
 }
 
 // Get returns one remote video by id. Unknown — or hidden because its origin
@@ -88,6 +91,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (RemoteVideo, error) {
 		WatchURL:        row.WatchUrl,
 		StreamURL:       row.StreamUrl,
 		HasThumbnail:    row.ThumbnailKey != nil && *row.ThumbnailKey != "",
+		IsSensitive:     row.IsSensitive,
 		FetchedAt:       row.FetchedAt,
 		UpdatedAt:       row.UpdatedAt,
 	}

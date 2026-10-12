@@ -38,7 +38,7 @@ func TestEmittedVideoIsReadableByOurOwnIngest(t *testing.T) {
 	repo := newContractRepo()
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
 
-	payload, err := svc.buildVideoActivity("Create", "films", repo.videosByID[ctVideoID])
+	payload, err := svc.buildVideoActivity(t.Context(), "Create", "films", repo.videosByID[ctVideoID])
 	if err != nil {
 		t.Fatalf("buildVideoActivity: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestEmittedVideoOmitsWhatTheOriginCannotBack(t *testing.T) {
 	}
 	repo.videosByID[ctVideo2ID] = bare
 
-	payload, err := svc.buildVideoActivity("Create", "films", bare)
+	payload, err := svc.buildVideoActivity(t.Context(), "Create", "films", bare)
 	if err != nil {
 		t.Fatalf("buildVideoActivity: %v", err)
 	}
@@ -121,10 +121,11 @@ func TestEmittedOutboxVideoMatchesTheDeliveredOne(t *testing.T) {
 		HasThumbnail:          true,
 		ThumbnailContentType:  "image/jpeg",
 		HasHls:                true,
+		OwnerUsername:         "ada", // the SQL join's channel owner
 	}}
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
 
-	pushed, err := svc.buildVideoActivity("Create", "films", repo.videosByID[ctVideoID])
+	pushed, err := svc.buildVideoActivity(t.Context(), "Create", "films", repo.videosByID[ctVideoID])
 	if err != nil {
 		t.Fatalf("buildVideoActivity: %v", err)
 	}
