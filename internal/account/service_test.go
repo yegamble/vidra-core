@@ -83,6 +83,9 @@ func (f *fakeVideoDeleter) Delete(_ context.Context, _, id uuid.UUID) error {
 type fakeRepo struct {
 	user sqlcgen.User
 
+	// feedTokenPurged records DeleteUserFeedTokenByUser calls (the explicit purge).
+	feedTokenPurged []uuid.UUID
+
 	channels      []sqlcgen.Channel
 	videos        map[uuid.UUID][]sqlcgen.ListVideosByChannelRow // by channel
 	videoFiles    map[uuid.UUID][]sqlcgen.VideoFile
@@ -260,6 +263,11 @@ func (f *fakeRepo) DeleteNotificationPrefsByUser(context.Context, uuid.UUID) err
 func (f *fakeRepo) DeletePasswordResetTokensByUser(context.Context, uuid.UUID) error {
 	return f.purge("reset_tokens")
 }
+func (f *fakeRepo) DeleteUserFeedTokenByUser(_ context.Context, id uuid.UUID) error {
+	f.feedTokenPurged = append(f.feedTokenPurged, id)
+	return nil
+}
+
 func (f *fakeRepo) DeleteEmailVerificationTokensByUser(context.Context, uuid.UUID) error {
 	return f.purge("verify_tokens")
 }
@@ -1122,3 +1130,17 @@ func TestExportTTLFunc(t *testing.T) {
 
 // RenewAccountExportLease is the lease heartbeat; the fake has no leases to keep.
 func (*fakeRepo) RenewAccountExportLease(_ context.Context, _ uuid.UUID) error { return nil }
+
+// The users row is anonymised, not removed, so ON DELETE CASCADE never fires:
+// the private-feed token must be purged explicitly.
+func TestDeletePurgesFeedToken(t *testing.T) {
+	user := testUser()
+	repo := newFakeRepo(user)
+	svc := NewService(repo, newFakeBlobs(), &fakeVideoDeleter{})
+	if err := svc.Delete(context.Background(), user.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if len(repo.feedTokenPurged) != 1 || repo.feedTokenPurged[0] != user.ID {
+		t.Errorf("feed token purges = %v, want exactly [%s]", repo.feedTokenPurged, user.ID)
+	}
+}

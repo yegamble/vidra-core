@@ -14,7 +14,13 @@
 --     longer exists has nothing left to transfer.
 --   * one PENDING request per video is a database guarantee (partial unique
 --     index), so two concurrent gives cannot both land. Answered requests stay
---     as history and do not block a new one.
+--     as history and do not block a new one. A pending request that went stale
+--     (its giver no longer owns the video, or it outlived the offer window) is
+--     marked 'expired' by the next give, so it never blocks the video's new
+--     owner; the giver may also withdraw it ('cancelled').
+--   * video_title is the title AT GIVE TIME. The recipient's list shows it for
+--     every status, so what they see never follows the video after it has left
+--     the request (a later owner's renames, or a private video's title).
 --
 -- notifications.type is unconstrained TEXT, so the new
 -- 'video_ownership_request' type needs no schema change (see 0156/0158).
@@ -23,8 +29,9 @@ CREATE TABLE video_ownership_changes (
     video_id      UUID NOT NULL REFERENCES videos (id) ON DELETE CASCADE,
     initiator_id  UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     next_owner_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    video_title   TEXT NOT NULL,
     status        TEXT NOT NULL DEFAULT 'pending'
-                  CHECK (status IN ('pending', 'accepted', 'refused')),
+                  CHECK (status IN ('pending', 'accepted', 'refused', 'cancelled', 'expired')),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (initiator_id <> next_owner_id)
@@ -37,3 +44,8 @@ CREATE UNIQUE INDEX video_ownership_changes_one_pending_idx
 -- A recipient's requests, newest first (GET /me/video-ownership-changes).
 CREATE INDEX video_ownership_changes_next_owner_idx
     ON video_ownership_changes (next_owner_id, created_at DESC, id DESC);
+
+-- The re-offer cooldown: has this recipient refused this giver recently?
+CREATE INDEX video_ownership_changes_refused_pair_idx
+    ON video_ownership_changes (initiator_id, next_owner_id, updated_at DESC)
+    WHERE status = 'refused';

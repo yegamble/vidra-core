@@ -104,7 +104,8 @@ func TestAcceptVideoOwnership(t *testing.T) {
 }
 
 // TestRefuseVideoOwnership: only the recipient refuses, only once; the video
-// stays exactly where it was (no hooks), and the giver may offer it again.
+// stays exactly where it was (no hooks), and the giver may offer it again
+// (to the refuser only after the cooldown).
 func TestRefuseVideoOwnership(t *testing.T) {
 	var hooks int
 	srv, repo, own := ownershipServer(t,
@@ -137,7 +138,12 @@ func TestRefuseVideoOwnership(t *testing.T) {
 	if rec := answerOwnership(srv, bobTok, change, "refuse", ""); rec.Code != http.StatusConflict {
 		t.Errorf("second refuse = %d, want 409", rec.Code)
 	}
-	if rec := giveOwnership(srv, adaTok, id, "bob"); rec.Code != http.StatusNoContent {
-		t.Errorf("give again after a refusal = %d, want 204", rec.Code)
+	// The video can be offered again — to someone else straight away; the same
+	// recipient only after the refusal cooldown.
+	if rec := giveOwnership(srv, adaTok, id, "bob"); rec.Code != http.StatusConflict {
+		t.Errorf("re-offer to the refuser = %d, want 409 (cooldown)", rec.Code)
+	}
+	if rec := giveOwnership(srv, adaTok, id, "carol"); rec.Code != http.StatusNoContent {
+		t.Errorf("offer to someone else after a refusal = %d, want 204", rec.Code)
 	}
 }

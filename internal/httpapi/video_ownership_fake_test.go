@@ -57,7 +57,7 @@ func (f *ownershipFakeRepo) CreateVideoOwnershipChange(_ context.Context, a sqlc
 	}
 	now := time.Now()
 	r := sqlcgen.VideoOwnershipChange{ID: uuid.New(), VideoID: a.VideoID, InitiatorID: a.InitiatorID,
-		NextOwnerID: a.NextOwnerID, Status: "pending", CreatedAt: now, UpdatedAt: now}
+		NextOwnerID: a.NextOwnerID, VideoTitle: a.VideoTitle, Status: "pending", CreatedAt: now, UpdatedAt: now}
 	f.rows = append(f.rows, r)
 	return r, nil
 }
@@ -70,8 +70,14 @@ func (f *ownershipFakeRepo) ListIncomingVideoOwnershipChanges(_ context.Context,
 		if r.NextOwnerID != a.NextOwnerID || !ok {
 			continue
 		}
-		row := sqlcgen.ListIncomingVideoOwnershipChangesRow{ID: r.ID, Status: r.Status, CreatedAt: r.CreatedAt,
-			UpdatedAt: r.UpdatedAt, VideoID: r.VideoID, VideoTitle: v.Title}
+		// The SQL: the title is the give-time snapshot, and a pending request
+		// the giver can no longer honour reads 'expired'.
+		status := r.Status
+		if status == "pending" && (v.OwnerID != r.InitiatorID || !r.CreatedAt.After(a.ExpiredBefore)) {
+			status = "expired"
+		}
+		row := sqlcgen.ListIncomingVideoOwnershipChangesRow{ID: r.ID, Status: status, CreatedAt: r.CreatedAt,
+			UpdatedAt: r.UpdatedAt, VideoID: r.VideoID, VideoTitle: r.VideoTitle}
 		for _, u := range f.v.users.users {
 			if u.ID == r.InitiatorID {
 				row.InitiatorUsername, row.InitiatorDisplayName = u.Username, u.DisplayName
@@ -151,4 +157,45 @@ func (f *ownershipFakeRepo) SumVideoStorageUsage(_ context.Context, videoID uuid
 func (f *videoFakeRepo) channelByID(id uuid.UUID) (sqlcgen.Channel, bool) {
 	ch, err := f.GetChannelByID(context.Background(), id)
 	return ch, err == nil
+}
+
+func (f *ownershipFakeRepo) ExpireStaleVideoOwnershipChanges(_ context.Context, a sqlcgen.ExpireStaleVideoOwnershipChangesParams) (int64, error) {
+	var n int64
+	for i, r := range f.rows {
+		v, ok := f.v.videos[r.VideoID]
+		if r.VideoID == a.VideoID && r.Status == "pending" && ok &&
+			(v.OwnerID != r.InitiatorID || !r.CreatedAt.After(a.ExpiredBefore)) {
+			f.rows[i].Status, f.rows[i].UpdatedAt = "expired", time.Now()
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *ownershipFakeRepo) HasPendingVideoOwnershipChange(_ context.Context, videoID uuid.UUID) (bool, error) {
+	for _, r := range f.rows {
+		if r.VideoID == videoID && r.Status == "pending" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *ownershipFakeRepo) HasRecentOwnershipRefusal(_ context.Context, a sqlcgen.HasRecentOwnershipRefusalParams) (bool, error) {
+	for _, r := range f.rows {
+		if r.InitiatorID == a.InitiatorID && r.NextOwnerID == a.NextOwnerID && r.Status == "refused" && r.UpdatedAt.After(a.RefusedAfter) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *ownershipFakeRepo) CancelVideoOwnershipChange(_ context.Context, a sqlcgen.CancelVideoOwnershipChangeParams) (int64, error) {
+	for i, r := range f.rows {
+		if r.VideoID == a.VideoID && r.InitiatorID == a.InitiatorID && r.Status == "pending" {
+			f.rows[i].Status, f.rows[i].UpdatedAt = "cancelled", time.Now()
+			return 1, nil
+		}
+	}
+	return 0, nil
 }
