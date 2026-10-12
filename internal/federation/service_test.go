@@ -841,7 +841,7 @@ func (f fakeRepo) CreateRemoteComment(_ context.Context, arg sqlcgen.CreateRemot
 		ID: uuid.New(), VideoID: arg.VideoID, Body: arg.Body, ParentID: arg.ParentID,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		RemoteActorUrl: arg.RemoteActorUrl, RemoteAuthorName: arg.RemoteAuthorName,
-		RemoteObjectUrl: arg.RemoteObjectUrl,
+		RemoteObjectUrl: arg.RemoteObjectUrl, HeldForReview: arg.HeldForReview,
 	}
 	f.commentsByID[c.ID] = c
 	return c, nil

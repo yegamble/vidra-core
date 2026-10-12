@@ -256,7 +256,7 @@ func (s *Server) handleListComments(c echo.Context) error {
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	viewerID, _, authed := principalFromContext(c)
-	items, total, err := s.commentsvc.ListByVideo(c.Request().Context(), videoID, viewerID, authed, page.Limit32(), page.Offset32())
+	items, total, err := s.commentsvc.ListByVideo(c.Request().Context(), videoID, viewerID, authed, false, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}

@@ -85,6 +85,13 @@ func (s *Service) handleCreateNote(ctx context.Context, act inboxActivity, signe
 	if body == "" {
 		return nil
 	}
+	// A requires_approval video (0161) holds a remote comment exactly as it
+	// holds a local stranger's: stored, but shown only to the video's managers
+	// until one of them approves it.
+	held, err := s.videoHoldsComments(ctx, videoID)
+	if err != nil {
+		return err
+	}
 	// The author-name snapshot comes from the cached signer actor (it was
 	// fetched+cached during signature verification).
 	author, err := s.repo.GetRemoteActor(ctx, signerActorURL)
@@ -105,6 +112,7 @@ func (s *Service) handleCreateNote(ctx context.Context, act inboxActivity, signe
 		RemoteActorUrl:   &signerActorURL,
 		RemoteAuthorName: &name,
 		RemoteObjectUrl:  &note.ID,
+		HeldForReview:    held,
 	})
 	if err != nil {
 		return err
@@ -232,8 +240,23 @@ func (s *Service) resolveNoteTarget(ctx context.Context, inReplyTo string) (uuid
 		}
 		parent = p
 	}
+	// A held parent (0161) is invisible to everyone the reply could come
+	// from, and threading under it would surface the reply as an orphan.
+	if parent.HeldForReview {
+		return uuid.UUID{}, pgtype.UUID{}, false, nil
+	}
 	ok, err := s.videoIsPubliclyVisible(ctx, parent.VideoID)
 	return parent.VideoID, pgconv.UUID(parent.ID), ok, err
+}
+
+// videoHoldsComments reports whether a local video's comments_policy holds new
+// comments for review (0161).
+func (s *Service) videoHoldsComments(ctx context.Context, videoID uuid.UUID) (bool, error) {
+	v, err := s.repo.GetVideoByID(ctx, videoID)
+	if err != nil {
+		return false, err
+	}
+	return v.CommentsPolicy == commentsPolicyRequiresApproval, nil
 }
 
 // videoIsPubliclyVisible reports whether a local video exists and is public +

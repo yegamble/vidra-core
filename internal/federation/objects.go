@@ -130,7 +130,8 @@ func (s *Service) NoteObject(ctx context.Context, commentID uuid.UUID) (map[stri
 		}
 		return nil, err
 	}
-	if !c.UserID.Valid {
+	// A held comment (0161) is not public yet, so it has no public Note.
+	if !c.UserID.Valid || c.HeldForReview {
 		return nil, ErrNotFound
 	}
 	visible, err := s.videoIsPubliclyVisible(ctx, c.VideoID)

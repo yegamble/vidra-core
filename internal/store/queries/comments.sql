@@ -1,23 +1,29 @@
 -- name: CreateComment :one
 -- parent_id is NULL for a top-level comment, or the id of the comment being
 -- replied to (the service validates it references a comment on the same video).
-INSERT INTO comments (video_id, user_id, body, parent_id)
-VALUES (sqlc.arg('video_id'), sqlc.arg('user_id'), sqlc.arg('body'), sqlc.narg('parent_id'))
+-- held_for_review (0161) is decided by the caller from the video's
+-- comments_policy and who is posting; a held comment stays out of every public
+-- read until a manager approves it.
+INSERT INTO comments (video_id, user_id, body, parent_id, held_for_review)
+VALUES (sqlc.arg('video_id'), sqlc.arg('user_id'), sqlc.arg('body'), sqlc.narg('parent_id'), sqlc.arg('held_for_review'))
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted;
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review;
 
 -- name: CreateRemoteComment :one
 -- Store an inbound federated Note as a comment (remote-content §6): attributed
 -- to a remote actor (with a display-name snapshot) instead of a local user.
 -- Idempotent by the Note's ActivityPub object id — a re-delivered or updated
--- Note refreshes the body.
-INSERT INTO comments (video_id, body, parent_id, remote_actor_url, remote_author_name, remote_object_url)
+-- Note refreshes the body. held_for_review (0161) is set only on the first
+-- insert: a re-delivery must neither re-hold an approved comment nor release a
+-- held one, so the conflict arm deliberately leaves it alone.
+INSERT INTO comments (video_id, body, parent_id, remote_actor_url, remote_author_name, remote_object_url, held_for_review)
 VALUES (sqlc.arg('video_id'), sqlc.arg('body'), sqlc.narg('parent_id'),
-        sqlc.arg('remote_actor_url'), sqlc.arg('remote_author_name'), sqlc.arg('remote_object_url'))
+        sqlc.arg('remote_actor_url'), sqlc.arg('remote_author_name'), sqlc.arg('remote_object_url'),
+        sqlc.arg('held_for_review'))
 ON CONFLICT (remote_object_url) DO UPDATE
     SET body = EXCLUDED.body, updated_at = now()
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted;
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review;
 
 -- name: ListCommentsByVideo :many
 -- A video's comments, the creator-pinned one first then newest first, joined with
@@ -31,6 +37,7 @@ RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
 -- (anonymous), only the admin instance blocklist filters (it hides for
 -- everyone).
 SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at, c.deleted_at, c.hearted,
+       c.held_for_review,
        (c.id IS NOT DISTINCT FROM v.pinned_comment_id)::boolean AS pinned,
        COALESCE(u.username, '')::text AS author_username,
        COALESCE(u.display_name, '')::text AS author_display_name,
@@ -71,6 +78,13 @@ WHERE c.video_id = $1
       WHERE (rab.blocker_id = sqlc.narg('viewer_id') OR rab.blocker_id IS NULL)
         AND rab.actor_url = c.remote_actor_url
   )
+  -- Held comments (0161) are visible only to their author and to callers the
+  -- HTTP layer has established may review them (the video's owner, an editor
+  -- member, staff): include_held. Everyone else — anonymous readers included —
+  -- never sees one, in the rows or in the count.
+  AND (NOT c.held_for_review
+       OR sqlc.arg('include_held')::boolean
+       OR c.user_id = sqlc.narg('viewer_id'))
 ORDER BY (c.id IS NOT DISTINCT FROM v.pinned_comment_id) DESC, c.created_at DESC, c.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
@@ -112,11 +126,18 @@ WHERE c.video_id = $1
       SELECT 1 FROM remote_actor_block_reach rab
       WHERE (rab.blocker_id = sqlc.narg('viewer_id') OR rab.blocker_id IS NULL)
         AND rab.actor_url = c.remote_actor_url
-  );
+  )
+  -- Held comments (0161) are visible only to their author and to callers the
+  -- HTTP layer has established may review them (the video's owner, an editor
+  -- member, staff): include_held. Everyone else — anonymous readers included —
+  -- never sees one, in the rows or in the count.
+  AND (NOT c.held_for_review
+       OR sqlc.arg('include_held')::boolean
+       OR c.user_id = sqlc.narg('viewer_id'));
 
 -- name: GetComment :one
 SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
-       remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
+       remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 FROM comments
 WHERE id = $1;
 
@@ -126,6 +147,7 @@ WHERE id = $1;
 -- endpoints return after acting. No viewer-mute filtering: the caller is the
 -- video owner (or staff), authorized in the HTTP layer.
 SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at, c.deleted_at, c.hearted,
+       c.held_for_review,
        (c.id IS NOT DISTINCT FROM v.pinned_comment_id)::boolean AS pinned,
        COALESCE(u.username, '')::text AS author_username,
        COALESCE(u.display_name, '')::text AS author_display_name,
@@ -147,14 +169,27 @@ UPDATE comments
 SET hearted = sqlc.arg('hearted')
 WHERE id = sqlc.arg('id')
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted;
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review;
+
+-- name: ApproveComment :one
+-- Release a held comment (0161): the one-way held -> published transition a
+-- video manager performs. Conditional on the row STILL being held, so repeated
+-- or concurrent approvals have exactly one winner — no row means "nothing to
+-- do", and the caller fires the side effects that were withheld while it was
+-- held (the reply notification, federation) only for the winner. Like the
+-- creator heart it never bumps updated_at: approval is not an edit.
+UPDATE comments
+SET held_for_review = false
+WHERE id = sqlc.arg('id') AND held_for_review
+RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review;
 
 -- name: GetCommentByRemoteObjectURL :one
 -- Look a federated comment up by its Note's ActivityPub object id — the key
 -- inbound Update{Note}/Delete use (§6/§7). Local comments never match (their
 -- remote_object_url is NULL).
 SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
-       remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
+       remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 FROM comments
 WHERE remote_object_url = sqlc.arg('remote_object_url')::text;
 -- NOTE: keep the column list of the two queries above in lock-step; both project
@@ -167,7 +202,7 @@ UPDATE comments
 SET body = sqlc.arg('body'), updated_at = now()
 WHERE id = sqlc.arg('id')
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted;
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review;
 
 -- name: DeleteComment :exec
 DELETE FROM comments

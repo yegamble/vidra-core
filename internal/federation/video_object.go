@@ -130,8 +130,12 @@ func videoObject(in videoObjectInput) map[string]any {
 const peertubeMaxNameLen = 120
 
 // peertubeCommentsPolicy maps vidra's per-video policy to PeerTube's
-// VideoCommentPolicy (1 enabled, 2 disabled; vidra has no approval tier).
-var peertubeCommentsPolicy = map[string]int{"enabled": 1, "disabled": 2}
+// VideoCommentPolicy (1 enabled, 2 disabled, 3 requires approval — 0161).
+var peertubeCommentsPolicy = map[string]int{"enabled": 1, "disabled": 2, commentsPolicyRequiresApproval: 3}
+
+// commentsPolicyRequiresApproval is the per-video policy that holds new
+// comments — inbound Notes included — for a manager's review (0161).
+const commentsPolicyRequiresApproval = "requires_approval"
 
 // peertubeFields adds the fields PeerTube's validator requires (uuid, views)
 // or would otherwise overwrite with its defaults (videos.ts:63-78), plus the
@@ -141,7 +145,9 @@ func (s *Service) peertubeFields(obj map[string]any, r sqlcgen.ListChannelOutbox
 	obj["uuid"], obj["views"], obj["state"] = r.ID.String(), r.Views, 1
 	obj["sensitive"], obj["downloadEnabled"], obj["waitTranscoding"] = r.IsSensitive, r.DownloadEnabled, r.PublishAfterTranscode
 	if p, ok := peertubeCommentsPolicy[r.CommentsPolicy]; ok {
-		obj["commentsPolicy"], obj["commentsEnabled"] = p, p == 1
+		// The legacy boolean answers "are comments accepted": an approval
+		// video still accepts them, it only holds them for review.
+		obj["commentsPolicy"], obj["commentsEnabled"] = p, p != 2
 	}
 	// A non-integer category/licence id rejects the WHOLE video
 	// (videos.ts:91,263), so a custom non-numeric id is omitted.
