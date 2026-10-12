@@ -1517,6 +1517,9 @@ func (s *Server) routes() {
 		// shipped Caddy config now does. A non-AP Accept is 406, like every
 		// other document in this block.
 		s.echo.GET("/videos/:id", s.handleVideoObject)
+		// The id a video carried before /videos/{uuid}: this instance's own older
+		// form, or a PeerTube-imported video's id at the source. Redirects.
+		s.echo.GET("/videos/watch/:id", s.handleLegacyVideoObject)
 		s.echo.GET("/comments/:id", s.handleNoteObject)
 		// The object id for a locally-authored comment ON A REMOTE video
 		// (migration 0147). Distinct path from /comments/ so the two id spaces

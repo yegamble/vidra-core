@@ -71,6 +71,20 @@ type fakeRepo struct {
 	// adminActorBlocks are the instance-wide per-actor blocks (0142), keyed by
 	// actor url.
 	adminActorBlocks map[string]string
+	// importedVideos maps a PeerTube source uuid to the video imported from it
+	// (videos.peertube_uuid, 0127).
+	importedVideos map[uuid.UUID]uuid.UUID
+}
+
+// GetVideoIDByLegacyUUID mirrors "WHERE id = $1 OR peertube_uuid = $1".
+func (f fakeRepo) GetVideoIDByLegacyUUID(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	if _, ok := f.videosByID[id]; ok {
+		return id, nil
+	}
+	if v, ok := f.importedVideos[id]; ok {
+		return v, nil
+	}
+	return uuid.UUID{}, pgx.ErrNoRows
 }
 
 // GetRemoteVideoByID resolves the VIDEO behind a mirrored comment — the origin

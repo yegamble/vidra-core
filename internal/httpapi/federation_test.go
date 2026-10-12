@@ -57,6 +57,8 @@ type fakeFedRepo struct {
 	// remoteVideoComments are MIRRORED threads on remote videos (0140), keyed
 	// by the origin's object url.
 	remoteVideoComments map[string]sqlcgen.UpsertRemoteVideoCommentParams
+	// importedVideos maps a PeerTube source uuid to the imported video (0127).
+	importedVideos map[uuid.UUID]uuid.UUID
 }
 
 func (f fakeFedRepo) CountUsers(context.Context) (int64, error)        { return f.users, nil }
@@ -133,6 +135,17 @@ func (f fakeFedRepo) InsertRemoteFollow(_ context.Context, arg sqlcgen.InsertRem
 func (f fakeFedRepo) DeleteRemoteFollow(_ context.Context, arg sqlcgen.DeleteRemoteFollowParams) error {
 	delete(f.remoteFollows, arg.RemoteActorUrl)
 	return nil
+}
+
+// GetVideoIDByLegacyUUID mirrors "WHERE id = $1 OR peertube_uuid = $1".
+func (f fakeFedRepo) GetVideoIDByLegacyUUID(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	if _, ok := f.videosByID[id]; ok {
+		return id, nil
+	}
+	if v, ok := f.importedVideos[id]; ok {
+		return v, nil
+	}
+	return uuid.UUID{}, pgx.ErrNoRows
 }
 
 func (f fakeFedRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
@@ -417,6 +430,7 @@ func newFedRepoFor(_ *config.Config) fakeFedRepo {
 		videosByID:          map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
 		commentsBy:          map[uuid.UUID]sqlcgen.Comment{},
 		tombstones:          map[uuid.UUID]time.Time{},
+		importedVideos:      map[uuid.UUID]uuid.UUID{},
 		blockedDomains:      map[string]bool{},
 		remoteBlocks:        map[string]bool{},
 		remoteVideoComments: map[string]sqlcgen.UpsertRemoteVideoCommentParams{},
