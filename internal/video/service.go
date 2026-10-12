@@ -175,6 +175,7 @@ type Repository interface {
 	CreateVideoFile(ctx context.Context, arg sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error)
 	GetVideoFileByKind(ctx context.Context, arg sqlcgen.GetVideoFileByKindParams) (sqlcgen.VideoFile, error)
 	DeleteVideoFilesByVideoAndKind(ctx context.Context, arg sqlcgen.DeleteVideoFilesByVideoAndKindParams) error
+	SwapVideoOriginalIfOwner(ctx context.Context, arg sqlcgen.SwapVideoOriginalIfOwnerParams) (sqlcgen.VideoFile, error)
 	UpsertCaption(ctx context.Context, arg sqlcgen.UpsertCaptionParams) (sqlcgen.Caption, error)
 	ListCaptionsByVideo(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.Caption, error)
 	GetCaptionByLang(ctx context.Context, arg sqlcgen.GetCaptionByLangParams) (sqlcgen.Caption, error)
@@ -1064,21 +1065,26 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 	// The swap: from here the new source is the video's original. Downloads and
 	// progressive playback follow the file row immediately; HLS keeps serving
 	// the previous generation until the re-transcode promotes the new one.
-	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
-		VideoID: videoID,
-		Kind:    "original",
-	}); err != nil {
-		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
-	}
-	file, err := s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+	//
+	// One statement, and only while the video still belongs to the owner it had
+	// when this replacement began (v.OwnerID): ownership is derived from the
+	// channel, and an accepted ownership change can land while the file is
+	// stored, scanned and probed. Then nothing is swapped, the new blob is
+	// dropped like any other refused replacement, and the caller sees
+	// ErrReplaceConflict.
+	file, err := s.repo.SwapVideoOriginalIfOwner(ctx, sqlcgen.SwapVideoOriginalIfOwnerParams{
 		VideoID:      videoID,
-		Kind:         "original",
+		OwnerID:      v.OwnerID,
 		StorageKey:   key,
 		ContentType:  strings.TrimSpace(in.ContentType),
 		OriginalName: strings.TrimSpace(in.Filename),
 		SizeBytes:    size,
 		Sha256:       sum,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = s.blobs.Delete(ctx, key)
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrReplaceConflict
+	}
 	if err != nil {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
 	}
