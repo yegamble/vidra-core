@@ -184,7 +184,7 @@ same video inserts nothing, so a hook that fires twice cannot double-notify.
 emailed, set per type in the `email` map of `/api/v1/me/notification-prefs`. Email is
 opt-in, mirroring PeerTube's web-only defaults for those types. It rides the in-app
 notification: the statement that creates the notification also queues the email (set-
-based for the fan-out, migration 0156), and a background drain sends at most 25 per
+based for the fan-out, migration 0157), and a background drain sends at most 25 per
 5 s per instance, with retries. At send time the recipient must still be active, have
 a **verified** address and email on, must not have muted or blocked the actor, and the
 video must still be available; a day-old backlog is dropped, and with no mail path

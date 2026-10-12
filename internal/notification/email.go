@@ -41,7 +41,7 @@ type EmailSender interface {
 	SendNotificationEmail(ctx context.Context, to string, n mail.NotificationEmail) error
 }
 
-// EmailDrain delivers the notification email outbox (migration 0156). Delivery
+// EmailDrain delivers the notification email outbox (migration 0157). Delivery
 // is a best-effort side effect, exactly like the in-app notification it rides
 // on: nothing here can fail the action that raised it, and a failed send is
 // retried from the queue, never surfaced to a request.

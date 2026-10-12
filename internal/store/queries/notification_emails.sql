@@ -1,4 +1,4 @@
--- Notification email outbox (migration 0156). A row means "this in-app
+-- Notification email outbox (migration 0157). A row means "this in-app
 -- notification is also owed an email". It is deleted once the email is sent or
 -- is no longer owed, so the table only ever holds outstanding work.
 

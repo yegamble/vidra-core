@@ -2463,7 +2463,7 @@ func run() error {
 		logger.Info("account export worker started")
 	}
 
-	// Drain the notification email outbox (migration 0156): the emails users
+	// Drain the notification email outbox (migration 0157): the emails users
 	// opted into, sent in bounded batches in the background and never from the
 	// request that raised the notification. Always on — the due scan is an index
 	// lookup — and with no mail path the drain drops what is owed unsent. The
