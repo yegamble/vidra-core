@@ -5,9 +5,10 @@
 -- or staff is stored HELD: visible only to its author, the video's managers
 -- and staff, never federated, and never announced to a third party, until a
 -- manager approves it (POST /videos/{id}/comments/{comment_id}/approve) or
--- deletes it. Approval is the one-way transition held_for_review true -> false;
--- a comment is never re-held, so turning the policy off later leaves already
--- held comments waiting rather than publishing them silently.
+-- deletes it. Approval releases a held comment (true -> false); a later body
+-- change by a non-reviewer on a requires_approval video re-holds it, because an
+-- approved comment must not change unreviewed. Turning the policy off later
+-- leaves already held comments waiting rather than publishing them silently.
 --
 -- Widen-a-CHECK idiom (drop, then re-add the same name): the previous release
 -- only ever writes 'enabled'/'disabled', which the wider check still accepts.

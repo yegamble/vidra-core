@@ -167,11 +167,9 @@ func (s *Service) Create(ctx context.Context, videoID, userID uuid.UUID, body st
 	return s.create(ctx, videoID, userID, body, parentID, false)
 }
 
-// CreateHeld is Create for a comment the video's comments_policy holds for
-// review (0161): stored with held_for_review set, and NOT announced — the
-// create hook (federation) fires only when a manager approves it. Whether a
-// comment is held is the caller's decision (it knows the policy and who is
-// posting).
+// CreateHeld is Create for a comment held for review (0161): stored held and
+// NOT announced until approved. The caller decides (it knows the policy and
+// who is posting).
 func (s *Service) CreateHeld(ctx context.Context, videoID, userID uuid.UUID, body string, parentID *uuid.UUID) (sqlcgen.Comment, error) {
 	return s.create(ctx, videoID, userID, body, parentID, true)
 }
@@ -204,13 +202,10 @@ func (s *Service) create(ctx context.Context, videoID, userID uuid.UUID, body st
 	return created, nil
 }
 
-// Approve releases a held comment (0161) — the HTTP layer has already
-// authorized the caller as one of the video's managers or staff. released is
-// true only for the call that performed the transition: a repeat (or a comment
-// that was never held) succeeds with released false and no side effects, so
-// the withheld create hook — the federation announce — fires exactly once. The
-// caller owns the other withheld side effect, the reply notification, and keys
-// it off the same flag. An unknown comment is ErrNotFound.
+// Approve releases a held comment (0161); the HTTP layer authorized the caller.
+// released is true only for the call that performed the transition, so the
+// withheld create hook (federation announce) — and the caller's withheld
+// notifications — fire exactly once. An unknown comment is ErrNotFound.
 func (s *Service) Approve(ctx context.Context, commentID uuid.UUID) (WithAuthor, bool, error) {
 	_, err := s.repo.ApproveComment(ctx, commentID)
 	released := err == nil
@@ -351,6 +346,18 @@ func (s *Service) RemoveByAccount(ctx context.Context, account string) (int, uui
 // editable locally. An unknown id is ErrNotFound; another user's comment is
 // ErrForbidden. The caller trims/validates the body first.
 func (s *Service) Edit(ctx context.Context, commentID, userID uuid.UUID, body string) (sqlcgen.Comment, error) {
+	return s.edit(ctx, commentID, userID, body, false)
+}
+
+// EditForReview is Edit for an edit that must be reviewed (0161): a
+// non-reviewer's on a requires_approval video. A CHANGED body sends the comment
+// back to held — its new text is not federated, and a Note already announced
+// is retracted (the delete hook) until a reviewer approves it again.
+func (s *Service) EditForReview(ctx context.Context, commentID, userID uuid.UUID, body string) (sqlcgen.Comment, error) {
+	return s.edit(ctx, commentID, userID, body, true)
+}
+
+func (s *Service) edit(ctx context.Context, commentID, userID uuid.UUID, body string, hold bool) (sqlcgen.Comment, error) {
 	c, err := s.repo.GetComment(ctx, commentID)
 	if err != nil {
 		return sqlcgen.Comment{}, ErrNotFound
@@ -358,12 +365,19 @@ func (s *Service) Edit(ctx context.Context, commentID, userID uuid.UUID, body st
 	if !c.UserID.Valid || uuid.UUID(c.UserID.Bytes) != userID {
 		return sqlcgen.Comment{}, ErrForbidden
 	}
-	updated, err := s.repo.UpdateComment(ctx, sqlcgen.UpdateCommentParams{ID: commentID, Body: body})
+	updated, err := s.repo.UpdateComment(ctx, sqlcgen.UpdateCommentParams{ID: commentID, Body: body, Hold: hold})
 	if err != nil {
 		return sqlcgen.Comment{}, err
 	}
-	if s.onUpdate != nil && !updated.HeldForReview {
-		s.onUpdate(ctx, updated.ID)
+	switch {
+	case !updated.HeldForReview:
+		if s.onUpdate != nil {
+			s.onUpdate(ctx, updated.ID)
+		}
+	case !c.HeldForReview: // re-held by this edit: retract what was announced
+		if s.onDelete != nil {
+			s.onDelete(ctx, commentID, c.VideoID, userID)
+		}
 	}
 	return updated, nil
 }

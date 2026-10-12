@@ -85,13 +85,17 @@ func (s *Service) handleCreateNote(ctx context.Context, act inboxActivity, signe
 	if body == "" {
 		return nil
 	}
-	// A requires_approval video (0161) holds a remote comment exactly as it
-	// holds a local stranger's: stored, but shown only to the video's managers
-	// until one of them approves it.
-	held, err := s.videoHoldsComments(ctx, videoID)
+	// The video's comment policy applies to remote comments as to local ones:
+	// comments off (per video or instance-wide) drops the Note, and
+	// requires_approval (0161) stores it held for the video's reviewers.
+	policy, err := s.videoCommentsPolicy(ctx, videoID)
 	if err != nil {
 		return err
 	}
+	if policy == "disabled" || (s.commentsEnabled != nil && !s.commentsEnabled()) {
+		return nil
+	}
+	held := policy == commentsPolicyRequiresApproval
 	// The author-name snapshot comes from the cached signer actor (it was
 	// fetched+cached during signature verification).
 	author, err := s.repo.GetRemoteActor(ctx, signerActorURL)
@@ -150,7 +154,14 @@ func (s *Service) handleUpdateNote(ctx context.Context, act inboxActivity, signe
 	if body == "" {
 		return nil
 	}
-	updated, err := s.repo.UpdateComment(ctx, sqlcgen.UpdateCommentParams{ID: c.ID, Body: body})
+	// A changed body on a requires_approval video goes back to review (0161).
+	policy, err := s.videoCommentsPolicy(ctx, c.VideoID)
+	if err != nil {
+		return err
+	}
+	updated, err := s.repo.UpdateComment(ctx, sqlcgen.UpdateCommentParams{
+		ID: c.ID, Body: body, Hold: policy == commentsPolicyRequiresApproval,
+	})
 	if err != nil {
 		return err
 	}
@@ -249,14 +260,13 @@ func (s *Service) resolveNoteTarget(ctx context.Context, inReplyTo string) (uuid
 	return parent.VideoID, pgconv.UUID(parent.ID), ok, err
 }
 
-// videoHoldsComments reports whether a local video's comments_policy holds new
-// comments for review (0161).
-func (s *Service) videoHoldsComments(ctx context.Context, videoID uuid.UUID) (bool, error) {
+// videoCommentsPolicy returns a local video's comments_policy.
+func (s *Service) videoCommentsPolicy(ctx context.Context, videoID uuid.UUID) (string, error) {
 	v, err := s.repo.GetVideoByID(ctx, videoID)
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	return v.CommentsPolicy == commentsPolicyRequiresApproval, nil
+	return v.CommentsPolicy, nil
 }
 
 // videoIsPubliclyVisible reports whether a local video exists and is public +
