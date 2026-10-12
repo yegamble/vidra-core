@@ -384,7 +384,7 @@ func (f *videoFakeRepo) ClearWatchHistory(_ context.Context, userID uuid.UUID) e
 	return nil
 }
 
-// fakeListedPrivacy mirrors the browse queries' privacy predicate (0159):
+// fakeListedPrivacy mirrors the browse queries' privacy predicate (0160):
 // public for everyone, plus 'internal' when a viewer is signed in.
 func fakeListedPrivacy(privacy string, viewer pgtype.UUID) bool {
 	return privacy == "public" || (privacy == video.PrivacyInternal && viewer.Valid)
@@ -400,7 +400,7 @@ func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.List
 		if f.blockedFromFeed(r.ID) {
 			continue
 		}
-		// 0159: the follower is signed in by definition, so 'internal' rides along.
+		// 0160: the follower is signed in by definition, so 'internal' rides along.
 		if (r.Privacy == "public" || r.Privacy == video.PrivacyInternal) && r.State == "published" && follows && !hidden {
 			rows = append(rows, sqlcgen.ListSubscriptionVideosRow{
 				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,

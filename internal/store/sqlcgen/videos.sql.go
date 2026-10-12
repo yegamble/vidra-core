@@ -1353,7 +1353,7 @@ type ListPublicVideosByChannelRow struct {
 }
 
 // A channel's public, published videos with discovery-card data — plus its
-// 'internal' ones when the viewer is signed in (viewer_id non-NULL; 0159: the
+// 'internal' ones when the viewer is signed in (viewer_id non-NULL; 0160: the
 // tier is visible to any signed-in account of this instance, never anonymous).
 func (q *Queries) ListPublicVideosByChannel(ctx context.Context, arg ListPublicVideosByChannelParams) ([]ListPublicVideosByChannelRow, error) {
 	rows, err := q.db.Query(ctx, listPublicVideosByChannel,
@@ -1669,7 +1669,7 @@ type ListPublicVideosSortedRow struct {
 // popular/trending sort them after viewed local videos. Blocked instances hide
 // remote rows for everyone; a signed-in viewer's muted instances hide them too.
 // A signed-in viewer (viewer_id non-NULL) also gets local 'internal' videos
-// (0159); an anonymous one, and every federated/RSS/sitemap caller, does not.
+// (0160); an anonymous one, and every federated/RSS/sitemap caller, does not.
 func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVideosSortedParams) ([]ListPublicVideosSortedRow, error) {
 	rows, err := q.db.Query(ctx, listPublicVideosSorted,
 		arg.ViewerID,
@@ -2071,7 +2071,7 @@ type ListSubscriptionVideosRow struct {
 }
 
 // The "subscriptions" feed (remote-content §3): a UNION of public (and, the
-// follower being signed in by definition, 'internal' — 0159), published
+// follower being signed in by definition, 'internal' — 0160), published
 // videos from the LOCAL channels the user follows and the ingested remote
 // videos of their ACCEPTED remote-channel follows, newest first, with the same
 // discovery-card shape as the main feed. Remote cards are flagged remote and

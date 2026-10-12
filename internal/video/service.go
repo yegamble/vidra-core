@@ -3024,7 +3024,7 @@ var adminSorts = []string{
 func AdminSorts() []string { return append([]string(nil), adminSorts...) }
 
 // adminStates is the videos.state CHECK constraint's value set (migrations
-// 0006/0045/0048/0098), and adminPrivacies is videos.privacy's (0006/0074/0159).
+// 0006/0045/0048/0098), and adminPrivacies is videos.privacy's (0006/0074/0160).
 var (
 	adminStates    = []string{"draft", "processing", "scheduled", "quarantined", "transcoding", "published", "failed"}
 	adminPrivacies = []string{"public", "unlisted", "private", "password", PrivacyInternal}

@@ -13,7 +13,7 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// 0159: 'internal' is a storable privacy, and every anonymous, federated and
+// 0160: 'internal' is a storable privacy, and every anonymous, federated and
 // search-reconcile read path — all of which allowlist privacy='public' — leaves
 // it out. Proven on real Postgres because the predicates are SQL: the same row
 // is flipped to public and back so a broken fixture cannot pass as a filter.

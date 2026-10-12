@@ -201,7 +201,7 @@ SELECT id FROM videos WHERE channel_id = $1 ORDER BY id;
 
 -- name: ListPublicVideosByChannel :many
 -- A channel's public, published videos with discovery-card data — plus its
--- 'internal' ones when the viewer is signed in (viewer_id non-NULL; 0159: the
+-- 'internal' ones when the viewer is signed in (viewer_id non-NULL; 0160: the
 -- tier is visible to any signed-in account of this instance, never anonymous).
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,
@@ -283,7 +283,7 @@ WHERE v.channel_id = sqlc.arg('channel_id') AND (v.privacy = 'public' OR (v.priv
 -- popular/trending sort them after viewed local videos. Blocked instances hide
 -- remote rows for everyone; a signed-in viewer's muted instances hide them too.
 -- A signed-in viewer (viewer_id non-NULL) also gets local 'internal' videos
--- (0159); an anonymous one, and every federated/RSS/sitemap caller, does not.
+-- (0160); an anonymous one, and every federated/RSS/sitemap caller, does not.
 SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
@@ -506,7 +506,7 @@ FROM (
 
 -- name: ListSubscriptionVideos :many
 -- The "subscriptions" feed (remote-content §3): a UNION of public (and, the
--- follower being signed in by definition, 'internal' — 0159), published
+-- follower being signed in by definition, 'internal' — 0160), published
 -- videos from the LOCAL channels the user follows and the ingested remote
 -- videos of their ACCEPTED remote-channel follows, newest first, with the same
 -- discovery-card shape as the main feed. Remote cards are flagged remote and

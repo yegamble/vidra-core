@@ -1,4 +1,4 @@
--- 0159: the 'internal' video privacy tier (PeerTube parity, VideoPrivacy 4).
+-- 0160: the 'internal' video privacy tier (PeerTube parity, VideoPrivacy 4).
 --
 -- An internal video is visible to any signed-in, active account of THIS
 -- instance and to nobody anonymous (internal/video/privacy.go). Until now the
