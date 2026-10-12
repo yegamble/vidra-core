@@ -28,6 +28,7 @@ const (
 	rsVideoURL = rsOrigin + "/videos/abc"
 	rsOwnerURL = rsOrigin + "/accounts/marta"
 	rsGroupURL = rsOrigin + "/video-channels/movies"
+	rsNSFWURL  = rsOrigin + "/videos/nsfw"
 )
 
 // rsTransport serves canned ActivityPub JSON by exact URL and counts calls.
@@ -60,6 +61,10 @@ func rsDocs() map[string]string {
 				{"mediaType": "text/html", "href": "` + rsOrigin + `/w/abc"},
 				{"mediaType": "application/x-mpegURL", "href": "` + rsOrigin + `/hls/abc.m3u8"}
 			]
+		}`,
+		rsNSFWURL: `{
+			"id": "` + rsNSFWURL + `", "type": "Video", "name": "Late show", "sensitive": true,
+			"attributedTo": "` + rsOwnerURL + `", "duration": "PT62S"
 		}`,
 		rsOwnerURL: `{
 			"id": "` + rsOwnerURL + `", "type": "Person", "preferredUsername": "marta",
@@ -126,6 +131,7 @@ func (f *remoteSearchFedRepo) UpsertRemoteVideo(_ context.Context, arg sqlcgen.U
 		ID: id, ObjectUrl: arg.ObjectUrl, RemoteActorUrl: arg.RemoteActorUrl,
 		Domain: domain, Title: arg.Title, Description: arg.Description,
 		DurationSeconds: arg.DurationSeconds, WatchUrl: arg.WatchUrl, StreamUrl: arg.StreamUrl,
+		IsSensitive: arg.IsSensitive,
 	}
 	return sqlcgen.UpsertRemoteVideoRow{ID: id}, nil
 }
@@ -333,5 +339,34 @@ func TestRemoteURISearchRateLimited(t *testing.T) {
 	}
 	if calls != fetchesAfterFirst {
 		t.Errorf("rate-limited search made %d extra outbound fetches, want 0", calls-fetchesAfterFirst)
+	}
+}
+
+// TestRemoteURISearchAppliesSensitivePolicy (T05): a remote video the origin
+// flagged sensitive is excluded from search under the "hide" policy and
+// returned WITH is_sensitive under warn — exactly as a local sensitive video.
+func TestRemoteURISearchAppliesSensitivePolicy(t *testing.T) {
+	srv := remoteSearchServer(t, fedTestConfig(), nil)
+	adminTok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	q := "q=" + url.QueryEscape(rsNSFWURL)
+
+	patchPolicy := func(policy string) {
+		t.Helper()
+		rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/instance-settings", `{"sensitive_content_policy":"`+policy+`"}`, adminTok)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("patch policy = %d; body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	patchPolicy("hide")
+	if body := searchBody(t, srv, q, adminTok); len(body.Remote) != 0 {
+		t.Errorf("hide policy: sensitive remote video surfaced in search: %+v", body.Remote[0].Video)
+	}
+	patchPolicy("warn")
+	body := searchBody(t, srv, q, adminTok)
+	if len(body.Remote) != 1 || body.Remote[0].Video == nil {
+		t.Fatalf("warn policy: remote = %+v, want the video", body.Remote)
+	}
+	if !body.Remote[0].Video.IsSensitive {
+		t.Error("warn policy: is_sensitive = false; the frontend cannot warn on what it is not told")
 	}
 }

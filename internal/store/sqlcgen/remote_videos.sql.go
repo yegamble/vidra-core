@@ -72,7 +72,7 @@ const getRemoteVideoByID = `-- name: GetRemoteVideoByID :one
 SELECT rv.id, rv.object_url, rv.remote_actor_url, ra.domain, rv.title,
        rv.description, rv.duration_seconds, rv.published_at, rv.watch_url,
        rv.stream_url, rv.thumbnail_key, rv.fetched_at, rv.updated_at,
-       ra.preferred_username, ra.attributed_to
+       ra.preferred_username, ra.attributed_to, rv.is_sensitive
 FROM remote_videos rv
 JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
 WHERE rv.id = $1
@@ -96,6 +96,7 @@ type GetRemoteVideoByIDRow struct {
 	UpdatedAt         time.Time          `json:"updated_at"`
 	PreferredUsername string             `json:"preferred_username"`
 	AttributedTo      string             `json:"attributed_to"`
+	IsSensitive       bool               `json:"is_sensitive"`
 }
 
 // The remote-watch read model. Content from admin-blocked instances is hidden
@@ -127,6 +128,7 @@ func (q *Queries) GetRemoteVideoByID(ctx context.Context, id uuid.UUID) (GetRemo
 		&i.UpdatedAt,
 		&i.PreferredUsername,
 		&i.AttributedTo,
+		&i.IsSensitive,
 	)
 	return i, err
 }
@@ -312,9 +314,9 @@ const upsertRemoteVideo = `-- name: UpsertRemoteVideo :one
 
 INSERT INTO remote_videos (
     object_url, remote_actor_url, title, description, duration_seconds,
-    published_at, watch_url, stream_url
+    published_at, watch_url, stream_url, is_sensitive
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (object_url) DO UPDATE SET
     remote_actor_url = EXCLUDED.remote_actor_url,
     title            = EXCLUDED.title,
@@ -323,6 +325,7 @@ ON CONFLICT (object_url) DO UPDATE SET
     published_at     = EXCLUDED.published_at,
     watch_url        = EXCLUDED.watch_url,
     stream_url       = EXCLUDED.stream_url,
+    is_sensitive     = EXCLUDED.is_sensitive,
     updated_at       = now()
 RETURNING id, thumbnail_key
 `
@@ -336,6 +339,7 @@ type UpsertRemoteVideoParams struct {
 	PublishedAt     pgtype.Timestamptz `json:"published_at"`
 	WatchUrl        string             `json:"watch_url"`
 	StreamUrl       *string            `json:"stream_url"`
+	IsSensitive     bool               `json:"is_sensitive"`
 }
 
 type UpsertRemoteVideoRow struct {
@@ -358,6 +362,7 @@ func (q *Queries) UpsertRemoteVideo(ctx context.Context, arg UpsertRemoteVideoPa
 		arg.PublishedAt,
 		arg.WatchUrl,
 		arg.StreamUrl,
+		arg.IsSensitive,
 	)
 	var i UpsertRemoteVideoRow
 	err := row.Scan(&i.ID, &i.ThumbnailKey)

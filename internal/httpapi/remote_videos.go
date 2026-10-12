@@ -36,6 +36,9 @@ type remoteVideoView struct {
 	DurationSeconds *int32     `json:"duration_seconds,omitempty"`
 	PublishedAt     *time.Time `json:"published_at,omitempty"`
 	HasThumbnail    bool       `json:"has_thumbnail"`
+	// IsSensitive is the origin's flag; the viewer's policy applies to it as
+	// to a local video's is_sensitive (T05).
+	IsSensitive bool `json:"is_sensitive"`
 }
 
 // newRemoteVideoView shapes one remote-video read model as its public view
@@ -56,6 +59,7 @@ func newRemoteVideoView(rv remotevideo.RemoteVideo) remoteVideoView {
 		DurationSeconds: rv.DurationSeconds,
 		PublishedAt:     rv.PublishedAt,
 		HasThumbnail:    rv.HasThumbnail,
+		IsSensitive:     rv.IsSensitive,
 	}
 }
 
