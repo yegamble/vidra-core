@@ -121,7 +121,7 @@ func (s *Service) ChannelOutboxPage(ctx context.Context, handle string, page int
 			"type":   "Create",
 			"actor":  channelActor,
 			"to":     []string{publicAudience},
-			"object": s.videoObjectFromOutbox(channelActor, r),
+			"object": s.videoObjectFromOutbox(ctx, channelActor, r),
 		})
 	}
 	pg := &OrderedCollectionPage{

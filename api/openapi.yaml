@@ -8990,6 +8990,71 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/playlists/{id}/videos/{videoId}/move:
+    post:
+      operationId: movePlaylistItem
+      summary: Move one video within a playlist
+      description: >-
+        Moves one item of a playlist owned by the caller to directly after
+        another item (`after_video_id`), or to the front when `after_video_id`
+        is null or omitted, and renumbers the playlist in one atomic step.
+        Unlike PUT /playlists/{id}/videos it needs no copy of the full item
+        list, so a client holding one page of a long playlist can reorder it.
+        The anchor is an item, not an index, so it stays correct when items the
+        client cannot see (a video that went private or unpublished) sit
+        between the visible ones. Concurrent moves are serialized, never lost.
+      tags: [playlists]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: videoId
+          in: path
+          required: true
+          description: The item to move.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MovePlaylistItemRequest"
+      responses:
+        "204":
+          description: The video is in its new place.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such playlist owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The video, or after_video_id, is not an item of this playlist
+            (the client's copy is stale — reload it). Nothing moved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: after_video_id is malformed or names the moved video itself.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/playlists/{id}/thumbnail:
     get:
       operationId: getPlaylistThumbnail
@@ -9828,6 +9893,63 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/comments/bulk-remove:
+    post:
+      operationId: bulkRemoveAdminComments
+      summary: Remove every comment by one account
+      description: >-
+        Spam-wave cleanup (PeerTube's bulk/remove-comments-of). Hard-deletes every
+        comment authored by one account, instance-wide, in one set-based
+        statement; the end state per comment is identical to
+        DELETE /api/v1/comments/{id} (replies, reports and notifications under it
+        are removed, a pin on the video clears). `account` is a local username
+        (case-insensitive, deactivated accounts included) or, for federated
+        comments, a remote actor URL starting with http:// or https://. Comments
+        by local authors are federated as a Delete exactly as a single delete is;
+        remote authors' comments are removed locally only. Restricted to
+        moderators/admins. An unknown local username is 404; a remote actor with
+        no comments yields removed=0. Audited as moderation.comment.bulk_remove
+        (actor, target account, count; never comment bodies).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkRemoveCommentsRequest"
+      responses:
+        "200":
+          description: The comments were removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkRemoveCommentsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such local account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
           content:
             application/json:
               schema:
@@ -16463,6 +16585,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: adminCreateUser
+      summary: Create an account on behalf of the user (admin)
+      description: >-
+        PeerTube `POST /users` parity, for instances with registration closed.
+        Admin-only; the CALLER re-confirms their OWN password (same step-up and
+        strict limiter as `POST /api/v1/admin/users/{id}/password-reset-link`).
+        There is no admin-chosen password: the account starts password-less and
+        the holder sets the first one with a one-time link (the ordinary reset
+        token, 1 hour). The address is marked verified (the admin vouches for
+        it). Signup creates no default channel, so neither does this. When a
+        mail path is configured the link is emailed and `link_emailed` is true
+        with no `reset_url`; otherwise `reset_url` is returned once (no-store),
+        only after the audit row `admin.user.create` is written. The row is required
+        on both delivery paths: if it, the update or the delivery fails after the
+        account was made, the account is DEACTIVATED (it cannot sign in and does
+        not count as an active admin) and 502/503 is returned; the username and
+        email stay reserved until an admin deletes it. The audit payload never carries the address, a password or the token.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminCreateUserRequest"
+      responses:
+        "201":
+          description: The created account and how the set-password link was delivered.
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCreateUserResponse"
+        "401":
+          description: "Missing, invalid, or expired token."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "403":
+          description: "Not an admin, or the caller's password is wrong."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "409":
+          description: "Username or email already taken (or reserved by a channel); the caller has no password; or PUBLIC_BASE_URL is unset and no mail path exists."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "422":
+          description: "Validation failed (username, email, role, storage_quota_bytes or password)."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "429":
+          description: "Too many attempts (strict auth limiter)."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "502":
+          description: "The set-password email failed and there is no origin to return a link on; the account was deactivated."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "503":
+          description: "The audit write failed; the account was deactivated and no link was issued."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
   /api/v1/admin/users/{id}:
     patch:
       operationId: updateUser
@@ -19580,7 +19760,7 @@ components:
                 $ref: "#/components/schemas/BlockedInstance"
     RemoteVideo:
       type: object
-      required: [id, remote, domain, title, description, object_url, watch_url, has_thumbnail]
+      required: [id, remote, domain, title, description, object_url, watch_url, has_thumbnail, is_sensitive]
       properties:
         id:
           type: string
@@ -19636,6 +19816,12 @@ components:
         has_thumbnail:
           type: boolean
           description: Whether a locally cached thumbnail is available.
+        is_sensitive:
+          type: boolean
+          description: >-
+            The origin flagged this video sensitive (ActivityStreams
+            `sensitive`). The viewer's sensitive-content policy applies as to a
+            local video's is_sensitive: under "hide" it is excluded from search.
     ATProtoLinkRequest:
       type: object
       required: [handle, app_password]
@@ -20482,11 +20668,17 @@ components:
           example: true
     Playlist:
       type: object
-      required: [id, title, description, visibility, video_count, has_thumbnail, created_at, updated_at]
+      required: [id, owner_id, title, description, visibility, video_count, has_thumbnail, created_at, updated_at]
       properties:
         id:
           type: string
           format: uuid
+        owner_id:
+          type: string
+          format: uuid
+          description: >-
+            The owning user. Compare it with the signed-in user to decide owner
+            controls; GET /me/playlists is paged and cannot answer that.
         title:
           type: string
           example: Watch later picks
@@ -20569,6 +20761,15 @@ components:
         video_id:
           type: string
           format: uuid
+    MovePlaylistItemRequest:
+      type: object
+      properties:
+        after_video_id:
+          type: [string, "null"]
+          format: uuid
+          description: >-
+            The item the moved video should directly follow. null or omitted
+            moves it to the front.
     ReorderPlaylistItemsRequest:
       type: object
       required: [video_ids]
@@ -20589,6 +20790,23 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
+    BulkRemoveCommentsRequest:
+      type: object
+      required: [account]
+      properties:
+        account:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: A local username, or a remote actor URL (http:// or https://).
+    BulkRemoveCommentsResponse:
+      type: object
+      required: [removed]
+      properties:
+        removed:
+          type: integer
+          minimum: 0
+          description: How many comments were removed.
     ResolveReportRequest:
       type: object
       required: [status]
@@ -21230,6 +21448,31 @@ components:
           type: string
           format: uri
           description: PUBLIC_BASE_URL + /reset-password/confirm?token=..., shown once.
+        expires_at: {type: string, format: date-time}
+    AdminCreateUserRequest:
+      type: object
+      required: [username, email, role, password]
+      properties:
+        username: {type: string, minLength: 3, maxLength: 30, description: "Same rules as signup: no '@' or whitespace."}
+        email: {type: string, format: email}
+        role: {type: string, enum: [user, moderator, admin]}
+        storage_quota_bytes:
+          type: [integer, "null"]
+          minimum: 0
+          description: Per-user override (0 = unlimited); absent or null = the instance default.
+        password:
+          type: string
+          description: The CALLING administrator's own current password (step-up), never the new account's.
+    AdminCreateUserResponse:
+      type: object
+      required: [user, link_emailed, expires_at]
+      properties:
+        user: {$ref: "#/components/schemas/AdminUser"}
+        link_emailed: {type: boolean, description: "True when the set-password link was emailed; reset_url is then absent."}
+        reset_url:
+          type: string
+          format: uri
+          description: PUBLIC_BASE_URL + /reset-password/confirm?token=..., shown once; absent when emailed.
         expires_at: {type: string, format: date-time}
     AdminUser:
       type: object

@@ -173,6 +173,48 @@ func (f *commentFakeRepo) DeleteComment(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// GetCommentAuthorIDByUsername mirrors the real query: case-insensitive, and NOT
+// restricted to active accounts.
+func (f *commentFakeRepo) GetCommentAuthorIDByUsername(_ context.Context, username string) (uuid.UUID, error) {
+	for _, u := range f.users.users {
+		if strings.EqualFold(u.Username, username) {
+			return u.ID, nil
+		}
+	}
+	return uuid.Nil, errors.New("not found")
+}
+
+// DeleteCommentsByAuthor mirrors the real set-based DELETE ... RETURNING,
+// including the FK effects: replies CASCADE and a pinned comment is cleared.
+func (f *commentFakeRepo) DeleteCommentsByAuthor(_ context.Context, a sqlcgen.DeleteCommentsByAuthorParams) ([]sqlcgen.DeleteCommentsByAuthorRow, error) {
+	var rows []sqlcgen.DeleteCommentsByAuthorRow
+	for _, c := range f.comments {
+		byUser := a.UserID.Valid && c.UserID == a.UserID
+		byActor := a.RemoteActorUrl != nil && c.RemoteActorUrl != nil && *c.RemoteActorUrl == *a.RemoteActorUrl
+		if byUser || byActor {
+			rows = append(rows, sqlcgen.DeleteCommentsByAuthorRow{ID: c.ID, VideoID: c.VideoID, UserID: c.UserID})
+		}
+	}
+	for _, r := range rows {
+		f.cascadeDelete(r.ID)
+	}
+	return rows, nil
+}
+
+func (f *commentFakeRepo) cascadeDelete(id uuid.UUID) {
+	for cid, c := range f.comments {
+		if c.ParentID.Valid && uuid.UUID(c.ParentID.Bytes) == id {
+			f.cascadeDelete(cid)
+		}
+	}
+	if c, ok := f.comments[id]; ok {
+		if f.isPinned(c.VideoID, id) {
+			delete(f.pinned, c.VideoID)
+		}
+		delete(f.comments, id)
+	}
+}
+
 func listComments(srv *Server, videoID string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/comments", nil))

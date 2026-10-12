@@ -116,10 +116,21 @@ func newGoldenRepo() fakeRepo {
 		Privacy: "public", State: "published",
 		CreatedAt: ctCreatedAt, UpdatedAt: ctCreatedAt,
 	}
+	// The PeerTube-facing facts (T05) on the complete video, so the goldens pin
+	// every field a PeerTube follower validates. No media backend is wired
+	// here, so the icon carries no width/height: the conformance test owns
+	// the poster-size path.
+	full := r.videosByID[ctVideoID]
+	full.Category, full.Language, full.License = ptStr("2"), ptStr("en"), ptStr("1")
+	full.CommentsPolicy, full.DownloadEnabled = "enabled", true
+	r.videosByID[ctVideoID] = full
+	r.videoFacts = map[uuid.UUID]sqlcgen.GetVideoFederationFactsRow{
+		ctVideoID: {Views: 42, Tags: []string{"fjord", "kayak"}, CaptionLanguages: []string{"en"}},
+	}
 	r.outboxVideos[ctChannelID] = []sqlcgen.ListChannelOutboxVideosRow{
 		{
 			ID: ctVideo2ID, Title: "Night paddle", Description: "Part two.",
-			CreatedAt: ctCreatedAt, UpdatedAt: ctCreatedAt,
+			CreatedAt: ctCreatedAt, UpdatedAt: ctCreatedAt, OwnerUsername: "ada",
 		},
 		{
 			ID: ctVideoID, Title: "Dawn over the fjord", Description: "A quiet opening.",
@@ -130,6 +141,9 @@ func newGoldenRepo() fakeRepo {
 			HasThumbnail:          true,
 			ThumbnailContentType:  "image/jpeg",
 			HasHls:                true,
+			Category:              full.Category, Language: full.Language, License: full.License,
+			CommentsPolicy: "enabled", DownloadEnabled: true, OwnerUsername: "ada",
+			Views: 42, Tags: []string{"fjord", "kayak"}, CaptionLanguages: []string{"en"},
 		},
 	}
 	// ada's top-level comment on the local video…

@@ -108,6 +108,13 @@ func (s *Service) DrainDeliveries(ctx context.Context, limit int) (int, error) {
 			s.reflectAuthoredCommentDelivery(ctx, row, authoredCommentFailed, deliveryCancelledBlocked, row.Attempts)
 			continue
 		}
+		// A Create/Update queued (or retrying) before a moderator block landed
+		// must not reach a peer after the Delete and resurrect the video (T13).
+		if s.payloadOfBlockedVideo(ctx, row.Payload) {
+			_ = s.repo.FailDelivery(ctx, sqlcgen.FailDeliveryParams{ID: row.ID, LastError: "cancelled: video blocked"})
+			s.reflectAuthoredCommentDelivery(ctx, row, authoredCommentFailed, "cancelled: video blocked", row.Attempts)
+			continue
+		}
 		if err := s.attemptDelivery(ctx, row); err != nil {
 			s.recordDeliveryFailure(ctx, row, err)
 			continue
@@ -525,6 +532,33 @@ func (s *Service) redeliverable(ctx context.Context, payload []byte) (bool, erro
 	return false, nil
 }
 
+// payloadOfBlockedVideo reports whether a Create/Update snapshot describes a
+// local video (or a comment on one) that a moderator has since blocked. Errors
+// read as "not blocked": the check must never stall the queue.
+func (s *Service) payloadOfBlockedVideo(ctx context.Context, payload []byte) bool {
+	var env struct {
+		Type   string          `json:"type"`
+		Object json.RawMessage `json:"object"`
+	}
+	if json.Unmarshal(payload, &env) != nil || (env.Type != "Create" && env.Type != "Update") {
+		return false
+	}
+	videoID, ok := s.localVideoIDFromObject(env.Object)
+	if !ok {
+		commentID, isComment := s.localCommentIDFromObject(env.Object)
+		if !isComment {
+			return false
+		}
+		c, err := s.repo.GetComment(ctx, commentID)
+		if err != nil {
+			return false
+		}
+		videoID = c.VideoID
+	}
+	v, err := s.repo.GetVideoByID(ctx, videoID)
+	return err == nil && v.Blocked
+}
+
 // videoStillPublishable is the video arm of redeliverable: the snapshot may go
 // out only if the thing it describes is still the thing a stranger may see.
 func (s *Service) videoStillPublishable(ctx context.Context, videoID uuid.UUID) (bool, error) {
@@ -532,7 +566,7 @@ func (s *Service) videoStillPublishable(ctx context.Context, videoID uuid.UUID) 
 	if err != nil || !found {
 		return false, err
 	}
-	return ch.ActivitypubEnabled && v.Privacy == "public" && v.State == "published", nil
+	return ch.ActivitypubEnabled && v.Privacy == "public" && v.State == "published" && !v.Blocked, nil
 }
 
 // commentStillPublishable is the comment arm, and it is deliberately the video

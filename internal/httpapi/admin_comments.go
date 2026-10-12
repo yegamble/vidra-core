@@ -1,10 +1,18 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+
+	"github.com/vidra/vidra-core/internal/audit"
+	"github.com/vidra/vidra-core/internal/comment"
+	"github.com/vidra/vidra-core/internal/observability"
 )
 
 // adminCommentView is the admin/moderator comments-overview projection. Remote
@@ -59,4 +67,59 @@ func (s *Server) handleListAdminComments(c echo.Context) error {
 		views = append(views, v)
 	}
 	return c.JSON(http.StatusOK, adminCommentListResponse{Comments: views, pageMeta: page.meta(total)})
+}
+
+// bulkRemoveCommentsRequest is the POST /admin/comments/bulk-remove body.
+type bulkRemoveCommentsRequest struct {
+	// Account is a local username, or a remote actor URL (http:// or https://).
+	Account string `json:"account"`
+}
+
+func (r bulkRemoveCommentsRequest) Validate() []FieldError {
+	if strings.TrimSpace(r.Account) == "" {
+		return []FieldError{{Field: "account", Message: "is required"}}
+	}
+	if len(r.Account) > 2048 {
+		return []FieldError{{Field: "account", Message: "is too long"}}
+	}
+	return nil
+}
+
+// bulkRemoveCommentsResponse reports how many comments were removed.
+type bulkRemoveCommentsResponse struct {
+	Removed int `json:"removed"`
+}
+
+// handleBulkRemoveComments deletes every comment by one account, instance-wide
+// (PeerTube's bulk/remove-comments-of). Behind requireRole(admin, moderator).
+// One audit event records actor, target and count; comment bodies are never
+// logged. A removal that matched nothing is still a 200 with removed=0.
+func (s *Server) handleBulkRemoveComments(c echo.Context) error {
+	actorID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
+	}
+	var in bulkRemoveCommentsRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	n, targetID, err := s.commentsvc.RemoveByAccount(c.Request().Context(), in.Account)
+	if err != nil {
+		if errors.Is(err, comment.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "account not found")
+		}
+		return err
+	}
+	// The resource id must match the audit id pattern (no "/"), so a remote
+	// actor URL is recorded by fingerprint, a local account by its id.
+	resourceID := queryFingerprint(strings.TrimSpace(in.Account))
+	if targetID != uuid.Nil {
+		resourceID = targetID.String()
+	}
+	s.auditEvent(c, audit.Event{
+		Action: observability.ActionAdminCommentBulkRemove, Result: observability.ResultSuccess,
+		ActorID: actorID.String(), ResourceType: "account", ResourceID: resourceID,
+		Metadata: []audit.MetadataField{{Key: "count", Value: strconv.Itoa(n)}},
+	})
+	return c.JSON(http.StatusOK, bulkRemoveCommentsResponse{Removed: n})
 }

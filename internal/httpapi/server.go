@@ -159,6 +159,7 @@ type Server struct {
 	channelsyncsvc    *channelsync.Service
 	captionjobsvc     *captionjob.Service
 	fedsvc            *federation.Service
+	videoFed          videoFederator
 	atprotosvc        *atproto.Service
 	remotevideosvc    *remotevideo.Service
 	authoredrcsvc     *authoredremotecomment.Service
@@ -1930,6 +1931,7 @@ func (s *Server) routes() {
 			api.PUT("/comments/:id/heart", s.handleHeartComment, s.requireAuth)
 			api.DELETE("/comments/:id/heart", s.handleUnheartComment, s.requireAuth)
 			api.GET("/admin/comments", s.handleListAdminComments, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+			api.POST("/admin/comments/bulk-remove", s.handleBulkRemoveComments, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		}
 
 		// Ratings (like/dislike) are scoped to a (public, published) video.
@@ -1989,6 +1991,7 @@ func (s *Server) routes() {
 		api.POST("/playlists/:id/videos", s.handleAddPlaylistItem, s.requireAuth)
 		api.PUT("/playlists/:id/videos", s.handleReorderPlaylistItems, s.requireAuth)
 		api.DELETE("/playlists/:id/videos/:videoId", s.handleRemovePlaylistItem, s.requireAuth)
+		api.POST("/playlists/:id/videos/:videoId/move", s.handleMovePlaylistItem, s.requireAuth)
 		// Playlist cover image: owner upload/remove + public (visibility-gated) get.
 		api.GET("/playlists/:id/thumbnail", s.handleGetPlaylistThumbnail, s.optionalAuth)
 		api.POST("/playlists/:id/thumbnail", s.handleSetPlaylistThumbnail, s.requireAuth, s.requireScannerGate)
@@ -2171,6 +2174,10 @@ func (s *Server) routes() {
 	// Admin user management is admin-only (not moderators).
 	if s.adminsvc != nil {
 		api.GET("/admin/users", s.handleListUsers, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// Admin-created account (PeerTube POST /users): no admin-chosen password,
+		// the holder gets a set-password link. Caller-password step-up + strict
+		// limiter, exactly like the reset-link route below.
+		api.POST("/admin/users", s.handleAdminCreateUser, s.adminPasswordStepUpMW()...)
 		api.PATCH("/admin/users/:id", s.handleUpdateUser, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		// Administrator removal of a user's second factor (A05 ruling 2): the
 		// operator answer to a lost authenticator AND lost recovery codes,

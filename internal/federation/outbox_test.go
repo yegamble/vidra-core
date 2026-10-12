@@ -39,10 +39,10 @@ func TestAnnounceVideoFansOutToFollowers(t *testing.T) {
 			Type   string `json:"type"`
 			Actor  string `json:"actor"`
 			Object struct {
-				Type         string `json:"type"`
-				Name         string `json:"name"`
-				ID           string `json:"id"`
-				AttributedTo string `json:"attributedTo"`
+				Type         string          `json:"type"`
+				Name         string          `json:"name"`
+				ID           string          `json:"id"`
+				AttributedTo json.RawMessage `json:"attributedTo"`
 			} `json:"object"`
 		}
 		if err := json.Unmarshal(d.row.Payload, &create); err != nil {

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -605,5 +607,123 @@ func TestDistributionRoutesUnmountedWithoutPublicOrigin(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("GET %s status = %d, want 404 (route must not be registered without PUBLIC_BASE_URL)", path, rec.Code)
 		}
+	}
+}
+
+// A PeerTube subscriber's feed URL names its channel or account with params
+// vidra used to ignore, so it silently received the whole-instance feed. These
+// pin the mapping AND the refusal: a filter that cannot be resolved is a 404,
+// never the instance-wide feed.
+func TestVideosFeedPeerTubeFilterParams(t *testing.T) {
+	srv, repo, ada := distributionServer(t)
+	bobTok := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	bob, _ := repo.channels.GetChannelByHandle(context.Background(), "bob")
+	seedVideo(repo, ada, "Ada Clip", "d", "public", "published", 10)
+	seedVideo(repo, bob, "Bob Clip", "d", "public", "published", 10)
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me", `{"profile_public":true}`, bobTok); rec.Code != http.StatusOK {
+		t.Fatalf("make bob public = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	titles := func(path string) []string {
+		rec := get(t, srv, path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d, want 200; body=%s", path, rec.Code, rec.Body.String())
+		}
+		var doc rssDocument
+		if err := xml.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+			t.Fatalf("%s not well-formed: %v", path, err)
+		}
+		var out []string
+		for _, it := range doc.Channel.Items {
+			out = append(out, it.Title)
+		}
+		return out
+	}
+	for path, want := range map[string]string{
+		"/feeds/videos.xml?videoChannelName=ada":                 "Ada Clip",
+		"/feeds/videos.xml?videoChannelName=ada@videos.example":  "Ada Clip",
+		"/feeds/videos.xml?accountName=bob":                      "Bob Clip",
+		"/feeds/videos.xml?accountName=bob@videos.example":       "Bob Clip",
+		"/feeds/videos.xml?accountName=bob&videoChannelName=bob": "Bob Clip",
+	} {
+		if got := titles(path); len(got) != 1 || got[0] != want {
+			t.Errorf("%s items = %v, want [%s]", path, got, want)
+		}
+	}
+
+	for _, path := range []string{
+		"/feeds/videos.xml?videoChannelId=3",                   // PeerTube numeric id: not preserved
+		"/feeds/videos.xml?accountId=1",                        // ditto
+		"/feeds/videos.xml?videoChannelName=nobody",            // unknown
+		"/feeds/videos.xml?videoChannelName=ada@other.example", // remote host
+		"/feeds/videos.xml?accountName=nobody",
+		"/feeds/videos.xml?accountName=ada",                      // exists but profile not public
+		"/feeds/videos.xml?accountName=bob&videoChannelName=ada", // channel not owned by account
+		"/feeds/videos.xml?channel=ada&accountId=1",              // one bad filter poisons the rest
+	} {
+		if rec := get(t, srv, path); rec.Code != http.StatusNotFound {
+			t.Errorf("%s = %d, want 404 (never the instance-wide feed)", path, rec.Code)
+		}
+	}
+}
+
+func TestFeedLocalNameNormalisesHost(t *testing.T) {
+	for _, tc := range []struct {
+		base, raw, want string
+		ok              bool
+	}{
+		{"https://videos.example", "ada@videos.example", "ada", true},
+		{"https://videos.example:443", "ada@videos.example", "ada", true},
+		{"https://videos.example", "ada@videos.example:443", "ada", true},
+		{"http://videos.example:80", "ada@VIDEOS.example", "ada", true},
+		{"https://videos.example:8443", "ada@videos.example", "", false},
+		{"https://videos.example:8443", "ada@videos.example:8443", "ada", true},
+		{"https://bücher.example", "ada@xn--bcher-kva.example", "ada", true},
+		{"https://xn--bcher-kva.example", "ada@bücher.example", "ada", true},
+		{"https://videos.example", "ada@other.example", "", false},
+	} {
+		s := &Server{cfg: &config.Config{PublicBaseURL: tc.base}}
+		got, ok := s.feedLocalName(tc.raw)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("feedLocalName(%q) under %q = %q,%v; want %q,%v", tc.raw, tc.base, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+// The account feed merges several channels; equal timestamps must order by id
+// DESC, the same tie-break as the per-channel query, so the feed is stable.
+func TestAccountFeedTieBreaksByIDDesc(t *testing.T) {
+	srv, repo, _ := distributionServer(t)
+	tok := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	if rec := postJSONAuth(srv, "/api/v1/channels", `{"handle":"bob2","display_name":"bob2"}`, tok); rec.Code != http.StatusCreated {
+		t.Fatalf("second channel = %d", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me", `{"profile_public":true}`, tok); rec.Code != http.StatusOK {
+		t.Fatalf("public = %d", rec.Code)
+	}
+	bob, _ := repo.channels.GetChannelByHandle(context.Background(), "bob")
+	bob2, _ := repo.channels.GetChannelByHandle(context.Background(), "bob2")
+	ts := time.Now().Add(-time.Hour).UTC()
+	ids := map[uuid.UUID]bool{}
+	for i, ch := range []sqlcgen.Channel{bob, bob2, bob, bob2} {
+		id := seedVideo(repo, ch, fmt.Sprintf("v%d", i), "d", "public", "published", 10)
+		row := repo.videos[id]
+		row.CreatedAt = ts
+		repo.videos[id] = row
+		ids[id] = true
+	}
+	rec := get(t, srv, "/feeds/videos.xml?accountName=bob")
+	var doc rssDocument
+	if err := xml.Unmarshal(rec.Body.Bytes(), &doc); err != nil || len(doc.Channel.Items) != 4 {
+		t.Fatalf("feed: err=%v items=%d", err, len(doc.Channel.Items))
+	}
+	var got []string
+	for _, it := range doc.Channel.Items {
+		got = append(got, it.GUID.Value)
+	}
+	want := append([]string(nil), got...)
+	sort.Sort(sort.Reverse(sort.StringSlice(want)))
+	if !sort.SliceIsSorted(got, func(i, j int) bool { return got[i] > got[j] }) {
+		t.Errorf("equal-timestamp items not ordered by id DESC:\n got %v\nwant %v", got, want)
 	}
 }

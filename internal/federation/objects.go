@@ -44,8 +44,8 @@ var ErrGone = errors.New("federation: object has been deleted")
 //   - ErrGone, for a video we recorded a federated deletion for (410 +
 //     Tombstone, so a peer that dereferences the retraction it was just sent
 //     learns that the retraction was real);
-//   - ErrNotFound for everything else — never seen, private, unlisted, or
-//     unpublished. A well-formed uuid that was never a video and a private
+//   - ErrNotFound for everything else — never seen, private, unlisted,
+//     unpublished, or blocked without a recorded retraction. A well-formed uuid that was never a video and a private
 //     video answer identically, which is what stops the endpoint being an
 //     enumeration oracle.
 func (s *Service) VideoObject(ctx context.Context, videoID uuid.UUID) (map[string]any, error) {
@@ -59,6 +59,12 @@ func (s *Service) VideoObject(ctx context.Context, videoID uuid.UUID) (map[strin
 	if v.Privacy != "public" || v.State != "published" {
 		return nil, ErrNotFound
 	}
+	// A moderator-blocked video was unfederated (UnfederateBlockedVideo records
+	// its tombstone), so a peer dereferencing the Delete it was sent gets the same
+	// 410 a deleted video answers — and a block with no recorded tombstone is 404.
+	if v.Blocked {
+		return nil, s.tombstoneOrNotFound(ctx, videoID)
+	}
 	ch, err := s.repo.GetChannelByID(ctx, v.ChannelID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -71,7 +77,10 @@ func (s *Service) VideoObject(ctx context.Context, videoID uuid.UUID) (map[strin
 	if !ch.ActivitypubEnabled {
 		return nil, ErrNotFound
 	}
-	obj := s.videoObjectFromDetail(s.baseURL+"/video-channels/"+ch.Handle, v)
+	obj, err := s.videoObjectFromDetail(ctx, s.baseURL+"/video-channels/"+ch.Handle, v)
+	if err != nil {
+		return nil, err
+	}
 	obj["@context"] = "https://www.w3.org/ns/activitystreams"
 	return obj, nil
 }
