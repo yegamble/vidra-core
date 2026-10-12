@@ -28,8 +28,24 @@ type fakeInstance struct {
 	followers map[string]*sqlcgen.GetInstanceFollowerByActorRow
 	// outbox is ListInstanceOutboxVideoIDs' answer, newest first.
 	outbox []uuid.UUID
-	// backfilledAt is instance_follower_backfills, keyed by remote actor url.
+	// backfilledAt is instance_follower_backfills, keyed by host.
 	backfilledAt map[string]time.Time
+	// unlistedChannels are channels whose owner opted out of discovery.
+	unlistedChannels map[uuid.UUID]bool
+}
+
+// IsVideoInInstanceOutbox: the fake's outbox slice stands in for the view.
+func (f fakeRepo) IsVideoInInstanceOutbox(_ context.Context, id uuid.UUID) (bool, error) {
+	for _, v := range f.inst.outbox {
+		if v == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f fakeRepo) IsChannelOwnerUnlisted(_ context.Context, id uuid.UUID) (bool, error) {
+	return f.inst.unlistedChannels[id], nil
 }
 
 // ClaimInstanceFollowerBackfill mirrors the SQL claim: absent or older than the
@@ -38,10 +54,10 @@ func (f fakeRepo) ClaimInstanceFollowerBackfill(_ context.Context, a sqlcgen.Cla
 	if f.inst.backfilledAt == nil {
 		f.inst.backfilledAt = map[string]time.Time{}
 	}
-	if at, ok := f.inst.backfilledAt[a.RemoteActorUrl]; ok && time.Since(at) < time.Duration(a.CooldownSeconds)*time.Second {
+	if at, ok := f.inst.backfilledAt[a.Host]; ok && time.Since(at) < time.Duration(a.CooldownSeconds)*time.Second {
 		return 0, nil
 	}
-	f.inst.backfilledAt[a.RemoteActorUrl] = time.Now()
+	f.inst.backfilledAt[a.Host] = time.Now()
 	return 1, nil
 }
 

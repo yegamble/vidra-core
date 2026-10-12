@@ -526,15 +526,16 @@ func (s *Service) redeliverable(ctx context.Context, payload []byte) (bool, erro
 	return false, nil
 }
 
-// payloadOfBlockedVideo reports whether a Create/Update snapshot describes a
-// local video (or a comment on one) that a moderator has since blocked. Errors
-// read as "not blocked": the check must never stall the queue.
+// payloadOfBlockedVideo reports whether a Create/Update snapshot — or the
+// instance actor's Announce — describes a local video (or a comment on one)
+// that a moderator has since blocked. Errors read as "not blocked": the check
+// must never stall the queue.
 func (s *Service) payloadOfBlockedVideo(ctx context.Context, payload []byte) bool {
 	var env struct {
 		Type   string          `json:"type"`
 		Object json.RawMessage `json:"object"`
 	}
-	if json.Unmarshal(payload, &env) != nil || (env.Type != "Create" && env.Type != "Update") {
+	if json.Unmarshal(payload, &env) != nil || (env.Type != "Create" && env.Type != "Update" && env.Type != "Announce") {
 		return false
 	}
 	videoID, ok := s.localVideoIDFromObject(env.Object)

@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,9 +19,10 @@ import (
 // instance-follow tables) and removes it — and its follow rows — afterwards.
 func seedRemoteInstanceActor(t *testing.T, st *Store) string {
 	t.Helper()
-	url := "https://pt-" + uuid.NewString()[:8] + ".example/accounts/peertube"
+	host := "pt-" + uuid.NewString()[:8] + ".example"
+	url := "https://" + host + "/accounts/peertube"
 	if err := st.Queries().UpsertRemoteActor(context.Background(), sqlcgen.UpsertRemoteActorParams{
-		ActorUrl: url, ActorType: "Application", PreferredUsername: "peertube", PublicKeyPem: "k",
+		ActorUrl: url, ActorType: "Application", PreferredUsername: "peertube", PublicKeyPem: "k", Domain: host,
 		InboxUrl: url + "/inbox",
 	}); err != nil {
 		t.Fatalf("seed remote actor: %v", err)
@@ -186,7 +188,7 @@ func TestInstanceOutboxPredicateOnRealPG(t *testing.T) {
 	if _, err := st.Pool.Exec(ctx, `INSERT INTO video_blocks (video_id, reason) VALUES ($1, 'tos')`, blocked); err != nil {
 		t.Fatal(err)
 	}
-	listed := func() map[uuid.UUID]bool {
+	listed := func(t *testing.T) map[uuid.UUID]bool {
 		ids, err := q.ListInstanceOutboxVideoIDs(ctx, sqlcgen.ListInstanceOutboxVideoIDsParams{ResultLimit: 100000})
 		if err != nil {
 			t.Fatal(err)
@@ -197,7 +199,7 @@ func TestInstanceOutboxPredicateOnRealPG(t *testing.T) {
 		}
 		return out
 	}
-	got := listed()
+	got := listed(t)
 	if !got[public] {
 		t.Error("a public published video is missing from the instance outbox")
 	}
@@ -209,10 +211,34 @@ func TestInstanceOutboxPredicateOnRealPG(t *testing.T) {
 	if n, err := q.CountInstanceOutboxVideos(ctx); err != nil || n < 1 {
 		t.Errorf("count = %d, %v", n, err)
 	}
+	if listed, err := q.IsVideoInInstanceOutbox(ctx, public); err != nil || !listed {
+		t.Errorf("IsVideoInInstanceOutbox(public) = %v, %v", listed, err)
+	}
+	// The owner opts out of discovery: the video leaves the outbox (and so the
+	// backfill and the live Announce, which read the same view).
+	userID := uuid.Nil
+	if err := st.Pool.QueryRow(ctx, `SELECT owner_id FROM channels WHERE id = $1`, channelID).Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Pool.Exec(ctx, `UPDATE users SET unlisted = TRUE WHERE id = $1`, userID); err != nil {
+		t.Fatal(err)
+	}
+	if listed(t)[public] {
+		t.Error("an opted-out owner's video is still in the instance outbox")
+	}
+	if in, _ := q.IsVideoInInstanceOutbox(ctx, public); in {
+		t.Error("IsVideoInInstanceOutbox must follow the opt-out")
+	}
+	if u, err := q.IsChannelOwnerUnlisted(ctx, channelID); err != nil || !u {
+		t.Errorf("IsChannelOwnerUnlisted = %v, %v", u, err)
+	}
+	if _, err := st.Pool.Exec(ctx, `UPDATE users SET unlisted = FALSE WHERE id = $1`, userID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.Pool.Exec(ctx, `UPDATE channels SET activitypub_enabled = FALSE WHERE id = $1`, channelID); err != nil {
 		t.Fatal(err)
 	}
-	if listed()[public] {
+	if listed(t)[public] {
 		t.Error("a channel that opted out of ActivityPub is still in the instance outbox")
 	}
 }
@@ -249,10 +275,44 @@ func TestInstanceFollowerInboxesOnRealPG(t *testing.T) {
 	if !got[shared] || got[accepted+"/inbox"] || got[pending+"/inbox"] {
 		t.Errorf("inboxes = %v, want the accepted follower's shared inbox only", inboxes)
 	}
+	// Never to a blocked actor, nor to an instance on the blocklist.
+	has := func() bool {
+		t.Helper()
+		inboxes, err := q.ListAcceptedInstanceFollowerInboxes(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, in := range inboxes {
+			if in == shared {
+				return true
+			}
+		}
+		return false
+	}
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO blocked_remote_actors (remote_actor_url, reason) VALUES ($1, '')`, accepted); err != nil {
+		t.Fatal(err)
+	}
+	if has() {
+		t.Error("an admin-blocked actor still receives Announces")
+	}
+	if _, err := st.Pool.Exec(ctx, `DELETE FROM blocked_remote_actors WHERE remote_actor_url = $1`, accepted); err != nil {
+		t.Fatal(err)
+	}
+	domain := strings.TrimPrefix(strings.SplitN(accepted, "/accounts", 2)[0], "https://")
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO blocked_instances (domain) VALUES ($1)`, domain); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM blocked_instances WHERE domain = $1`, domain)
+	})
+	if has() {
+		t.Error("an instance on the blocklist still receives Announces")
+	}
 }
 
-// The backfill cooldown is a database fact: one claim per actor per window,
-// outliving the follower row (an Undo deletes that) and the actor cache row.
+// The backfill cooldown is a database fact: one claim per HOST per window,
+// outliving the follower row (an Undo deletes that), whatever the case of the
+// host a request spells.
 func TestInstanceFollowerBackfillCooldownOnRealPG(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -262,25 +322,25 @@ func TestInstanceFollowerBackfillCooldownOnRealPG(t *testing.T) {
 	}
 	defer st.Close()
 	q := st.Queries()
-	actor := "https://pt-" + uuid.NewString()[:8] + ".example/accounts/peertube"
+	host := "pt-" + uuid.NewString()[:8] + ".example"
 	t.Cleanup(func() {
-		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM instance_follower_backfills WHERE remote_actor_url = $1`, actor)
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM instance_follower_backfills WHERE host = $1`, host)
 	})
-	claim := func() int64 {
+	claim := func(h string) int64 {
 		t.Helper()
-		n, err := q.ClaimInstanceFollowerBackfill(ctx, sqlcgen.ClaimInstanceFollowerBackfillParams{RemoteActorUrl: actor, CooldownSeconds: 86400})
+		n, err := q.ClaimInstanceFollowerBackfill(ctx, sqlcgen.ClaimInstanceFollowerBackfillParams{Host: h, CooldownSeconds: 86400})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return n
 	}
-	if claim() != 1 || claim() != 0 {
-		t.Fatal("want the first claim granted and a second one inside the window refused")
+	if claim(host) != 1 || claim(strings.ToUpper(host)) != 0 {
+		t.Fatal("want the first claim granted and a second one for the same host inside the window refused")
 	}
-	if _, err := st.Pool.Exec(ctx, `UPDATE instance_follower_backfills SET last_backfill_at = now() - interval '25 hours' WHERE remote_actor_url = $1`, actor); err != nil {
+	if _, err := st.Pool.Exec(ctx, `UPDATE instance_follower_backfills SET last_backfill_at = now() - interval '25 hours' WHERE host = $1`, host); err != nil {
 		t.Fatal(err)
 	}
-	if claim() != 1 || claim() != 0 {
+	if claim(host) != 1 || claim(host) != 0 {
 		t.Error("want a claim granted again once the window has passed, and only one")
 	}
 }

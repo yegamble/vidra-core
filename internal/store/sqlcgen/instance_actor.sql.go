@@ -12,24 +12,24 @@ import (
 )
 
 const claimInstanceFollowerBackfill = `-- name: ClaimInstanceFollowerBackfill :execrows
-INSERT INTO instance_follower_backfills (remote_actor_url, last_backfill_at)
-VALUES ($1, now())
-ON CONFLICT (remote_actor_url) DO UPDATE SET last_backfill_at = now()
+INSERT INTO instance_follower_backfills (host, last_backfill_at)
+VALUES (lower($1), now())
+ON CONFLICT (host) DO UPDATE SET last_backfill_at = now()
 WHERE instance_follower_backfills.last_backfill_at
       <= now() - make_interval(secs => $2::int)
 `
 
 type ClaimInstanceFollowerBackfillParams struct {
-	RemoteActorUrl  string `json:"remote_actor_url"`
+	Host            string `json:"host"`
 	CooldownSeconds int32  `json:"cooldown_seconds"`
 }
 
-// Atomically claims the new-follower backfill for one remote instance actor:
+// Atomically claims the new-follower backfill for one remote HOST:
 // 1 = claimed (never backfilled, or longer ago than the cooldown), 0 = it was
 // backfilled inside the window and gets nothing now. Concurrent Follows race
 // on the primary key, so at most one of them wins.
 func (q *Queries) ClaimInstanceFollowerBackfill(ctx context.Context, arg ClaimInstanceFollowerBackfillParams) (int64, error) {
-	result, err := q.db.Exec(ctx, claimInstanceFollowerBackfill, arg.RemoteActorUrl, arg.CooldownSeconds)
+	result, err := q.db.Exec(ctx, claimInstanceFollowerBackfill, arg.Host, arg.CooldownSeconds)
 	if err != nil {
 		return 0, err
 	}
@@ -59,15 +59,9 @@ func (q *Queries) CountAcceptedInstanceFollowing(ctx context.Context) (int64, er
 }
 
 const countInstanceOutboxVideos = `-- name: CountInstanceOutboxVideos :one
-SELECT count(*)::bigint
-FROM videos v
-JOIN channels c ON c.id = v.channel_id
-WHERE v.privacy = 'public' AND v.state = 'published' AND c.activitypub_enabled
-  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+SELECT count(*)::bigint FROM instance_outbox_videos
 `
 
-// How many rows ListInstanceOutboxVideoIDs pages over; the predicate must stay
-// identical.
 func (q *Queries) CountInstanceOutboxVideos(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countInstanceOutboxVideos)
 	var column_1 int64
@@ -185,12 +179,48 @@ func (q *Queries) InstanceActorNameReserved(ctx context.Context, lower string) (
 	return reserved, err
 }
 
+const isChannelOwnerUnlisted = `-- name: IsChannelOwnerUnlisted :one
+SELECT EXISTS (
+    SELECT 1 FROM channels c JOIN users u ON u.id = c.owner_id
+    WHERE c.id = $1 AND u.unlisted
+) AS unlisted
+`
+
+// Whether a channel's owner has opted out of discovery (0047). Their videos are
+// never announced to instance followers, so neither are their edits,
+// retractions or comments.
+func (q *Queries) IsChannelOwnerUnlisted(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, isChannelOwnerUnlisted, id)
+	var unlisted bool
+	err := row.Scan(&unlisted)
+	return unlisted, err
+}
+
+const isVideoInInstanceOutbox = `-- name: IsVideoInInstanceOutbox :one
+SELECT EXISTS (SELECT 1 FROM instance_outbox_videos WHERE id = $1) AS listed
+`
+
+// The live Announce's gate: the same view, for one video.
+func (q *Queries) IsVideoInInstanceOutbox(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, isVideoInInstanceOutbox, id)
+	var listed bool
+	err := row.Scan(&listed)
+	return listed, err
+}
+
 const listAcceptedInstanceFollowerInboxes = `-- name: ListAcceptedInstanceFollowerInboxes :many
 SELECT DISTINCT COALESCE(ra.shared_inbox_url, ra.inbox_url) AS inbox
 FROM instance_followers f
 JOIN remote_actors ra ON ra.actor_url = f.remote_actor_url
 WHERE f.state = 'accepted'
   AND COALESCE(ra.shared_inbox_url, ra.inbox_url) <> ''
+  -- Nothing to an instance on the blocklist, or to an actor an admin blocked
+  -- (the drain would cancel those deliveries; they are never queued).
+  AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = lower(ra.domain))
+  AND NOT EXISTS (
+      SELECT 1 FROM remote_actor_block_reach r
+      WHERE r.blocker_id IS NULL AND r.actor_url = ra.actor_url
+  )
 ORDER BY inbox
 `
 
@@ -218,12 +248,8 @@ func (q *Queries) ListAcceptedInstanceFollowerInboxes(ctx context.Context) ([]st
 }
 
 const listInstanceOutboxVideoIDs = `-- name: ListInstanceOutboxVideoIDs :many
-SELECT v.id
-FROM videos v
-JOIN channels c ON c.id = v.channel_id
-WHERE v.privacy = 'public' AND v.state = 'published' AND c.activitypub_enabled
-  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
-ORDER BY v.created_at DESC, v.id DESC
+SELECT id FROM instance_outbox_videos
+ORDER BY created_at DESC, id DESC
 LIMIT $2 OFFSET $1
 `
 
@@ -232,10 +258,8 @@ type ListInstanceOutboxVideoIDsParams struct {
 	ResultLimit  int32 `json:"result_limit"`
 }
 
-// The instance actor's outbox, newest first: every video a stranger may see
-// that federates at all — public, published, not moderator-blocked, on a
-// channel that has not opted out of ActivityPub (0096). The same predicate
-// AnnounceVideo applies, so the outbox and the push never disagree.
+// The instance actor's outbox, newest first: the instance_outbox_videos view
+// (migration 0166) is the one definition of what it federates.
 func (q *Queries) ListInstanceOutboxVideoIDs(ctx context.Context, arg ListInstanceOutboxVideoIDsParams) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, listInstanceOutboxVideoIDs, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {

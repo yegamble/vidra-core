@@ -50,37 +50,45 @@ FROM instance_followers f
 JOIN remote_actors ra ON ra.actor_url = f.remote_actor_url
 WHERE f.state = 'accepted'
   AND COALESCE(ra.shared_inbox_url, ra.inbox_url) <> ''
+  -- Nothing to an instance on the blocklist, or to an actor an admin blocked
+  -- (the drain would cancel those deliveries; they are never queued).
+  AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = lower(ra.domain))
+  AND NOT EXISTS (
+      SELECT 1 FROM remote_actor_block_reach r
+      WHERE r.blocker_id IS NULL AND r.actor_url = ra.actor_url
+  )
 ORDER BY inbox;
 
 -- name: ListInstanceOutboxVideoIDs :many
--- The instance actor's outbox, newest first: every video a stranger may see
--- that federates at all — public, published, not moderator-blocked, on a
--- channel that has not opted out of ActivityPub (0096). The same predicate
--- AnnounceVideo applies, so the outbox and the push never disagree.
-SELECT v.id
-FROM videos v
-JOIN channels c ON c.id = v.channel_id
-WHERE v.privacy = 'public' AND v.state = 'published' AND c.activitypub_enabled
-  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
-ORDER BY v.created_at DESC, v.id DESC
+-- The instance actor's outbox, newest first: the instance_outbox_videos view
+-- (migration 0166) is the one definition of what it federates.
+SELECT id FROM instance_outbox_videos
+ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: CountInstanceOutboxVideos :one
--- How many rows ListInstanceOutboxVideoIDs pages over; the predicate must stay
--- identical.
-SELECT count(*)::bigint
-FROM videos v
-JOIN channels c ON c.id = v.channel_id
-WHERE v.privacy = 'public' AND v.state = 'published' AND c.activitypub_enabled
-  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id);
+SELECT count(*)::bigint FROM instance_outbox_videos;
+
+-- name: IsVideoInInstanceOutbox :one
+-- The live Announce's gate: the same view, for one video.
+SELECT EXISTS (SELECT 1 FROM instance_outbox_videos WHERE id = $1) AS listed;
+
+-- name: IsChannelOwnerUnlisted :one
+-- Whether a channel's owner has opted out of discovery (0047). Their videos are
+-- never announced to instance followers, so neither are their edits,
+-- retractions or comments.
+SELECT EXISTS (
+    SELECT 1 FROM channels c JOIN users u ON u.id = c.owner_id
+    WHERE c.id = $1 AND u.unlisted
+) AS unlisted;
 
 -- name: ClaimInstanceFollowerBackfill :execrows
--- Atomically claims the new-follower backfill for one remote instance actor:
+-- Atomically claims the new-follower backfill for one remote HOST:
 -- 1 = claimed (never backfilled, or longer ago than the cooldown), 0 = it was
 -- backfilled inside the window and gets nothing now. Concurrent Follows race
 -- on the primary key, so at most one of them wins.
-INSERT INTO instance_follower_backfills (remote_actor_url, last_backfill_at)
-VALUES (sqlc.arg('remote_actor_url'), now())
-ON CONFLICT (remote_actor_url) DO UPDATE SET last_backfill_at = now()
+INSERT INTO instance_follower_backfills (host, last_backfill_at)
+VALUES (lower(sqlc.arg('host')), now())
+ON CONFLICT (host) DO UPDATE SET last_backfill_at = now()
 WHERE instance_follower_backfills.last_backfill_at
       <= now() - make_interval(secs => sqlc.arg('cooldown_seconds')::int);

@@ -398,7 +398,7 @@ type InstanceFollower struct {
 }
 
 type InstanceFollowerBackfill struct {
-	RemoteActorUrl string    `json:"remote_actor_url"`
+	Host           string    `json:"host"`
 	LastBackfillAt time.Time `json:"last_backfill_at"`
 }
 
@@ -423,6 +423,11 @@ type InstanceImage struct {
 	SizeBytes   int64     `json:"size_bytes"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type InstanceOutboxVideo struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type InstanceSetting struct {
