@@ -68,7 +68,7 @@ type Repository interface {
 	DeleteOAuthIdentitiesByUser(ctx context.Context, userID uuid.UUID) error
 	DeleteUserMFA(ctx context.Context, userID uuid.UUID) (int64, error)
 	// DeleteUserBan: the ban reason is staff prose about a person; erasure anonymises
-	// the row in place, so the 0154 CASCADE never fires and it must go explicitly.
+	// the row in place, so the 0155 CASCADE never fires and it must go explicitly.
 	DeleteUserBan(ctx context.Context, userID uuid.UUID) error
 	DeleteRecoveryCodes(ctx context.Context, userID uuid.UUID) error
 	DeleteNotificationsByUser(ctx context.Context, userID uuid.UUID) error

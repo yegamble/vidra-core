@@ -64,7 +64,7 @@ var (
 	ErrBanReasonTooLong = errors.New("admin: ban reason is too long")
 )
 
-// MaxBanReasonLen bounds a ban reason in characters (also a CHECK in 0154).
+// MaxBanReasonLen bounds a ban reason in characters (also a CHECK in 0155).
 const MaxBanReasonLen = 500
 
 // Repository is the data access the admin service needs. *sqlcgen.Queries
@@ -91,7 +91,7 @@ type Repository interface {
 	// factor (a pending enrollment does not count). The list carries the same
 	// fact inline; this is for the single-user views.
 	UserHasMFAEnabled(ctx context.Context, userID uuid.UUID) (bool, error)
-	// The ban explanation (0154): written with a deactivation, cleared with a reactivation.
+	// The ban explanation (0155): written with a deactivation, cleared with a reactivation.
 	UpsertUserBan(ctx context.Context, arg sqlcgen.UpsertUserBanParams) error
 	DeleteUserBan(ctx context.Context, userID uuid.UUID) error
 	GetUserBan(ctx context.Context, userID uuid.UUID) (sqlcgen.UserBan, error)

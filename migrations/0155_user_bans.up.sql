@@ -1,4 +1,4 @@
--- 0154: why and by whom an account was banned. users.is_active stays THE ban
+-- 0155: why and by whom an account was banned. users.is_active stays THE ban
 -- flag (every session lookup already reads it); this row only explains it, so
 -- the moderator who banned someone, the date and the stated reason survive in
 -- the console and in the notice the user is sent (DSA statement of reasons).

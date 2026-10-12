@@ -13,7 +13,7 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// The ban explanation (0154): upsert replaces, ListUsers joins it onto the row
+// The ban explanation (0155): upsert replaces, ListUsers joins it onto the row
 // (and leaves un-banned rows null), delete clears it, and the CHECK refuses an
 // over-long reason.
 func TestUserBanExplanationRoundTrip(t *testing.T) {

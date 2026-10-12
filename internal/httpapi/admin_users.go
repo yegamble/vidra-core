@@ -51,7 +51,7 @@ type adminUserView struct {
 	// returns at all. A pending enrollment reads as false, exactly as the
 	// account's own status endpoint reports it.
 	MFAEnabled bool `json:"mfa_enabled"`
-	// The ban explanation (0154): why, when and by whom an inactive account was
+	// The ban explanation (0155): why, when and by whom an inactive account was
 	// banned. Null on an account that was never banned or was reinstated.
 	BanReason *string    `json:"ban_reason"`
 	BannedAt  *time.Time `json:"banned_at"`
