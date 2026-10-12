@@ -137,11 +137,12 @@ func (q *Queries) InsertChannelFollowBackIfAbsent(ctx context.Context, arg Inser
 	return result.RowsAffected(), nil
 }
 
-const insertRemoteFollowPending = `-- name: InsertRemoteFollowPending :exec
+const insertRemoteFollowPending = `-- name: InsertRemoteFollowPending :one
 
 INSERT INTO remote_follows (channel_id, remote_actor_url, state, follow_activity_url)
 VALUES ($1, $2, 'pending', $3)
 ON CONFLICT (channel_id, remote_actor_url) DO NOTHING
+RETURNING id
 `
 
 type InsertRemoteFollowPendingParams struct {
@@ -160,12 +161,15 @@ type InsertRemoteFollowPendingParams struct {
 // delivered on approval). An existing row — accepted OR pending — is left
 // untouched: the gate is never retroactive and a re-Follow never downgrades an
 // accepted follower.
-func (q *Queries) InsertRemoteFollowPending(ctx context.Context, arg InsertRemoteFollowPendingParams) error {
-	_, err := q.db.Exec(ctx, insertRemoteFollowPending, arg.ChannelID, arg.RemoteActorUrl, arg.FollowActivityUrl)
-	return err
+func (q *Queries) InsertRemoteFollowPending(ctx context.Context, arg InsertRemoteFollowPendingParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertRemoteFollowPending, arg.ChannelID, arg.RemoteActorUrl, arg.FollowActivityUrl)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const listPendingRemoteFollows = `-- name: ListPendingRemoteFollows :many
+
 SELECT rf.id, rf.channel_id, rf.remote_actor_url, rf.follow_activity_url, rf.created_at,
        c.handle AS channel_handle,
        COALESCE(ra.preferred_username, '')::text AS preferred_username,
@@ -194,6 +198,8 @@ type ListPendingRemoteFollowsRow struct {
 	Domain            string    `json:"domain"`
 }
 
+// Returns the new row's id, or pgx.ErrNoRows when a row already existed (nothing
+// was queued, so nothing is announced to staff).
 // The admin follower-approval queue, newest first, with the followed channel's
 // handle and the follower's cached identity (empty strings when the actor
 // cache row is gone).

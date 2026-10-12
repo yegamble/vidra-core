@@ -31,6 +31,8 @@ type fakeRepo struct {
 	// (same pass-through contract as fanOut above; rules proved in
 	// store.TestNewReportStaffFanOutOnRealPG).
 	reportFanOut []uuid.UUID
+	// staffQueue records the three approval-queue fan-outs as "type:subject".
+	staffQueue []string
 	// replyRecipients answers CommentReplyRecipient: comment id -> the row the
 	// real query would return. An absent key is pgx.ErrNoRows, exactly like the
 	// :one query's "nobody to notify" answer. replyErr, when set, fails the
@@ -118,6 +120,21 @@ func (f *fakeRepo) NotifyStaffOfNewReport(_ context.Context, reportID uuid.UUID)
 		return 0, f.fanOutErr
 	}
 	return f.fanOutN, nil
+}
+
+func (f *fakeRepo) NotifyStaffOfNewRegistrationRequest(_ context.Context, id uuid.UUID) (int64, error) {
+	f.staffQueue = append(f.staffQueue, "new_registration_request:"+id.String())
+	return f.fanOutN, f.fanOutErr
+}
+
+func (f *fakeRepo) NotifyStaffOfQuarantinedUpload(_ context.Context, id uuid.UUID) (int64, error) {
+	f.staffQueue = append(f.staffQueue, "upload_quarantined:"+id.String())
+	return f.fanOutN, f.fanOutErr
+}
+
+func (f *fakeRepo) NotifyStaffOfFederationFollowerRequest(_ context.Context, id uuid.UUID) (int64, error) {
+	f.staffQueue = append(f.staffQueue, "federation_follower_request:"+id.String())
+	return f.fanOutN, f.fanOutErr
 }
 
 func prefKey(userID uuid.UUID, typ string) string { return userID.String() + "\x00" + typ }
@@ -933,5 +950,41 @@ func TestNotifyVideoUnblockedSkipsSelfAndDisabled(t *testing.T) {
 	}
 	if !repo.notifs[0].VideoID.Valid {
 		t.Error("video_unblocked carries no video, so it cannot link back to the restored video")
+	}
+}
+
+// TestStaffQueueTypesRegisteredAndFanOut: the three approval-queue types are
+// registered with the preference model (so users can mute them and the email
+// work can pick them up) and each Notify* method reaches its fan-out.
+func TestStaffQueueTypesRegisteredAndFanOut(t *testing.T) {
+	repo := &fakeRepo{fanOutN: 2}
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	for _, typ := range []string{TypeNewRegistrationRequest, TypeUploadQuarantined, TypeFederationFollowerRequest} {
+		if !knownType(typ) {
+			t.Errorf("knownType(%q) = false", typ)
+		}
+		found := false
+		for _, k := range KnownTypes() {
+			found = found || k == typ
+		}
+		if !found {
+			t.Errorf("KnownTypes() missing %s", typ)
+		}
+	}
+
+	id := uuid.New()
+	for name, call := range map[string]func() (int64, error){
+		TypeNewRegistrationRequest:    func() (int64, error) { return svc.NotifyNewRegistrationRequest(ctx, id) },
+		TypeUploadQuarantined:         func() (int64, error) { return svc.NotifyUploadQuarantined(ctx, id) },
+		TypeFederationFollowerRequest: func() (int64, error) { return svc.NotifyFederationFollowerRequest(ctx, id) },
+	} {
+		if n, err := call(); err != nil || n != 2 {
+			t.Errorf("%s: n=%d err=%v, want 2, nil", name, n, err)
+		}
+	}
+	if len(repo.staffQueue) != 3 {
+		t.Errorf("fan-outs reached = %v, want 3", repo.staffQueue)
 	}
 }

@@ -31,6 +31,13 @@ func WithFlagReporting(file func(context.Context, moderation.RemoteReport) (uuid
 	return func(s *Service) { s.fileFlagReport, s.notifyNewReport = file, notify }
 }
 
+// WithFollowerRequestHook registers a best-effort callback fired with the new
+// remote_follows id when a follow lands in the approval queue — the seam the
+// admin push notification uses (migration 0157).
+func WithFollowerRequestHook(fn func(context.Context, uuid.UUID)) Option {
+	return func(s *Service) { s.onFollowerRequest = fn }
+}
+
 // handleFlag (T07): a fediverse user reported OUR video, comment or account —
 // PeerTube sends one object, Mastodon [account, statuses...]. One report per
 // LOCAL object; an admin-blocked actor is refused like a blocked instance. A

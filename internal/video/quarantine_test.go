@@ -184,3 +184,40 @@ func TestRejectQuarantined(t *testing.T) {
 		t.Errorf("approve unknown = %v, want ErrNotFound", err)
 	}
 }
+
+// TestQuarantineHookFiresOnlyWhenParked: the staff-notification seam runs once
+// when an upload parks in the queue and never for one that publishes.
+func TestQuarantineHookFiresOnlyWhenParked(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		requires bool
+		want     int
+	}{{"parked", true, 1}, {"privileged owner publishes", false, 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			owner := uuid.New()
+			repo := newFakeRepo(owner)
+			repo.requiresQuarantine = tc.requires
+			var parked []uuid.UUID
+			svc := NewService(repo, memBackend(t),
+				WithQuarantineNewUploads(true),
+				WithQuarantineHook(func(_ context.Context, id uuid.UUID) { parked = append(parked, id) }),
+			)
+			v, err := svc.CreateDraft(context.Background(), uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, file, err := svc.AttachOriginal(context.Background(), owner, v.ID, UploadInput{
+				Filename: "clip.mp4", ContentType: "video/mp4", Reader: strings.NewReader("bytes"),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.Process(context.Background(), v.ID, file.StorageKey); err != nil {
+				t.Fatal(err)
+			}
+			if len(parked) != tc.want || (tc.want == 1 && parked[0] != v.ID) {
+				t.Errorf("quarantine hook calls = %v, want %d", parked, tc.want)
+			}
+		})
+	}
+}

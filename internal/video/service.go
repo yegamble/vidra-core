@@ -324,6 +324,7 @@ type Service struct {
 	viewDeduper          ViewDeduper
 	quarantineNewUploads func() bool
 	onPublish            []func(context.Context, uuid.UUID)
+	onQuarantine         []func(context.Context, uuid.UUID)
 	onTranscode          func(context.Context, uuid.UUID, string)
 	onUpdate             []func(context.Context, uuid.UUID, bool)
 	onDelete             []func(context.Context, uuid.UUID, uuid.UUID, bool)
@@ -461,6 +462,26 @@ func WithQuarantineGate(decide func() bool) Option {
 // Without any, Process does no post-publish work.
 func WithPublishHook(fn func(context.Context, uuid.UUID)) Option {
 	return func(s *Service) { s.onPublish = append(s.onPublish, fn) }
+}
+
+// WithQuarantineHook registers a best-effort callback invoked after an upload
+// parks in the 'quarantined' review queue (either the new-upload gate or a
+// quarantine-mode scan error) — the seam the staff notification uses. Hooks
+// append and run in registration order.
+func WithQuarantineHook(fn func(context.Context, uuid.UUID)) Option {
+	return func(s *Service) { s.onQuarantine = append(s.onQuarantine, fn) }
+}
+
+// parkQuarantined moves a processed upload into the quarantine queue and, only
+// if that succeeded, tells the quarantine hooks.
+func (s *Service) parkQuarantined(ctx context.Context, videoID uuid.UUID) (sqlcgen.Video, error) {
+	v, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "quarantined"})
+	if err == nil {
+		for _, hook := range s.onQuarantine {
+			hook(ctx, videoID)
+		}
+	}
+	return v, err
 }
 
 // WithTranscodeHook registers a callback invoked (best-effort, synchronously)
@@ -1184,7 +1205,7 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		// moderator review (the existing quarantine queue) instead of publishing.
 		// No hooks fire — a moderator approve/reject runs the publish transition.
 		if scanQuarantine {
-			return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "quarantined"})
+			return s.parkQuarantined(ctx, videoID)
 		}
 		// Quarantine hold (§11): with QUARANTINE_NEW_UPLOADS on, a non-privileged
 		// owner's finished upload parks in 'quarantined' before any scheduled hold
@@ -1193,7 +1214,7 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		// quarantines rather than silently publishing past moderation.
 		if s.quarantineNewUploads != nil && s.quarantineNewUploads() {
 			if requires, qerr := s.repo.UploadRequiresQuarantine(ctx, videoID); qerr != nil || requires {
-				return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "quarantined"})
+				return s.parkQuarantined(ctx, videoID)
 			}
 		}
 		v, gerr := s.GetByID(ctx, videoID)

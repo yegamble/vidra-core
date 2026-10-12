@@ -449,7 +449,26 @@ func run() error {
 	}
 
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL)
+	// notifsvc is built far below; the staff approval-queue hooks (registration
+	// requests, quarantined uploads, follower requests) close over it and are
+	// nil-guarded, the same deferred-service seam as the publish hooks.
+	var notifsvc *notification.Service
+	staffQueueHook := func(what string, fan func(context.Context, uuid.UUID) (int64, error)) func(context.Context, uuid.UUID) {
+		return func(ctx context.Context, id uuid.UUID) {
+			if notifsvc == nil {
+				return
+			}
+			// Best-effort: a notification failure never fails the action.
+			if _, err := fan(ctx, id); err != nil {
+				logger.Warn("staff queue notification failed", "queue", what, "subject_id", id, "error", err)
+			}
+		}
+	}
 	var authOpts []auth.Option
+	authOpts = append(authOpts, auth.WithRegistrationRequestHook(staffQueueHook("registration_request",
+		func(ctx context.Context, id uuid.UUID) (int64, error) {
+			return notifsvc.NotifyNewRegistrationRequest(ctx, id)
+		})))
 
 	// Outbound mail configuration (migration 0151). The credential is sealed at
 	// rest with the MFA KEK chain; without a KEK the panel still READS and an
@@ -1310,7 +1329,10 @@ func run() error {
 	// on notifications) and best-effort: a fan-out failure is logged and never
 	// touches the publish. notifsvc is built further down, so this takes the
 	// same deferred-service seam as the federation/ATProto hooks below.
-	var notifsvc *notification.Service
+	vopts = append(vopts, video.WithQuarantineHook(staffQueueHook("upload_quarantined",
+		func(ctx context.Context, id uuid.UUID) (int64, error) {
+			return notifsvc.NotifyUploadQuarantined(ctx, id)
+		})))
 	vopts = append(vopts, video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
 		if notifsvc == nil {
 			return
@@ -2205,6 +2227,12 @@ func run() error {
 		// comment or account) lands in the local moderation queue and fans
 		// out new_report to staff, exactly as a local report does.
 		federation.WithFlagReporting(moderationsvc.ReportFromRemote, notifsvc.NotifyNewReport),
+		// A follow that lands in the approval queue pings the admins who
+		// approve it (migration 0157).
+		federation.WithFollowerRequestHook(staffQueueHook("federation_follower_request",
+			func(ctx context.Context, id uuid.UUID) (int64, error) {
+				return notifsvc.NotifyFederationFollowerRequest(ctx, id)
+			})),
 		// Federation policy gates (config-parity W12): runtime provider funcs
 		// over the settings overlay, read per inbound activity so an admin
 		// change applies without a restart. All gate the ActivityPub inbox

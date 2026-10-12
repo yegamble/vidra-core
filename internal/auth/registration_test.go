@@ -294,3 +294,23 @@ func TestRegistrationDecisionsSurviveADeadMailer(t *testing.T) {
 		t.Errorf("pending queue = %+v, want both decisions recorded despite the mail failures", list)
 	}
 }
+
+// TestRequestRegistrationFiresHookOnlyForNewRequests: the staff push seam runs
+// once per genuinely filed request and never for a refused duplicate.
+func TestRequestRegistrationFiresHookOnlyForNewRequests(t *testing.T) {
+	ctx := context.Background()
+	var got []uuid.UUID
+	svc := NewService(newFakeRepo(), newTestIssuer(), time.Hour,
+		WithRegistrationRequestHook(func(_ context.Context, id uuid.UUID) { got = append(got, id) }))
+
+	req, err := svc.RequestRegistration(ctx, regInput("bob", "bob@example.test"), "")
+	if err != nil {
+		t.Fatalf("RequestRegistration: %v", err)
+	}
+	if _, err := svc.RequestRegistration(ctx, regInput("bob", "bob@example.test"), ""); err != ErrConflict {
+		t.Fatalf("duplicate err = %v, want ErrConflict", err)
+	}
+	if len(got) != 1 || got[0] != req.ID {
+		t.Errorf("hook calls = %v, want exactly [%s]", got, req.ID)
+	}
+}
