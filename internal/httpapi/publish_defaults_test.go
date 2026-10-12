@@ -94,12 +94,11 @@ func TestCreateVideoSeedsOverriddenPublishDefaults(t *testing.T) {
 }
 
 // TestCreateVideoRejectsBadCommentsPolicy: the create/update enums refuse
-// anything outside enabled|disabled (requires_approval is deliberately
-// deferred — parity ledger §13).
+// anything outside enabled|disabled|requires_approval (0161).
 func TestCreateVideoRejectsBadCommentsPolicy(t *testing.T) {
 	srv := videoServer(t)
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
-	rec := postJSONAuth(srv, "/api/v1/channels/ada/videos", `{"title":"x","comments_policy":"requires_approval"}`, tok)
+	rec := postJSONAuth(srv, "/api/v1/channels/ada/videos", `{"title":"x","comments_policy":"moderated"}`, tok)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("create with bad policy = %d, want 422; body=%s", rec.Code, rec.Body.String())
 	}

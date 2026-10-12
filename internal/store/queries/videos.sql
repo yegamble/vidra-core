@@ -698,7 +698,10 @@ FROM (
            ''::text AS short_code
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
-    WHERE EXISTS (
+    -- local_only is the zero-value-safe polarity: a caller that sets nothing
+    -- (every direct query user) keeps the remote branch.
+    WHERE NOT sqlc.arg('local_only')::bool
+      AND EXISTS (
           SELECT 1 FROM remote_channel_follows rcf
           WHERE rcf.user_id = sqlc.arg('follower_id')
             AND rcf.remote_actor_url = rv.remote_actor_url

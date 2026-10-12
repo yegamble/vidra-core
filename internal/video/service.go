@@ -643,17 +643,17 @@ type CreateInput struct {
 	PublishAfterTranscode bool
 }
 
-// Per-video comment-policy values (config-parity W9). PeerTube's third tier
-// requires_approval is deliberately deferred (no comment-approval queue; see
-// the parity ledger §13).
+// Per-video comment-policy values (config-parity W9); requires_approval (0161)
+// holds comments from anyone but the video's reviewers until one approves it.
 const (
-	CommentsPolicyEnabled  = "enabled"
-	CommentsPolicyDisabled = "disabled"
+	CommentsPolicyEnabled          = "enabled"
+	CommentsPolicyDisabled         = "disabled"
+	CommentsPolicyRequiresApproval = "requires_approval"
 )
 
 // IsCommentsPolicy reports whether v is a valid per-video comment policy.
 func IsCommentsPolicy(v string) bool {
-	return v == CommentsPolicyEnabled || v == CommentsPolicyDisabled
+	return v == CommentsPolicyEnabled || v == CommentsPolicyDisabled || v == CommentsPolicyRequiresApproval
 }
 
 // PublishDefaults are the instance-level publish defaults (config-parity W9,
@@ -2677,7 +2677,21 @@ func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter Fee
 // first, each carrying discovery-card data, with the matching total. The caller
 // clamps limit/offset.
 func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]FeedItem, int64, error) {
+	return s.listSubscriptions(ctx, userID, limit, offset, true)
+}
+
+// ListLocalSubscriptions is ListSubscriptions without the remote branch of the
+// UNION, filtered IN SQL so the LIMIT counts only rows the caller will keep (the
+// token-gated RSS feed cannot render remote cards, and filtering after the
+// LIMIT let a busy remote follow crowd local videos out of the window).
+func (s *Service) ListLocalSubscriptions(ctx context.Context, userID uuid.UUID, limit int32) ([]FeedItem, error) {
+	items, _, err := s.listSubscriptions(ctx, userID, limit, 0, false)
+	return items, err
+}
+
+func (s *Service) listSubscriptions(ctx context.Context, userID uuid.UUID, limit, offset int32, includeRemote bool) ([]FeedItem, int64, error) {
 	rows, err := s.repo.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{
+		LocalOnly:    !includeRemote,
 		FollowerID:   userID,
 		ResultLimit:  limit,
 		ResultOffset: offset,
@@ -2685,9 +2699,11 @@ func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := s.repo.CountSubscriptionVideos(ctx, userID)
-	if err != nil {
-		return nil, 0, err
+	var total int64
+	if includeRemote { // the total is only read by the paginated API
+		if total, err = s.repo.CountSubscriptionVideos(ctx, userID); err != nil {
+			return nil, 0, err
+		}
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
