@@ -233,3 +233,34 @@ func TestRemoteReholdFiresTheHeldHook(t *testing.T) {
 		t.Errorf("held hook after a re-holding Update = %v, want [%s]", fired, c.ID)
 	}
 }
+
+// TestNoteResentToAnotherVideoChangesNothing: the hold decision comes from the
+// stored comment's own video — a re-send of a known Note id naming a different
+// video is accepted and ignored, leaving the stored comment as it was.
+func TestNoteResentToAnotherVideoChangesNothing(t *testing.T) {
+	approval, open := uuid.New(), uuid.New()
+	repo := newNotesRepo(approval)
+	v := repo.videosByID[approval]
+	v.CommentsPolicy = "requires_approval"
+	repo.videosByID[approval] = v
+	o := v
+	o.ID, o.CommentsPolicy = open, "enabled"
+	repo.videosByID[open] = o
+	svc := NewService(repo, WithBaseURL(noteBase))
+	ctx := context.Background()
+	const noteID = "https://remote.example/comments/x1"
+	if err := svc.HandleInbox(ctx, remoteBob, []byte(createNote("https://remote.example/act/x1", remoteBob, noteID, remoteBob,
+		noteBase+"/videos/"+approval.String(), "approved text"))); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	c := onlyComment(t, repo)
+	c.HeldForReview = false
+	repo.commentsByID[c.ID] = c
+	if err := svc.HandleInbox(ctx, remoteBob, []byte(createNote("https://remote.example/act/x2", remoteBob, noteID, remoteBob,
+		noteBase+"/videos/"+open.String(), "different text"))); err != nil {
+		t.Fatalf("re-send: %v", err)
+	}
+	if got := onlyComment(t, repo); got.Body != "approved text" || got.VideoID != approval || got.HeldForReview {
+		t.Errorf("after a re-send to another video: %+v, want the stored comment unchanged", got)
+	}
+}

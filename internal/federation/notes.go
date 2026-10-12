@@ -118,6 +118,9 @@ func (s *Service) handleCreateNote(ctx context.Context, act inboxActivity, signe
 		RemoteObjectUrl:  &note.ID,
 		HeldForReview:    held,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // a known Note id on another video: never moved (0161)
+	}
 	if err != nil {
 		return err
 	}

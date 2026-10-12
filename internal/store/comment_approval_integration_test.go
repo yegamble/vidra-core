@@ -130,18 +130,22 @@ func TestHeldCommentVisibilityOnRealPG(t *testing.T) {
 		t.Errorf("reply recipient for a held reply: err=%v, want no row", err)
 	}
 
+	// A stale version (the comment changed since it was reviewed) approves nothing.
+	if _, err := q.ApproveComment(ctx, sqlcgen.ApproveCommentParams{ID: held.ID, ExpectedUpdatedAt: held.UpdatedAt.Add(-time.Second)}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("stale-version approve err = %v, want no row", err)
+	}
 	// Approval: exactly one winner, then the comment is everyone's.
-	got, err := q.ApproveComment(ctx, held.ID)
+	got, err := approveCurrent(ctx, q, held.ID)
 	if err != nil || got.HeldForReview {
 		t.Fatalf("first approve: held=%v err=%v, want released", got.HeldForReview, err)
 	}
 	if !got.UpdatedAt.Equal(held.UpdatedAt) {
 		t.Errorf("approval bumped updated_at (%v -> %v); it is not an edit", held.UpdatedAt, got.UpdatedAt)
 	}
-	if _, err := q.ApproveComment(ctx, held.ID); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := approveCurrent(ctx, q, held.ID); !errors.Is(err, pgx.ErrNoRows) {
 		t.Errorf("second approve err = %v, want no row (nothing left to release)", err)
 	}
-	if _, err := q.ApproveComment(ctx, published.ID); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := approveCurrent(ctx, q, published.ID); !errors.Is(err, pgx.ErrNoRows) {
 		t.Errorf("approving a never-held comment err = %v, want no row", err)
 	}
 	if row, err := q.CommentVideoOwnerRecipient(ctx, held.ID); err != nil || row.RecipientID != owner {
@@ -179,7 +183,7 @@ func TestHeldCommentVisibilityOnRealPG(t *testing.T) {
 	if !first.HeldForReview || remote(false).HeldForReview != true {
 		t.Fatal("a re-delivered Note released a held remote comment")
 	}
-	if _, err := q.ApproveComment(ctx, first.ID); err != nil {
+	if _, err := approveCurrent(ctx, q, first.ID); err != nil {
 		t.Fatalf("approve remote: %v", err)
 	}
 	if remote(true).HeldForReview {
@@ -326,7 +330,7 @@ func TestManagedCommentQueueOnRealPG(t *testing.T) {
 		t.Errorf("unread comment_held rows after re-surface = %d, %v; want 2", unread, err)
 	}
 	// An approved comment no longer pings anyone.
-	if _, err := q.ApproveComment(ctx, held); err != nil {
+	if _, err := approveCurrent(ctx, q, held); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	if _, err := st.Pool.Exec(ctx, `DELETE FROM notifications WHERE comment_id = $1`, held); err != nil {
@@ -385,7 +389,7 @@ func TestHeldCommentReholdOnRealPG(t *testing.T) {
 	if n, _ := tq.CountComments(ctx); n != before {
 		t.Errorf("NodeInfo count with a held comment = %d, want %d (held excluded)", n, before)
 	}
-	if _, err := tq.ApproveComment(ctx, counted.ID); err != nil {
+	if _, err := approveCurrent(ctx, tq, counted.ID); err != nil {
 		t.Fatalf("approve in tx: %v", err)
 	}
 	if n, _ := tq.CountComments(ctx); n != before+1 {
@@ -399,7 +403,7 @@ func TestHeldCommentReholdOnRealPG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := q.ApproveComment(ctx, c.ID); err != nil {
+	if _, err := approveCurrent(ctx, q, c.ID); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	edit := func(body string, hold bool) bool {
@@ -442,7 +446,7 @@ func TestHeldCommentReholdOnRealPG(t *testing.T) {
 		return r
 	}
 	r := upsert("a")
-	if _, err := q.ApproveComment(ctx, r.ID); err != nil {
+	if _, err := approveCurrent(ctx, q, r.ID); err != nil {
 		t.Fatalf("approve remote: %v", err)
 	}
 	if upsert("a").HeldForReview {
@@ -451,4 +455,38 @@ func TestHeldCommentReholdOnRealPG(t *testing.T) {
 	if !upsert("b").HeldForReview {
 		t.Error("a changed-body re-delivery published unreviewed")
 	}
+
+	// The upsert never moves a comment to another video, nor takes its hold
+	// decision from one: a re-send of the same Note id naming a different
+	// video (comments enabled, so hold=false) changes nothing.
+	if _, err := approveCurrent(ctx, q, r.ID); err != nil {
+		t.Fatalf("re-approve remote: %v", err)
+	}
+	var other uuid.UUID
+	if err := st.Pool.QueryRow(ctx, `INSERT INTO videos (channel_id, title, privacy, state, comments_policy)
+		VALUES ($1, 'Open', 'public', 'published', 'enabled') RETURNING id`, channelID).Scan(&other); err != nil {
+		t.Fatalf("seed second video: %v", err)
+	}
+	_, err = q.CreateRemoteComment(ctx, sqlcgen.CreateRemoteCommentParams{
+		VideoID: other, Body: "elsewhere", RemoteActorUrl: &actor, RemoteAuthorName: &name,
+		RemoteObjectUrl: &object, HeldForReview: false,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("cross-video re-send err = %v, want no row (refused)", err)
+	}
+	got, err := q.GetComment(ctx, r.ID)
+	if err != nil || got.VideoID != videoID || got.Body != "b" || got.HeldForReview {
+		t.Errorf("after a cross-video re-send: video=%s body=%q held=%v err=%v, want the approved row untouched",
+			got.VideoID, got.Body, got.HeldForReview, err)
+	}
+}
+
+// approveCurrent approves a comment at its current version (updated_at) — what
+// a reviewer looking at it right now sends.
+func approveCurrent(ctx context.Context, q *sqlcgen.Queries, id uuid.UUID) (sqlcgen.Comment, error) {
+	cur, err := q.GetComment(ctx, id)
+	if err != nil {
+		return cur, err
+	}
+	return q.ApproveComment(ctx, sqlcgen.ApproveCommentParams{ID: id, ExpectedUpdatedAt: cur.UpdatedAt})
 }

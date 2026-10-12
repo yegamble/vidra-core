@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -77,7 +78,7 @@ func TestApproveIsOneWayAndFiresTheCreateHookOnce(t *testing.T) {
 		t.Fatalf("CreateHeld: %v", err)
 	}
 
-	got, released, err := svc.Approve(ctx, c.ID)
+	got, released, err := svc.Approve(ctx, c.ID, c.UpdatedAt)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -92,13 +93,13 @@ func TestApproveIsOneWayAndFiresTheCreateHookOnce(t *testing.T) {
 	}
 
 	// Idempotent: a second approval succeeds, releases nothing, fires nothing.
-	if _, released, err := svc.Approve(ctx, c.ID); err != nil || released {
+	if _, released, err := svc.Approve(ctx, c.ID, c.UpdatedAt); err != nil || released {
 		t.Errorf("second approve released=%v err=%v, want false/nil", released, err)
 	}
 	if len(created) != 1 {
 		t.Errorf("create hook fired %d times, want once", len(created))
 	}
-	if _, _, err := svc.Approve(ctx, uuid.New()); !errors.Is(err, ErrNotFound) {
+	if _, _, err := svc.Approve(ctx, uuid.New(), time.Time{}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("approve unknown err = %v, want ErrNotFound", err)
 	}
 }
@@ -211,5 +212,27 @@ func TestEditForReviewReholdsAndRetracts(t *testing.T) {
 	other, _ := svc.Create(ctx, uuid.New(), author, "reviewer's", nil)
 	if got, err := svc.Edit(ctx, other.ID, author, "reviewer's, edited"); err != nil || got.HeldForReview {
 		t.Errorf("plain Edit: held=%v err=%v, want published", got.HeldForReview, err)
+	}
+}
+
+// TestApproveRefusesAnEditedVersion: approving the version the reviewer saw
+// fails with ErrStale once the held comment was edited since, and releases
+// nothing; the current version approves.
+func TestApproveRefusesAnEditedVersion(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+	author := uuid.New()
+	c, _ := svc.CreateHeld(ctx, uuid.New(), author, "seen", nil)
+	time.Sleep(time.Millisecond)
+	edited, _ := svc.EditForReview(ctx, c.ID, author, "changed")
+	if _, released, err := svc.Approve(ctx, c.ID, c.UpdatedAt); !errors.Is(err, ErrStale) || released {
+		t.Fatalf("stale approve released=%v err=%v, want ErrStale", released, err)
+	}
+	if !repo.comments[c.ID].HeldForReview {
+		t.Fatal("a stale approval released the comment")
+	}
+	if _, released, err := svc.Approve(ctx, c.ID, edited.UpdatedAt); err != nil || !released {
+		t.Errorf("current approve released=%v err=%v, want released", released, err)
 	}
 }

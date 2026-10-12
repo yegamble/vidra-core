@@ -13,9 +13,9 @@ RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
 -- Store an inbound federated Note as a comment (remote-content §6): attributed
 -- to a remote actor (with a display-name snapshot) instead of a local user.
 -- Idempotent by the Note's ActivityPub object id — a re-delivered or updated
--- Note refreshes the body. held_for_review (0161) is never released here; on a
--- requires_approval video (held_for_review passed true) a re-delivery that
--- CHANGES the body re-holds it — an approved comment must not change unreviewed.
+-- Note refreshes the body — only on the comment's OWN video (no row otherwise),
+-- so the hold decision always comes from the stored row's video (0161): passed
+-- true there, a CHANGED body re-holds an approved comment; nothing releases one.
 INSERT INTO comments (video_id, body, parent_id, remote_actor_url, remote_author_name, remote_object_url, held_for_review)
 VALUES (sqlc.arg('video_id'), sqlc.arg('body'), sqlc.narg('parent_id'),
         sqlc.arg('remote_actor_url'), sqlc.arg('remote_author_name'), sqlc.arg('remote_object_url'),
@@ -24,6 +24,7 @@ ON CONFLICT (remote_object_url) DO UPDATE
     SET body = EXCLUDED.body, updated_at = now(),
         held_for_review = comments.held_for_review
             OR (EXCLUDED.held_for_review AND comments.body IS DISTINCT FROM EXCLUDED.body)
+    WHERE comments.video_id = EXCLUDED.video_id
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
           remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review;
 
@@ -170,15 +171,14 @@ RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
           remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review;
 
 -- name: ApproveComment :one
--- Release a held comment (0161): the one-way held -> published transition a
--- video manager performs. Conditional on the row STILL being held, so repeated
--- or concurrent approvals have exactly one winner — no row means "nothing to
--- do", and the caller fires the side effects that were withheld while it was
--- held (the reply notification, federation) only for the winner. Like the
--- creator heart it never bumps updated_at: approval is not an edit.
+-- Release a held comment (0161). Conditional on the row STILL being held, so
+-- repeated or concurrent approvals have exactly one winner (no row = nothing to
+-- do) and the withheld side effects fire once. Never bumps updated_at.
+-- expected_updated_at is the version the reviewer saw: an edit since then
+-- (updated_at moved) is not approved.
 UPDATE comments
 SET held_for_review = false
-WHERE id = sqlc.arg('id') AND held_for_review
+WHERE id = sqlc.arg('id') AND held_for_review AND updated_at = sqlc.arg('expected_updated_at')
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
           remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review;
 

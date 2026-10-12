@@ -39,6 +39,9 @@ var (
 	// (0161): the public cannot see the parent, so the reply would publish as
 	// an orphan. Approve the parent first.
 	ErrParentHeld = errors.New("comment: parent is held for review")
+	// ErrStale means an approval named a version (updated_at) the held comment
+	// no longer has: it was edited after the reviewer saw it.
+	ErrStale = errors.New("comment: changed since it was reviewed")
 	// ErrHeld means a pin was attempted on a held comment — pinning promotes a
 	// comment to the top of a thread its readers cannot see yet.
 	ErrHeld = errors.New("comment: comment is held for review")
@@ -69,7 +72,7 @@ type Repository interface {
 	SetVideoPinnedComment(ctx context.Context, arg sqlcgen.SetVideoPinnedCommentParams) error
 	// ApproveComment releases a held comment (0161); pgx.ErrNoRows when the row
 	// is missing or no longer held.
-	ApproveComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)
+	ApproveComment(ctx context.Context, arg sqlcgen.ApproveCommentParams) (sqlcgen.Comment, error)
 	// The managers' review queue (0161): comments on every video a user manages.
 	ListManagedVideoComments(ctx context.Context, arg sqlcgen.ListManagedVideoCommentsParams) ([]sqlcgen.ListManagedVideoCommentsRow, error)
 	CountManagedVideoComments(ctx context.Context, arg sqlcgen.CountManagedVideoCommentsParams) (int64, error)
@@ -208,9 +211,10 @@ func (s *Service) create(ctx context.Context, videoID, userID uuid.UUID, body st
 // Approve releases a held comment (0161); the HTTP layer authorized the caller.
 // released is true only for the call that performed the transition, so the
 // withheld create hook (federation announce) — and the caller's withheld
-// notifications — fire exactly once. An unknown comment is ErrNotFound.
-func (s *Service) Approve(ctx context.Context, commentID uuid.UUID) (WithAuthor, bool, error) {
-	_, err := s.repo.ApproveComment(ctx, commentID)
+// notifications — fire exactly once. version is the updated_at the reviewer
+// saw: a held comment edited since is ErrStale. An unknown one is ErrNotFound.
+func (s *Service) Approve(ctx context.Context, commentID uuid.UUID, version time.Time) (WithAuthor, bool, error) {
+	_, err := s.repo.ApproveComment(ctx, sqlcgen.ApproveCommentParams{ID: commentID, ExpectedUpdatedAt: version})
 	released := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return WithAuthor{}, false, err
@@ -218,6 +222,9 @@ func (s *Service) Approve(ctx context.Context, commentID uuid.UUID) (WithAuthor,
 	row, err := s.repo.GetCommentWithMeta(ctx, commentID)
 	if err != nil {
 		return WithAuthor{}, false, ErrNotFound
+	}
+	if !released && row.HeldForReview {
+		return WithAuthor{}, false, ErrStale
 	}
 	if released && s.onCreate != nil && row.UserID.Valid {
 		s.onCreate(ctx, commentID)
