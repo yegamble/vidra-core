@@ -68,7 +68,7 @@ type Repository interface {
 	IsInstanceBlocked(ctx context.Context, domain string) (bool, error)
 	// Federation policy gates (config-parity W12): the pending channel-follower
 	// approval queue and the auto-follow-back edges (migration 0087).
-	InsertRemoteFollowPending(ctx context.Context, arg sqlcgen.InsertRemoteFollowPendingParams) error
+	InsertRemoteFollowPending(ctx context.Context, arg sqlcgen.InsertRemoteFollowPendingParams) (uuid.UUID, error)
 	ListPendingRemoteFollows(ctx context.Context, arg sqlcgen.ListPendingRemoteFollowsParams) ([]sqlcgen.ListPendingRemoteFollowsRow, error)
 	CountPendingRemoteFollows(ctx context.Context) (int64, error)
 	AcceptPendingRemoteFollowByID(ctx context.Context, id uuid.UUID) (sqlcgen.AcceptPendingRemoteFollowByIDRow, error)
@@ -185,6 +185,8 @@ type Service struct {
 	// Inbound Flag → moderation report + staff fan-out (WithFlagReporting).
 	fileFlagReport  func(context.Context, moderation.RemoteReport) (uuid.UUID, error)
 	notifyNewReport func(context.Context, uuid.UUID) (int64, error)
+	// onFollowerRequest: see WithFollowerRequestHook (nil = none).
+	onFollowerRequest func(context.Context, uuid.UUID)
 
 	// allowPrivateFetch relaxes the SSRF guard for remote-actor fetches so backed
 	// e2e / dev can reach a loopback origin. Never true in production.

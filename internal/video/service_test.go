@@ -2116,3 +2116,10 @@ func TestReplaceSourceFailsWhenThePriorDigestCannotBeRead(t *testing.T) {
 		t.Errorf("original after a failed replacement = %q, %v; want the untouched source", cur, cerr)
 	}
 }
+
+// GetChannelByID: the move guard's lookup. The unit fake knows no channels, so a
+// move target is always "missing" here; the same-owner rule is proven end to end
+// in internal/httpapi (TestMoveVideoSameOwnerOnly).
+func (f *fakeRepo) GetChannelByID(_ context.Context, _ uuid.UUID) (sqlcgen.Channel, error) {
+	return sqlcgen.Channel{}, errors.New("not found")
+}

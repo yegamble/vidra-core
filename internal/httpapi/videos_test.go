@@ -733,6 +733,16 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 	if a.PublishAfterTranscode != nil {
 		r.PublishAfterTranscode = *a.PublishAfterTranscode
 	}
+	if a.ChannelID.Valid {
+		// COALESCE(narg('channel_id'), channel_id); the owner follows the channel
+		// because the real GetVideoByID derives it through the channels JOIN.
+		r.ChannelID = uuid.UUID(a.ChannelID.Bytes)
+		for _, ch := range f.channels.byHandle {
+			if ch.ID == r.ChannelID {
+				r.OwnerID = ch.OwnerID
+			}
+		}
+	}
 	f.videos[a.ID] = r
 	return vidRowToVideo(r), nil
 }
@@ -3010,4 +3020,14 @@ func TestPublicFeedReportsTotal(t *testing.T) {
 	if len(body.Videos) != 2 || body.Total != 4 || body.Limit != 2 {
 		t.Errorf("feed = %d rows / total %d / limit %d, want 2 / 4 / 2", len(body.Videos), body.Total, body.Limit)
 	}
+}
+
+// GetChannelByID mirrors the real query for the service's same-owner move guard.
+func (f *videoFakeRepo) GetChannelByID(_ context.Context, id uuid.UUID) (sqlcgen.Channel, error) {
+	for _, ch := range f.channels.byHandle {
+		if ch.ID == id {
+			return ch, nil
+		}
+	}
+	return sqlcgen.Channel{}, errors.New("not found")
 }
