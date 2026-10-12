@@ -93,9 +93,16 @@ type JRD struct {
 // JRDLink is a single WebFinger link relation.
 type JRDLink struct {
 	Rel  string `json:"rel"`
-	Type string `json:"type"`
-	Href string `json:"href"`
+	Type string `json:"type,omitempty"`
+	Href string `json:"href,omitempty"`
+	// Template carries an RFC 7033 link template ({uri} placeholder) instead
+	// of an href — the remote-interaction subscribe link uses it.
+	Template string `json:"template,omitempty"`
 }
+
+// SubscribeRel is the OStatus rel a WebFinger document uses to advertise
+// "send your users here to follow/interact from their home instance".
+const SubscribeRel = "http://ostatus.org/schema/1.0/subscribe"
 
 // AccountActor returns the ActivityPub Person document for a local account,
 // minting its keypair on first request. Unknown/inactive username → ErrNotFound.
@@ -299,7 +306,11 @@ func (s *Service) WebFinger(ctx context.Context, resource string) (*JRD, error) 
 	if accountURL == "" && channelURL == "" {
 		return nil, ErrNotFound
 	}
-	return jrd(resource, accountURL, channelURL), nil
+	out := jrd(resource, accountURL, channelURL)
+	// Advertise the inbound remote-interaction page so other servers can send
+	// their users here to follow this content while signed in on vidra.
+	out.Links = append(out.Links, JRDLink{Rel: SubscribeRel, Template: s.baseURL + "/remote-interaction?uri={uri}"})
+	return out, nil
 }
 
 // jrd renders the JRD for one resource. Either URL may be empty; when only the

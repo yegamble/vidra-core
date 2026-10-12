@@ -185,7 +185,7 @@ func TestWebFinger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WebFinger account: %v", err)
 	}
-	if jrd.Subject != "acct:ada@videos.example" || len(jrd.Links) != 1 {
+	if jrd.Subject != "acct:ada@videos.example" || len(actorLinks(jrd)) != 1 || len(jrd.Links) != 2 {
 		t.Fatalf("jrd = %+v", jrd)
 	}
 	if jrd.Links[0].Href != "https://videos.example/accounts/ada" || jrd.Links[0].Rel != "self" {

@@ -236,7 +236,7 @@ server {
 	# surfaces); routing them unconditionally is harmless, the api answers 404
 	# when they are not mounted.
 	#
-	# NOTE on /.well-known: only the two paths the api serves are listed, NOT
+	# NOTE on /.well-known: only the paths the api serves are listed, NOT
 	# the whole namespace — /.well-known/acme-challenge/ must stay with
 	# whatever renews this proxy's certificate.
 	#
@@ -279,6 +279,18 @@ server {
 		proxy_pass http://%[4]s;
 	}
 	location = /.well-known/webfinger {
+		proxy_pass http://%[4]s;
+	}
+	location = /.well-known/host-meta {
+		proxy_pass http://%[4]s;
+	}
+	location = /.well-known/host-meta.json {
+		proxy_pass http://%[4]s;
+	}
+	location = /.well-known/security.txt {
+		proxy_pass http://%[4]s;
+	}
+	location = /.well-known/change-password {
 		proxy_pass http://%[4]s;
 	}
 	location = /services/oembed {

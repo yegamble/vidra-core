@@ -11677,6 +11677,90 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/remote-interaction/resolve:
+    get:
+      operationId: resolveRemoteInteraction
+      summary: Find the subscribe URL on a visitor's home fediverse server
+      description: >-
+        The outbound half of remote interaction. A visitor who is not signed in
+        here gives their own fediverse handle (user@host) and an address on THIS
+        instance (a channel or video); the server WebFingers the handle's host
+        through the SSRF-guarded federation fetch and returns that host's
+        subscribe template (rel http://ostatus.org/schema/1.0/subscribe) with
+        {uri} replaced by the escaped target. The client navigates to the
+        returned https URL. Optional auth; signed-out callers need the operator's
+        search_remote_uri_anonymous setting. Rate-limited (fail closed) on the
+        same budget as remote-URI search resolution. Mounted with the federation
+        service; 503 while federation is disabled.
+      tags: [federation]
+      security: []
+      parameters:
+        - name: handle
+          in: query
+          required: true
+          description: The visitor's fediverse handle, user@host (a leading @ is accepted).
+          schema:
+            type: string
+        - name: target
+          in: query
+          required: true
+          description: >-
+            The ActivityPub id of the channel or video on this instance the
+            visitor wants to follow or interact with.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The home-server URL to send the visitor to.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteInteractionResolution"
+        "403":
+          description: >-
+            The caller is signed out and the operator has not enabled remote
+            lookups for anonymous visitors (search_remote_uri_anonymous). The
+            client may fall back to looking the handle up from the browser.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The handle's server advertises no usable subscribe template.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Malformed handle, a target that is not on this instance, or a handle
+            that is a literal non-public address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many lookups from this client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: >-
+            The handle's server could not be reached (or may not be contacted;
+            the two are deliberately indistinguishable).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            Federation is disabled on this instance, or the rate budget is
+            temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/blocks/remote:
     get:
       operationId: listRemoteBlocks
@@ -20171,6 +20255,14 @@ components:
         blocked_at:
           type: string
           format: date-time
+    RemoteInteractionResolution:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: https URL on the visitor's home server to navigate to.
     RemoteBlockListResponse:
       type: object
       required: [actors, total, limit, offset]
