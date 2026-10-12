@@ -3013,6 +3013,7 @@ func run() error {
 					// restart rather than at the end of the run.
 					ReloadSettings: settingssvc.Load,
 					Logger:         logger,
+					PublicBaseURL:  cfg.PublicBaseURL,
 				})
 				return imp, func() { src.Close() }, nil
 			}))

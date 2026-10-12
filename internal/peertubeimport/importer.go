@@ -53,6 +53,9 @@ type Importer struct {
 	// exits) → nothing to reload.
 	reloadSettings func(context.Context) error
 	logger         *slog.Logger
+	// publicBaseURL is THIS instance's origin: a remote follower is carried only
+	// onto a channel whose actor id here is the one it followed. "" → deferred.
+	publicBaseURL string
 
 	// videosByID caches the source videos by numeric id, built once so
 	// comments/playlist-elements/renditions (which reference the numeric id) can
@@ -151,6 +154,8 @@ type Options struct {
 	// next restart. Nil in a one-shot process.
 	ReloadSettings func(context.Context) error
 	Logger         *slog.Logger
+	// PublicBaseURL is PUBLIC_BASE_URL; without it remote followers are deferred.
+	PublicBaseURL string
 }
 
 // NewImporter builds an importer over an open Vidra pool and source.
@@ -183,6 +188,7 @@ func NewImporter(dest *pgxpool.Pool, src *Source, opts Options) *Importer {
 		sealKey:             opts.SealKey,
 		reloadSettings:      opts.ReloadSettings,
 		logger:              logger,
+		publicBaseURL:       strings.TrimRight(opts.PublicBaseURL, "/"),
 	}
 }
 
@@ -479,6 +485,11 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 		return nil, err
 	}
 	r.count(KindFollow).Planned = len(follows)
+	remote, err := im.src.RemoteFollowers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.count(KindRemoteFollower).Planned = len(remote)
 	if err := im.importWatchHistory(ctx, r); err != nil {
 		return nil, err
 	}
@@ -584,6 +595,7 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		{"comments", im.importComments},
 		{"playlists", im.importPlaylists},
 		{"follows", im.importFollows},
+		{"remote followers", im.importRemoteFollowers},
 		{"watch history", im.importWatchHistory},
 		{"missing media", im.countMissingMedia},
 	}

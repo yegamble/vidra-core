@@ -172,6 +172,7 @@ func main() {
 		CopyConcurrency:     cfg.PeerTubeImportCopyConcurrency,
 		SealKey:             sealKey,
 		SourceAuthoritative: *sourceAuth,
+		PublicBaseURL:       cfg.PublicBaseURL,
 	})
 
 	version, err := importer.Preflight(ctx)
