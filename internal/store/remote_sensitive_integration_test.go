@@ -38,7 +38,9 @@ func TestRemoteSensitiveVideoFollowsTheHidePolicy(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertRemoteActor: %v", err)
 	}
-	defer func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM remote_actors WHERE actor_url = $1`, actor) }()
+	defer func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM remote_actors WHERE actor_url = $1`, actor)
+	}()
 	row, err := q.UpsertRemoteVideo(ctx, sqlcgen.UpsertRemoteVideoParams{
 		ObjectUrl: "https://" + domain + "/videos/1", RemoteActorUrl: actor, Title: title,
 		WatchUrl: "https://" + domain + "/w/1", IsSensitive: true,
