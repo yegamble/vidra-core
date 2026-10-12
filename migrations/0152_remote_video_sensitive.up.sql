@@ -1,4 +1,4 @@
--- 0153: remote_videos.is_sensitive (T05). An inbound Create/Update{Video}'s
+-- 0152: remote_videos.is_sensitive (T05). An inbound Create/Update{Video}'s
 -- ActivityStreams `sensitive` flag (PeerTube's nsfw) was read by nothing, so a
 -- remote video the origin flagged played with no warning whatever the viewer's
 -- sensitive-content policy said. Stored like videos.is_sensitive (0082) so the

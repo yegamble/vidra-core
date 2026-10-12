@@ -65,7 +65,7 @@ type RemoteVideo struct {
 	FetchedAt       time.Time
 	UpdatedAt       time.Time
 
-	// IsSensitive is the origin's `sensitive` flag (migration 0153).
+	// IsSensitive is the origin's `sensitive` flag (migration 0152).
 	IsSensitive bool
 }
 
