@@ -15,9 +15,7 @@ const PrivacyInternal = "internal"
 // ever set).
 //
 // It is fail-closed on purpose: a value this build does not know about admits
-// the owner only. Every privacy comparison used to be `== "private"`, which reads
-// a NEW tier as public — exactly what an app-only rollback to a release that
-// predates a tier would do to it.
+// the owner only, so a tier added later is never treated as a wider one.
 func PrivacyAdmits(privacy string, authed, isOwner bool) bool {
 	switch privacy {
 	case "public", "unlisted", PrivacyPassword:

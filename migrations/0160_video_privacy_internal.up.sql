@@ -9,11 +9,9 @@
 -- sitemap, ATProto and public-IPFS query already allowlists privacy='public', so
 -- an internal row is excluded from all of them without touching one.
 --
--- ROLLBACK HAZARD (one-release compat): a release that predates this tier reads
--- privacy with `== 'private'` comparisons, so it would serve an internal video
--- by direct link to an ANONYMOUS viewer. Before an app-only rollback to such a
--- release, run the down migration's UPDATE first (internal → private: the
--- stricter tier, never the looser one).
+-- Rollback: releases before 0160 don't know the internal tier; the meta repo's
+-- rollback guard refuses an app-only rollback to them while internal rows exist
+-- (see deploy/rollback.sh). The down migration remaps internal → private.
 --
 -- Same drop/add pattern as 0074 (the inline column check is auto-named
 -- videos_privacy_check).
