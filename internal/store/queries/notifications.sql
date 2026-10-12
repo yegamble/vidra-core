@@ -1,11 +1,27 @@
 -- name: CreateNotification :one
 -- Record a notification for a recipient (user_id). Context columns are optional
 -- and depend on the type.
-INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id, report_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id;
+--
+-- The same statement records whether it is ALSO owed an email (migration 0157):
+-- a notification_emails row when, and only when, the recipient explicitly
+-- turned email on for this type. Email is opt-in, and the prefs API accepts an
+-- email choice only for the types that offer it, so for every other type the
+-- second insert is empty. One statement, so a notification can never exist
+-- without the email decision that belongs to it (or the reverse).
+WITH n AS (
+    INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id, report_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id, registration_request_id, remote_follow_id
+), owed AS (
+    INSERT INTO notification_emails (notification_id)
+    SELECT n.id FROM n
+    JOIN notification_prefs np ON np.user_id = n.user_id AND np.type = n.type
+    WHERE np.email_enabled
+)
+SELECT id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id, registration_request_id, remote_follow_id
+FROM n;
 
--- name: NotifyFollowersOfNewVideo :execrows
+-- name: NotifyFollowersOfNewVideo :one
 -- The "new video from a channel you follow" fan-out (migration 0101), fired by
 -- the publish transition. ONE set-based statement rather than a row-per-follower
 -- loop: a channel's whole follower set is notified in a single round trip, and
@@ -26,6 +42,14 @@ RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at
 --
 -- ON CONFLICT rides notifications_new_video_unique_idx, so a publish hook that
 -- fires twice for the same video is a no-op the second time.
+--
+-- The same statement queues the EMAILS (migration 0157): one notification_emails
+-- row per notification it actually inserted whose recipient explicitly turned
+-- new_video email on. Keyed off what the INSERT returned, so the no-op re-run
+-- above queues nothing either; nothing is mailed here — the outbox drain sends
+-- in the background, so a large follower list never mails inline. Returns how
+-- many followers were notified (not how many emails were queued).
+WITH ins AS (
 INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id)
 SELECT cf.follower_id, 'new_video', ch.owner_id, v.channel_id, v.id
 FROM videos v
@@ -52,7 +76,15 @@ WHERE v.id = sqlc.arg('video_id')
       WHERE (ub.blocker_id = cf.follower_id AND ub.blocked_id = ch.owner_id)
          OR (ub.blocker_id = ch.owner_id AND ub.blocked_id = cf.follower_id)
   )
-ON CONFLICT (user_id, video_id) WHERE type = 'new_video' DO NOTHING;
+ON CONFLICT (user_id, video_id) WHERE type = 'new_video' DO NOTHING
+RETURNING id, user_id
+), owed AS (
+    INSERT INTO notification_emails (notification_id)
+    SELECT ins.id FROM ins
+    JOIN notification_prefs np ON np.user_id = ins.user_id AND np.type = 'new_video'
+    WHERE np.email_enabled
+)
+SELECT count(*)::bigint FROM ins;
 
 -- name: NotifyStaffOfNewReport :execrows
 -- The "new abuse report" staff fan-out (migration 0103), fired when a report is
@@ -85,6 +117,72 @@ WHERE r.id = sqlc.arg('report_id')
       WHERE np.user_id = u.id AND np.type = 'new_report' AND np.enabled = FALSE
   )
 ON CONFLICT (user_id, report_id) WHERE type = 'new_report' DO NOTHING;
+
+-- name: NotifyStaffOfNewRegistrationRequest :execrows
+-- Staff push signal for the registration approval queue (migration 0156), fired
+-- when a request is filed. Set-based like NotifyStaffOfNewReport. Recipients are
+-- the roles that may work the queue (admin + moderator, matching the
+-- /admin/registration-requests route gate), active and non-deleted, minus anyone
+-- who turned the type off. The applicant has no account, so there is no actor.
+-- Idempotent via notifications_new_registration_request_unique_idx.
+INSERT INTO notifications (user_id, type, registration_request_id)
+SELECT u.id, 'new_registration_request', rr.id
+FROM registration_requests rr
+JOIN users u ON u.role IN ('admin', 'moderator')
+WHERE rr.id = sqlc.arg('request_id')
+  AND rr.status = 'pending'
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = u.id AND np.type = 'new_registration_request' AND np.enabled = FALSE
+  )
+ON CONFLICT (user_id, registration_request_id) WHERE type = 'new_registration_request' DO NOTHING;
+
+-- name: NotifyStaffOfQuarantinedUpload :execrows
+-- Staff push signal for the upload quarantine queue (migration 0156), fired when
+-- a finished upload parks in 'quarantined'. Recipients are the roles behind
+-- /admin/videos/quarantined (admin + moderator), minus the uploader (staff
+-- uploads bypass the gate, but a moderator-owned video never self-notifies) and
+-- anyone who turned the type off. The video must still be quarantined, so a
+-- late fan-out for an already-approved video is a no-op. Idempotent via
+-- notifications_upload_quarantined_unique_idx.
+INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id)
+SELECT u.id, 'upload_quarantined', ch.owner_id, v.channel_id, v.id
+FROM videos v
+JOIN channels ch ON ch.id = v.channel_id
+JOIN users u ON u.role IN ('admin', 'moderator')
+WHERE v.id = sqlc.arg('video_id')
+  AND v.state = 'quarantined'
+  AND ch.owner_id <> u.id
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = u.id AND np.type = 'upload_quarantined' AND np.enabled = FALSE
+  )
+ON CONFLICT (user_id, video_id) WHERE type = 'upload_quarantined' DO NOTHING;
+
+-- name: NotifyStaffOfFederationFollowerRequest :execrows
+-- Staff push signal for the federation follower-approval queue (migration 0156),
+-- fired when a remote actor's follow lands as 'pending'. The queue's routes are
+-- admin-only (/admin/federation/follower-requests), so ONLY admins are told —
+-- notifying a moderator of a queue they cannot open would be noise. The followed
+-- channel is stored for display; the remote actor is not a local user, so there
+-- is no actor. Idempotent via notifications_federation_follower_request_unique_idx.
+INSERT INTO notifications (user_id, type, channel_id, remote_follow_id)
+SELECT u.id, 'federation_follower_request', rf.channel_id, rf.id
+FROM remote_follows rf
+JOIN users u ON u.role = 'admin'
+WHERE rf.id = sqlc.arg('remote_follow_id')
+  AND rf.state = 'pending'
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = u.id AND np.type = 'federation_follower_request' AND np.enabled = FALSE
+  )
+ON CONFLICT (user_id, remote_follow_id) WHERE type = 'federation_follower_request' DO NOTHING;
 
 -- name: ListNotifications :many
 -- A user's notifications, newest first, joined with the actor's identity and the

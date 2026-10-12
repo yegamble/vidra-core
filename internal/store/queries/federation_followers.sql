@@ -4,7 +4,7 @@
 -- (federation_auto_follow_back). All of this governs the ActivityPub inbox
 -- only — ATProto has no inbound path in vidra.
 
--- name: InsertRemoteFollowPending :exec
+-- name: InsertRemoteFollowPending :one
 -- A remote actor follows a local channel while federation_follower_approval is
 -- on: the follow waits in the admin queue (state 'pending'; the Accept is only
 -- delivered on approval). An existing row — accepted OR pending — is left
@@ -12,7 +12,10 @@
 -- accepted follower.
 INSERT INTO remote_follows (channel_id, remote_actor_url, state, follow_activity_url)
 VALUES ($1, $2, 'pending', $3)
-ON CONFLICT (channel_id, remote_actor_url) DO NOTHING;
+ON CONFLICT (channel_id, remote_actor_url) DO NOTHING
+RETURNING id;
+-- Returns the new row's id, or pgx.ErrNoRows when a row already existed (nothing
+-- was queued, so nothing is announced to staff).
 
 -- name: ListPendingRemoteFollows :many
 -- The admin follower-approval queue, newest first, with the followed channel's

@@ -11,10 +11,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -348,5 +351,77 @@ func TestAutoFollowBackLoopGuards(t *testing.T) {
 				t.Errorf("a new follow-back edge appeared despite the guard: %+v", repo.followBacks)
 			}
 		})
+	}
+}
+
+func TestAccountFollowGetsCleanReject(t *testing.T) {
+	// A Mastodon user following a vidra ACCOUNT (Person) must not hang on
+	// "pending": nothing is recorded (followers are per channel) and a Reject
+	// signed as the ACCOUNT is queued.
+	repo := newContractRepo()
+	cacheContractActor(repo, ctMastoUser, "Person", "kaisa", "mastodon.example")
+	svc := NewService(repo, WithBaseURL(contractBase))
+	follow := `{"id":"` + ctMastoFollow + `","type":"Follow","actor":"` + ctMastoUser + `","object":"` + contractBase + `/accounts/ada"}`
+	if err := svc.HandleInbox(context.Background(), ctMastoUser, []byte(follow)); err != nil {
+		t.Fatalf("HandleInbox: %v", err)
+	}
+	if len(repo.remoteFollows) != 0 {
+		t.Errorf("follow recorded: %+v", repo.remoteFollows)
+	}
+	if len(repo.deliveries) != 1 {
+		t.Fatalf("deliveries = %d, want exactly one Reject", len(repo.deliveries))
+	}
+	for _, d := range repo.deliveries {
+		if d.row.SigningUsername != "ada" || !d.row.SigningUserID.Valid {
+			t.Errorf("signing = %q/%v, want the ada account", d.row.SigningUsername, d.row.SigningUserID)
+		}
+	}
+	reject := deliveredPayloads(t, repo)["Reject"]
+	inner, _ := reject["object"].(map[string]any)
+	if reject["actor"] != contractBase+"/accounts/ada" || inner["id"] != ctMastoFollow || inner["actor"] != ctMastoUser {
+		t.Errorf("Reject = %v", reject)
+	}
+
+	// An unknown account is ignored, not rejected.
+	repo2 := newContractRepo()
+	cacheContractActor(repo2, ctMastoUser, "Person", "kaisa", "mastodon.example")
+	svc2 := NewService(repo2, WithBaseURL(contractBase))
+	nobody := `{"id":"` + ctMastoFollow + `","type":"Follow","actor":"` + ctMastoUser + `","object":"` + contractBase + `/accounts/nobody"}`
+	if err := svc2.HandleInbox(context.Background(), ctMastoUser, []byte(nobody)); err != nil || len(repo2.deliveries) != 0 {
+		t.Errorf("unknown account: err=%v deliveries=%d, want none", err, len(repo2.deliveries))
+	}
+}
+
+// TestFollowerRequestHookFiresOnlyForNewPendingRows: the admin push seam gets
+// the new queue row's id once, and a repeated Follow (row exists) announces
+// nothing — a re-Follow must not re-notify an admin who already knows.
+func TestFollowerRequestHookFiresOnlyForNewPendingRows(t *testing.T) {
+	repo := newContractRepo()
+	cacheContractActor(repo, ctMastoUser, "Person", "kaisa", "mastodon.example")
+	var got []uuid.UUID
+	svc := NewService(repo, WithBaseURL(contractBase), WithFollowerApprovalFunc(gateOn),
+		WithFollowerRequestHook(func(_ context.Context, id uuid.UUID) { got = append(got, id) }))
+
+	for i := 0; i < 2; i++ {
+		if err := svc.HandleInbox(context.Background(), ctMastoUser, readFixture(t, "inbound/mastodon_follow.json")); err != nil {
+			t.Fatalf("HandleInbox #%d: %v", i, err)
+		}
+	}
+	row := repo.remoteFollows[ctChannelID.String()+"|"+ctMastoUser]
+	if len(got) != 1 || row == nil || got[0] != row.ID {
+		t.Errorf("hook calls = %v, want exactly the pending row's id", got)
+	}
+}
+
+// TestFollowSurvivesPanickingHook: a panicking (wrapped) follower-request hook
+// must not fail inbox handling.
+func TestFollowSurvivesPanickingHook(t *testing.T) {
+	repo := newContractRepo()
+	cacheContractActor(repo, ctMastoUser, "Person", "kaisa", "mastodon.example")
+	hook := notification.StaffQueueHook(slog.New(slog.NewTextHandler(io.Discard, nil)), "federation_follower_request",
+		func(context.Context, uuid.UUID) (int64, error) { panic("boom") })
+	svc := NewService(repo, WithBaseURL(contractBase), WithFollowerApprovalFunc(gateOn), WithFollowerRequestHook(hook))
+	if err := svc.HandleInbox(context.Background(), ctMastoUser, readFixture(t, "inbound/mastodon_follow.json")); err != nil {
+		t.Fatalf("HandleInbox with panicking hook: %v", err)
 	}
 }

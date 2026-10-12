@@ -8562,12 +8562,16 @@ paths:
       summary: Get the caller's notification preferences
       description: >-
         Returns the caller's per-type notification switchboard: every known
-        notification type (caption_ready, comment, comment_mention, comment_reply, follow,
-        message, new_report, new_video, report_resolved, video_blocked,
-        video_rejected, video_unblocked) mapped to whether it is
-        delivered. Types never configured default to enabled. The new_report
-        type is only ever delivered to admins/moderators, but the switch is
-        visible to everyone.
+        notification type (caption_ready, comment, comment_mention, comment_reply,
+        federation_follower_request, follow, message, new_registration_request,
+        new_report, new_video, report_resolved, upload_quarantined,
+        video_blocked, video_rejected, video_unblocked) mapped to whether it
+        is delivered. Types never configured default to enabled. The new_report,
+        new_registration_request, upload_quarantined and
+        federation_follower_request types are only ever delivered to staff
+        (the last to admins only), but the switches are visible to everyone. Alongside it, `email` maps each type that can ALSO
+        be delivered by email (comment, comment_reply, new_video) to whether
+        it is; email is opt-in, so a type never configured is false.
       tags: [notifications]
       security:
         - bearerAuth: []
@@ -8589,9 +8593,14 @@ paths:
       summary: Update the caller's notification preferences
       description: >-
         Applies a partial preference update: only the types present in the body
-        are changed. Disabling a type suppresses new notifications of that type
-        at creation time (existing notifications are unaffected). An unknown
-        type is 422 and nothing is written. Returns the full updated map.
+        are changed, in `prefs` (in-app) and/or `email`. Disabling a type
+        suppresses new notifications of that type at creation time (existing
+        notifications are unaffected). Email rides the in-app notification: it
+        is queued only when that notification is created, so an in-app type
+        that is off sends no email either, and it is delivered in the
+        background, only to a verified address, while the instance has mail
+        configured. An unknown type, or an email switch for a type without email
+        delivery, is 422 and nothing is written. Returns the full updated maps.
       tags: [notifications]
       security:
         - bearerAuth: []
@@ -8621,7 +8630,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: Empty update or unknown notification type.
+          description: >-
+            Empty update, unknown notification type, or an email switch for a
+            type without email delivery.
           content:
             application/json:
               schema:
@@ -14418,7 +14429,11 @@ paths:
         instance_is_sensitive, the config-parity W8 feature toggles
         import_http_enabled, channel_sync_enabled, storyboards_enabled,
         video_card_previews_enabled, video_card_previews_default_enabled,
-        transcription_enabled,
+        transcription_enabled, auto_transcribe_new_uploads (default false;
+        on queues the same auto-caption job as POST /videos/{id}/captions/auto
+        for each video as it publishes, only while transcription is
+        effectively available, never duplicating a job or an existing
+        caption),
         user_import_enabled, user_export_enabled, and
         the config-parity W10 VOD knobs transcoding_enabled,
         transcoding_original_resolution, upload_additional_extensions_enabled,
@@ -20506,8 +20521,8 @@ components:
           format: uuid
         type:
           type: string
-          enum: [follow, comment, comment_reply, comment_mention, message, new_video, new_report, report_resolved, video_rejected, video_blocked, video_unblocked, caption_ready]
-          description: What happened. follow = someone followed your channel; comment = someone commented on your video (addressed to the video's OWNER); comment_reply = someone replied to a comment you wrote (addressed to the comment's AUTHOR, who is usually not the video's owner; actor = the replier, video_id/video_title = the video the thread lives on, comment_id = the reply). A reply to a comment written by the video's own owner delivers comment_reply only, never both; comment_mention = a comment @-mentioned you (a local @username in its body; actor = the commenter, absent when the comment came from another instance; video_id/video_title = the video, comment_id = the mentioning comment). Never sent in addition to a comment or comment_reply for the same comment, and at most once per comment; message = someone sent you a direct message; new_video = a channel you follow published a new public video (actor = the channel owner, channel_handle/channel_display_name = the channel, video_id/video_title = the video; sent only while your bell for that channel is "all"); new_report = a user filed an abuse report (delivered only to admins/moderators; actor = the reporter, report_id/report_status/report_target_type carry the report); report_resolved = a moderator resolved an abuse report you filed; video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one, moderation_note carries the moderator's written reason when they gave one; the moderator's identity is never included); video_blocked = a moderator blocked one of your PUBLISHED videos, so it is no longer available to viewers (video_id/video_title carry which one; distinct from video_rejected, which is the quarantine outcome for an upload that never published — a block takes down live content and is reversible). The moderator's identity is never included, but moderation_note carries their block reason while the block stands (the A16 ruling made it creator-facing) and is absent once the block is lifted; video_unblocked = a moderator LIFTED the block on one of your videos, so it is available again (video_id/video_title carry which one; no moderator identity and no prose — there is nothing to explain about a restoration). It closes the loop video_blocked opens, and a repeated unblock of the same video delivers only one; caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one).
+          enum: [follow, comment, comment_reply, comment_mention, message, new_video, new_report, new_registration_request, upload_quarantined, federation_follower_request, report_resolved, video_rejected, video_blocked, video_unblocked, caption_ready]
+          description: What happened. follow = someone followed your channel; comment = someone commented on your video (addressed to the video's OWNER); comment_reply = someone replied to a comment you wrote (addressed to the comment's AUTHOR, who is usually not the video's owner; actor = the replier, video_id/video_title = the video the thread lives on, comment_id = the reply). A reply to a comment written by the video's own owner delivers comment_reply only, never both; message = someone sent you a direct message; new_video = a channel you follow published a new public video (actor = the channel owner, channel_handle/channel_display_name = the channel, video_id/video_title = the video; sent only while your bell for that channel is "all"); new_report = a user filed an abuse report (delivered only to admins/moderators; actor = the reporter, report_id/report_status/report_target_type carry the report); new_registration_request = a registration request awaits approval (delivered only to admins/moderators; no actor, the applicant has no account yet); upload_quarantined = an upload entered the quarantine review queue (delivered only to admins/moderators; actor = the uploader, video_id/video_title/channel_handle carry which one); federation_follower_request = a remote actor asked to follow a channel while follower approval is on (delivered only to admins; channel_handle/channel_display_name = the followed channel); report_resolved = a moderator resolved an abuse report you filed; video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one, moderation_note carries the moderator's written reason when they gave one; the moderator's identity is never included); video_blocked = a moderator blocked one of your PUBLISHED videos, so it is no longer available to viewers (video_id/video_title carry which one; distinct from video_rejected, which is the quarantine outcome for an upload that never published — a block takes down live content and is reversible). The moderator's identity is never included, but moderation_note carries their block reason while the block stands (the A16 ruling made it creator-facing) and is absent once the block is lifted; video_unblocked = a moderator LIFTED the block on one of your videos, so it is available again (video_id/video_title carry which one; no moderator identity and no prose — there is nothing to explain about a restoration). It closes the loop video_blocked opens, and a repeated unblock of the same video delivers only one; caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one).
         read:
           type: boolean
         created_at:
@@ -20582,7 +20597,7 @@ components:
           example: 3
     NotificationPrefsResponse:
       type: object
-      required: [prefs]
+      required: [prefs, email]
       properties:
         prefs:
           type: object
@@ -20591,23 +20606,45 @@ components:
             this user. Types with no stored preference default to true.
           additionalProperties:
             type: boolean
-          example: { caption_ready: true, comment: true, comment_mention: true, comment_reply: true, follow: false, message: true, new_report: true, new_video: true, report_resolved: true, video_blocked: true, video_rejected: true, video_unblocked: true }
+          example: { caption_ready: true, comment: true, comment_mention: true, comment_reply: true, federation_follower_request: true, follow: false, message: true, new_registration_request: true, new_report: true, new_video: true, report_resolved: true, upload_quarantined: true, video_blocked: true, video_rejected: true, video_unblocked: true }
+        email:
+          type: object
+          description: >-
+            Every type that can also be delivered by email (comment,
+            comment_reply, new_video) mapped to whether it is. Email is opt-in,
+            mirroring PeerTube's web-only defaults for these types: a type with
+            no stored choice is false. Types absent from this map have no email
+            delivery.
+          additionalProperties:
+            type: boolean
+          example: { comment: false, comment_reply: true, new_video: true }
     UpdateNotificationPrefsRequest:
       type: object
-      required: [prefs]
+      description: >-
+        At least one type must be named in prefs or email (an update naming
+        none is 422).
       properties:
         prefs:
           type: object
           description: >-
             Partial map of notification type -> enabled. Only the types present
             are changed. Known types: caption_ready, comment, comment_mention, comment_reply,
-            follow, message, new_report, new_video, report_resolved,
-            video_blocked, video_rejected, video_unblocked. An unknown
+            federation_follower_request, follow, message,
+            new_registration_request, new_report, new_video, report_resolved,
+            upload_quarantined, video_blocked, video_rejected, video_unblocked. An unknown
             type rejects the whole update (422).
           additionalProperties:
             type: boolean
-          minProperties: 1
           example: { follow: false }
+        email:
+          type: object
+          description: >-
+            Partial map of email-capable type -> emailed. Only the types present
+            are changed. Email types: comment, comment_reply, new_video. Any
+            other type rejects the whole update (422).
+          additionalProperties:
+            type: boolean
+          example: { new_video: true }
     PlayerSettings:
       type: object
       description: >-

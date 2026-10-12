@@ -20,6 +20,10 @@ type fakeRepo struct {
 	notifs   []sqlcgen.Notification
 	prefs    map[string]bool
 	prefsErr error
+	// emailPrefs maps "userID\x00type" → the EXPLICIT email choice, mirroring
+	// notification_prefs.email_enabled: a separate column, so an absent key is
+	// the type's default whatever prefs says.
+	emailPrefs map[string]bool
 	// fanOut records the videos handed to the new-video fan-out and what the
 	// (SQL-side) statement reported back. The fan-out's real rules live in the
 	// query, so they are proved against a live schema in the integration test —
@@ -31,6 +35,8 @@ type fakeRepo struct {
 	// (same pass-through contract as fanOut above; rules proved in
 	// store.TestNewReportStaffFanOutOnRealPG).
 	reportFanOut []uuid.UUID
+	// staffQueue records the three approval-queue fan-outs as "type:subject".
+	staffQueue []string
 	// replyRecipients answers CommentReplyRecipient: comment id -> the row the
 	// real query would return. An absent key is pgx.ErrNoRows, exactly like the
 	// :one query's "nobody to notify" answer. replyErr, when set, fails the
@@ -130,6 +136,21 @@ func (f *fakeRepo) NotifyStaffOfNewReport(_ context.Context, reportID uuid.UUID)
 	return f.fanOutN, nil
 }
 
+func (f *fakeRepo) NotifyStaffOfNewRegistrationRequest(_ context.Context, id uuid.UUID) (int64, error) {
+	f.staffQueue = append(f.staffQueue, "new_registration_request:"+id.String())
+	return f.fanOutN, f.fanOutErr
+}
+
+func (f *fakeRepo) NotifyStaffOfQuarantinedUpload(_ context.Context, id uuid.UUID) (int64, error) {
+	f.staffQueue = append(f.staffQueue, "upload_quarantined:"+id.String())
+	return f.fanOutN, f.fanOutErr
+}
+
+func (f *fakeRepo) NotifyStaffOfFederationFollowerRequest(_ context.Context, id uuid.UUID) (int64, error) {
+	f.staffQueue = append(f.staffQueue, "federation_follower_request:"+id.String())
+	return f.fanOutN, f.fanOutErr
+}
+
 func prefKey(userID uuid.UUID, typ string) string { return userID.String() + "\x00" + typ }
 
 func (f *fakeRepo) ListNotificationPrefs(_ context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationPrefsRow, error) {
@@ -166,14 +187,38 @@ func (f *fakeRepo) IsNotificationTypeEnabled(_ context.Context, a sqlcgen.IsNoti
 	return true, nil
 }
 
-func (f *fakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNotificationParams) (sqlcgen.Notification, error) {
+func (f *fakeRepo) ListNotificationEmailPrefs(_ context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationEmailPrefsRow, error) {
+	if f.prefsErr != nil {
+		return nil, f.prefsErr
+	}
+	var rows []sqlcgen.ListNotificationEmailPrefsRow
+	for _, typ := range KnownTypes() { // stable order, like ORDER BY type
+		if on, ok := f.emailPrefs[prefKey(userID, typ)]; ok {
+			rows = append(rows, sqlcgen.ListNotificationEmailPrefsRow{Type: typ, EmailEnabled: on})
+		}
+	}
+	return rows, nil
+}
+
+func (f *fakeRepo) UpsertNotificationEmailPref(_ context.Context, a sqlcgen.UpsertNotificationEmailPrefParams) error {
+	if f.prefsErr != nil {
+		return f.prefsErr
+	}
+	if f.emailPrefs == nil {
+		f.emailPrefs = map[string]bool{}
+	}
+	f.emailPrefs[prefKey(a.UserID, a.Type)] = a.EmailEnabled
+	return nil
+}
+
+func (f *fakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNotificationParams) (sqlcgen.CreateNotificationRow, error) {
 	n := sqlcgen.Notification{
 		ID: uuid.New(), UserID: a.UserID, Type: a.Type,
 		ActorID: a.ActorID, ChannelID: a.ChannelID, VideoID: a.VideoID, CommentID: a.CommentID,
 		ConversationID: a.ConversationID, ReportID: a.ReportID, CreatedAt: time.Now(),
 	}
 	f.notifs = append(f.notifs, n)
-	return n, nil
+	return sqlcgen.CreateNotificationRow(n), nil
 }
 
 func (f *fakeRepo) ListNotifications(_ context.Context, a sqlcgen.ListNotificationsParams) ([]sqlcgen.ListNotificationsRow, error) {
@@ -982,5 +1027,128 @@ func TestCommentMentionIsAPreferenceType(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("KnownTypes() = %v, missing comment_mention", KnownTypes())
+	}
+}
+
+// TestEmailIsOptInForExactlyTheOfferedTypes pins the email switchboard's shape
+// and its defaults. Email is offered for the three types that bring a user
+// back — a new video from a channel they follow, a comment on their video, a
+// reply to their comment — and is OFF until they turn it on, mirroring
+// PeerTube's web-only defaults for the equivalent types. The SQL that queues
+// emails hardcodes the same opt-in rule (only an explicit TRUE mails), so a
+// default that flipped here without the SQL would show a switch that lies.
+func TestEmailIsOptInForExactlyTheOfferedTypes(t *testing.T) {
+	want := []string{TypeComment, TypeCommentReply, TypeNewVideo}
+	got := EmailTypes()
+	if len(got) != len(want) {
+		t.Fatalf("EmailTypes() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("EmailTypes() = %v, want %v", got, want)
+		}
+		if !knownType(got[i]) {
+			t.Errorf("email type %q is not a known notification type", got[i])
+		}
+	}
+
+	svc := NewService(&fakeRepo{})
+	prefs, err := svc.EmailPrefs(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("EmailPrefs: %v", err)
+	}
+	if len(prefs) != len(want) {
+		t.Fatalf("EmailPrefs = %v, want exactly %v", prefs, want)
+	}
+	for _, typ := range want {
+		on, ok := prefs[typ]
+		if !ok || on {
+			t.Errorf("email[%s] = %v (present=%v), want false: email is opt-in", typ, on, ok)
+		}
+	}
+}
+
+// TestSetEmailPrefsRejectsTypesWithoutEmail proves a switch can only be set
+// where an email can actually be sent. Accepting {"follow": true} would store a
+// preference nothing honours — a dead control — so the whole update is
+// refused and nothing is written, even the valid half.
+func TestSetEmailPrefsRejectsTypesWithoutEmail(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	user := uuid.New()
+	for _, typ := range []string{TypeFollow, TypeMessage, "premium_offers"} {
+		err := svc.SetEmailPrefs(context.Background(), user, map[string]bool{TypeComment: true, typ: true})
+		if !errors.Is(err, ErrNoEmailForType) {
+			t.Errorf("SetEmailPrefs(%s) err = %v, want ErrNoEmailForType", typ, err)
+		}
+	}
+	if len(repo.emailPrefs) != 0 {
+		t.Fatalf("a refused update wrote %v", repo.emailPrefs)
+	}
+}
+
+// TestEmailAndInAppSwitchesAreIndependent proves the two columns never write
+// through each other: turning email on leaves the in-app switch alone, and
+// turning the in-app switch off leaves the email choice alone.
+func TestEmailAndInAppSwitchesAreIndependent(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	ctx, user := context.Background(), uuid.New()
+
+	if err := svc.SetEmailPrefs(ctx, user, map[string]bool{TypeNewVideo: true}); err != nil {
+		t.Fatalf("SetEmailPrefs: %v", err)
+	}
+	if err := svc.SetPrefs(ctx, user, map[string]bool{TypeComment: false}); err != nil {
+		t.Fatalf("SetPrefs: %v", err)
+	}
+	email, err := svc.EmailPrefs(ctx, user)
+	if err != nil {
+		t.Fatalf("EmailPrefs: %v", err)
+	}
+	if !email[TypeNewVideo] || email[TypeComment] {
+		t.Errorf("email = %v, want new_video on and comment untouched (off)", email)
+	}
+	inApp, err := svc.Prefs(ctx, user)
+	if err != nil {
+		t.Fatalf("Prefs: %v", err)
+	}
+	if !inApp[TypeNewVideo] || inApp[TypeComment] {
+		t.Errorf("in-app = %v, want new_video untouched (on) and comment off", inApp)
+	}
+}
+
+// TestStaffQueueTypesRegisteredAndFanOut: the three approval-queue types are
+// registered with the preference model (so users can mute them and the email
+// work can pick them up) and each Notify* method reaches its fan-out.
+func TestStaffQueueTypesRegisteredAndFanOut(t *testing.T) {
+	repo := &fakeRepo{fanOutN: 2}
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	for _, typ := range []string{TypeNewRegistrationRequest, TypeUploadQuarantined, TypeFederationFollowerRequest} {
+		if !knownType(typ) {
+			t.Errorf("knownType(%q) = false", typ)
+		}
+		found := false
+		for _, k := range KnownTypes() {
+			found = found || k == typ
+		}
+		if !found {
+			t.Errorf("KnownTypes() missing %s", typ)
+		}
+	}
+
+	id := uuid.New()
+	for name, call := range map[string]func() (int64, error){
+		TypeNewRegistrationRequest:    func() (int64, error) { return svc.NotifyNewRegistrationRequest(ctx, id) },
+		TypeUploadQuarantined:         func() (int64, error) { return svc.NotifyUploadQuarantined(ctx, id) },
+		TypeFederationFollowerRequest: func() (int64, error) { return svc.NotifyFederationFollowerRequest(ctx, id) },
+	} {
+		if n, err := call(); err != nil || n != 2 {
+			t.Errorf("%s: n=%d err=%v, want 2, nil", name, n, err)
+		}
+	}
+	if len(repo.staffQueue) != 3 {
+		t.Errorf("fan-outs reached = %v, want 3", repo.staffQueue)
 	}
 }

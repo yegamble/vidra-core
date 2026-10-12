@@ -203,6 +203,7 @@ const (
 	KeyVideoCardPreviewsEnabled        = "video_card_previews_enabled"         // master gate for signed-in users' hover-preview preference
 	KeyVideoCardPreviewsDefaultEnabled = "video_card_previews_default_enabled" // inherited preference until a user explicitly chooses
 	KeyTranscriptionEnabled            = "transcription_enabled"               // Whisper auto-captions; effective only with WHISPER_ENDPOINT
+	KeyAutoTranscribeNewUploads        = "auto_transcribe_new_uploads"         // Whisper-caption every newly published video; needs transcription_enabled
 	KeyUserImportEnabled               = "user_import_enabled"                 // POST /me/import
 	KeyUserExportEnabled               = "user_export_enabled"                 // POST /me/export
 	KeyUserExportExpirationHours       = "user_export_expiration_hours"        // 0 = archives never expire
@@ -986,6 +987,10 @@ var specs = []spec{
 	{key: KeyVideoCardPreviewsDefaultEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageVOD, section: "playback"},
 	{key: KeyTranscriptionEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.TranscriptionEnabled }, validate: validateBool,
+		page: PageVOD, section: "transcription"},
+	// Opt-in: transcription costs real compute, so auto-running it on every
+	// upload is an operator decision. Effective only while transcription is.
+	{key: KeyAutoTranscribeNewUploads, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageVOD, section: "transcription"},
 	// User data portability (shipped internal/account flows). Both default ON
 	// with no env backing — the runtime settings are the operator controls.

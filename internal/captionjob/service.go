@@ -98,6 +98,7 @@ type VideoStore interface {
 	GetByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
 	OriginalFileKey(ctx context.Context, videoID uuid.UUID) (string, error)
 	AddCaption(ctx context.Context, ownerID, videoID uuid.UUID, in video.CaptionInput) (sqlcgen.Caption, error)
+	ListCaptions(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.Caption, error)
 }
 
 // Notifier tells a video's owner their auto-caption is ready.
@@ -114,6 +115,7 @@ type Service struct {
 	notifier        Notifier
 	enabled         bool
 	enabledFn       func() bool // when set, supersedes enabled (runtime overlay), resolved per call
+	autoFn          func() bool // auto_transcribe_new_uploads overlay; nil = off
 	bootCapable     *bool       // when set, the deployment-side prerequisite alone (see BootCapable)
 	defaultLanguage string
 	logger          *slog.Logger
@@ -136,6 +138,13 @@ func WithEnabled(enabled bool) Option {
 // effective value is always settingAND(whisper configured).
 func WithEnabledFunc(f func() bool) Option {
 	return func(s *Service) { s.enabledFn = f }
+}
+
+// WithAutoTranscribeFunc wires the auto_transcribe_new_uploads runtime setting
+// consulted by AutoEnqueueOnPublish. Unset (or false) leaves captioning
+// strictly on-demand.
+func WithAutoTranscribeFunc(f func() bool) Option {
+	return func(s *Service) { s.autoFn = f }
 }
 
 // WithBootCapability records the DEPLOYMENT-side prerequisite on its own — for
@@ -243,6 +252,45 @@ func (s *Service) Enqueue(ctx context.Context, videoID uuid.UUID, language strin
 		return sqlcgen.CaptionJob{}, err
 	}
 	return job, nil
+}
+
+// AutoEnqueueOnPublish queues the SAME job the on-demand route does for a video
+// that just published, when auto_transcribe_new_uploads is on and transcription
+// is effectively available. Best-effort by contract: every failure is logged and
+// swallowed so the publish pipeline can never be failed by it. It is idempotent —
+// it skips a video that already has a caption in the default language, or any
+// prior job (active, done or dead-lettered: a failed auto run is not retried on
+// every later publish transition; the creator can re-request by hand). Audio-only
+// videos are transcribed too: the Whisper client extracts the audio track from
+// whatever the original is. Reports whether a job was queued.
+func (s *Service) AutoEnqueueOnPublish(ctx context.Context, videoID uuid.UUID) bool {
+	if s.autoFn == nil || !s.autoFn() || !s.Enabled() {
+		return false
+	}
+	caps, err := s.videos.ListCaptions(ctx, videoID)
+	if err != nil {
+		s.logger.Warn("auto-transcribe: caption lookup failed", "video_id", videoID.String(), "error", err)
+		return false
+	}
+	lang := normalizeLanguage(s.defaultLanguage)
+	for _, c := range caps {
+		if normalizeLanguage(c.Language) == lang {
+			return false
+		}
+	}
+	if _, err := s.repo.GetLatestCaptionJobByVideo(ctx, videoID); err == nil {
+		return false
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		s.logger.Warn("auto-transcribe: job lookup failed", "video_id", videoID.String(), "error", err)
+		return false
+	}
+	if _, err := s.Enqueue(ctx, videoID, ""); err != nil {
+		if !errors.Is(err, ErrJobActive) {
+			s.logger.Warn("auto-transcribe: enqueue failed", "video_id", videoID.String(), "error", err)
+		}
+		return false
+	}
+	return true
 }
 
 // LatestForVideo returns a video's most recent auto-caption job (GET status).

@@ -281,6 +281,15 @@ func (fakeFedRepo) GetRemoteVideoByURL(context.Context, string) (sqlcgen.GetRemo
 	return sqlcgen.GetRemoteVideoByURLRow{}, pgx.ErrNoRows
 }
 
+// No avatar/banner rows: actors serve without icon/image.
+func (f fakeFedRepo) GetUserImage(context.Context, sqlcgen.GetUserImageParams) (sqlcgen.UserImage, error) {
+	return sqlcgen.UserImage{}, pgx.ErrNoRows
+}
+
+func (f fakeFedRepo) GetChannelImage(context.Context, sqlcgen.GetChannelImageParams) (sqlcgen.ChannelImage, error) {
+	return sqlcgen.ChannelImage{}, pgx.ErrNoRows
+}
+
 // GetUserActorByID resolves ada — the owner of the "films" channel — so the
 // served Group actor can attribute itself to the owner account (PeerTube interop).
 func (f fakeFedRepo) GetUserActorByID(_ context.Context, id uuid.UUID) (sqlcgen.GetUserActorByIDRow, error) {
@@ -316,8 +325,8 @@ func (fakeFedRepo) HasRemoteChannelFollow(context.Context, string) (bool, error)
 
 // W12 follower-approval queue + follow-back stubs: the handler suite for the
 // admin queue lives in admin_federation_test.go, whose fake overrides these.
-func (fakeFedRepo) InsertRemoteFollowPending(context.Context, sqlcgen.InsertRemoteFollowPendingParams) error {
-	return nil
+func (fakeFedRepo) InsertRemoteFollowPending(context.Context, sqlcgen.InsertRemoteFollowPendingParams) (uuid.UUID, error) {
+	return uuid.New(), nil
 }
 func (fakeFedRepo) ListPendingRemoteFollows(context.Context, sqlcgen.ListPendingRemoteFollowsParams) ([]sqlcgen.ListPendingRemoteFollowsRow, error) {
 	return nil, nil
@@ -521,9 +530,38 @@ func TestChannelActorServesGroup(t *testing.T) {
 	}
 }
 
+func TestActorBrowserAcceptRedirectsToProfile(t *testing.T) {
+	srv := fedServer(fedTestConfig())
+	for path, want := range map[string]string{"/accounts/ada": "/users/ada", "/video-channels/films": "/channels/films"} {
+		rec := getAccept(t, srv, path, "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8")
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != want {
+			t.Errorf("%s: status/location = %d %q, want 302 %s", path, rec.Code, rec.Header().Get("Location"), want)
+		}
+		if ap := getAccept(t, srv, path, apAccept); ap.Code != http.StatusOK {
+			t.Errorf("%s with AP Accept = %d, want 200", path, ap.Code)
+		}
+	}
+	if rec := getAccept(t, srv, "/accounts/nobody", "text/html"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown actor for a browser = %d, want 404", rec.Code)
+	}
+}
+
+// TestActorResponsesVaryOnAccept: the same actor URL answers a browser with a
+// 302 and an AP client with JSON (and anything else with 406), so every outcome
+// must carry Vary: Accept or a shared cache could hand the redirect to a peer.
+func TestActorResponsesVaryOnAccept(t *testing.T) {
+	srv := fedServer(fedTestConfig())
+	for name, accept := range map[string]string{"html": "text/html", "ap": apAccept, "other": "application/json"} {
+		rec := getAccept(t, srv, "/accounts/ada", accept)
+		if got := strings.Join(rec.Header().Values("Vary"), ", "); !strings.Contains(got, "Accept") {
+			t.Errorf("%s (%d): Vary = %q, want it to include Accept", name, rec.Code, got)
+		}
+	}
+}
+
 func TestActorRequiresActivityJSONAccept(t *testing.T) {
-	// A browser Accept (no AP media type) is 406 — the HTML profile is the frontend's.
-	rec := getAccept(t, fedServer(fedTestConfig()), "/accounts/ada", "text/html")
+	// Neither AP nor HTML (e.g. a JSON API client) is 406.
+	rec := getAccept(t, fedServer(fedTestConfig()), "/accounts/ada", "application/json")
 	if rec.Code != http.StatusNotAcceptable {
 		t.Errorf("status = %d, want 406 for a non-AP Accept", rec.Code)
 	}

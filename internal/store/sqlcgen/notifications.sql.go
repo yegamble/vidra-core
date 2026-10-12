@@ -163,9 +163,18 @@ func (q *Queries) CountUnreadNotifications(ctx context.Context, userID uuid.UUID
 }
 
 const createNotification = `-- name: CreateNotification :one
-INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id, report_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id
+WITH n AS (
+    INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id, report_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id, registration_request_id, remote_follow_id
+), owed AS (
+    INSERT INTO notification_emails (notification_id)
+    SELECT n.id FROM n
+    JOIN notification_prefs np ON np.user_id = n.user_id AND np.type = n.type
+    WHERE np.email_enabled
+)
+SELECT id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id, registration_request_id, remote_follow_id
+FROM n
 `
 
 type CreateNotificationParams struct {
@@ -179,9 +188,32 @@ type CreateNotificationParams struct {
 	ReportID       pgtype.UUID `json:"report_id"`
 }
 
+type CreateNotificationRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	UserID                uuid.UUID          `json:"user_id"`
+	Type                  string             `json:"type"`
+	ActorID               pgtype.UUID        `json:"actor_id"`
+	ChannelID             pgtype.UUID        `json:"channel_id"`
+	VideoID               pgtype.UUID        `json:"video_id"`
+	CommentID             pgtype.UUID        `json:"comment_id"`
+	ReadAt                pgtype.Timestamptz `json:"read_at"`
+	CreatedAt             time.Time          `json:"created_at"`
+	ConversationID        pgtype.UUID        `json:"conversation_id"`
+	ReportID              pgtype.UUID        `json:"report_id"`
+	RegistrationRequestID pgtype.UUID        `json:"registration_request_id"`
+	RemoteFollowID        pgtype.UUID        `json:"remote_follow_id"`
+}
+
 // Record a notification for a recipient (user_id). Context columns are optional
 // and depend on the type.
-func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotificationParams) (Notification, error) {
+//
+// The same statement records whether it is ALSO owed an email (migration 0157):
+// a notification_emails row when, and only when, the recipient explicitly
+// turned email on for this type. Email is opt-in, and the prefs API accepts an
+// email choice only for the types that offer it, so for every other type the
+// second insert is empty. One statement, so a notification can never exist
+// without the email decision that belongs to it (or the reverse).
+func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotificationParams) (CreateNotificationRow, error) {
 	row := q.db.QueryRow(ctx, createNotification,
 		arg.UserID,
 		arg.Type,
@@ -192,7 +224,7 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		arg.ConversationID,
 		arg.ReportID,
 	)
-	var i Notification
+	var i CreateNotificationRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -205,6 +237,8 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		&i.CreatedAt,
 		&i.ConversationID,
 		&i.ReportID,
+		&i.RegistrationRequestID,
+		&i.RemoteFollowID,
 	)
 	return i, err
 }
@@ -491,7 +525,8 @@ func (q *Queries) NotifyCommentMentions(ctx context.Context, arg NotifyCommentMe
 	return result.RowsAffected(), nil
 }
 
-const notifyFollowersOfNewVideo = `-- name: NotifyFollowersOfNewVideo :execrows
+const notifyFollowersOfNewVideo = `-- name: NotifyFollowersOfNewVideo :one
+WITH ins AS (
 INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id)
 SELECT cf.follower_id, 'new_video', ch.owner_id, v.channel_id, v.id
 FROM videos v
@@ -519,6 +554,14 @@ WHERE v.id = $1
          OR (ub.blocker_id = ch.owner_id AND ub.blocked_id = cf.follower_id)
   )
 ON CONFLICT (user_id, video_id) WHERE type = 'new_video' DO NOTHING
+RETURNING id, user_id
+), owed AS (
+    INSERT INTO notification_emails (notification_id)
+    SELECT ins.id FROM ins
+    JOIN notification_prefs np ON np.user_id = ins.user_id AND np.type = 'new_video'
+    WHERE np.email_enabled
+)
+SELECT count(*)::bigint FROM ins
 `
 
 // The "new video from a channel you follow" fan-out (migration 0101), fired by
@@ -541,8 +584,74 @@ ON CONFLICT (user_id, video_id) WHERE type = 'new_video' DO NOTHING
 //
 // ON CONFLICT rides notifications_new_video_unique_idx, so a publish hook that
 // fires twice for the same video is a no-op the second time.
+//
+// The same statement queues the EMAILS (migration 0157): one notification_emails
+// row per notification it actually inserted whose recipient explicitly turned
+// new_video email on. Keyed off what the INSERT returned, so the no-op re-run
+// above queues nothing either; nothing is mailed here — the outbox drain sends
+// in the background, so a large follower list never mails inline. Returns how
+// many followers were notified (not how many emails were queued).
 func (q *Queries) NotifyFollowersOfNewVideo(ctx context.Context, videoID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, notifyFollowersOfNewVideo, videoID)
+	row := q.db.QueryRow(ctx, notifyFollowersOfNewVideo, videoID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const notifyStaffOfFederationFollowerRequest = `-- name: NotifyStaffOfFederationFollowerRequest :execrows
+INSERT INTO notifications (user_id, type, channel_id, remote_follow_id)
+SELECT u.id, 'federation_follower_request', rf.channel_id, rf.id
+FROM remote_follows rf
+JOIN users u ON u.role = 'admin'
+WHERE rf.id = $1
+  AND rf.state = 'pending'
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = u.id AND np.type = 'federation_follower_request' AND np.enabled = FALSE
+  )
+ON CONFLICT (user_id, remote_follow_id) WHERE type = 'federation_follower_request' DO NOTHING
+`
+
+// Staff push signal for the federation follower-approval queue (migration 0156),
+// fired when a remote actor's follow lands as 'pending'. The queue's routes are
+// admin-only (/admin/federation/follower-requests), so ONLY admins are told —
+// notifying a moderator of a queue they cannot open would be noise. The followed
+// channel is stored for display; the remote actor is not a local user, so there
+// is no actor. Idempotent via notifications_federation_follower_request_unique_idx.
+func (q *Queries) NotifyStaffOfFederationFollowerRequest(ctx context.Context, remoteFollowID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, notifyStaffOfFederationFollowerRequest, remoteFollowID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const notifyStaffOfNewRegistrationRequest = `-- name: NotifyStaffOfNewRegistrationRequest :execrows
+INSERT INTO notifications (user_id, type, registration_request_id)
+SELECT u.id, 'new_registration_request', rr.id
+FROM registration_requests rr
+JOIN users u ON u.role IN ('admin', 'moderator')
+WHERE rr.id = $1
+  AND rr.status = 'pending'
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = u.id AND np.type = 'new_registration_request' AND np.enabled = FALSE
+  )
+ON CONFLICT (user_id, registration_request_id) WHERE type = 'new_registration_request' DO NOTHING
+`
+
+// Staff push signal for the registration approval queue (migration 0156), fired
+// when a request is filed. Set-based like NotifyStaffOfNewReport. Recipients are
+// the roles that may work the queue (admin + moderator, matching the
+// /admin/registration-requests route gate), active and non-deleted, minus anyone
+// who turned the type off. The applicant has no account, so there is no actor.
+// Idempotent via notifications_new_registration_request_unique_idx.
+func (q *Queries) NotifyStaffOfNewRegistrationRequest(ctx context.Context, requestID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, notifyStaffOfNewRegistrationRequest, requestID)
 	if err != nil {
 		return 0, err
 	}
@@ -584,6 +693,39 @@ ON CONFLICT (user_id, report_id) WHERE type = 'new_report' DO NOTHING
 // fires twice for the same report is a no-op the second time.
 func (q *Queries) NotifyStaffOfNewReport(ctx context.Context, reportID uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, notifyStaffOfNewReport, reportID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const notifyStaffOfQuarantinedUpload = `-- name: NotifyStaffOfQuarantinedUpload :execrows
+INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id)
+SELECT u.id, 'upload_quarantined', ch.owner_id, v.channel_id, v.id
+FROM videos v
+JOIN channels ch ON ch.id = v.channel_id
+JOIN users u ON u.role IN ('admin', 'moderator')
+WHERE v.id = $1
+  AND v.state = 'quarantined'
+  AND ch.owner_id <> u.id
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = u.id AND np.type = 'upload_quarantined' AND np.enabled = FALSE
+  )
+ON CONFLICT (user_id, video_id) WHERE type = 'upload_quarantined' DO NOTHING
+`
+
+// Staff push signal for the upload quarantine queue (migration 0156), fired when
+// a finished upload parks in 'quarantined'. Recipients are the roles behind
+// /admin/videos/quarantined (admin + moderator), minus the uploader (staff
+// uploads bypass the gate, but a moderator-owned video never self-notifies) and
+// anyone who turned the type off. The video must still be quarantined, so a
+// late fan-out for an already-approved video is a no-op. Idempotent via
+// notifications_upload_quarantined_unique_idx.
+func (q *Queries) NotifyStaffOfQuarantinedUpload(ctx context.Context, videoID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, notifyStaffOfQuarantinedUpload, videoID)
 	if err != nil {
 		return 0, err
 	}

@@ -43,6 +43,8 @@ type Actor struct {
 	Name              string           `json:"name,omitempty"`
 	Summary           string           `json:"summary,omitempty"`
 	URL               string           `json:"url,omitempty"`
+	Icon              *Image           `json:"icon,omitempty"`
+	Image             *Image           `json:"image,omitempty"`
 	Inbox             string           `json:"inbox"`
 	Outbox            string           `json:"outbox"`
 	Followers         string           `json:"followers"`
@@ -50,6 +52,14 @@ type Actor struct {
 	Endpoints         *Endpoints       `json:"endpoints,omitempty"`
 	AttributedTo      []AttributedItem `json:"attributedTo,omitempty"`
 	PublicKey         PublicKey        `json:"publicKey"`
+}
+
+// Image is an ActivityStreams Image object: an actor's avatar (icon) or banner
+// (image). Mastodon and PeerTube both read url + mediaType.
+type Image struct {
+	Type      string `json:"type"`
+	MediaType string `json:"mediaType,omitempty"`
+	URL       string `json:"url"`
 }
 
 // PublicKey is the actor's HTTP-signature public key block.
@@ -102,7 +112,25 @@ func (s *Service) AccountActor(ctx context.Context, username string) (*Actor, er
 		return nil, err
 	}
 	base := s.baseURL + "/accounts/" + u.Username
-	return buildActor(base, "Person", u.Username, u.DisplayName, u.Bio, pub), nil
+	actor := buildActor(base, "Person", u.Username, u.DisplayName, u.Bio, pub)
+	// url is the HUMAN profile page on the frontend, distinct from the AP id: a
+	// browser following it must land on HTML, not the 406 the id answers.
+	actor.URL = s.baseURL + "/users/" + url.PathEscape(u.Username)
+	img := func(kind string) *Image {
+		row, err := s.repo.GetUserImage(ctx, sqlcgen.GetUserImageParams{UserID: u.ID, Kind: kind})
+		return s.actorImage(row.ContentType, "/api/v1/users/"+u.ID.String()+"/"+kind, err)
+	}
+	actor.Icon, actor.Image = img("avatar"), img("banner")
+	return actor, nil
+}
+
+// actorImage builds an Image for a stored avatar/banner, or nil when the lookup
+// found none (or failed — an actor without its picture beats no actor).
+func (s *Service) actorImage(contentType, path string, lookupErr error) *Image {
+	if lookupErr != nil {
+		return nil
+	}
+	return &Image{Type: "Image", MediaType: contentType, URL: s.baseURL + path}
 }
 
 // ChannelActor returns the ActivityPub Group document for a local channel,
@@ -138,6 +166,12 @@ func (s *Service) ChannelActor(ctx context.Context, handle string) (*Actor, erro
 		Type: "Person",
 		ID:   s.baseURL + "/accounts/" + owner.Username,
 	}}
+	actor.URL = s.baseURL + "/channels/" + url.PathEscape(ch.Handle) // human page, not the AP id
+	img := func(kind string) *Image {
+		row, err := s.repo.GetChannelImage(ctx, sqlcgen.GetChannelImageParams{ChannelID: ch.ID, Kind: kind})
+		return s.actorImage(row.ContentType, "/api/v1/channels/"+url.PathEscape(ch.Handle)+"/"+kind, err)
+	}
+	actor.Icon, actor.Image = img("avatar"), img("banner")
 	return actor, nil
 }
 

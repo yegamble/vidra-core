@@ -626,24 +626,34 @@ type MutedInstance struct {
 }
 
 type Notification struct {
-	ID             uuid.UUID          `json:"id"`
-	UserID         uuid.UUID          `json:"user_id"`
-	Type           string             `json:"type"`
-	ActorID        pgtype.UUID        `json:"actor_id"`
-	ChannelID      pgtype.UUID        `json:"channel_id"`
-	VideoID        pgtype.UUID        `json:"video_id"`
-	CommentID      pgtype.UUID        `json:"comment_id"`
-	ReadAt         pgtype.Timestamptz `json:"read_at"`
-	CreatedAt      time.Time          `json:"created_at"`
-	ConversationID pgtype.UUID        `json:"conversation_id"`
-	ReportID       pgtype.UUID        `json:"report_id"`
+	ID                    uuid.UUID          `json:"id"`
+	UserID                uuid.UUID          `json:"user_id"`
+	Type                  string             `json:"type"`
+	ActorID               pgtype.UUID        `json:"actor_id"`
+	ChannelID             pgtype.UUID        `json:"channel_id"`
+	VideoID               pgtype.UUID        `json:"video_id"`
+	CommentID             pgtype.UUID        `json:"comment_id"`
+	ReadAt                pgtype.Timestamptz `json:"read_at"`
+	CreatedAt             time.Time          `json:"created_at"`
+	ConversationID        pgtype.UUID        `json:"conversation_id"`
+	ReportID              pgtype.UUID        `json:"report_id"`
+	RegistrationRequestID pgtype.UUID        `json:"registration_request_id"`
+	RemoteFollowID        pgtype.UUID        `json:"remote_follow_id"`
+}
+
+type NotificationEmail struct {
+	NotificationID uuid.UUID `json:"notification_id"`
+	Attempts       int32     `json:"attempts"`
+	NextAttemptAt  time.Time `json:"next_attempt_at"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type NotificationPref struct {
-	UserID    uuid.UUID `json:"user_id"`
-	Type      string    `json:"type"`
-	Enabled   bool      `json:"enabled"`
-	UpdatedAt time.Time `json:"updated_at"`
+	UserID       uuid.UUID `json:"user_id"`
+	Type         string    `json:"type"`
+	Enabled      bool      `json:"enabled"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	EmailEnabled *bool     `json:"email_enabled"`
 }
 
 type OauthIdentity struct {

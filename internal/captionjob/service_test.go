@@ -112,6 +112,12 @@ type fakeVideoStore struct {
 	getErr     error
 	captionErr error
 	stored     []storedCaption
+	existing   []sqlcgen.Caption // tracks ListCaptions reports
+	listErr    error
+}
+
+func (s *fakeVideoStore) ListCaptions(_ context.Context, _ uuid.UUID) ([]sqlcgen.Caption, error) {
+	return s.existing, s.listErr
 }
 
 func (s *fakeVideoStore) GetByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
@@ -393,4 +399,75 @@ func TestBootCapableFallsBackToTheStaticFlag(t *testing.T) {
 	if NewService(newFakeRepo(), &fakeVideoStore{}, nil, WithEnabled(false)).BootCapable() {
 		t.Error("with no explicit boot capability, BootCapable() must report the static flag")
 	}
+}
+
+// ---- auto-transcribe new uploads (T24) ---------------------------------------
+
+func autoSvc(repo Repository, vs VideoStore, on, capable bool) *Service {
+	return NewService(repo, vs, nil,
+		WithEnabledFunc(func() bool { return capable }),
+		WithAutoTranscribeFunc(func() bool { return on }),
+		WithDefaultLanguage("en"))
+}
+
+func jobCount(r *fakeRepo) int { return len(r.jobs) }
+
+func TestAutoEnqueueOnPublish(t *testing.T) {
+	ctx := context.Background()
+	vid := uuid.New()
+
+	t.Run("setting off enqueues nothing", func(t *testing.T) {
+		repo := newFakeRepo()
+		if autoSvc(repo, &fakeVideoStore{}, false, true).AutoEnqueueOnPublish(ctx, vid) || jobCount(repo) != 0 {
+			t.Fatal("enqueued with auto_transcribe_new_uploads off")
+		}
+	})
+	t.Run("setting on enqueues exactly one, again is a no-op", func(t *testing.T) {
+		repo := newFakeRepo()
+		svc := autoSvc(repo, &fakeVideoStore{}, true, true)
+		if !svc.AutoEnqueueOnPublish(ctx, vid) || jobCount(repo) != 1 {
+			t.Fatalf("want one job, got %d", jobCount(repo))
+		}
+		// Already queued: no duplicate.
+		if svc.AutoEnqueueOnPublish(ctx, vid) || jobCount(repo) != 1 {
+			t.Fatalf("duplicate enqueue, jobs=%d", jobCount(repo))
+		}
+	})
+	t.Run("prior finished job is not re-run", func(t *testing.T) {
+		repo := newFakeRepo()
+		svc := autoSvc(repo, &fakeVideoStore{}, true, true)
+		svc.AutoEnqueueOnPublish(ctx, vid)
+		for id, j := range repo.jobs {
+			j.State = StateFailed
+			repo.jobs[id] = j
+		}
+		if svc.AutoEnqueueOnPublish(ctx, vid) || jobCount(repo) != 1 {
+			t.Fatalf("re-enqueued after a finished job, jobs=%d", jobCount(repo))
+		}
+	})
+	t.Run("captions already present in the language", func(t *testing.T) {
+		repo := newFakeRepo()
+		vs := &fakeVideoStore{existing: []sqlcgen.Caption{{Language: "en"}}}
+		if autoSvc(repo, vs, true, true).AutoEnqueueOnPublish(ctx, vid) || jobCount(repo) != 0 {
+			t.Fatal("enqueued although a caption exists")
+		}
+	})
+	t.Run("capability unavailable", func(t *testing.T) {
+		repo := newFakeRepo()
+		if autoSvc(repo, &fakeVideoStore{}, true, false).AutoEnqueueOnPublish(ctx, vid) || jobCount(repo) != 0 {
+			t.Fatal("enqueued without transcription capability")
+		}
+	})
+	t.Run("enqueue error is swallowed", func(t *testing.T) {
+		svc := autoSvc(errRepo{newFakeRepo()}, &fakeVideoStore{}, true, true)
+		if svc.AutoEnqueueOnPublish(ctx, vid) {
+			t.Fatal("reported success on a failing enqueue")
+		}
+	})
+}
+
+type errRepo struct{ *fakeRepo }
+
+func (errRepo) EnqueueCaptionJob(context.Context, sqlcgen.EnqueueCaptionJobParams) (sqlcgen.CaptionJob, error) {
+	return sqlcgen.CaptionJob{}, errors.New("db down")
 }

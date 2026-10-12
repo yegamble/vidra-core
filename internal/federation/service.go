@@ -68,7 +68,7 @@ type Repository interface {
 	IsInstanceBlocked(ctx context.Context, domain string) (bool, error)
 	// Federation policy gates (config-parity W12): the pending channel-follower
 	// approval queue and the auto-follow-back edges (migration 0087).
-	InsertRemoteFollowPending(ctx context.Context, arg sqlcgen.InsertRemoteFollowPendingParams) error
+	InsertRemoteFollowPending(ctx context.Context, arg sqlcgen.InsertRemoteFollowPendingParams) (uuid.UUID, error)
 	ListPendingRemoteFollows(ctx context.Context, arg sqlcgen.ListPendingRemoteFollowsParams) ([]sqlcgen.ListPendingRemoteFollowsRow, error)
 	CountPendingRemoteFollows(ctx context.Context) (int64, error)
 	AcceptPendingRemoteFollowByID(ctx context.Context, id uuid.UUID) (sqlcgen.AcceptPendingRemoteFollowByIDRow, error)
@@ -79,6 +79,9 @@ type Repository interface {
 	// Outbound remote-channel follows (remote-content §3): a local user follows
 	// a remote channel; the accepted edges also gate remote-video ingestion.
 	GetUserActorByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetUserActorByIDRow, error)
+	// Actor avatar/banner (icon/image) — the same rows the REST image routes serve.
+	GetUserImage(ctx context.Context, arg sqlcgen.GetUserImageParams) (sqlcgen.UserImage, error)
+	GetChannelImage(ctx context.Context, arg sqlcgen.GetChannelImageParams) (sqlcgen.ChannelImage, error)
 	UpsertRemoteChannelFollow(ctx context.Context, arg sqlcgen.UpsertRemoteChannelFollowParams) (sqlcgen.RemoteChannelFollow, error)
 	GetRemoteChannelFollowByID(ctx context.Context, arg sqlcgen.GetRemoteChannelFollowByIDParams) (sqlcgen.GetRemoteChannelFollowByIDRow, error)
 	ListRemoteChannelFollows(ctx context.Context, arg sqlcgen.ListRemoteChannelFollowsParams) ([]sqlcgen.ListRemoteChannelFollowsRow, error)
@@ -188,6 +191,8 @@ type Service struct {
 	// Inbound Flag → moderation report + staff fan-out (WithFlagReporting).
 	fileFlagReport  func(context.Context, moderation.RemoteReport) (uuid.UUID, error)
 	notifyNewReport func(context.Context, uuid.UUID) (int64, error)
+	// onFollowerRequest: see WithFollowerRequestHook (nil = none).
+	onFollowerRequest func(context.Context, uuid.UUID)
 
 	// allowPrivateFetch relaxes the SSRF guard for remote-actor fetches so backed
 	// e2e / dev can reach a loopback origin. Never true in production.
