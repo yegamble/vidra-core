@@ -91,6 +91,10 @@ type Repository interface {
 	RejectRemoteChannelFollowByActivity(ctx context.Context, arg sqlcgen.RejectRemoteChannelFollowByActivityParams) (int64, error)
 	HasAcceptedRemoteChannelFollow(ctx context.Context, remoteActorURL string) (bool, error)
 	HasRemoteChannelFollow(ctx context.Context, remoteActorURL string) (bool, error)
+	// Inbound Move (migration 0167): the per-origin cooldown claim and the
+	// bounded batch of local edges to the actor that moved.
+	ClaimRemoteActorMove(ctx context.Context, arg sqlcgen.ClaimRemoteActorMoveParams) (int64, error)
+	ListRemoteChannelFollowsOfActor(ctx context.Context, arg sqlcgen.ListRemoteChannelFollowsOfActorParams) ([]sqlcgen.ListRemoteChannelFollowsOfActorRow, error)
 	// Federated comments (remote-content §6): inbound Create/Update{Note}
 	// storage + the comment reads outbound fan-out needs.
 	GetComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)

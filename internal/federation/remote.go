@@ -42,7 +42,10 @@ type fetchedActor struct {
 	// blocking @name@domain saw nothing change, because the videos are
 	// attributed to the Group and the block named the Person.
 	AttributedTo json.RawMessage `json:"attributedTo"`
-	PublicKey    struct {
+	// AlsoKnownAs lists the actor's other identities. Read only to verify an
+	// inbound Move: the target must name the actor that moved to it.
+	AlsoKnownAs json.RawMessage `json:"alsoKnownAs"`
+	PublicKey   struct {
 		PublicKeyPem string `json:"publicKeyPem"`
 	} `json:"publicKey"`
 	Endpoints struct {
@@ -134,7 +137,11 @@ func (s *Service) refetchRemoteActor(ctx context.Context, actorURL string) (sqlc
 	if err != nil {
 		return sqlcgen.RemoteActor{}, err
 	}
+	return s.cacheFetchedActor(ctx, actorURL, fa)
+}
 
+// cacheFetchedActor upserts the cache row for an actor document just fetched.
+func (s *Service) cacheFetchedActor(ctx context.Context, actorURL string, fa fetchedActor) (sqlcgen.RemoteActor, error) {
 	var sharedInbox *string
 	if fa.Endpoints.SharedInbox != "" {
 		sharedInbox = &fa.Endpoints.SharedInbox

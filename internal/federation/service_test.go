@@ -71,6 +71,35 @@ type fakeRepo struct {
 	// adminActorBlocks are the instance-wide per-actor blocks (0142), keyed by
 	// actor url.
 	adminActorBlocks map[string]string
+	// moveClaims are the origins whose Move was claimed (0167); the cooldown
+	// never expires inside a test.
+	moveClaims map[string]string
+}
+
+func (f fakeRepo) ClaimRemoteActorMove(_ context.Context, arg sqlcgen.ClaimRemoteActorMoveParams) (int64, error) {
+	if _, ok := f.moveClaims[arg.OriginActorUrl]; ok {
+		return 0, nil
+	}
+	f.moveClaims[arg.OriginActorUrl] = arg.TargetActorUrl
+	return 1, nil
+}
+
+// ListRemoteChannelFollowsOfActor mirrors the SQL: live edges, oldest first.
+func (f fakeRepo) ListRemoteChannelFollowsOfActor(_ context.Context, arg sqlcgen.ListRemoteChannelFollowsOfActorParams) ([]sqlcgen.ListRemoteChannelFollowsOfActorRow, error) {
+	var rows []*sqlcgen.RemoteChannelFollow
+	for _, r := range f.rcFollows {
+		if r.RemoteActorUrl == arg.RemoteActorUrl && r.State != "rejected" {
+			rows = append(rows, r)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt.Before(rows[j].CreatedAt) })
+	var out []sqlcgen.ListRemoteChannelFollowsOfActorRow
+	for _, r := range rows {
+		if len(out) < int(arg.ResultLimit) {
+			out = append(out, sqlcgen.ListRemoteChannelFollowsOfActorRow{ID: r.ID, UserID: r.UserID})
+		}
+	}
+	return out, nil
 }
 
 // GetRemoteVideoByID resolves the VIDEO behind a mirrored comment — the origin
