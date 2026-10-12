@@ -51,6 +51,7 @@ type InstanceRepository interface {
 	ListAcceptedInstanceFollowerInboxes(ctx context.Context) ([]string, error)
 	ListInstanceOutboxVideoIDs(ctx context.Context, arg sqlcgen.ListInstanceOutboxVideoIDsParams) ([]uuid.UUID, error)
 	CountInstanceOutboxVideos(ctx context.Context) (int64, error)
+	ClaimInstanceFollowerBackfill(ctx context.Context, arg sqlcgen.ClaimInstanceFollowerBackfillParams) (int64, error)
 }
 
 // The production repository provides it; a drift here is a compile error, not

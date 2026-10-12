@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -27,6 +28,21 @@ type fakeInstance struct {
 	followers map[string]*sqlcgen.GetInstanceFollowerByActorRow
 	// outbox is ListInstanceOutboxVideoIDs' answer, newest first.
 	outbox []uuid.UUID
+	// backfilledAt is instance_follower_backfills, keyed by remote actor url.
+	backfilledAt map[string]time.Time
+}
+
+// ClaimInstanceFollowerBackfill mirrors the SQL claim: absent or older than the
+// cooldown → claimed (and stamped now); inside the window → 0.
+func (f fakeRepo) ClaimInstanceFollowerBackfill(_ context.Context, a sqlcgen.ClaimInstanceFollowerBackfillParams) (int64, error) {
+	if f.inst.backfilledAt == nil {
+		f.inst.backfilledAt = map[string]time.Time{}
+	}
+	if at, ok := f.inst.backfilledAt[a.RemoteActorUrl]; ok && time.Since(at) < time.Duration(a.CooldownSeconds)*time.Second {
+		return 0, nil
+	}
+	f.inst.backfilledAt[a.RemoteActorUrl] = time.Now()
+	return 1, nil
 }
 
 // ListAcceptedInstanceFollowerInboxes mirrors the SQL: accepted followers'

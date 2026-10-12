@@ -73,3 +73,14 @@ FROM videos v
 JOIN channels c ON c.id = v.channel_id
 WHERE v.privacy = 'public' AND v.state = 'published' AND c.activitypub_enabled
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id);
+
+-- name: ClaimInstanceFollowerBackfill :execrows
+-- Atomically claims the new-follower backfill for one remote instance actor:
+-- 1 = claimed (never backfilled, or longer ago than the cooldown), 0 = it was
+-- backfilled inside the window and gets nothing now. Concurrent Follows race
+-- on the primary key, so at most one of them wins.
+INSERT INTO instance_follower_backfills (remote_actor_url, last_backfill_at)
+VALUES (sqlc.arg('remote_actor_url'), now())
+ON CONFLICT (remote_actor_url) DO UPDATE SET last_backfill_at = now()
+WHERE instance_follower_backfills.last_backfill_at
+      <= now() - make_interval(secs => sqlc.arg('cooldown_seconds')::int);

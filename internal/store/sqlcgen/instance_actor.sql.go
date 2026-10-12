@@ -11,6 +11,31 @@ import (
 	"github.com/google/uuid"
 )
 
+const claimInstanceFollowerBackfill = `-- name: ClaimInstanceFollowerBackfill :execrows
+INSERT INTO instance_follower_backfills (remote_actor_url, last_backfill_at)
+VALUES ($1, now())
+ON CONFLICT (remote_actor_url) DO UPDATE SET last_backfill_at = now()
+WHERE instance_follower_backfills.last_backfill_at
+      <= now() - make_interval(secs => $2::int)
+`
+
+type ClaimInstanceFollowerBackfillParams struct {
+	RemoteActorUrl  string `json:"remote_actor_url"`
+	CooldownSeconds int32  `json:"cooldown_seconds"`
+}
+
+// Atomically claims the new-follower backfill for one remote instance actor:
+// 1 = claimed (never backfilled, or longer ago than the cooldown), 0 = it was
+// backfilled inside the window and gets nothing now. Concurrent Follows race
+// on the primary key, so at most one of them wins.
+func (q *Queries) ClaimInstanceFollowerBackfill(ctx context.Context, arg ClaimInstanceFollowerBackfillParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimInstanceFollowerBackfill, arg.RemoteActorUrl, arg.CooldownSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countAcceptedInstanceFollowers = `-- name: CountAcceptedInstanceFollowers :one
 SELECT count(*)::bigint FROM instance_followers WHERE state = 'accepted'
 `

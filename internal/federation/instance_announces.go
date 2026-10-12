@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -27,6 +28,13 @@ import (
 // instance follower. Each makes the follower fetch one video, so the push is
 // the newest slice; the outbox serves the rest to a follower that crawls it.
 const instanceBackfillLimit = 50
+
+// instanceBackfillCooldown is how long one remote instance actor waits for its
+// next backfill. A follow is cheap to make and to Undo, and each new one would
+// otherwise queue instanceBackfillLimit signed deliveries; a re-Follow inside
+// the window is accepted and answered, and backfilled with nothing. Persisted
+// (instance_follower_backfills), so a restart does not reset it.
+const instanceBackfillCooldown = 24 * time.Hour
 
 // buildInstanceAnnounce renders the instance actor's Announce of one local
 // video, addressed as PeerTube addresses a share (to Public, cc its followers).
@@ -87,8 +95,15 @@ func (s *Service) backfillInstanceFollower(ctx context.Context, follower string)
 		return nil
 	}
 	ids, err := s.inst.ListInstanceOutboxVideoIDs(ctx, sqlcgen.ListInstanceOutboxVideoIDsParams{ResultLimit: instanceBackfillLimit})
-	if err != nil {
+	if err != nil || len(ids) == 0 {
 		return err
+	}
+	claimed, err := s.inst.ClaimInstanceFollowerBackfill(ctx, sqlcgen.ClaimInstanceFollowerBackfillParams{
+		RemoteActorUrl:  follower,
+		CooldownSeconds: int32(instanceBackfillCooldown / time.Second),
+	})
+	if err != nil || claimed == 0 {
+		return err // backfilled inside the window: nothing this time
 	}
 	for i := len(ids) - 1; i >= 0; i-- {
 		payload, err := json.Marshal(s.buildInstanceAnnounce(s.InstanceActorURL()+"/activities/announce/"+uuid.NewString(), ids[i]))
