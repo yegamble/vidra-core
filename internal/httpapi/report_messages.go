@@ -13,6 +13,7 @@ import (
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/ratelimit"
 )
 
 // reportMessageView is one message in a report's thread. AuthorUsername is
@@ -57,8 +58,34 @@ func (r createReportMessageRequest) Validate() []FieldError {
 		return []FieldError{{Field: "body", Message: "is required"}}
 	case utf8.RuneCountInString(body) > moderation.MaxMessageLen:
 		return []FieldError{{Field: "body", Message: "must be at most 3000 characters"}}
+	case strings.ContainsRune(body, 0):
+		return []FieldError{{Field: "body", Message: "must not contain NUL characters"}}
 	}
 	return nil
+}
+
+// defaultReportMessageRateLimit: report-thread posts per user per hour.
+const defaultReportMessageRateLimit = 20
+
+// reportMessageRateLimit throttles report-thread posts PER USER (each reporter
+// message notifies all staff), in the mailTestRateLimit style.
+func (s *Server) reportMessageRateLimit() echo.MiddlewareFunc {
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+			userID, _, ok := principalFromContext(c)
+			if !ok || s.reportMessageLimit == nil {
+				return nil, "", false
+			}
+			return s.reportMessageLimit, "report-msg:" + userID.String(), true
+		},
+		unavailable: "report message rate limiter unavailable, failing open",
+		denied:      "you have sent several report messages recently; wait before sending another",
+		auditReason: "report_message_rate_limited",
+		auditActor: func(c echo.Context) string {
+			userID, _, _ := principalFromContext(c)
+			return userID.String()
+		},
+	})
 }
 
 // reportThreadError maps the thread's sentinel errors. Not-yours and
@@ -98,9 +125,8 @@ func (s *Server) handleListReportMessages(c echo.Context) error {
 }
 
 // handleCreateReportMessage posts to a report's thread and tells the other side
-// (best-effort). Access is handleListReportMessages'; a remote Flag report is
-// 409. A staff message is audited by id — never the body, which no log line
-// carries either.
+// (best-effort); a remote Flag report is 409. A staff message is audited by id,
+// never the body.
 func (s *Server) handleCreateReportMessage(c echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {

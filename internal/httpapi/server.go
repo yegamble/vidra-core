@@ -117,6 +117,9 @@ type Server struct {
 	// exhausted budget degrades that search to local-only — it never fails the
 	// request. Always non-nil after New().
 	searchResolveLimit *ratelimit.Limiter
+	// reportMessageLimit is the per-USER budget for posting to report threads:
+	// every reporter message notifies all staff. Always non-nil after New().
+	reportMessageLimit *ratelimit.Limiter
 	// contactMailer delivers contact-form messages to the operator (spec
 	// instance-platform-info). Nil when the deployment has no outbound mail
 	// path — the contact form then reports unavailable (409 / effective
@@ -480,6 +483,12 @@ func WithContactRateLimiter(l *ratelimit.Limiter) Option {
 // nil/unset, the route falls back to the general limiter only.
 func WithMailTestRateLimiter(l *ratelimit.Limiter) Option {
 	return func(s *Server) { s.mailTestLimit = l }
+}
+
+// WithReportMessageRateLimiter overrides the per-user report-message budget
+// (cmd/api wires a Redis-backed one for multi-node correctness).
+func WithReportMessageRateLimiter(l *ratelimit.Limiter) Option {
+	return func(s *Server) { s.reportMessageLimit = l }
 }
 
 // WithSearchResolveRateLimiter overrides the per-caller budget applied to
@@ -1197,6 +1206,9 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// (Redis-backed in cmd/api) when present, else an in-memory default.
 	if s.searchResolveLimit == nil {
 		s.searchResolveLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultSearchResolveRateLimit, defaultSearchResolveRateWindow)
+	}
+	if s.reportMessageLimit == nil {
+		s.reportMessageLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultReportMessageRateLimit, time.Hour)
 	}
 	// Media falls back to the general limiter when no dedicated one was wired, so
 	// a server built without WithMediaRateLimiter (unit tests, embedders) behaves
@@ -2046,7 +2058,7 @@ func (s *Server) routes() {
 		// A report's message thread: its local reporter and staff (404 to anyone
 		// else, so a report's existence never leaks).
 		api.GET("/reports/:id/messages", s.handleListReportMessages, s.requireAuth)
-		api.POST("/reports/:id/messages", s.handleCreateReportMessage, s.requireAuth)
+		api.POST("/reports/:id/messages", s.handleCreateReportMessage, s.requireAuth, s.reportMessageRateLimit())
 		api.GET("/me/reports", s.handleListMyReports, s.requireAuth)
 		api.GET("/me/reports/:id", s.handleGetMyReport, s.requireAuth)
 		api.GET("/admin/reports", s.handleListReports, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))

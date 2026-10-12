@@ -587,6 +587,9 @@ func run() error {
 	// being set up. Ten still bounds a stuck tab to ten messages an hour, which
 	// is the failure the limiter exists for.
 	opts = append(opts, httpapi.WithMailTestRateLimiter(ratelimit.NewLimiter(contactCounter, 10, time.Hour)))
+	// Report-thread posts: 20 per USER per hour on the same counter — every
+	// reporter message notifies all staff.
+	opts = append(opts, httpapi.WithReportMessageRateLimiter(ratelimit.NewLimiter(contactCounter, 20, time.Hour)))
 	// Remote-URI search resolution (config-parity W13) is an outbound-fetch
 	// surface, so it carries its own per-caller budget — 10 resolutions per
 	// minute — on the shared Redis counter when rate limiting is on (multi-node

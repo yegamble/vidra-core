@@ -9558,13 +9558,10 @@ paths:
       operationId: listReportMessages
       summary: Read a report's message thread
       description: >-
-        The conversation between a report's reporter and the moderation team,
-        oldest first. Open to the report's LOCAL reporter and to admins and
-        moderators; any other caller gets the same 404 as an unknown report, so
-        a report's existence never leaks. The reporter is never told which
-        moderator wrote a message (author_username is filled for staff only).
-        A report another instance filed (a remote Flag) has no local reporter:
-        staff can read its thread, which is empty and reports can_reply=false.
+        The reporter↔staff conversation, oldest first. Open to the report's
+        LOCAL reporter and to admins/moderators; anyone else gets the same 404
+        as an unknown report. A remote Flag report is readable by staff with
+        can_reply=false.
       tags: [moderation]
       security:
         - bearerAuth: []
@@ -9600,12 +9597,9 @@ paths:
       operationId: createReportMessage
       summary: Post to a report's message thread
       description: >-
-        Adds a message to the thread. Same access as reading it. A staff
-        member's message notifies the reporter (report_message, with no actor);
-        the reporter's notifies the staff who receive new_report. Notifications
-        never carry the body. A staff message is audited as
-        moderation.report.message by id only. A report another instance filed
-        has no local reporter to write to: 409.
+        Same access as reading. Notifies the other side (report_message, never
+        the body); a staff message is audited by id. 409 on a remote Flag
+        report; posting is limited per user (20/hour by default).
       tags: [moderation]
       security:
         - bearerAuth: []
@@ -9648,7 +9642,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: Validation failed (empty body, or over 3000 characters).
+          description: Validation failed (empty, over 3000 characters, or a NUL character).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: The caller has posted too many report messages recently.
           content:
             application/json:
               schema:
@@ -21371,9 +21371,7 @@ components:
           description: True when the caller wrote it.
         author_username:
           type: string
-          description: >-
-            Who wrote it. Sent to staff only — the reporter is never told which
-            moderator wrote — and omitted once the author's account is deleted.
+          description: Who wrote it — staff viewers only; the reporter is never told which moderator.
         created_at:
           type: string
           format: date-time
@@ -21389,9 +21387,7 @@ components:
                 $ref: "#/components/schemas/ReportMessage"
             can_reply:
               type: boolean
-              description: >-
-                False for a report another instance filed: there is no local
-                reporter, so nobody can post to its thread.
+              description: False for a remote Flag report (no local reporter to write to).
     CreateReportMessageRequest:
       type: object
       required: [body]

@@ -18,6 +18,7 @@ import (
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -371,5 +372,44 @@ func TestRemoteReportThreadIsReadOnly(t *testing.T) {
 	}
 	if got := sendJSONAuth(fx.srv, http.MethodGet, path, "", fx.reporter).Code; got != http.StatusNotFound {
 		t.Errorf("non-staff GET remote thread = %d, want 404", got)
+	}
+}
+
+// Every reporter message notifies every staff member, so posting carries its
+// own per-USER budget on top of the general per-IP one: past it the post is a
+// 429, nothing is stored, and staff are told about exactly the posts that got
+// through.
+func TestReportMessagePostsAreRateLimitedPerUser(t *testing.T) {
+	fx := newReportThreadFixture(t)
+	const budget = 3
+	fx.srv.reportMessageLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), budget, time.Hour)
+	before := unreadCount(t, fx.srv, fx.mod)
+	for i := 0; i < budget; i++ {
+		if got := fx.post(fx.reporter, `{"body":"again"}`); got != http.StatusCreated {
+			t.Fatalf("post %d = %d, want 201", i+1, got)
+		}
+	}
+	rec := sendJSONAuth(fx.srv, http.MethodPost, "/api/v1/reports/"+fx.reportID+"/messages", `{"body":"one too many"}`, fx.reporter)
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("post %d = %d (Retry-After %q), want 429 with Retry-After", budget+1, rec.Code, rec.Header().Get("Retry-After"))
+	}
+	if got := unreadCount(t, fx.srv, fx.mod) - before; got != budget {
+		t.Errorf("staff were told about %d messages, want %d (the refused post notifies nobody)", got, budget)
+	}
+	if th := fx.thread(t, fx.mod); th.Total != budget {
+		t.Errorf("thread holds %d messages, want %d", th.Total, budget)
+	}
+	// The budget is the reporter's, not the report's: staff can still answer.
+	if got := fx.post(fx.mod, `{"body":"slow down please"}`); got != http.StatusCreated {
+		t.Errorf("moderator post after the reporter's budget ran out = %d, want 201", got)
+	}
+}
+
+// PostgreSQL text cannot hold a NUL byte; the body is refused as a validation
+// error rather than reaching the database as a 500.
+func TestReportMessageRejectsNULByte(t *testing.T) {
+	fx := newReportThreadFixture(t)
+	if got := fx.post(fx.reporter, `{"body":"before\u0000after"}`); got != http.StatusUnprocessableEntity {
+		t.Errorf("NUL in body = %d, want 422", got)
 	}
 }
