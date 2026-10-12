@@ -54,18 +54,29 @@ const (
 	// — the moderation queue's push signal. Like new_video it is created by a
 	// set-based fan-out (NotifyNewReport); only staff ever receive it.
 	TypeNewReport = "new_report"
+	// The three staff approval-queue signals (migration 0156). Like new_report
+	// they are set-based fan-outs that only staff ever receive; each tells staff
+	// that a queue they must work just gained an entry.
+	//
+	// TypeNewRegistrationRequest: a request was filed in approval mode.
+	TypeNewRegistrationRequest = "new_registration_request"
+	// TypeUploadQuarantined: an upload parked in the quarantine review queue.
+	TypeUploadQuarantined = "upload_quarantined"
+	// TypeFederationFollowerRequest: a remote actor's follow awaits approval.
+	TypeFederationFollowerRequest = "federation_follower_request"
 )
 
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeCaptionReady, TypeComment, TypeCommentReply, TypeFollow, TypeMessage, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeVideoBlocked, TypeVideoRejected, TypeVideoUnblocked}
+	return []string{TypeCaptionReady, TypeComment, TypeCommentReply, TypeFederationFollowerRequest, TypeFollow, TypeMessage, TypeNewRegistrationRequest, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeUploadQuarantined, TypeVideoBlocked, TypeVideoRejected, TypeVideoUnblocked}
 }
 
 // knownType reports whether t is a recognised notification type.
 func knownType(t string) bool {
 	switch t {
-	case TypeFollow, TypeComment, TypeCommentReply, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeVideoUnblocked, TypeCaptionReady, TypeNewVideo, TypeNewReport:
+	case TypeFollow, TypeComment, TypeCommentReply, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeVideoUnblocked, TypeCaptionReady, TypeNewVideo, TypeNewReport,
+		TypeNewRegistrationRequest, TypeUploadQuarantined, TypeFederationFollowerRequest:
 		return true
 	}
 	return false
@@ -94,6 +105,9 @@ type Repository interface {
 	IsNotificationTypeEnabled(ctx context.Context, arg sqlcgen.IsNotificationTypeEnabledParams) (bool, error)
 	NotifyFollowersOfNewVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
 	NotifyStaffOfNewReport(ctx context.Context, reportID uuid.UUID) (int64, error)
+	NotifyStaffOfNewRegistrationRequest(ctx context.Context, requestID uuid.UUID) (int64, error)
+	NotifyStaffOfQuarantinedUpload(ctx context.Context, videoID uuid.UUID) (int64, error)
+	NotifyStaffOfFederationFollowerRequest(ctx context.Context, remoteFollowID uuid.UUID) (int64, error)
 	CommentReplyRecipient(ctx context.Context, commentID uuid.UUID) (sqlcgen.CommentReplyRecipientRow, error)
 	CommentVideoOwnerRecipient(ctx context.Context, commentID uuid.UUID) (sqlcgen.CommentVideoOwnerRecipientRow, error)
 	FollowNotificationRecipient(ctx context.Context, arg sqlcgen.FollowNotificationRecipientParams) (uuid.UUID, error)
@@ -347,6 +361,29 @@ func (s *Service) NotifyNewVideo(ctx context.Context, videoID uuid.UUID) (int64,
 // non-fatal — a notification failure must never fail the report itself.
 func (s *Service) NotifyNewReport(ctx context.Context, reportID uuid.UUID) (int64, error) {
 	return s.repo.NotifyStaffOfNewReport(ctx, reportID)
+}
+
+// NotifyNewRegistrationRequest tells staff who can work the registration queue
+// (admin + moderator) that a request awaits approval; it returns how many were
+// told. Set-based and idempotent exactly like NotifyNewReport (migration 0156);
+// per-user opt-outs are honoured in the SQL. Best-effort: the caller treats an
+// error as non-fatal — it must never fail the registration request.
+func (s *Service) NotifyNewRegistrationRequest(ctx context.Context, requestID uuid.UUID) (int64, error) {
+	return s.repo.NotifyStaffOfNewRegistrationRequest(ctx, requestID)
+}
+
+// NotifyUploadQuarantined tells staff who can work the quarantine queue (admin
+// + moderator) that an upload just parked there. Same contract as
+// NotifyNewRegistrationRequest.
+func (s *Service) NotifyUploadQuarantined(ctx context.Context, videoID uuid.UUID) (int64, error) {
+	return s.repo.NotifyStaffOfQuarantinedUpload(ctx, videoID)
+}
+
+// NotifyFederationFollowerRequest tells the admins who approve remote follower
+// requests (admin-only routes) that a follow awaits a decision. Same contract
+// as NotifyNewRegistrationRequest.
+func (s *Service) NotifyFederationFollowerRequest(ctx context.Context, remoteFollowID uuid.UUID) (int64, error) {
+	return s.repo.NotifyStaffOfFederationFollowerRequest(ctx, remoteFollowID)
 }
 
 // NotifyReportResolved records that a moderator (actorID) resolved recipientID's
