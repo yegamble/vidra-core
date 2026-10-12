@@ -32,6 +32,9 @@ type notifFakeRepo struct {
 	notifs    []sqlcgen.Notification
 	prefs     map[string]bool
 	createErr error
+	// emailPrefs mirrors notification_prefs.email_enabled: a separate column,
+	// so an absent key is the type's (opt-in) default whatever prefs says.
+	emailPrefs map[string]bool
 }
 
 // CommentReplyRecipient mirrors the real :one query (who hears about a reply):
@@ -181,6 +184,24 @@ func (f *notifFakeRepo) IsNotificationTypeEnabled(_ context.Context, a sqlcgen.I
 	return true, nil
 }
 
+func (f *notifFakeRepo) ListNotificationEmailPrefs(_ context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationEmailPrefsRow, error) {
+	var rows []sqlcgen.ListNotificationEmailPrefsRow
+	for _, typ := range notification.KnownTypes() { // stable order, like ORDER BY type
+		if on, ok := f.emailPrefs[notifPrefKey(userID, typ)]; ok {
+			rows = append(rows, sqlcgen.ListNotificationEmailPrefsRow{Type: typ, EmailEnabled: on})
+		}
+	}
+	return rows, nil
+}
+
+func (f *notifFakeRepo) UpsertNotificationEmailPref(_ context.Context, a sqlcgen.UpsertNotificationEmailPrefParams) error {
+	if f.emailPrefs == nil {
+		f.emailPrefs = map[string]bool{}
+	}
+	f.emailPrefs[notifPrefKey(a.UserID, a.Type)] = a.EmailEnabled
+	return nil
+}
+
 func (f *notifFakeRepo) userByID(id uuid.UUID) (sqlcgen.User, bool) {
 	for _, u := range f.auth.users {
 		if u.ID == id {
@@ -199,9 +220,9 @@ func (f *notifFakeRepo) channelByID(id uuid.UUID) (sqlcgen.Channel, bool) {
 	return sqlcgen.Channel{}, false
 }
 
-func (f *notifFakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNotificationParams) (sqlcgen.Notification, error) {
+func (f *notifFakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNotificationParams) (sqlcgen.CreateNotificationRow, error) {
 	if f.createErr != nil {
-		return sqlcgen.Notification{}, f.createErr
+		return sqlcgen.CreateNotificationRow{}, f.createErr
 	}
 	n := sqlcgen.Notification{
 		ID: uuid.New(), UserID: a.UserID, Type: a.Type,
@@ -209,7 +230,7 @@ func (f *notifFakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNo
 		ConversationID: a.ConversationID, ReportID: a.ReportID, CreatedAt: time.Now(),
 	}
 	f.notifs = append(f.notifs, n)
-	return n, nil
+	return sqlcgen.CreateNotificationRow(n), nil
 }
 
 // NotifyFollowersOfNewVideo mirrors the shape of the real set-based fan-out
@@ -613,6 +634,72 @@ func TestPatchNotificationPrefsFlipsAndValidates(t *testing.T) {
 	}
 	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/me/notification-prefs", `{"prefs":{"follow":true}}`, ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("anon patch prefs = %d, want 401", rec.Code)
+	}
+}
+
+// TestNotificationPrefsCarryEmailSwitches proves the email switchboard rides
+// the existing prefs route: GET lists exactly the email-capable types, all off
+// (email is opt-in, mirroring PeerTube's web-only defaults for them); PATCH
+// sets them independently of the in-app map; a type with no email delivery is
+// 422 with nothing written; and a body naming neither map is 422.
+func TestNotificationPrefsCarryEmailSwitches(t *testing.T) {
+	srv := videoServer(t)
+	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	const route = "/api/v1/me/notification-prefs"
+	decode := func(rec *httptest.ResponseRecorder) notificationPrefsResponse {
+		t.Helper()
+		var body notificationPrefsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode prefs: %v; body=%s", err, rec.Body.String())
+		}
+		return body
+	}
+
+	rec := sendJSONAuth(srv, http.MethodGet, route, "", tok)
+	got := decode(rec)
+	if len(got.Email) != len(notification.EmailTypes()) {
+		t.Fatalf("email = %v, want exactly %v", got.Email, notification.EmailTypes())
+	}
+	for _, typ := range notification.EmailTypes() {
+		if on, ok := got.Email[typ]; !ok || on {
+			t.Errorf("email[%s] = %v (present=%v), want false", typ, on, ok)
+		}
+	}
+
+	// Email alone, then both maps in one body: each lands, neither disturbs the other.
+	rec = sendJSONAuth(srv, http.MethodPatch, route, `{"email":{"new_video":true}}`, tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch email = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := decode(rec); !got.Email["new_video"] || !got.Prefs["new_video"] {
+		t.Errorf("after email patch: email=%v prefs=%v, want new_video on in both", got.Email, got.Prefs)
+	}
+	rec = sendJSONAuth(srv, http.MethodPatch, route, `{"prefs":{"follow":false},"email":{"comment":true}}`, tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch both = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := decode(rec); got.Prefs["follow"] || !got.Email["comment"] || !got.Email["new_video"] {
+		t.Errorf("after combined patch: prefs=%v email=%v", got.Prefs, got.Email)
+	}
+
+	// No email delivery for follow → 422, and the valid half was not written.
+	for _, body := range []string{
+		`{"email":{"comment_reply":true,"follow":true}}`,
+		`{"prefs":{"comment":false},"email":{"follow":true}}`,
+	} {
+		if rec := sendJSONAuth(srv, http.MethodPatch, route, body, tok); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s = %d, want 422", body, rec.Code)
+		}
+	}
+	after := decode(sendJSONAuth(srv, http.MethodGet, route, "", tok))
+	if after.Email["comment_reply"] || !after.Prefs["comment"] {
+		t.Errorf("a refused update wrote: prefs=%v email=%v", after.Prefs, after.Email)
+	}
+
+	for _, body := range []string{`{}`, `{"email":{}}`, `{"prefs":{},"email":{}}`} {
+		if rec := sendJSONAuth(srv, http.MethodPatch, route, body, tok); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s = %d, want 422", body, rec.Code)
+		}
 	}
 }
 

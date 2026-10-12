@@ -32,6 +32,40 @@ func (q *Queries) IsNotificationTypeEnabled(ctx context.Context, arg IsNotificat
 	return column_1, err
 }
 
+const listNotificationEmailPrefs = `-- name: ListNotificationEmailPrefs :many
+SELECT type, email_enabled::bool AS email_enabled
+FROM notification_prefs
+WHERE user_id = $1 AND email_enabled IS NOT NULL
+ORDER BY type
+`
+
+type ListNotificationEmailPrefsRow struct {
+	Type         string `json:"type"`
+	EmailEnabled bool   `json:"email_enabled"`
+}
+
+// A user's EXPLICIT email choices (migration 0157). A NULL email_enabled is the
+// type's default and is not returned; the service overlays these rows onto it.
+func (q *Queries) ListNotificationEmailPrefs(ctx context.Context, userID uuid.UUID) ([]ListNotificationEmailPrefsRow, error) {
+	rows, err := q.db.Query(ctx, listNotificationEmailPrefs, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNotificationEmailPrefsRow
+	for rows.Next() {
+		var i ListNotificationEmailPrefsRow
+		if err := rows.Scan(&i.Type, &i.EmailEnabled); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listNotificationPrefs = `-- name: ListNotificationPrefs :many
 SELECT type, enabled
 FROM notification_prefs
@@ -64,6 +98,27 @@ func (q *Queries) ListNotificationPrefs(ctx context.Context, userID uuid.UUID) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const upsertNotificationEmailPref = `-- name: UpsertNotificationEmailPref :exec
+INSERT INTO notification_prefs (user_id, type, email_enabled)
+VALUES ($1, $2, $3::bool)
+ON CONFLICT (user_id, type) DO UPDATE
+SET email_enabled = EXCLUDED.email_enabled, updated_at = now()
+`
+
+type UpsertNotificationEmailPrefParams struct {
+	UserID       uuid.UUID `json:"user_id"`
+	Type         string    `json:"type"`
+	EmailEnabled bool      `json:"email_enabled"`
+}
+
+// Set one (user, type) EMAIL choice. A new row takes the in-app default
+// (enabled = TRUE, the same answer as no row), so setting email never changes
+// whether the in-app notification is created.
+func (q *Queries) UpsertNotificationEmailPref(ctx context.Context, arg UpsertNotificationEmailPrefParams) error {
+	_, err := q.db.Exec(ctx, upsertNotificationEmailPref, arg.UserID, arg.Type, arg.EmailEnabled)
+	return err
 }
 
 const upsertNotificationPref = `-- name: UpsertNotificationPref :exec
