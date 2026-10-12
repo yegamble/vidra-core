@@ -78,6 +78,8 @@ type Repository interface {
 	CreateReportMessage(ctx context.Context, arg sqlcgen.CreateReportMessageParams) (sqlcgen.CreateReportMessageRow, error)
 	ListReportMessages(ctx context.Context, arg sqlcgen.ListReportMessagesParams) ([]sqlcgen.ListReportMessagesRow, error)
 	CountReportMessages(ctx context.Context, reportID uuid.UUID) (int64, error)
+	ListMyReports(ctx context.Context, arg sqlcgen.ListMyReportsParams) ([]sqlcgen.ListMyReportsRow, error)
+	CountMyReports(ctx context.Context, reporterID uuid.UUID) (int64, error)
 }
 
 // Service holds the moderation application logic.

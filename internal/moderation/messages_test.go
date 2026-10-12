@@ -139,3 +139,45 @@ func TestRemoteReportThreadIsReadOnly(t *testing.T) {
 		t.Errorf("stored %d messages on a remote report, want 0", len(repo.messages))
 	}
 }
+
+func (f *fakeRepo) ListMyReports(_ context.Context, a sqlcgen.ListMyReportsParams) ([]sqlcgen.ListMyReportsRow, error) {
+	var rows []sqlcgen.ListMyReportsRow
+	for i := len(f.reports) - 1; i >= 0; i-- { // newest first
+		r := f.reports[i]
+		if r.remoteActor != "" || r.reporterID != a.ReporterID || (a.ReportID.Valid && r.id != uuid.UUID(a.ReportID.Bytes)) {
+			continue
+		}
+		rows = append(rows, sqlcgen.ListMyReportsRow{ID: r.id, TargetType: r.targetType, Status: r.status,
+			Reason: r.reason, CreatedAt: r.createdAt, LastActivityAt: r.createdAt, VideoID: r.videoID})
+	}
+	rows = rows[min(int(a.ResultOffset), len(rows)):]
+	return rows[:min(int(a.ResultLimit), len(rows))], nil
+}
+
+func (f *fakeRepo) CountMyReports(ctx context.Context, reporterID uuid.UUID) (int64, error) {
+	rows, err := f.ListMyReports(ctx, sqlcgen.ListMyReportsParams{ReporterID: reporterID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+// "My reports" lists only the caller's own reports, and a single report that
+// is not the caller's is ErrNotFound — the same answer as no report at all.
+func TestMyReports(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	ctx := context.Background()
+	me, them := uuid.New(), uuid.New()
+	mine, _ := svc.ReportVideo(ctx, me, uuid.New(), "spam")
+	theirs, _ := svc.ReportVideo(ctx, them, uuid.New(), "spam")
+
+	items, total, err := svc.ListMine(ctx, me, 20, 0)
+	if err != nil || total != 1 || len(items) != 1 || items[0].ID != mine || items[0].Status != StatusOpen {
+		t.Fatalf("ListMine = %+v, %d, %v; want just my open report", items, total, err)
+	}
+	if got, err := svc.GetMine(ctx, me, mine); err != nil || got.ID != mine {
+		t.Errorf("GetMine(mine) = %+v, %v", got, err)
+	}
+	for _, id := range []uuid.UUID{theirs, uuid.New()} {
+		if _, err := svc.GetMine(ctx, me, id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("GetMine(%s) err = %v, want ErrNotFound", id, err)
+		}
+	}
+}

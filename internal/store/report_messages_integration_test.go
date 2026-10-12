@@ -212,3 +212,85 @@ func TestReportMessageFanOutRemoteReportOnRealPG(t *testing.T) {
 		t.Errorf("remote-report fan-out = %d, %v; want 0 (no local reporter)", n, err)
 	}
 }
+
+// TestListMyReportsOnRealPG proves the "My reports" read: only the caller's
+// own reports, most recent activity first (a thread message or a resolution
+// moves a report up), a message count, the report_id narrowing, a video title
+// only while the video is still public, and a count that agrees with the list.
+func TestListMyReportsOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	reporter, _ := seedOwnerChannel(ctx, t, st, "mine")
+	other, _ := seedOwnerChannel(ctx, t, st, "notmine")
+	_, channelID := seedOwnerChannel(ctx, t, st, "minechan")
+	public := seedPublishedVideo(ctx, t, st, channelID, "still public")
+	hidden := seedPublishedVideo(ctx, t, st, channelID, "made private later")
+	file := func(by, video uuid.UUID) uuid.UUID {
+		t.Helper()
+		id, err := q.CreateVideoReport(ctx, sqlcgen.CreateVideoReportParams{
+			ReporterID: by, VideoID: pgtype.UUID{Bytes: video, Valid: true}, Reason: "seeded by TestListMyReportsOnRealPG"})
+		if err != nil {
+			t.Fatalf("CreateVideoReport: %v", err)
+		}
+		return id
+	}
+	first := file(reporter, public)
+	second := file(reporter, hidden)
+	_ = file(other, public)
+	if _, err := st.Pool.Exec(ctx, `UPDATE reports SET created_at = now() - interval '1 hour' WHERE id = $1`, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Pool.Exec(ctx, `UPDATE videos SET privacy = 'private' WHERE id = $1`, hidden); err != nil {
+		t.Fatal(err)
+	}
+	list := func() []sqlcgen.ListMyReportsRow {
+		t.Helper()
+		rows, err := q.ListMyReports(ctx, sqlcgen.ListMyReportsParams{ReporterID: reporter, ResultLimit: 10})
+		if err != nil {
+			t.Fatalf("ListMyReports: %v", err)
+		}
+		return rows
+	}
+
+	rows := list()
+	if len(rows) != 2 || rows[0].ID != second || rows[1].ID != first {
+		t.Fatalf("ListMyReports = %+v, want [second, first] and none of the other reporter's", rows)
+	}
+	if rows[0].VideoTitle != "" || rows[1].VideoTitle != "still public" {
+		t.Errorf("titles = %q / %q, want the private video's hidden", rows[0].VideoTitle, rows[1].VideoTitle)
+	}
+	if n, err := q.CountMyReports(ctx, reporter); err != nil || n != 2 {
+		t.Errorf("CountMyReports = %d, %v; want 2", n, err)
+	}
+
+	// A thread message on the older report makes it the most recently active.
+	if _, err := q.CreateReportMessage(ctx, sqlcgen.CreateReportMessageParams{
+		ReportID: first, AuthorID: reporter, Body: "more context"}); err != nil {
+		t.Fatal(err)
+	}
+	rows = list()
+	if rows[0].ID != first || rows[0].MessageCount != 1 || rows[1].MessageCount != 0 {
+		t.Errorf("after a message: %+v, want first on top with message_count 1", rows)
+	}
+	if !rows[0].LastActivityAt.After(rows[0].CreatedAt) {
+		t.Errorf("last_activity_at %v not after created_at %v", rows[0].LastActivityAt, rows[0].CreatedAt)
+	}
+
+	one, err := q.ListMyReports(ctx, sqlcgen.ListMyReportsParams{ReporterID: reporter,
+		ReportID: pgtype.UUID{Bytes: second, Valid: true}, ResultLimit: 1})
+	if err != nil || len(one) != 1 || one[0].ID != second {
+		t.Errorf("ListMyReports(report_id) = %+v, %v; want just that report", one, err)
+	}
+	none, err := q.ListMyReports(ctx, sqlcgen.ListMyReportsParams{ReporterID: other,
+		ReportID: pgtype.UUID{Bytes: second, Valid: true}, ResultLimit: 1})
+	if err != nil || len(none) != 0 {
+		t.Errorf("another reporter's ListMyReports(report_id) = %+v, %v; want nothing", none, err)
+	}
+}

@@ -122,3 +122,29 @@ SET status         = sqlc.arg('status'),
     updated_at     = now()
 WHERE id = sqlc.arg('id')
 RETURNING reporter_id;
+
+-- name: ListMyReports :many
+-- A reporter's own reports, most recently active first (filing, resolution or
+-- the newest thread message). Never the moderator's note; a video title only
+-- while the video is still public. report_id narrows to one (NULL = all).
+SELECT r.id, r.target_type, r.status, r.reason, r.created_at, r.resolved_at,
+       r.video_id, COALESCE(CASE WHEN v.privacy = 'public' AND v.state = 'published' THEN v.title END, '')::text AS video_title,
+       ru.username AS reported_username, rv.title AS remote_video_title,
+       COALESCE(t.message_count, 0)::bigint AS message_count,
+       GREATEST(r.created_at, r.resolved_at, t.last_message_at)::timestamptz AS last_activity_at
+FROM reports r
+LEFT JOIN videos v ON v.id = r.video_id
+LEFT JOIN users ru ON ru.id = r.reported_user_id
+LEFT JOIN remote_videos rv ON rv.id = r.remote_video_id
+LEFT JOIN LATERAL (
+    SELECT count(*) AS message_count, max(m.created_at) AS last_message_at
+    FROM report_messages m WHERE m.report_id = r.id
+) t ON TRUE
+WHERE r.reporter_id = sqlc.arg('reporter_id')::uuid
+  AND (sqlc.narg('report_id')::uuid IS NULL OR r.id = sqlc.narg('report_id')::uuid)
+ORDER BY last_activity_at DESC, r.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountMyReports :one
+-- ListMyReports' total (no report_id narrowing).
+SELECT count(*)::bigint FROM reports WHERE reporter_id = sqlc.arg('reporter_id')::uuid;
