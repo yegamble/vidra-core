@@ -93,7 +93,9 @@ type Server struct {
 	// (WithAuthRateLimiter), else a built-in, always-on in-memory default so the
 	// endpoint is never left unthrottled — even on a single-node deployment
 	// running without Redis. Always non-nil after New().
-	unlockLimit     *ratelimit.Limiter
+	unlockLimit *ratelimit.Limiter
+	// bulkVideosLimit throttles POST /me/videos/bulk PER USER (see ratelimit.go).
+	bulkVideosLimit *ratelimit.Limiter
 	attachmentLimit *ratelimit.Limiter
 	// contactLimit throttles the public contact form (POST /instance/contact) —
 	// its own fixed-window budget, 1 request/IP/hour in production (wired in
@@ -1192,6 +1194,9 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	} else {
 		s.unlockLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultUnlockRateLimit, defaultUnlockRateWindow)
 	}
+	// Bulk video actions each run the full delete/update pipeline up to 100
+	// times, so they always carry a per-user budget, wired in-process like unlock.
+	s.bulkVideosLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultBulkVideosRateLimit, defaultBulkVideosRateWindow)
 	// Remote-URI search resolution (config-parity W13) triggers outbound
 	// fetches, so it always carries a per-caller budget: the wired limiter
 	// (Redis-backed in cmd/api) when present, else an in-memory default.
@@ -1461,6 +1466,12 @@ func (s *Server) routes() {
 		s.echo.GET("/metrics", echo.WrapHandler(s.metrics.Handler()))
 	}
 
+	// Not federation features: both only need the public base URL.
+	if s.cfg.PublicBaseURL != "" {
+		s.echo.GET("/.well-known/security.txt", s.handleSecurityTxt)
+		s.echo.GET("/.well-known/change-password", s.handleWellKnownChangePassword)
+	}
+
 	// Fediverse discovery (NodeInfo) lives at the root, outside /api/v1, and is a
 	// federation contract — not part of the REST OpenAPI. Mounted only when
 	// federation is enabled and wired, so the REST drift guard never sees it and
@@ -1469,6 +1480,8 @@ func (s *Server) routes() {
 		s.echo.GET("/.well-known/nodeinfo", s.handleNodeInfoDiscovery)
 		s.echo.GET("/nodeinfo/2.1", s.handleNodeInfo21)
 		s.echo.GET("/.well-known/webfinger", s.handleWebFinger)
+		s.echo.GET("/.well-known/host-meta", s.handleHostMeta)
+		s.echo.GET("/.well-known/host-meta.json", s.handleHostMetaJSON)
 		s.echo.GET("/accounts/:handle", s.handleAccountActor)
 		s.echo.GET("/video-channels/:handle", s.handleChannelActor)
 		// Inbound activities. The shared inbox plus per-actor inboxes advertised in
@@ -1510,6 +1523,7 @@ func (s *Server) routes() {
 	// the health probes and nodeinfo discovery.
 	if s.cfg.PublicBaseURL != "" && s.videosvc != nil && s.channelsvc != nil {
 		s.echo.GET("/feeds/videos.xml", s.handleVideosFeed)
+		s.echo.GET("/feeds/podcast/videos.xml", s.handlePodcastFeed, s.feedRateLimit())
 		s.echo.GET("/services/oembed", s.handleOEmbed)
 		s.echo.GET("/sitemap.xml", s.handleSitemap)
 	}
@@ -1719,6 +1733,9 @@ func (s *Server) routes() {
 		api.GET("/search/channels", s.handleSearchChannels, s.optionalAuth)
 		if s.authsvc != nil {
 			api.GET("/users/:username/profile", s.handleGetUserProfile, s.optionalAuth)
+			if s.videosvc != nil {
+				api.GET("/users/:username/videos", s.handleListUserVideos, s.optionalAuth)
+			}
 			// Account search. Mounted with the profile endpoint on purpose: they
 			// share one visibility rule, and the list must never outlive the
 			// single lookup's gate.
@@ -1782,6 +1799,8 @@ func (s *Server) routes() {
 		api.GET("/channels/:handle/videos", s.handleListChannelVideos, s.optionalAuth)
 		api.GET("/videos", s.handleListPublicVideos, s.optionalAuth)
 		api.GET("/me/subscriptions/videos", s.handleListSubscriptionVideos, s.requireAuth)
+		api.GET("/me/videos", s.handleListMyVideos, s.requireAuth)
+		api.POST("/me/videos/bulk", s.handleBulkMyVideos, s.requireAuth, s.bulkVideosRateLimit())
 		api.GET("/me/saved", s.handleListSavedVideos, s.requireAuth)
 		api.POST("/videos/:id/save", s.handleSaveVideo, s.requireAuth)
 		api.DELETE("/videos/:id/save", s.handleUnsaveVideo, s.requireAuth)
@@ -2082,6 +2101,9 @@ func (s *Server) routes() {
 	// because the identity a viewer supplies is resolved through the same
 	// WebFinger + SSRF-guarded machinery the follow flow uses.
 	if s.fedsvc != nil {
+		// Outbound remote interaction: an anonymous visitor's home-server
+		// subscribe URL, found via the SSRF-guarded WebFinger.
+		api.GET("/remote-interaction/resolve", s.handleResolveRemoteInteraction, s.optionalAuth, s.remoteInteractionLimit())
 		api.GET("/me/blocks/remote", s.handleListRemoteBlocks, s.requireAuth)
 		api.POST("/me/blocks/remote", s.handleBlockRemoteActor, s.requireAuth)
 		api.DELETE("/me/blocks/remote", s.handleUnblockRemoteActor, s.requireAuth)

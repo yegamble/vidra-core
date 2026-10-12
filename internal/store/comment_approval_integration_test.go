@@ -134,6 +134,20 @@ func TestHeldCommentVisibilityOnRealPG(t *testing.T) {
 	if _, err := q.ApproveComment(ctx, sqlcgen.ApproveCommentParams{ID: held.ID, ExpectedUpdatedAt: held.UpdatedAt.Add(-time.Second)}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Errorf("stale-version approve err = %v, want no row", err)
 	}
+	// Mentions in a held comment wait for approval (0161).
+	mentionStranger := func() int64 {
+		t.Helper()
+		n, err := q.NotifyCommentMentions(ctx, sqlcgen.NotifyCommentMentionsParams{
+			CommentID: held.ID, Usernames: []string{"held-stranger-" + suffix},
+		})
+		if err != nil {
+			t.Fatalf("mention fan-out: %v", err)
+		}
+		return n
+	}
+	if n := mentionStranger(); n != 0 {
+		t.Errorf("mention fan-out for a held comment notified %d, want 0", n)
+	}
 	// Approval: exactly one winner, then the comment is everyone's.
 	got, err := approveCurrent(ctx, q, held.ID)
 	if err != nil || got.HeldForReview {
@@ -150,6 +164,9 @@ func TestHeldCommentVisibilityOnRealPG(t *testing.T) {
 	}
 	if row, err := q.CommentVideoOwnerRecipient(ctx, held.ID); err != nil || row.RecipientID != owner {
 		t.Errorf("owner recipient after approval = %v, %v; want the owner", row.RecipientID, err)
+	}
+	if n := mentionStranger(); n != 1 {
+		t.Errorf("mention fan-out after approval notified %d, want 1", n)
 	}
 	check("approved", false, []viewer{
 		{"anonymous", pgtype.UUID{}, false, 2},

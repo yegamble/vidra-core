@@ -163,9 +163,7 @@ const (
 	ActionVideoCaptionGenerate = "content.video.caption_generate"
 	ActionChannelDelete        = "content.channel.delete"
 	ActionMediaGC              = "admin.media.gc"
-	// ActionCommentApprove / ActionCommentReject record a video's reviewer (or
-	// staff) releasing, or deleting, someone else's HELD comment (0161). The
-	// resource is the comment id; the body is never recorded.
+	// Approve/reject someone else's HELD comment (0161); resource = comment id.
 	ActionCommentApprove = "content.comment.approve"
 	ActionCommentReject  = "content.comment.reject"
 	// ActionAuditRetentionPrune is the audit trail recording its own retention

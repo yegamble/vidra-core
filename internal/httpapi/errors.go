@@ -122,6 +122,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var mailReason string
 	var mailPort int
 	var pr *PasswordRequiredError
+	var sir *SignInRequiredError
 	var tma *TooManyActiveUploadsError
 	var cfd *ContactFormDisabledError
 	var rc *ReplaceConflictError
@@ -266,6 +267,10 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		message = "this video is password protected"
 		code = "password_required"
 		videoID, shortCode = pr.VideoID, pr.ShortCode
+	case errors.As(err, &sir):
+		status = http.StatusUnauthorized
+		message = "sign in to watch this video"
+		code = "sign_in_required"
 	case errors.As(err, &qe):
 		status = http.StatusUnprocessableEntity
 		message = "storing this file would exceed your storage quota"
@@ -585,6 +590,15 @@ type PasswordRequiredError struct {
 }
 
 func (e *PasswordRequiredError) Error() string { return "password required" }
+
+// SignInRequiredError renders as 401 with the stable code "sign_in_required":
+// the video is privacy=internal (visible to any signed-in account of this
+// instance) and the caller is anonymous. Like password_required it is a
+// deliberate exception to the 404-for-invisible rule, so the watch page can
+// offer to sign in; it carries nothing about the video.
+type SignInRequiredError struct{}
+
+func (e *SignInRequiredError) Error() string { return "sign in required" }
 
 // ReplaceConflictError renders as 409 with the stable code "replace_conflict"
 // (video file replacement, config-parity W14): the target video is not in a

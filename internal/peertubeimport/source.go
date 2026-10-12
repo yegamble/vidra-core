@@ -237,11 +237,14 @@ type SourceUser struct {
 // SourceChannel is a LOCAL PeerTube video channel. OwnerUserID is the source
 // user id that owns it (via account.userId).
 type SourceChannel struct {
-	ID            int64
-	OwnerUserID   int64
-	Handle        string // channel actor preferredUsername
-	DisplayName   string
-	Description   string
+	ID          int64
+	OwnerUserID int64
+	Handle      string // channel actor preferredUsername
+	DisplayName string
+	Description string
+	// Support is the source's videoChannel.support (markdown, "" when blank);
+	// carried into channels.support (migration 0159).
+	Support       string
 	CreatedAt     time.Time
 	PublicKeyPEM  string
 	PrivateKeyPEM string // SECRET; may be empty
@@ -255,13 +258,16 @@ type SourceVideo struct {
 	ChannelID   int64
 	Title       string
 	Description string
-	Privacy     int // PeerTube VideoPrivacy: 1 public, 2 unlisted, 3 private, 4 internal
-	State       int // PeerTube VideoState: 1 published, others = not-yet-published
-	Category    *int
-	Licence     *int
-	Language    *string
-	Duration    int
-	CreatedAt   time.Time
+	// Support is the source's video.support ("" when blank), carried into
+	// videos.support (migration 0159).
+	Support   string
+	Privacy   int // PeerTube VideoPrivacy: 1 public, 2 unlisted, 3 private, 4 internal
+	State     int // PeerTube VideoState: 1 published, others = not-yet-published
+	Category  *int
+	Licence   *int
+	Language  *string
+	Duration  int
+	CreatedAt time.Time
 	// Views is the source's LIFETIME view total for this video — one number, with
 	// no daily breakdown behind it. 0 when the source does not carry the column.
 	Views int64
@@ -431,9 +437,13 @@ func (s *Source) Channels(ctx context.Context) ([]SourceChannel, error) {
 	if onActor {
 		actorJoin = `cact."videoChannelId" = vc.id`
 	}
+	supportExpr, err := s.optionalExpression(ctx, "videoChannel", "support", `COALESCE(vc.support, '')`, `''::text`)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT vc.id, acc."userId", cact."preferredUsername", vc.name,
-		       COALESCE(vc.description, ''), vc."createdAt",
+		       COALESCE(vc.description, ''), `+supportExpr+`, vc."createdAt",
 		       COALESCE(cact."publicKey", ''), COALESCE(cact."privateKey", '')
 		FROM "videoChannel" vc
 		JOIN account acc ON acc.id = vc."accountId"
@@ -448,7 +458,7 @@ func (s *Source) Channels(ctx context.Context) ([]SourceChannel, error) {
 	for rows.Next() {
 		var c SourceChannel
 		if err := rows.Scan(&c.ID, &c.OwnerUserID, &c.Handle, &c.DisplayName,
-			&c.Description, &c.CreatedAt, &c.PublicKeyPEM, &c.PrivateKeyPEM); err != nil {
+			&c.Description, &c.Support, &c.CreatedAt, &c.PublicKeyPEM, &c.PrivateKeyPEM); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan channel: %w", err)
 		}
 		out = append(out, c)
@@ -522,8 +532,12 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 	if err != nil {
 		return nil, err
 	}
+	supportExpr, err := s.optionalExpression(ctx, "video", "support", `COALESCE(v.support, '')`, `''::text`)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT v.id, v.uuid::text, v."channelId", v.name, COALESCE(v.description, ''),
+		SELECT v.id, v.uuid::text, v."channelId", v.name, COALESCE(v.description, ''), `+supportExpr+`,
 		       v.privacy, v.state, v.category, v.licence, v.language, v.duration, v."createdAt",
 		       `+viewsExpr+`, `+aspectExpr+`, `+origPubExpr+`, `+nsfwExpr+`, `+blacklistExpr+`, `+downloadExpr+`, `+commentsExpr+`
 		FROM video v
@@ -539,7 +553,7 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 	for rows.Next() {
 		var v SourceVideo
 		var uuidStr string
-		if err := rows.Scan(&v.ID, &uuidStr, &v.ChannelID, &v.Title, &v.Description,
+		if err := rows.Scan(&v.ID, &uuidStr, &v.ChannelID, &v.Title, &v.Description, &v.Support,
 			&v.Privacy, &v.State, &v.Category, &v.Licence, &v.Language, &v.Duration, &v.CreatedAt,
 			&v.Views, &v.AspectRatio, &v.OriginallyPublishedAt, &v.NSFW, &v.Blacklisted, &v.DownloadEnabled, &v.CommentsPolicy); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan video: %w", err)
