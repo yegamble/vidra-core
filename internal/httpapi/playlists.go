@@ -20,9 +20,12 @@ import (
 // validPlaylistVisibility is the allowed visibility set; empty defaults to "private".
 var validPlaylistVisibility = map[string]bool{"public": true, "unlisted": true, "private": true}
 
-// playlistView is the public projection of a playlist.
+// playlistView is the public projection of a playlist. OwnerID lets a client
+// decide owner controls from the playlist itself; searching GET /me/playlists
+// for it only ever sees one page.
 type playlistView struct {
 	ID           string    `json:"id"`
+	OwnerID      string    `json:"owner_id"`
 	Title        string    `json:"title"`
 	Description  string    `json:"description"`
 	Visibility   string    `json:"visibility"`
@@ -35,6 +38,7 @@ type playlistView struct {
 func newPlaylistView(p sqlcgen.Playlist, count int64) playlistView {
 	return playlistView{
 		ID:           p.ID.String(),
+		OwnerID:      p.OwnerID.String(),
 		Title:        p.Title,
 		Description:  p.Description,
 		Visibility:   p.Visibility,
@@ -48,6 +52,7 @@ func newPlaylistView(p sqlcgen.Playlist, count int64) playlistView {
 func playlistViewRow(r sqlcgen.GetPlaylistByIDRow) playlistView {
 	return playlistView{
 		ID:           r.ID.String(),
+		OwnerID:      r.OwnerID.String(),
 		Title:        r.Title,
 		Description:  r.Description,
 		Visibility:   r.Visibility,
@@ -153,6 +158,7 @@ func (s *Server) handleListMyPlaylists(c echo.Context) error {
 	for _, r := range rows {
 		views = append(views, playlistView{
 			ID:           r.ID.String(),
+			OwnerID:      r.OwnerID.String(),
 			Title:        r.Title,
 			Description:  r.Description,
 			Visibility:   r.Visibility,
@@ -424,6 +430,61 @@ func (s *Server) handleReorderPlaylistItems(c echo.Context) error {
 	if err := s.playlistsvc.ReorderItems(c.Request().Context(), userID, id, videoIDs); err != nil {
 		if errors.Is(err, playlist.ErrInvalidOrder) {
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "video_ids must be exactly the playlist's items, each listed once")
+		}
+		return playlistError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// movePlaylistItemRequest is the POST /api/v1/playlists/{id}/videos/{videoId}/move
+// body: the item the moved video should directly follow. null or omitted moves
+// it to the front.
+type movePlaylistItemRequest struct {
+	AfterVideoID *string `json:"after_video_id"`
+}
+
+func (r movePlaylistItemRequest) Validate() []FieldError {
+	if r.AfterVideoID != nil {
+		if _, err := uuid.Parse(strings.TrimSpace(*r.AfterVideoID)); err != nil {
+			return []FieldError{{Field: "after_video_id", Message: "must be a video id or null"}}
+		}
+	}
+	return nil
+}
+
+// handleMovePlaylistItem moves one item to directly after another, or to the
+// front. It is the reorder a paged client can make: PUT /videos needs every id,
+// and a client holds one page. Owner-only (a non-owner or unknown playlist is
+// 404, hiding existence); a video or anchor that is not an item is 409 (the
+// client's copy is stale); an item anchored on itself is 422.
+func (s *Server) handleMovePlaylistItem(c echo.Context) error {
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
+	}
+	id, err := pathUUID(c, "id", "playlist not found")
+	if err != nil {
+		return err
+	}
+	videoID, err := pathUUID(c, "videoId", "video not found")
+	if err != nil {
+		return err
+	}
+	var in movePlaylistItemRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	var after *uuid.UUID
+	if in.AfterVideoID != nil {
+		a, _ := uuid.Parse(strings.TrimSpace(*in.AfterVideoID)) // Validate() proved it parses.
+		after = &a
+	}
+	if err := s.playlistsvc.MoveItem(c.Request().Context(), userID, id, videoID, after); err != nil {
+		switch {
+		case errors.Is(err, playlist.ErrItemNotFound):
+			return echo.NewHTTPError(http.StatusConflict, "the video and after_video_id must both be items of this playlist")
+		case errors.Is(err, playlist.ErrInvalidMove):
+			return echo.NewHTTPError(http.StatusUnprocessableEntity, "after_video_id must not be the moved video")
 		}
 		return playlistError(err)
 	}

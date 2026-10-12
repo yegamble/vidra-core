@@ -28,6 +28,11 @@ var (
 	// ErrInvalidOrder means a reorder request's video ids are not exactly the
 	// playlist's current item set (a missing, extra, or duplicated id).
 	ErrInvalidOrder = errors.New("playlist: reorder ids do not match the playlist items")
+	// ErrItemNotFound means a move named a video, or an anchor, that is not an
+	// item of the playlist — typically a client holding a stale copy of it.
+	ErrItemNotFound = errors.New("playlist: video is not an item of the playlist")
+	// ErrInvalidMove means a move asked to place an item directly after itself.
+	ErrInvalidMove = errors.New("playlist: an item cannot be moved after itself")
 	// ErrUnsupportedMedia means an uploaded cover image is not an accepted type.
 	ErrUnsupportedMedia = errors.New("playlist: unsupported image type")
 	// ErrStorageUnavailable means no blob backend is configured for cover uploads.
@@ -49,6 +54,7 @@ type Repository interface {
 	CountPlaylistItems(ctx context.Context, playlistID uuid.UUID) (int64, error)
 	ListPlaylistItemVideoIDs(ctx context.Context, playlistID uuid.UUID) ([]uuid.UUID, error)
 	ReorderPlaylistItems(ctx context.Context, arg sqlcgen.ReorderPlaylistItemsParams) error
+	MovePlaylistItem(ctx context.Context, arg sqlcgen.MovePlaylistItemParams) (int64, error)
 	SetPlaylistThumbnail(ctx context.Context, arg sqlcgen.SetPlaylistThumbnailParams) error
 	ClearPlaylistThumbnail(ctx context.Context, id uuid.UUID) error
 }
@@ -257,6 +263,38 @@ func (s *Service) ReorderItems(ctx context.Context, ownerID, playlistID uuid.UUI
 		PlaylistID: playlistID,
 		VideoIds:   videoIDs,
 	})
+}
+
+// MoveItem moves videoID to directly after afterVideoID, or to the front when
+// afterVideoID is nil, and renumbers the playlist — one atomic statement that
+// serializes against concurrent moves (see MovePlaylistItem). Unlike
+// ReorderItems it needs no copy of the full item list, so a client holding one
+// page of a long playlist can still reorder it. Owner-only (non-owner →
+// ErrForbidden, unknown id → ErrNotFound); a video or anchor that is not an item
+// → ErrItemNotFound; an item anchored on itself → ErrInvalidMove.
+func (s *Service) MoveItem(ctx context.Context, ownerID, playlistID, videoID uuid.UUID, afterVideoID *uuid.UUID) error {
+	p, err := s.GetByID(ctx, playlistID)
+	if err != nil {
+		return err
+	}
+	if p.OwnerID != ownerID {
+		return ErrForbidden
+	}
+	if afterVideoID != nil && *afterVideoID == videoID {
+		return ErrInvalidMove
+	}
+	n, err := s.repo.MovePlaylistItem(ctx, sqlcgen.MovePlaylistItemParams{
+		PlaylistID:   playlistID,
+		VideoID:      videoID,
+		AfterVideoID: pgconv.UUIDPtr(afterVideoID),
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrItemNotFound
+	}
+	return nil
 }
 
 // samePermutation reports whether want and have contain exactly the same ids

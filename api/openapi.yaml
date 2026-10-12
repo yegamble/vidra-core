@@ -8990,6 +8990,71 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/playlists/{id}/videos/{videoId}/move:
+    post:
+      operationId: movePlaylistItem
+      summary: Move one video within a playlist
+      description: >-
+        Moves one item of a playlist owned by the caller to directly after
+        another item (`after_video_id`), or to the front when `after_video_id`
+        is null or omitted, and renumbers the playlist in one atomic step.
+        Unlike PUT /playlists/{id}/videos it needs no copy of the full item
+        list, so a client holding one page of a long playlist can reorder it.
+        The anchor is an item, not an index, so it stays correct when items the
+        client cannot see (a video that went private or unpublished) sit
+        between the visible ones. Concurrent moves are serialized, never lost.
+      tags: [playlists]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: videoId
+          in: path
+          required: true
+          description: The item to move.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MovePlaylistItemRequest"
+      responses:
+        "204":
+          description: The video is in its new place.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such playlist owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The video, or after_video_id, is not an item of this playlist
+            (the client's copy is stale — reload it). Nothing moved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: after_video_id is malformed or names the moved video itself.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/playlists/{id}/thumbnail:
     get:
       operationId: getPlaylistThumbnail
@@ -20482,11 +20547,17 @@ components:
           example: true
     Playlist:
       type: object
-      required: [id, title, description, visibility, video_count, has_thumbnail, created_at, updated_at]
+      required: [id, owner_id, title, description, visibility, video_count, has_thumbnail, created_at, updated_at]
       properties:
         id:
           type: string
           format: uuid
+        owner_id:
+          type: string
+          format: uuid
+          description: >-
+            The owning user. Compare it with the signed-in user to decide owner
+            controls; GET /me/playlists is paged and cannot answer that.
         title:
           type: string
           example: Watch later picks
@@ -20569,6 +20640,15 @@ components:
         video_id:
           type: string
           format: uuid
+    MovePlaylistItemRequest:
+      type: object
+      properties:
+        after_video_id:
+          type: [string, "null"]
+          format: uuid
+          description: >-
+            The item the moved video should directly follow. null or omitted
+            moves it to the front.
     ReorderPlaylistItemsRequest:
       type: object
       required: [video_ids]

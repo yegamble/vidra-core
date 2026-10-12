@@ -1989,6 +1989,7 @@ func (s *Server) routes() {
 		api.POST("/playlists/:id/videos", s.handleAddPlaylistItem, s.requireAuth)
 		api.PUT("/playlists/:id/videos", s.handleReorderPlaylistItems, s.requireAuth)
 		api.DELETE("/playlists/:id/videos/:videoId", s.handleRemovePlaylistItem, s.requireAuth)
+		api.POST("/playlists/:id/videos/:videoId/move", s.handleMovePlaylistItem, s.requireAuth)
 		// Playlist cover image: owner upload/remove + public (visibility-gated) get.
 		api.GET("/playlists/:id/thumbnail", s.handleGetPlaylistThumbnail, s.optionalAuth)
 		api.POST("/playlists/:id/thumbnail", s.handleSetPlaylistThumbnail, s.requireAuth, s.requireScannerGate)
