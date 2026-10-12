@@ -96,7 +96,7 @@ func (f fakeRepo) HasAcceptedInstanceFollowingForHost(_ context.Context, host st
 // peerInstance is a remote PeerTube-shaped instance: NodeInfo naming its
 // Application actor (unless nodeinfo is false — then only WebFinger does), the
 // actor, a channel and one video.
-func peerInstance(t *testing.T, nodeinfo bool) *httptest.Server {
+func peerInstance(t *testing.T, nodeinfo bool, webfingerTo ...string) *httptest.Server {
 	t.Helper()
 	pub, _, err := generateActorKeypair()
 	if err != nil {
@@ -117,7 +117,15 @@ func peerInstance(t *testing.T, nodeinfo bool) *httptest.Server {
 			}
 			_, _ = w.Write([]byte(`{"links":` + links + `]}`))
 		case "/.well-known/webfinger":
-			_, _ = w.Write([]byte(`{"subject":"acct:peertube@x","links":[{"rel":"self","type":"application/activity+json","href":"` + o + `/accounts/peertube"}]}`))
+			target := "/accounts/peertube"
+			if len(webfingerTo) > 0 {
+				target = webfingerTo[0]
+			}
+			_, _ = w.Write([]byte(`{"subject":"acct:peertube@x","links":[{"rel":"self","type":"application/activity+json","href":"` + o + target + `"}]}`))
+		case "/accounts/someone":
+			_, _ = w.Write([]byte(actor(o+"/accounts/someone", "Person")))
+		case "/videos/watch/foreign":
+			_, _ = w.Write([]byte(`{"id":"` + o + `/videos/watch/foreign","type":"Video","name":"Not theirs","attributedTo":"https://third.example/video-channels/movies","url":[{"type":"Link","mediaType":"video/mp4","href":"` + o + `/dl/2.mp4"}]}`))
 		case "/accounts/peertube":
 			_, _ = w.Write([]byte(actor(o+"/accounts/peertube", "Application")))
 		case "/video-channels/movies":
@@ -305,5 +313,38 @@ func TestRejectedInstanceFollowCanBeRearmed(t *testing.T) {
 	}
 	if f, err := svc.FollowInstance(context.Background(), host); err != nil || f.State != "pending" || len(sent(t, repo)["Follow"]) != 2 {
 		t.Errorf("re-follow after a Reject = %+v, %v; want pending with a fresh Follow", f, err)
+	}
+}
+
+// WebFinger acct:peertube@host can name anything; only an instance actor is
+// followed as an instance.
+func TestFollowInstanceRefusesANonInstanceActor(t *testing.T) {
+	peer := peerInstance(t, false, "/accounts/someone")
+	repo := newFollowingRepo()
+	svc := NewService(repo, WithBaseURL("https://videos.example"), WithAllowPrivateFetch(true))
+	if _, err := svc.FollowInstance(context.Background(), strings.TrimPrefix(peer.URL, "http://")); !errors.Is(err, ErrRemoteUnresolvable) {
+		t.Errorf("err = %v, want ErrRemoteUnresolvable", err)
+	}
+	if len(repo.inst.following) != 0 || len(repo.deliveries) != 0 {
+		t.Error("a refused follow must record and send nothing")
+	}
+}
+
+// A followed instance cannot announce a video attributed to a THIRD host: the
+// follow is consent to its own content, not to whatever it relays.
+func TestAnnounceOfAThirdHostsVideoIsRejected(t *testing.T) {
+	peer := peerInstance(t, true)
+	host := strings.TrimPrefix(peer.URL, "http://")
+	theirs := peer.URL + "/accounts/peertube"
+	repo := newFollowingRepo()
+	repo.inst.following[theirs] = &sqlcgen.InstanceFollowing{ID: uuid.New(), RemoteActorUrl: theirs, Host: host, State: "accepted"}
+	svc := NewService(repo, WithBaseURL("https://videos.example"), WithAllowPrivateFetch(true))
+	video := peer.URL + "/videos/watch/foreign"
+	announce := []byte(`{"id":"` + peer.URL + `/announces/9","type":"Announce","actor":"` + theirs + `","object":"` + video + `"}`)
+	if err := svc.HandleInbox(context.Background(), theirs, announce); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.remoteVideos) != 0 {
+		t.Errorf("ingested %v; a third host's video must be refused", repo.remoteVideos)
 	}
 }
