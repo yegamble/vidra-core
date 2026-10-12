@@ -21,12 +21,9 @@ RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
           remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 `
 
-// Release a held comment (0161): the one-way held -> published transition a
-// video manager performs. Conditional on the row STILL being held, so repeated
-// or concurrent approvals have exactly one winner — no row means "nothing to
-// do", and the caller fires the side effects that were withheld while it was
-// held (the reply notification, federation) only for the winner. Like the
-// creator heart it never bumps updated_at: approval is not an edit.
+// Release a held comment (0161). Conditional on the row STILL being held, so
+// repeated or concurrent approvals have exactly one winner (no row = nothing to
+// do) and the withheld side effects fire once. Never bumps updated_at.
 func (q *Queries) ApproveComment(ctx context.Context, id uuid.UUID) (Comment, error) {
 	row := q.db.QueryRow(ctx, approveComment, id)
 	var i Comment
@@ -195,6 +192,7 @@ ON CONFLICT (remote_object_url) DO UPDATE
     SET body = EXCLUDED.body, updated_at = now(),
         held_for_review = comments.held_for_review
             OR (EXCLUDED.held_for_review AND comments.body IS DISTINCT FROM EXCLUDED.body)
+    WHERE comments.video_id = EXCLUDED.video_id
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
           remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 `
@@ -212,9 +210,9 @@ type CreateRemoteCommentParams struct {
 // Store an inbound federated Note as a comment (remote-content §6): attributed
 // to a remote actor (with a display-name snapshot) instead of a local user.
 // Idempotent by the Note's ActivityPub object id — a re-delivered or updated
-// Note refreshes the body. held_for_review (0161) is never released here; on a
-// requires_approval video (held_for_review passed true) a re-delivery that
-// CHANGES the body re-holds it — an approved comment must not change unreviewed.
+// Note refreshes the body — only on the comment's OWN video (no row otherwise),
+// so the hold decision always comes from the stored row's video (0161): passed
+// true there, a CHANGED body re-holds an approved comment; nothing releases one.
 func (q *Queries) CreateRemoteComment(ctx context.Context, arg CreateRemoteCommentParams) (Comment, error) {
 	row := q.db.QueryRow(ctx, createRemoteComment,
 		arg.VideoID,

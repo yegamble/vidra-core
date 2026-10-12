@@ -830,6 +830,9 @@ func (f fakeRepo) CreateRemoteComment(_ context.Context, arg sqlcgen.CreateRemot
 	if arg.RemoteObjectUrl != nil {
 		for id, c := range f.commentsByID {
 			if c.RemoteObjectUrl != nil && *c.RemoteObjectUrl == *arg.RemoteObjectUrl {
+				if c.VideoID != arg.VideoID {
+					return sqlcgen.Comment{}, pgx.ErrNoRows // mirrors the conflict arm's WHERE
+				}
 				c.HeldForReview = c.HeldForReview || (arg.HeldForReview && c.Body != arg.Body)
 				c.Body = arg.Body
 				c.UpdatedAt = time.Now()

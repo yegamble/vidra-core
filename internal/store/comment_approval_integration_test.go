@@ -301,4 +301,28 @@ func TestHeldCommentReholdOnRealPG(t *testing.T) {
 	if !upsert("b").HeldForReview {
 		t.Error("a changed-body re-delivery published unreviewed")
 	}
+
+	// The upsert never moves a comment to another video, nor takes its hold
+	// decision from one: a re-send of the same Note id naming a different
+	// video (comments enabled, so hold=false) changes nothing.
+	if _, err := q.ApproveComment(ctx, r.ID); err != nil {
+		t.Fatalf("re-approve remote: %v", err)
+	}
+	var other uuid.UUID
+	if err := st.Pool.QueryRow(ctx, `INSERT INTO videos (channel_id, title, privacy, state, comments_policy)
+		VALUES ($1, 'Open', 'public', 'published', 'enabled') RETURNING id`, channelID).Scan(&other); err != nil {
+		t.Fatalf("seed second video: %v", err)
+	}
+	_, err = q.CreateRemoteComment(ctx, sqlcgen.CreateRemoteCommentParams{
+		VideoID: other, Body: "elsewhere", RemoteActorUrl: &actor, RemoteAuthorName: &name,
+		RemoteObjectUrl: &object, HeldForReview: false,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("cross-video re-send err = %v, want no row (refused)", err)
+	}
+	got, err := q.GetComment(ctx, r.ID)
+	if err != nil || got.VideoID != videoID || got.Body != "b" || got.HeldForReview {
+		t.Errorf("after a cross-video re-send: video=%s body=%q held=%v err=%v, want the approved row untouched",
+			got.VideoID, got.Body, got.HeldForReview, err)
+	}
 }
