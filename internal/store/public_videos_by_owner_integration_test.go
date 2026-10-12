@@ -110,3 +110,119 @@ func TestListPublicVideosByOwner(t *testing.T) {
 		t.Errorf("muting viewer sees %v (total %d), want none", got, n)
 	}
 }
+
+// TestPublicVideosByOwnerMatchesChannelUnion is the drift alarm for the two
+// twin queries: for every viewer class, the owner-scoped list must equal the
+// union of the per-channel public lists, across every privacy value, a draft, a
+// quarantined, a blocked and a sensitive video on two channels of one owner.
+func TestPublicVideosByOwnerMatchesChannelUnion(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	suffix := uuid.NewString()[:8]
+
+	mkUser := func(name string) uuid.UUID {
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+			name+"-"+suffix, name+"-"+suffix+"@example.test").Scan(&id); err != nil {
+			t.Fatalf("seed user: %v", err)
+		}
+		t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id) })
+		return id
+	}
+	owner := mkUser("par-owner")
+	signedIn, muter, blocker := mkUser("par-in"), mkUser("par-mute"), mkUser("par-block")
+	var chans []uuid.UUID
+	for _, h := range []string{"par1", "par2"} {
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'C') RETURNING id`,
+			owner, h+"_"+suffix).Scan(&id); err != nil {
+			t.Fatalf("seed channel: %v", err)
+		}
+		chans = append(chans, id)
+	}
+	var blockedVideo uuid.UUID
+	n := 0
+	for ci, ch := range chans {
+		for _, privacy := range []string{"public", "unlisted", "private", "password", "internal"} {
+			for _, state := range []string{"published", "draft", "quarantined"} {
+				for _, sens := range []bool{false, true} {
+					n++
+					var id uuid.UUID
+					if err := st.Pool.QueryRow(ctx,
+						`INSERT INTO videos (channel_id, title, privacy, state, is_sensitive) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+						ch, "v"+string(rune('a'+n%26)), privacy, state, sens).Scan(&id); err != nil {
+						t.Fatalf("seed video: %v", err)
+					}
+					if ci == 1 && privacy == "public" && state == "published" && sens {
+						blockedVideo = id
+					}
+				}
+			}
+		}
+	}
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO video_blocks (video_id, reason) VALUES ($1, 'x')`, blockedVideo); err != nil {
+		t.Fatalf("block: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO muted_accounts (muter_id, muted_id) VALUES ($1, $2)`, muter, owner); err != nil {
+		t.Fatalf("mute: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)`, blocker, owner); err != nil {
+		t.Fatalf("user block: %v", err)
+	}
+
+	viewers := map[string]*uuid.UUID{"anonymous": nil, "signed-in": &signedIn, "muting": &muter, "blocking": &blocker}
+	for name, v := range viewers {
+		for _, hide := range []bool{false, true} {
+			want := map[uuid.UUID]bool{}
+			for _, ch := range chans {
+				rows, err := q.ListPublicVideosByChannel(ctx, sqlcgen.ListPublicVideosByChannelParams{
+					ChannelID: ch, ViewerID: pgconv.UUIDPtr(v), HideSensitive: hide, Sort: "-published_at", ResultLimit: 500,
+				})
+				if err != nil {
+					t.Fatalf("channel list: %v", err)
+				}
+				for _, r := range rows {
+					want[r.ID] = true
+				}
+			}
+			rows, err := q.ListPublicVideosByOwner(ctx, sqlcgen.ListPublicVideosByOwnerParams{
+				OwnerID: owner, ViewerID: pgconv.UUIDPtr(v), HideSensitive: hide, Sort: "-published_at", ResultLimit: 500,
+			})
+			if err != nil {
+				t.Fatalf("owner list: %v", err)
+			}
+			got := map[uuid.UUID]bool{}
+			for _, r := range rows {
+				got[r.ID] = true
+			}
+			total, err := q.CountPublicVideosByOwnerVisible(ctx, sqlcgen.CountPublicVideosByOwnerVisibleParams{
+				OwnerID: owner, ViewerID: pgconv.UUIDPtr(v), HideSensitive: hide,
+			})
+			if err != nil {
+				t.Fatalf("owner count: %v", err)
+			}
+			if len(got) != len(want) || int64(len(got)) != total {
+				t.Errorf("%s hide=%v: owner list %d / count %d, channel union %d", name, hide, len(got), total, len(want))
+			}
+			for id := range want {
+				if !got[id] {
+					t.Errorf("%s hide=%v: %v in the channel lists but not the owner list", name, hide, id)
+				}
+			}
+			if (name == "muting" || name == "blocking") && len(got) != 0 {
+				t.Errorf("%s viewer must see nothing, got %d", name, len(got))
+			}
+			if name == "signed-in" && !hide && len(got) == 0 {
+				t.Errorf("signed-in viewer saw nothing: the parity check would be vacuous")
+			}
+		}
+	}
+}
