@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -180,5 +181,45 @@ func TestBackfillIsNotReflectedToAnotherHost(t *testing.T) {
 	got := sent(t, repo)
 	if len(got["Accept"]) != 1 || len(got["Announce"]) != 0 {
 		t.Errorf("sent Accept %d, Announce %d; want the Accept only", len(got["Accept"]), len(got["Announce"]))
+	}
+}
+
+// A Follow/Undo loop gets one backfill per cooldown window, not one per loop:
+// the re-Follow is accepted and answered, and sends no videos.
+func TestBackfillHasAPerActorCooldown(t *testing.T) {
+	repo := newInstanceInboxRepo()
+	repo.inst.outbox = []uuid.UUID{uuid.New(), uuid.New()}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+	undo := func(id string) []byte {
+		return []byte(`{"id":"https://pt.example/undo/` + id + `","type":"Undo","actor":"` + ptInstance +
+			`","object":{"type":"Follow","actor":"` + ptInstance + `","object":"` + ourInstance + `"}}`)
+	}
+	if err := svc.HandleInbox(ctx, ptInstance, instanceFollow(instanceFollowID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.HandleInbox(ctx, ptInstance, undo("1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.HandleInbox(ctx, ptInstance, instanceFollow(instanceFollowID+"-again")); err != nil {
+		t.Fatal(err)
+	}
+	got := sent(t, repo)
+	if repo.inst.followers[ptInstance] == nil || repo.inst.followers[ptInstance].State != "accepted" {
+		t.Fatal("the re-Follow inside the window must still be accepted")
+	}
+	if len(got["Accept"]) != 2 || len(got["Announce"]) != 2 {
+		t.Fatalf("sent Accept %d, Announce %d; want 2 Accepts and ONE backfill of 2", len(got["Accept"]), len(got["Announce"]))
+	}
+	// Once the window has passed, a new follow is backfilled again.
+	repo.inst.backfilledAt[ptInstance] = time.Now().Add(-instanceBackfillCooldown - time.Minute)
+	if err := svc.HandleInbox(ctx, ptInstance, undo("2")); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.HandleInbox(ctx, ptInstance, instanceFollow(instanceFollowID+"-later")); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(sent(t, repo)["Announce"]); n != 4 {
+		t.Errorf("Announces after the window = %d, want a second backfill (4)", n)
 	}
 }
