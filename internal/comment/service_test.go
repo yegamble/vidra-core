@@ -48,9 +48,10 @@ func (f *fakeRepo) CreateComment(_ context.Context, a sqlcgen.CreateCommentParam
 
 // ApproveComment mirrors the conditional UPDATE: only a still-held row is
 // released; anything else is pgx.ErrNoRows (the "nothing to do" answer).
-func (f *fakeRepo) ApproveComment(_ context.Context, id uuid.UUID) (sqlcgen.Comment, error) {
+func (f *fakeRepo) ApproveComment(_ context.Context, a sqlcgen.ApproveCommentParams) (sqlcgen.Comment, error) {
+	id := a.ID
 	c, ok := f.comments[id]
-	if !ok || !c.HeldForReview {
+	if !ok || !c.HeldForReview || !c.UpdatedAt.Equal(a.ExpectedUpdatedAt) {
 		return sqlcgen.Comment{}, pgx.ErrNoRows
 	}
 	c.HeldForReview = false

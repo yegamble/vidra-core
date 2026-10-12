@@ -198,3 +198,32 @@ func TestNoteResentToAnotherVideoChangesNothing(t *testing.T) {
 		t.Errorf("after a re-send to another video: %+v, want the stored comment unchanged", got)
 	}
 }
+
+// TestHeldInboundNoteNotifiesNoMentions: a Note stored (or edited) HELD on a
+// requires_approval video tells none of the local accounts it Mentions.
+func TestHeldInboundNoteNotifiesNoMentions(t *testing.T) {
+	videoID := uuid.New()
+	repo := newNotesRepo(videoID)
+	v := repo.videosByID[videoID]
+	v.CommentsPolicy = "requires_approval"
+	repo.videosByID[videoID] = v
+	var calls int
+	svc := NewService(repo, WithBaseURL(noteBase),
+		WithCommentMentionNotifier(func(context.Context, uuid.UUID, []string) (int64, error) { calls++; return 1, nil }))
+	tag := `[{"type":"Mention","href":"` + noteBase + `/accounts/ada"}]`
+	if err := svc.HandleInbox(context.Background(), remoteBob, []byte(inboundNoteWithTag(videoID, tag))); err != nil {
+		t.Fatalf("HandleInbox: %v", err)
+	}
+	c := onlyComment(t, repo)
+	if !c.HeldForReview || calls != 0 {
+		t.Fatalf("held=%v mention fan-outs=%d, want held and none", c.HeldForReview, calls)
+	}
+	update := `{"id":"https://remote.example/act/mu","type":"Update","actor":"` + remoteBob + `","object":{` +
+		`"id":"` + *c.RemoteObjectUrl + `","type":"Note","attributedTo":"` + remoteBob + `","content":"edited @ada","tag":` + tag + `}}`
+	if err := svc.HandleInbox(context.Background(), remoteBob, []byte(update)); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("an Update of a held comment fanned out mentions (%d)", calls)
+	}
+}

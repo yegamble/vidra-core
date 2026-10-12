@@ -381,8 +381,9 @@ WHERE c.id = sqlc.arg('comment_id')
 -- simply match no row.
 --
 -- A mention notifies only when ALL of these hold:
---   * the comment is live (not a tombstone, 0057) and on a public, published,
---     unblocked video — a mention must not leak a private video's existence;
+--   * the comment is live (not a tombstone, 0057), not held for review (0161 —
+--     its mentions wait for approval), and on a public, published, unblocked
+--     video — a mention must not leak a private video's existence;
 --   * the recipient is an active, non-deleted account and not the author;
 --   * the recipient has not muted the author and neither side blocked the other
 --     (for a federated comment user_id is NULL, so these are vacuously true);
@@ -403,6 +404,7 @@ WITH cand AS (
     LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
     WHERE c.id = sqlc.arg('comment_id')::uuid
       AND c.deleted_at IS NULL
+      AND NOT c.held_for_review
       AND v.privacy = 'public' AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks vb WHERE vb.video_id = v.id)
       AND c.user_id IS DISTINCT FROM u.id
