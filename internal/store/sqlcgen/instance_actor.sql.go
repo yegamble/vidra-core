@@ -33,6 +33,23 @@ func (q *Queries) CountAcceptedInstanceFollowing(ctx context.Context) (int64, er
 	return column_1, err
 }
 
+const countInstanceOutboxVideos = `-- name: CountInstanceOutboxVideos :one
+SELECT count(*)::bigint
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE v.privacy = 'public' AND v.state = 'published' AND c.activitypub_enabled
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+`
+
+// How many rows ListInstanceOutboxVideoIDs pages over; the predicate must stay
+// identical.
+func (q *Queries) CountInstanceOutboxVideos(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countInstanceOutboxVideos)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteInstanceFollowerByActor = `-- name: DeleteInstanceFollowerByActor :execrows
 DELETE FROM instance_followers WHERE remote_actor_url = $1 AND state <> 'rejected'
 `
@@ -141,4 +158,75 @@ func (q *Queries) InstanceActorNameReserved(ctx context.Context, lower string) (
 	var reserved bool
 	err := row.Scan(&reserved)
 	return reserved, err
+}
+
+const listAcceptedInstanceFollowerInboxes = `-- name: ListAcceptedInstanceFollowerInboxes :many
+SELECT DISTINCT COALESCE(ra.shared_inbox_url, ra.inbox_url) AS inbox
+FROM instance_followers f
+JOIN remote_actors ra ON ra.actor_url = f.remote_actor_url
+WHERE f.state = 'accepted'
+  AND COALESCE(ra.shared_inbox_url, ra.inbox_url) <> ''
+ORDER BY inbox
+`
+
+// Distinct inboxes (shared inbox preferred) of the instances following ours —
+// the fan-out targets of the instance actor's Announces and of every later
+// Update/Delete of a video they were announced.
+func (q *Queries) ListAcceptedInstanceFollowerInboxes(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listAcceptedInstanceFollowerInboxes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var inbox string
+		if err := rows.Scan(&inbox); err != nil {
+			return nil, err
+		}
+		items = append(items, inbox)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInstanceOutboxVideoIDs = `-- name: ListInstanceOutboxVideoIDs :many
+SELECT v.id
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE v.privacy = 'public' AND v.state = 'published' AND c.activitypub_enabled
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+ORDER BY v.created_at DESC, v.id DESC
+LIMIT $2 OFFSET $1
+`
+
+type ListInstanceOutboxVideoIDsParams struct {
+	ResultOffset int32 `json:"result_offset"`
+	ResultLimit  int32 `json:"result_limit"`
+}
+
+// The instance actor's outbox, newest first: every video a stranger may see
+// that federates at all — public, published, not moderator-blocked, on a
+// channel that has not opted out of ActivityPub (0096). The same predicate
+// AnnounceVideo applies, so the outbox and the push never disagree.
+func (q *Queries) ListInstanceOutboxVideoIDs(ctx context.Context, arg ListInstanceOutboxVideoIDsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listInstanceOutboxVideoIDs, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

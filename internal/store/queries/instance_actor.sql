@@ -40,3 +40,36 @@ SELECT id, state, follow_activity_url FROM instance_followers WHERE remote_actor
 -- Undo{Follow} from the follower. A follower the admin REJECTED stays
 -- rejected: an Undo-then-Follow must not walk past the admin's refusal.
 DELETE FROM instance_followers WHERE remote_actor_url = $1 AND state <> 'rejected';
+
+-- name: ListAcceptedInstanceFollowerInboxes :many
+-- Distinct inboxes (shared inbox preferred) of the instances following ours —
+-- the fan-out targets of the instance actor's Announces and of every later
+-- Update/Delete of a video they were announced.
+SELECT DISTINCT COALESCE(ra.shared_inbox_url, ra.inbox_url) AS inbox
+FROM instance_followers f
+JOIN remote_actors ra ON ra.actor_url = f.remote_actor_url
+WHERE f.state = 'accepted'
+  AND COALESCE(ra.shared_inbox_url, ra.inbox_url) <> ''
+ORDER BY inbox;
+
+-- name: ListInstanceOutboxVideoIDs :many
+-- The instance actor's outbox, newest first: every video a stranger may see
+-- that federates at all — public, published, not moderator-blocked, on a
+-- channel that has not opted out of ActivityPub (0096). The same predicate
+-- AnnounceVideo applies, so the outbox and the push never disagree.
+SELECT v.id
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE v.privacy = 'public' AND v.state = 'published' AND c.activitypub_enabled
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+ORDER BY v.created_at DESC, v.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountInstanceOutboxVideos :one
+-- How many rows ListInstanceOutboxVideoIDs pages over; the predicate must stay
+-- identical.
+SELECT count(*)::bigint
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE v.privacy = 'public' AND v.state = 'published' AND c.activitypub_enabled
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id);

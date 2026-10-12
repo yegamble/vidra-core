@@ -157,3 +157,96 @@ func TestDeliveryQueueCarriesTheInstanceSigner(t *testing.T) {
 	}
 	t.Fatal("the instance-signed delivery was not claimed")
 }
+
+// The instance outbox federates exactly what AnnounceVideo would: public,
+// published, not blocked, on a channel that did not opt out of ActivityPub.
+// Membership only — sibling packages share this database.
+func TestInstanceOutboxPredicateOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	_, channelID, cleanup := seedUserAndChannel(t, st)
+	defer cleanup()
+	video := func(privacy, state string) uuid.UUID {
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx, `INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, 'v', $2, $3) RETURNING id`,
+			channelID, privacy, state).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	public, blocked := video("public", "published"), video("public", "published")
+	hidden := []uuid.UUID{blocked, video("private", "published"), video("unlisted", "published"),
+		video("internal", "published"), video("public", "processing")}
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO video_blocks (video_id, reason) VALUES ($1, 'tos')`, blocked); err != nil {
+		t.Fatal(err)
+	}
+	listed := func() map[uuid.UUID]bool {
+		ids, err := q.ListInstanceOutboxVideoIDs(ctx, sqlcgen.ListInstanceOutboxVideoIDsParams{ResultLimit: 100000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[uuid.UUID]bool{}
+		for _, id := range ids {
+			out[id] = true
+		}
+		return out
+	}
+	got := listed()
+	if !got[public] {
+		t.Error("a public published video is missing from the instance outbox")
+	}
+	for _, id := range hidden {
+		if got[id] {
+			t.Errorf("video %s must never be federated", id)
+		}
+	}
+	if n, err := q.CountInstanceOutboxVideos(ctx); err != nil || n < 1 {
+		t.Errorf("count = %d, %v", n, err)
+	}
+	if _, err := st.Pool.Exec(ctx, `UPDATE channels SET activitypub_enabled = FALSE WHERE id = $1`, channelID); err != nil {
+		t.Fatal(err)
+	}
+	if listed()[public] {
+		t.Error("a channel that opted out of ActivityPub is still in the instance outbox")
+	}
+}
+
+func TestInstanceFollowerInboxesOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	accepted, pending := seedRemoteInstanceActor(t, st), seedRemoteInstanceActor(t, st)
+	shared := "https://shared-" + uuid.NewString()[:8] + ".example/inbox"
+	if _, err := st.Pool.Exec(ctx, `UPDATE remote_actors SET shared_inbox_url = $2 WHERE actor_url = $1`, accepted, shared); err != nil {
+		t.Fatal(err)
+	}
+	for actor, state := range map[string]string{accepted: "accepted", pending: "pending"} {
+		if _, err := q.InsertInstanceFollowerIfAbsent(ctx, sqlcgen.InsertInstanceFollowerIfAbsentParams{
+			RemoteActorUrl: actor, State: state, FollowActivityUrl: "f",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inboxes, err := q.ListAcceptedInstanceFollowerInboxes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, in := range inboxes {
+		got[in] = true
+	}
+	if !got[shared] || got[accepted+"/inbox"] || got[pending+"/inbox"] {
+		t.Errorf("inboxes = %v, want the accepted follower's shared inbox only", inboxes)
+	}
+}

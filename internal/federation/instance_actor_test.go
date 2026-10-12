@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -24,6 +25,41 @@ type fakeInstance struct {
 	acceptedFollowing int64
 	// followers are instance_followers rows, keyed by remote actor url.
 	followers map[string]*sqlcgen.GetInstanceFollowerByActorRow
+	// outbox is ListInstanceOutboxVideoIDs' answer, newest first.
+	outbox []uuid.UUID
+}
+
+// ListAcceptedInstanceFollowerInboxes mirrors the SQL: accepted followers'
+// cached inboxes, shared inbox preferred, distinct, ordered.
+func (f fakeRepo) ListAcceptedInstanceFollowerInboxes(context.Context) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for actor, r := range f.inst.followers {
+		ra, ok := f.remoteActors[actor]
+		if !ok || r.State != "accepted" {
+			continue
+		}
+		in := ra.InboxUrl
+		if ra.SharedInboxUrl != nil {
+			in = *ra.SharedInboxUrl
+		}
+		if in != "" && !seen[in] {
+			seen[in] = true
+			out = append(out, in)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (f fakeRepo) ListInstanceOutboxVideoIDs(_ context.Context, a sqlcgen.ListInstanceOutboxVideoIDsParams) ([]uuid.UUID, error) {
+	lo := min(int(a.ResultOffset), len(f.inst.outbox))
+	hi := min(lo+int(a.ResultLimit), len(f.inst.outbox))
+	return f.inst.outbox[lo:hi], nil
+}
+
+func (f fakeRepo) CountInstanceOutboxVideos(context.Context) (int64, error) {
+	return int64(len(f.inst.outbox)), nil
 }
 
 func (f fakeRepo) InstanceActorNameReserved(_ context.Context, name string) (bool, error) {

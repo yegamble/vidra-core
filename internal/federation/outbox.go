@@ -33,7 +33,10 @@ func (s *Service) AnnounceVideo(ctx context.Context, videoID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	return s.fanOutToFollowers(ctx, ch.ID, ch.Handle, payload)
+	if err := s.fanOutToFollowers(ctx, ch.ID, ch.Handle, payload); err != nil {
+		return err
+	}
+	return s.announceToInstanceFollowers(ctx, v.ID)
 }
 
 // UpdateVideo propagates an edit to remote followers: an Update{Video} while the
@@ -78,7 +81,7 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID uuid.UUID, wasFederat
 	if err != nil {
 		return err
 	}
-	return s.fanOutToFollowers(ctx, ch.ID, ch.Handle, payload)
+	return s.fanOutToVideoAudience(ctx, ch.ID, ch.Handle, payload)
 }
 
 // RetractMovedVideo tells the OLD channel's remote followers that a video moved
@@ -109,7 +112,7 @@ func (s *Service) RetractMovedVideo(ctx context.Context, videoID, oldChannelID u
 	// an Update to them: AP enabled, public+published, not blocked.
 	covered := map[string]bool{}
 	if newCh.ActivitypubEnabled && !v.Blocked && v.Privacy == "public" && v.State == "published" {
-		newInboxes, lerr := s.repo.ListRemoteFollowerInboxes(ctx, newCh.ID)
+		newInboxes, lerr := s.videoAudience(ctx, newCh.ID)
 		if lerr != nil {
 			return lerr
 		}
@@ -166,7 +169,7 @@ func (s *Service) DeleteVideo(ctx context.Context, videoID, channelID uuid.UUID,
 	if err != nil {
 		return err
 	}
-	return s.fanOutToFollowers(ctx, channelID, ch.Handle, payload)
+	return s.fanOutToVideoAudience(ctx, channelID, ch.Handle, payload)
 }
 
 // UnfederateBlockedVideo retracts a video a moderator just blocked: a Delete to
@@ -219,6 +222,22 @@ func (s *Service) fanOutToFollowers(ctx context.Context, channelID uuid.UUID, ch
 	if err != nil {
 		return err
 	}
+	return s.enqueueChannelDeliveries(ctx, channelID, channelHandle, inboxes, payload)
+}
+
+// fanOutToVideoAudience is fanOutToFollowers over the video's whole audience
+// (videoAudience): an edit or a retraction also reaches the instances that
+// were announced the video.
+func (s *Service) fanOutToVideoAudience(ctx context.Context, channelID uuid.UUID, channelHandle string, payload []byte) error {
+	inboxes, err := s.videoAudience(ctx, channelID)
+	if err != nil {
+		return err
+	}
+	return s.enqueueChannelDeliveries(ctx, channelID, channelHandle, inboxes, payload)
+}
+
+// enqueueChannelDeliveries queues payload, signed as the channel, to each inbox.
+func (s *Service) enqueueChannelDeliveries(ctx context.Context, channelID uuid.UUID, channelHandle string, inboxes []string, payload []byte) error {
 	for _, inbox := range inboxes {
 		if inbox == "" {
 			continue
