@@ -2264,6 +2264,9 @@ func run() error {
 		federation.WithAcceptRemoteCommentsFunc(func() bool {
 			return settingssvc.Bool(instancesettings.KeyFederationAcceptRemoteComments)
 		}),
+		federation.WithCommentsEnabledFunc(func() bool {
+			return settingssvc.Bool(instancesettings.KeyCommentsEnabled)
+		}),
 		federation.WithAllowChannelFollowersFunc(func() bool {
 			return settingssvc.Bool(instancesettings.KeyFederationAllowChannelFollowers)
 		}),

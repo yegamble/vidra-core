@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -42,8 +43,21 @@ func (f *commentFakeRepo) CreateComment(_ context.Context, a sqlcgen.CreateComme
 	c := sqlcgen.Comment{
 		ID: uuid.New(), VideoID: a.VideoID, UserID: a.UserID, Body: a.Body,
 		ParentID: a.ParentID, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		HeldForReview: a.HeldForReview,
 	}
 	f.comments[c.ID] = c
+	return c, nil
+}
+
+// ApproveComment mirrors the conditional UPDATE (0161): only a still-held row
+// is released; anything else is pgx.ErrNoRows.
+func (f *commentFakeRepo) ApproveComment(_ context.Context, id uuid.UUID) (sqlcgen.Comment, error) {
+	c, ok := f.comments[id]
+	if !ok || !c.HeldForReview {
+		return sqlcgen.Comment{}, pgx.ErrNoRows
+	}
+	c.HeldForReview = false
+	f.comments[id] = c
 	return c, nil
 }
 
@@ -71,6 +85,10 @@ func (f *commentFakeRepo) ListCommentsByVideo(_ context.Context, a sqlcgen.ListC
 		if c.UserID.Valid && a.ViewerID.Valid && f.userBlocks != nil && f.userBlocks.isBlocked(uuid.UUID(a.ViewerID.Bytes), authorID) {
 			continue
 		}
+		// Held comments (0161): only reviewers (include_held) and the author.
+		if c.HeldForReview && !a.IncludeHeld && (!a.ViewerID.Valid || c.UserID != a.ViewerID) {
+			continue
+		}
 		username, display := f.author(authorID)
 		rows = append(rows, sqlcgen.ListCommentsByVideoRow{
 			ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body,
@@ -78,6 +96,7 @@ func (f *commentFakeRepo) ListCommentsByVideo(_ context.Context, a sqlcgen.ListC
 			AuthorUsername: username, AuthorDisplayName: display,
 			RemoteActorUrl: c.RemoteActorUrl,
 			Hearted:        c.Hearted,
+			HeldForReview:  c.HeldForReview,
 			Pinned:         f.isPinned(c.VideoID, c.ID),
 		})
 	}
@@ -100,7 +119,7 @@ func (f *commentFakeRepo) GetCommentWithMeta(_ context.Context, id uuid.UUID) (s
 	return sqlcgen.GetCommentWithMetaRow{
 		ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body,
 		ParentID: c.ParentID, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
-		DeletedAt: c.DeletedAt, Hearted: c.Hearted,
+		DeletedAt: c.DeletedAt, Hearted: c.Hearted, HeldForReview: c.HeldForReview,
 		Pinned:         f.isPinned(c.VideoID, c.ID),
 		AuthorUsername: username, AuthorDisplayName: display,
 		RemoteActorUrl: c.RemoteActorUrl,
@@ -589,7 +608,7 @@ func TestCommentPinRejectsReply(t *testing.T) {
 
 func (f *commentFakeRepo) CountCommentsByVideo(ctx context.Context, a sqlcgen.CountCommentsByVideoParams) (int64, error) {
 	rows, err := f.ListCommentsByVideo(ctx, sqlcgen.ListCommentsByVideoParams{
-		VideoID: a.VideoID, ViewerID: a.ViewerID, ResultLimit: 1 << 30,
+		VideoID: a.VideoID, ViewerID: a.ViewerID, IncludeHeld: a.IncludeHeld, ResultLimit: 1 << 30,
 	})
 	return int64(len(rows)), err
 }

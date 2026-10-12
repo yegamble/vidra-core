@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/pgconv"
@@ -34,6 +35,13 @@ var (
 	// ErrTombstoned means a pin or heart was attempted on a tombstoned comment
 	// (its author's account was deleted; the body is "[deleted]").
 	ErrTombstoned = errors.New("comment: comment is tombstoned")
+	// ErrParentHeld means a reply targeted a comment still held for review
+	// (0161): the public cannot see the parent, so the reply would publish as
+	// an orphan. Approve the parent first.
+	ErrParentHeld = errors.New("comment: parent is held for review")
+	// ErrHeld means a pin was attempted on a held comment — pinning promotes a
+	// comment to the top of a thread its readers cannot see yet.
+	ErrHeld = errors.New("comment: comment is held for review")
 )
 
 // Repository is the data access the comment service needs. *sqlcgen.Queries
@@ -59,6 +67,9 @@ type Repository interface {
 	GetCommentWithMeta(ctx context.Context, id uuid.UUID) (sqlcgen.GetCommentWithMetaRow, error)
 	SetCommentHearted(ctx context.Context, arg sqlcgen.SetCommentHeartedParams) (sqlcgen.Comment, error)
 	SetVideoPinnedComment(ctx context.Context, arg sqlcgen.SetVideoPinnedCommentParams) error
+	// ApproveComment releases a held comment (0161); pgx.ErrNoRows when the row
+	// is missing or no longer held.
+	ApproveComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)
 }
 
 // Service holds the comment application logic.
@@ -132,6 +143,7 @@ func withAuthorFromMeta(r sqlcgen.GetCommentWithMetaRow) WithAuthor {
 			ID: r.ID, VideoID: r.VideoID, UserID: r.UserID, Body: r.Body,
 			ParentID: r.ParentID, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			RemoteActorUrl: r.RemoteActorUrl, DeletedAt: r.DeletedAt, Hearted: r.Hearted,
+			HeldForReview: r.HeldForReview,
 		},
 		AuthorUsername:    r.AuthorUsername,
 		AuthorDisplayName: r.AuthorDisplayName,
@@ -152,27 +164,62 @@ func withAuthorFromMeta(r sqlcgen.GetCommentWithMetaRow) WithAuthor {
 // the SAME video — otherwise ErrParentNotFound (so a reply can't be smuggled onto
 // another video's thread, and existence of arbitrary comment ids isn't leaked).
 func (s *Service) Create(ctx context.Context, videoID, userID uuid.UUID, body string, parentID *uuid.UUID) (sqlcgen.Comment, error) {
+	return s.create(ctx, videoID, userID, body, parentID, false)
+}
+
+// CreateHeld is Create for a comment held for review (0161): stored held and
+// NOT announced until approved. The caller decides (it knows the policy and
+// who is posting).
+func (s *Service) CreateHeld(ctx context.Context, videoID, userID uuid.UUID, body string, parentID *uuid.UUID) (sqlcgen.Comment, error) {
+	return s.create(ctx, videoID, userID, body, parentID, true)
+}
+
+func (s *Service) create(ctx context.Context, videoID, userID uuid.UUID, body string, parentID *uuid.UUID, held bool) (sqlcgen.Comment, error) {
 	var parent pgtype.UUID
 	if parentID != nil {
 		p, err := s.repo.GetComment(ctx, *parentID)
 		if err != nil || p.VideoID != videoID {
 			return sqlcgen.Comment{}, ErrParentNotFound
 		}
+		if p.HeldForReview {
+			return sqlcgen.Comment{}, ErrParentHeld
+		}
 		parent = pgconv.UUID(*parentID)
 	}
 	created, err := s.repo.CreateComment(ctx, sqlcgen.CreateCommentParams{
-		VideoID:  videoID,
-		UserID:   pgconv.UUID(userID),
-		Body:     body,
-		ParentID: parent,
+		VideoID:       videoID,
+		UserID:        pgconv.UUID(userID),
+		Body:          body,
+		ParentID:      parent,
+		HeldForReview: held,
 	})
 	if err != nil {
 		return sqlcgen.Comment{}, err
 	}
-	if s.onCreate != nil {
+	if s.onCreate != nil && !held {
 		s.onCreate(ctx, created.ID)
 	}
 	return created, nil
+}
+
+// Approve releases a held comment (0161); the HTTP layer authorized the caller.
+// released is true only for the call that performed the transition, so the
+// withheld create hook (federation announce) — and the caller's withheld
+// notifications — fire exactly once. An unknown comment is ErrNotFound.
+func (s *Service) Approve(ctx context.Context, commentID uuid.UUID) (WithAuthor, bool, error) {
+	_, err := s.repo.ApproveComment(ctx, commentID)
+	released := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return WithAuthor{}, false, err
+	}
+	row, err := s.repo.GetCommentWithMeta(ctx, commentID)
+	if err != nil {
+		return WithAuthor{}, false, ErrNotFound
+	}
+	if released && s.onCreate != nil && row.UserID.Valid {
+		s.onCreate(ctx, commentID)
+	}
+	return withAuthorFromMeta(row), released, nil
 }
 
 // ListByVideo returns a video's comments newest-first, each with its author's
@@ -180,11 +227,14 @@ func (s *Service) Create(ctx context.Context, videoID, userID uuid.UUID, body st
 // from accounts (and remote instances) viewerID has muted are hidden; for an
 // anonymous viewer (viewerAuthed false) only the admin instance blocklist
 // filters. Remote-authored rows are flagged Remote with their origin domain.
-func (s *Service) ListByVideo(ctx context.Context, videoID, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]WithAuthor, int64, error) {
+// Held comments (0161) are returned only to their author, or to every caller
+// when includeHeld — which the caller sets only for the video's reviewers.
+func (s *Service) ListByVideo(ctx context.Context, videoID, viewerID uuid.UUID, viewerAuthed, includeHeld bool, limit, offset int32) ([]WithAuthor, int64, error) {
 	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
 	rows, err := s.repo.ListCommentsByVideo(ctx, sqlcgen.ListCommentsByVideoParams{
 		VideoID:      videoID,
 		ViewerID:     viewer,
+		IncludeHeld:  includeHeld,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
@@ -194,7 +244,7 @@ func (s *Service) ListByVideo(ctx context.Context, videoID, viewerID uuid.UUID, 
 	// Counted for THIS viewer, so a viewer whose mutes hide half the thread is
 	// not told there are pages they can never reach.
 	total, err := s.repo.CountCommentsByVideo(ctx, sqlcgen.CountCommentsByVideoParams{
-		VideoID: videoID, ViewerID: viewer,
+		VideoID: videoID, ViewerID: viewer, IncludeHeld: includeHeld,
 	})
 	if err != nil {
 		return nil, 0, err
@@ -206,6 +256,7 @@ func (s *Service) ListByVideo(ctx context.Context, videoID, viewerID uuid.UUID, 
 				ID: r.ID, VideoID: r.VideoID, UserID: r.UserID, Body: r.Body,
 				ParentID: r.ParentID, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				RemoteActorUrl: r.RemoteActorUrl, DeletedAt: r.DeletedAt, Hearted: r.Hearted,
+				HeldForReview: r.HeldForReview,
 			},
 			AuthorUsername:    r.AuthorUsername,
 			AuthorDisplayName: r.AuthorDisplayName,
@@ -238,8 +289,9 @@ func (s *Service) Delete(ctx context.Context, commentID, userID uuid.UUID, isMod
 	if err := s.repo.DeleteComment(ctx, commentID); err != nil {
 		return err
 	}
-	// Only LOCAL comments federate their deletion.
-	if s.onDelete != nil && c.UserID.Valid {
+	// Only LOCAL comments federate their deletion — and only ones that were
+	// ever announced: a held comment (0161) never left this instance.
+	if s.onDelete != nil && c.UserID.Valid && !c.HeldForReview {
 		s.onDelete(ctx, commentID, c.VideoID, uuid.UUID(c.UserID.Bytes))
 	}
 	return nil
@@ -294,6 +346,18 @@ func (s *Service) RemoveByAccount(ctx context.Context, account string) (int, uui
 // editable locally. An unknown id is ErrNotFound; another user's comment is
 // ErrForbidden. The caller trims/validates the body first.
 func (s *Service) Edit(ctx context.Context, commentID, userID uuid.UUID, body string) (sqlcgen.Comment, error) {
+	return s.edit(ctx, commentID, userID, body, false)
+}
+
+// EditForReview is Edit for an edit that must be reviewed (0161): a
+// non-reviewer's on a requires_approval video. A CHANGED body sends the comment
+// back to held — its new text is not federated, and a Note already announced
+// is retracted (the delete hook) until a reviewer approves it again.
+func (s *Service) EditForReview(ctx context.Context, commentID, userID uuid.UUID, body string) (sqlcgen.Comment, error) {
+	return s.edit(ctx, commentID, userID, body, true)
+}
+
+func (s *Service) edit(ctx context.Context, commentID, userID uuid.UUID, body string, hold bool) (sqlcgen.Comment, error) {
 	c, err := s.repo.GetComment(ctx, commentID)
 	if err != nil {
 		return sqlcgen.Comment{}, ErrNotFound
@@ -301,12 +365,19 @@ func (s *Service) Edit(ctx context.Context, commentID, userID uuid.UUID, body st
 	if !c.UserID.Valid || uuid.UUID(c.UserID.Bytes) != userID {
 		return sqlcgen.Comment{}, ErrForbidden
 	}
-	updated, err := s.repo.UpdateComment(ctx, sqlcgen.UpdateCommentParams{ID: commentID, Body: body})
+	updated, err := s.repo.UpdateComment(ctx, sqlcgen.UpdateCommentParams{ID: commentID, Body: body, Hold: hold})
 	if err != nil {
 		return sqlcgen.Comment{}, err
 	}
-	if s.onUpdate != nil {
-		s.onUpdate(ctx, updated.ID)
+	switch {
+	case !updated.HeldForReview:
+		if s.onUpdate != nil {
+			s.onUpdate(ctx, updated.ID)
+		}
+	case !c.HeldForReview: // re-held by this edit: retract what was announced
+		if s.onDelete != nil {
+			s.onDelete(ctx, commentID, c.VideoID, userID)
+		}
 	}
 	return updated, nil
 }
@@ -351,6 +422,9 @@ func (s *Service) Pin(ctx context.Context, commentID uuid.UUID) (WithAuthor, err
 	}
 	if row.ParentID.Valid {
 		return WithAuthor{}, ErrNotTopLevel
+	}
+	if row.HeldForReview {
+		return WithAuthor{}, ErrHeld
 	}
 	if err := s.repo.SetVideoPinnedComment(ctx, sqlcgen.SetVideoPinnedCommentParams{
 		VideoID:         row.VideoID,

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -39,8 +40,21 @@ func (f *fakeRepo) CreateComment(_ context.Context, a sqlcgen.CreateCommentParam
 	c := sqlcgen.Comment{
 		ID: uuid.New(), VideoID: a.VideoID, UserID: a.UserID, Body: a.Body,
 		ParentID: a.ParentID, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		HeldForReview: a.HeldForReview,
 	}
 	f.comments[c.ID] = c
+	return c, nil
+}
+
+// ApproveComment mirrors the conditional UPDATE: only a still-held row is
+// released; anything else is pgx.ErrNoRows (the "nothing to do" answer).
+func (f *fakeRepo) ApproveComment(_ context.Context, id uuid.UUID) (sqlcgen.Comment, error) {
+	c, ok := f.comments[id]
+	if !ok || !c.HeldForReview {
+		return sqlcgen.Comment{}, pgx.ErrNoRows
+	}
+	c.HeldForReview = false
+	f.comments[id] = c
 	return c, nil
 }
 
@@ -78,7 +92,7 @@ func (f *fakeRepo) GetCommentWithMeta(_ context.Context, id uuid.UUID) (sqlcgen.
 	return sqlcgen.GetCommentWithMetaRow{
 		ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body,
 		ParentID: c.ParentID, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
-		DeletedAt: c.DeletedAt, Hearted: c.Hearted,
+		DeletedAt: c.DeletedAt, Hearted: c.Hearted, HeldForReview: c.HeldForReview,
 		Pinned:         f.pinned[c.VideoID] == c.ID,
 		AuthorUsername: au.username, AuthorDisplayName: au.displayName,
 		RemoteActorUrl: c.RemoteActorUrl, RemoteAuthorName: meta.name, AuthorDomain: meta.domain,
@@ -133,6 +147,7 @@ func (f *fakeRepo) UpdateComment(_ context.Context, a sqlcgen.UpdateCommentParam
 	if !ok {
 		return sqlcgen.Comment{}, errors.New("not found")
 	}
+	c.HeldForReview = c.HeldForReview || (a.Hold && c.Body != a.Body) // mirrors the SQL
 	c.Body = a.Body
 	c.UpdatedAt = time.Now()
 	f.comments[a.ID] = c
@@ -177,7 +192,7 @@ func TestCreateAndListByVideo(t *testing.T) {
 	if _, err := svc.Create(context.Background(), video, user, "first!", nil); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	items, _, err := svc.ListByVideo(context.Background(), video, uuid.Nil, false, 20, 0)
+	items, _, err := svc.ListByVideo(context.Background(), video, uuid.Nil, false, false, 20, 0)
 	if err != nil {
 		t.Fatalf("ListByVideo: %v", err)
 	}
@@ -264,7 +279,7 @@ func TestDeleteOnlyByAuthor(t *testing.T) {
 	if err := svc.Delete(context.Background(), c.ID, authorID, false); err != nil {
 		t.Errorf("author delete = %v, want nil", err)
 	}
-	if items, _, _ := svc.ListByVideo(context.Background(), c.VideoID, uuid.Nil, false, 20, 0); len(items) != 0 {
+	if items, _, _ := svc.ListByVideo(context.Background(), c.VideoID, uuid.Nil, false, false, 20, 0); len(items) != 0 {
 		t.Errorf("comment should be deleted, still %d", len(items))
 	}
 }
@@ -344,7 +359,7 @@ func TestPinSwapUnpinAndList(t *testing.T) {
 	}
 
 	// The list returns B first, flagged pinned.
-	items, _, _ := svc.ListByVideo(ctx, video, uuid.Nil, false, 20, 0)
+	items, _, _ := svc.ListByVideo(ctx, video, uuid.Nil, false, false, 20, 0)
 	if len(items) != 2 || items[0].Comment.ID != b.ID || !items[0].Pinned {
 		t.Fatalf("list[0] = %+v, want B pinned-first", items[0])
 	}
@@ -435,7 +450,7 @@ func TestHeartRoundTripLocalAndRemote(t *testing.T) {
 		t.Fatalf("heart remote = %+v, err %v", wa, err)
 	}
 
-	items, _, _ := svc.ListByVideo(ctx, video, uuid.Nil, false, 20, 0)
+	items, _, _ := svc.ListByVideo(ctx, video, uuid.Nil, false, false, 20, 0)
 	for _, it := range items {
 		if it.Comment.ID == remote.ID && !it.Comment.Hearted {
 			t.Error("remote heart not reflected in the list")
