@@ -16,6 +16,7 @@ import (
 const (
 	maxFlagObjects   = 20   // objects past this are ignored, not rejected
 	maxFlagReasonLen = 2000 // the local report form's limit; longer is truncated
+	maxFlagIDLen     = 2048 // bytes; a longer Flag id is refused before any insert
 )
 
 // peertubeAbuseReasons are PeerTube's predefined reasons (Flag tag names); vidra
@@ -37,6 +38,10 @@ func WithFlagReporting(file func(context.Context, moderation.RemoteReport) (uuid
 func (s *Service) handleFlag(ctx context.Context, act inboxActivity, signerActorURL string) error {
 	if act.Actor != signerActorURL {
 		return ErrActorMismatch
+	}
+	// Bind the Flag id to the signer's host, like every other inbound id.
+	if len(act.ID) > maxFlagIDLen || !sameHost(act.ID, signerActorURL) {
+		return ErrBadResource
 	}
 	if blocked, err := s.repo.IsRemoteActorBlockedInstanceWide(ctx, signerActorURL); err != nil {
 		return err

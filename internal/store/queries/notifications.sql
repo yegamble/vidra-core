@@ -2,7 +2,7 @@
 -- Record a notification for a recipient (user_id). Context columns are optional
 -- and depend on the type.
 --
--- The same statement records whether it is ALSO owed an email (migration 0156):
+-- The same statement records whether it is ALSO owed an email (migration 0157):
 -- a notification_emails row when, and only when, the recipient explicitly
 -- turned email on for this type. Email is opt-in, and the prefs API accepts an
 -- email choice only for the types that offer it, so for every other type the
@@ -43,7 +43,7 @@ FROM n;
 -- ON CONFLICT rides notifications_new_video_unique_idx, so a publish hook that
 -- fires twice for the same video is a no-op the second time.
 --
--- The same statement queues the EMAILS (migration 0156): one notification_emails
+-- The same statement queues the EMAILS (migration 0157): one notification_emails
 -- row per notification it actually inserted whose recipient explicitly turned
 -- new_video email on. Keyed off what the INSERT returned, so the no-op re-run
 -- above queues nothing either; nothing is mailed here — the outbox drain sends

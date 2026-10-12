@@ -45,12 +45,15 @@ func TestRemoteFlagReportsOnRealPG(t *testing.T) {
 
 	const actor = "https://peertube.example/accounts/peertube"
 	flagID := "https://peertube.example/admin/abuses/" + uuid.NewString()
-	file := func(flag, target string, video, user pgtype.UUID) (uuid.UUID, error) {
+	fileFrom := func(domain, flag, target string, video, user pgtype.UUID) (uuid.UUID, error) {
 		return q.CreateRemoteFlagReport(ctx, sqlcgen.CreateRemoteFlagReportParams{
 			TargetType: target, VideoID: video, ReportedUserID: user,
 			Reason:   "[spamOrMisleading] seeded by TestRemoteFlagReportsOnRealPG",
-			ActorUrl: actor, Domain: "peertube.example", FlagActivityID: flag,
+			ActorUrl: "https://" + domain + "/accounts/peertube", Domain: domain, FlagActivityID: flag,
 		})
+	}
+	file := func(flag, target string, video, user pgtype.UUID) (uuid.UUID, error) {
+		return fileFrom("peertube.example", flag, target, video, user)
 	}
 	vid := pgtype.UUID{Bytes: videoID, Valid: true}
 	acct := pgtype.UUID{Bytes: owner, Valid: true}
@@ -63,14 +66,18 @@ func TestRemoteFlagReportsOnRealPG(t *testing.T) {
 	if _, err := file(flagID, "video", vid, pgtype.UUID{}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Errorf("redelivered Flag err = %v, want pgx.ErrNoRows", err)
 	}
-	// The same Flag naming a second target, and a second Flag naming the same
-	// video, are both new reports: the key is (Flag, target), not the actor —
-	// one instance actor reports for many people.
+	// The same Flag naming a second target is a new report.
 	if id, err := file(flagID, "account", pgtype.UUID{}, acct); err != nil || id == uuid.Nil {
 		t.Errorf("second target of the same Flag = %s, %v; want a new report", id, err)
 	}
-	if id, err := file(flagID+"-2", "video", vid, pgtype.UUID{}); err != nil || id == uuid.Nil {
-		t.Errorf("second Flag on the same video = %s, %v; want a new report", id, err)
+	// At most one OPEN remote report per (reporting domain, target): a second
+	// Flag from the same domain on the same open target is a no-op, while
+	// another domain's Flag on it is a new report.
+	if _, err := file(flagID+"-2", "video", vid, pgtype.UUID{}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("second Flag from the same domain on an open target err = %v, want pgx.ErrNoRows", err)
+	}
+	if id, err := fileFrom("mastodon.example", flagID+"-m", "video", vid, pgtype.UUID{}); err != nil || id == uuid.Nil {
+		t.Errorf("another domain's Flag on the same video = %s, %v; want a new report", id, err)
 	}
 	// A local report on the same video coexists with the remote ones.
 	if _, err := q.CreateVideoReport(ctx, sqlcgen.CreateVideoReportParams{ReporterID: staff, VideoID: vid, Reason: "local"}); err != nil {
@@ -150,5 +157,10 @@ func TestRemoteFlagReportsOnRealPG(t *testing.T) {
 	})
 	if err != nil || reporter.Valid {
 		t.Errorf("ResolveReport(remote) = %v, %v; want a NULL reporter", reporter, err)
+	}
+	// Once that report is no longer open, the same domain can report the
+	// target again.
+	if id, err := file(flagID+"-3", "video", vid, pgtype.UUID{}); err != nil || id == uuid.Nil {
+		t.Errorf("same domain after the open report was resolved = %s, %v; want a new report", id, err)
 	}
 }

@@ -50,6 +50,7 @@ type authFakeRepo struct {
 	users map[string]sqlcgen.User // keyed by lowercased email
 	// failDeactivate makes DeactivateUser fail, to test a rollback that cannot roll back.
 	failDeactivate bool
+	bans           map[uuid.UUID]sqlcgen.UserBan
 	sessions       map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow
 	resets         map[string]*sqlcgen.PasswordResetToken     // keyed by token hash
 	verifs         map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
@@ -218,6 +219,26 @@ func (f *authFakeRepo) SetUserEmailVerified(_ context.Context, id uuid.UUID) err
 		}
 	}
 	return errors.New("not found")
+}
+
+func (f *authFakeRepo) UpsertUserBan(_ context.Context, a sqlcgen.UpsertUserBanParams) error {
+	if f.bans == nil {
+		f.bans = map[uuid.UUID]sqlcgen.UserBan{}
+	}
+	f.bans[a.UserID] = sqlcgen.UserBan{UserID: a.UserID, Reason: a.Reason, BannedAt: time.Now(), BannedBy: a.BannedBy}
+	return nil
+}
+
+func (f *authFakeRepo) DeleteUserBan(_ context.Context, id uuid.UUID) error {
+	delete(f.bans, id)
+	return nil
+}
+
+func (f *authFakeRepo) GetUserBan(_ context.Context, id uuid.UUID) (sqlcgen.UserBan, error) {
+	if b, ok := f.bans[id]; ok {
+		return b, nil
+	}
+	return sqlcgen.UserBan{}, errors.New("not found")
 }
 
 func (f *authFakeRepo) DeactivateUser(_ context.Context, id uuid.UUID) error {
@@ -791,7 +812,7 @@ func (f *authFakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) (
 	for _, u := range f.users {
 		if q == "" || strings.Contains(strings.ToLower(u.Username), q) || strings.Contains(strings.ToLower(u.Email), q) {
 			used, _ := f.SumUserStorageUsage(context.Background(), u.ID)
-			out = append(out, sqlcgen.ListUsersRow{
+			row := sqlcgen.ListUsersRow{
 				ID: u.ID, Username: u.Username, Email: u.Email, PasswordHash: u.PasswordHash,
 				Role: u.Role, EmailVerified: u.EmailVerified, IsActive: u.IsActive,
 				CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt,
@@ -799,7 +820,11 @@ func (f *authFakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) (
 				StorageQuotaBytes: u.StorageQuotaBytes, StorageUsedBytes: used,
 				BypassQuarantine: u.BypassQuarantine, DeletedAt: u.DeletedAt,
 				IsOwner: u.IsOwner, MfaEnabled: f.mfaEnabledFor(u.ID),
-			})
+			}
+			if b, ok := f.bans[u.ID]; ok {
+				row.BanReason, row.BannedAt, row.BannedBy = &b.Reason, pgtype.Timestamptz{Time: b.BannedAt, Valid: true}, b.BannedBy
+			}
+			out = append(out, row)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
@@ -1304,6 +1329,17 @@ type captureResetMailer struct {
 	// twoFactorRemoved records the two-factor-removed notices, with the flag
 	// saying whether an administrator did the removing.
 	twoFactorRemoved []auth.CapturedTwoFactorRemoval
+	suspensions      []auth.CapturedSuspension
+	reinstated       []string
+}
+
+func (m *captureResetMailer) SendAccountSuspended(_ context.Context, email, reason string) error {
+	m.suspensions = append(m.suspensions, auth.CapturedSuspension{Email: email, Reason: reason})
+	return nil
+}
+func (m *captureResetMailer) SendAccountReinstated(_ context.Context, email string) error {
+	m.reinstated = append(m.reinstated, email)
+	return nil
 }
 
 func (m *captureResetMailer) SendTwoFactorRemoved(_ context.Context, email string, byAdmin bool) error {
