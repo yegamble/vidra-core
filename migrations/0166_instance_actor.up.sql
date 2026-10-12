@@ -107,3 +107,12 @@ JOIN channels c ON c.id = v.channel_id
 WHERE v.privacy = 'public' AND v.state = 'published' AND c.activitypub_enabled
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted);
+
+-- (9) The host of a URL, lower-cased (userinfo included, so a URL that hides
+-- another host behind `user@` never compares equal). Delivery targets for
+-- instance followers are re-checked against the follower's own host with it
+-- every time they are resolved, not only when the Follow arrived.
+CREATE FUNCTION instance_url_host(url TEXT) RETURNS TEXT
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT lower(substring(url FROM '^[A-Za-z][A-Za-z0-9+.-]*://([^/?#]+)'))
+$$;

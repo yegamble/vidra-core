@@ -57,6 +57,12 @@ WHERE f.state = 'accepted'
       SELECT 1 FROM remote_actor_block_reach r
       WHERE r.blocker_id IS NULL AND r.actor_url = ra.actor_url
   )
+  -- Only to the follower's own server, re-checked HERE: the cached actor row
+  -- is refreshed after the Follow (key rotation re-fetches it), so a check
+  -- made when the Follow arrived says nothing about where it points now.
+  AND instance_url_host(ra.inbox_url) = instance_url_host(ra.actor_url)
+  AND (COALESCE(ra.shared_inbox_url, '') = ''
+       OR instance_url_host(ra.shared_inbox_url) = instance_url_host(ra.actor_url))
 ORDER BY inbox;
 
 -- name: ListInstanceOutboxVideoIDs :many
@@ -84,11 +90,15 @@ SELECT EXISTS (
 
 -- name: ClaimInstanceFollowerBackfill :execrows
 -- Atomically claims the new-follower backfill for one remote HOST:
--- 1 = claimed (never backfilled, or longer ago than the cooldown), 0 = it was
--- backfilled inside the window and gets nothing now. Concurrent Follows race
--- on the primary key, so at most one of them wins.
+-- 1 = claimed, 0 = refused — the host was backfilled inside the cooldown, or
+-- this instance has already backfilled daily_cap hosts in the last day (one
+-- server can mint any number of host names). Concurrent Follows of one host
+-- race on the primary key, so at most one of them wins; the instance-wide cap
+-- is a ceiling, not an exact count, under concurrency.
 INSERT INTO instance_follower_backfills (host, last_backfill_at)
-VALUES (lower(sqlc.arg('host')), now())
+SELECT lower(sqlc.arg('host')), now()
+WHERE (SELECT count(*) FROM instance_follower_backfills
+       WHERE last_backfill_at > now() - interval '1 day') < sqlc.arg('daily_cap')::int
 ON CONFLICT (host) DO UPDATE SET last_backfill_at = now()
 WHERE instance_follower_backfills.last_backfill_at
       <= now() - make_interval(secs => sqlc.arg('cooldown_seconds')::int);
