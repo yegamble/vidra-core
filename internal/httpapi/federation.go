@@ -132,6 +132,9 @@ func (s *Server) handleChannelActor(c echo.Context) error {
 // profile page under profilePrefix, as Mastodon and PeerTube do; an
 // unknown/inactive actor gets 404.
 func (s *Server) serveActor(c echo.Context, fetch func(context.Context, string) (*federation.Actor, error), profilePrefix string) error {
+	// One URL, three answers keyed on Accept (302 for a browser, AP JSON, 406):
+	// say so, or a shared cache could hand a peer the browser redirect.
+	c.Response().Header().Add(echo.HeaderVary, echo.HeaderAccept)
 	accept := c.Request().Header.Get("Accept")
 	if !wantsActivityJSON(accept) {
 		if strings.Contains(strings.ToLower(accept), "text/html") {

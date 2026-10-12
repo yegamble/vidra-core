@@ -546,6 +546,19 @@ func TestActorBrowserAcceptRedirectsToProfile(t *testing.T) {
 	}
 }
 
+// TestActorResponsesVaryOnAccept: the same actor URL answers a browser with a
+// 302 and an AP client with JSON (and anything else with 406), so every outcome
+// must carry Vary: Accept or a shared cache could hand the redirect to a peer.
+func TestActorResponsesVaryOnAccept(t *testing.T) {
+	srv := fedServer(fedTestConfig())
+	for name, accept := range map[string]string{"html": "text/html", "ap": apAccept, "other": "application/json"} {
+		rec := getAccept(t, srv, "/accounts/ada", accept)
+		if got := rec.Header().Get("Vary"); !strings.Contains(got, "Accept") {
+			t.Errorf("%s (%d): Vary = %q, want it to include Accept", name, rec.Code, got)
+		}
+	}
+}
+
 func TestActorRequiresActivityJSONAccept(t *testing.T) {
 	// Neither AP nor HTML (e.g. a JSON API client) is 406.
 	rec := getAccept(t, fedServer(fedTestConfig()), "/accounts/ada", "application/json")
