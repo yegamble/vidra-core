@@ -4,6 +4,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/pgconv"
 )
 
 func TestMapRole(t *testing.T) {
@@ -16,7 +20,10 @@ func TestMapRole(t *testing.T) {
 }
 
 func TestMapPrivacy(t *testing.T) {
-	cases := map[int]string{1: "public", 2: "unlisted", 3: "private", 4: "private", 0: "private"}
+	// 4 INTERNAL keeps its meaning (any signed-in member); 5 PASSWORD_PROTECTED
+	// arrives without its passwords, so it stays private (owner only) rather
+	// than becoming readable to anyone.
+	cases := map[int]string{1: "public", 2: "unlisted", 3: "private", 4: "internal", 5: "private", 0: "private"}
 	for in, want := range cases {
 		if got := mapPrivacy(in); got != want {
 			t.Errorf("mapPrivacy(%d) = %q, want %q", in, got, want)
@@ -198,5 +205,31 @@ func TestDeferredFamiliesNoLongerClaimActorImages(t *testing.T) {
 		if strings.Contains(strings.ToLower(note), "avatar") {
 			t.Errorf("deferred families still lists %q, but the importer carries actor images now", note)
 		}
+	}
+}
+
+func TestSupportToText(t *testing.T) {
+	if supportToText("") != nil || supportToText("  \n ") != nil {
+		t.Fatal("blank source support must map to NULL, not an empty string")
+	}
+	if got := supportToText("  Patreon: x  "); got == nil || *got != "Patreon: x" {
+		t.Fatalf("got %v, want the trimmed text", got)
+	}
+	// An over-long value (a hand-edited source) is cut to the column limit by
+	// characters, never bytes, so one entity cannot fail on the CHECK.
+	got := supportToText(strings.Repeat("é", 1500))
+	if got == nil || len([]rune(*got)) != 1000 {
+		t.Fatalf("over-long support kept %d characters, want 1000", len([]rune(pgconv.Deref(got))))
+	}
+}
+
+func TestSupportDigestSeparatesSupportChanges(t *testing.T) {
+	a, b, empty := "Liberapay", "Ko-fi", ""
+	base := channelDigest(uuid.Nil, "n", "d")
+	if supportDigest(base, &a) == supportDigest(base, &b) || supportDigest(base, &a) == supportDigest(base, nil) {
+		t.Fatal("a changed support text must change the digest, or a resync would never write it")
+	}
+	if supportDigest(base, nil) != supportDigest(base, &empty) {
+		t.Fatal("NULL and empty support must digest alike (both mean none)")
 	}
 }

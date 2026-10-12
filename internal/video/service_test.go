@@ -265,7 +265,7 @@ func (f *fakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoParams) (
 		ID: uuid.New(), ShortCode: fakeShortCode(), ChannelID: a.ChannelID, Title: a.Title,
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
 		Category: a.Category, Language: a.Language, License: a.License,
-		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive,
+		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive, Support: a.Support,
 		PublishAfterTranscode: a.PublishAfterTranscode,
 		CreatedAt:             time.Now(), UpdatedAt: time.Now(),
 	}
@@ -1941,6 +1941,10 @@ func (f *fakeRepo) CountPublicVideosSorted(ctx context.Context, a sqlcgen.CountP
 		Sort: "recent", ResultLimit: 1 << 30,
 	})
 	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) ListDownloadEnabledVideoIDs(context.Context, []uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
 }
 
 func (f *fakeRepo) CountSubscriptionVideos(ctx context.Context, followerID uuid.UUID) (int64, error) {

@@ -150,6 +150,7 @@ type Repository interface {
 	CountVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error)
 	ListVideoIDsByChannel(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error)
 	ListPublicVideosByChannel(ctx context.Context, arg sqlcgen.ListPublicVideosByChannelParams) ([]sqlcgen.ListPublicVideosByChannelRow, error)
+	ListDownloadEnabledVideoIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
 	CountPublicVideosByChannelVisible(ctx context.Context, arg sqlcgen.CountPublicVideosByChannelVisibleParams) (int64, error)
 	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
 	CountPublicVideosSorted(ctx context.Context, arg sqlcgen.CountPublicVideosSortedParams) (int64, error)
@@ -594,6 +595,12 @@ type CreateInput struct {
 	Category string
 	Language string
 	License  string
+	// Support is PeerTube's free-text "support" field (markdown, <= MaxSupportLen
+	// characters; the HTTP layer enforces it). nil = not provided, so the new
+	// video INHERITS its channel's support text at create time (PeerTube's
+	// behaviour); a non-nil value, even "", is the creator's explicit choice
+	// and wins ("" = deliberately none).
+	Support *string
 	// Tags is the video's free-form tag set (the HTTP layer validates count and
 	// length limits; normalization happens here via NormalizeTags).
 	Tags []string
@@ -722,6 +729,20 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 	if in.DownloadEnabled != nil {
 		downloadEnabled = *in.DownloadEnabled
 	}
+	support := in.Support
+	if support == nil {
+		// Inherit the channel's text as a snapshot. Best-effort: a failed
+		// lookup must not block creating the video (the creator can still set
+		// it by hand), so it is logged, never returned.
+		ch, cerr := s.repo.GetChannelByID(ctx, channelID)
+		switch {
+		case cerr == nil:
+			support = ch.Support
+		case !errors.Is(cerr, pgx.ErrNoRows):
+			slog.WarnContext(ctx, "could not read the channel's support text to inherit; creating without it",
+				"channel_id", channelID, "error", cerr)
+		}
+	}
 	v, err := s.repo.CreateVideo(ctx, sqlcgen.CreateVideoParams{
 		ChannelID:       channelID,
 		Title:           strings.TrimSpace(in.Title),
@@ -733,6 +754,7 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 		PublishAt:       timestamptz(in.PublishAt),
 		IsSensitive:     in.IsSensitive,
 		SensitiveReason: strings.TrimSpace(in.SensitiveReason),
+		Support:         nilIfEmpty(pgconv.Deref(support)),
 		CommentsPolicy:  commentsPolicy,
 		DownloadEnabled: downloadEnabled,
 
@@ -752,6 +774,10 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 // MaxTagsPerVideo and MaxTagLen are the free-form tag limits (product-decisions
 // §18): at most 5 tags of at most 50 characters each (after normalization).
 const (
+	// MaxSupportLen is PeerTube's SUPPORT max (1000 characters) for both the
+	// channel and the video support text; migration 0159 CHECKs the same.
+	MaxSupportLen = 1000
+
 	MaxTagsPerVideo = 5
 	MaxTagLen       = 50
 )
@@ -1493,16 +1519,16 @@ func (s *Service) PublishDue(ctx context.Context, limit int32) (int, error) {
 }
 
 // FileForView authorises serving a stored file of the given kind ("original",
-// "thumbnail", …) for a video and returns it. Visibility mirrors GetByID:
-// public/unlisted to anyone, private only to its owner; everyone else — and any
-// video without a stored file of that kind — gets ErrNotFound so existence is
-// not leaked.
+// "thumbnail", …) for a video and returns it. Visibility is PrivacyAdmits:
+// public/unlisted to anyone, internal to any signed-in account, private only to
+// its owner; everyone else — and any video without a stored file of that kind —
+// gets ErrNotFound so existence is not leaked.
 func (s *Service) FileForView(ctx context.Context, videoID, viewerID uuid.UUID, authed bool, kind string) (sqlcgen.VideoFile, error) {
 	v, err := s.GetByID(ctx, videoID)
 	if err != nil {
 		return sqlcgen.VideoFile{}, err // ErrNotFound
 	}
-	if v.Privacy == "private" && (!authed || viewerID != v.OwnerID) {
+	if !PrivacyAdmits(v.Privacy, authed, viewerID == v.OwnerID) {
 		return sqlcgen.VideoFile{}, ErrNotFound
 	}
 	f, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: kind})
@@ -1513,8 +1539,8 @@ func (s *Service) FileForView(ctx context.Context, videoID, viewerID uuid.UUID, 
 }
 
 // RecordView counts a view of a published video, deduping per viewer within a
-// window when a deduper is configured. Visibility mirrors GetByID (private →
-// owner only, else ErrNotFound). viewerKey identifies the viewer (already
+// window when a deduper is configured. Visibility is PrivacyAdmits (private →
+// owner only, internal → signed-in only, else ErrNotFound). viewerKey identifies the viewer (already
 // hashed by the caller). Non-published videos are a silent no-op (no error) so
 // owner previews do not inflate counts. The deduper is best-effort: an error is
 // treated as "count it".
@@ -1523,7 +1549,7 @@ func (s *Service) RecordView(ctx context.Context, videoID, viewerID uuid.UUID, a
 	if err != nil {
 		return err // ErrNotFound
 	}
-	if v.Privacy == "private" && (!authed || viewerID != v.OwnerID) {
+	if !PrivacyAdmits(v.Privacy, authed, viewerID == v.OwnerID) {
 		return ErrNotFound
 	}
 	if v.State != "published" {
@@ -2082,6 +2108,9 @@ type UpdateInput struct {
 	Category *string
 	Language *string
 	License  *string
+	// Support: nil leaves the support text unchanged; a non-nil value sets it
+	// ("" clears it). The HTTP layer caps its length (MaxSupportLen).
+	Support *string
 	// Tags: nil leaves the tag set unchanged; a non-nil slice replaces it in
 	// full (an empty slice clears all tags).
 	Tags *[]string
@@ -2176,6 +2205,7 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 		PublishAt:       timestamptz(in.PublishAt),
 		IsSensitive:     in.IsSensitive,
 		SensitiveReason: pgconv.TrimPtr(in.SensitiveReason),
+		Support:         pgconv.TrimPtr(in.Support),
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
 		ChannelID:       pgconv.UUIDPtr(in.ChannelID),
@@ -2570,6 +2600,23 @@ func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, total, nil
+}
+
+// DownloadEnabledSet reports, in one query, which of ids have the per-video
+// download flag on.
+func (s *Service) DownloadEnabledSet(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error) {
+	out := make(map[uuid.UUID]bool, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	on, err := s.repo.ListDownloadEnabledVideoIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range on {
+		out[id] = true
+	}
+	return out, nil
 }
 
 // Save adds videoID to userID's library (idempotent). The caller confirms the
@@ -3024,10 +3071,10 @@ var adminSorts = []string{
 func AdminSorts() []string { return append([]string(nil), adminSorts...) }
 
 // adminStates is the videos.state CHECK constraint's value set (migrations
-// 0006/0045/0048/0098), and adminPrivacies is videos.privacy's (0006/0074).
+// 0006/0045/0048/0098), and adminPrivacies is videos.privacy's (0006/0074/0160).
 var (
 	adminStates    = []string{"draft", "processing", "scheduled", "quarantined", "transcoding", "published", "failed"}
-	adminPrivacies = []string{"public", "unlisted", "private", "password"}
+	adminPrivacies = []string{"public", "unlisted", "private", "password", PrivacyInternal}
 )
 
 // AdminStates and AdminPrivacies are the accepted ?state / ?privacy filter

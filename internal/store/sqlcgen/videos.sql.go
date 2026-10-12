@@ -150,7 +150,8 @@ const countPublicVideosByChannelVisible = `-- name: CountPublicVideosByChannelVi
 SELECT count(*)::bigint
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
-WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+WHERE v.channel_id = $1 AND (v.privacy = 'public' OR (v.privacy = 'internal' AND $2::uuid IS NOT NULL))
+  AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND NOT EXISTS (
       SELECT 1 FROM muted_accounts m
@@ -208,7 +209,8 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE (v.privacy = 'public' OR (v.privacy = 'internal' AND $1::uuid IS NOT NULL))
+      AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -534,7 +536,7 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE v.privacy IN ('public', 'internal') AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -624,9 +626,9 @@ func (q *Queries) CountVideosByChannel(ctx context.Context, channelID uuid.UUID)
 }
 
 const createVideo = `-- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason, support)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support
 `
 
 type CreateVideoParams struct {
@@ -643,6 +645,7 @@ type CreateVideoParams struct {
 	DownloadEnabled       bool               `json:"download_enabled"`
 	PublishAfterTranscode bool               `json:"publish_after_transcode"`
 	SensitiveReason       string             `json:"sensitive_reason"`
+	Support               *string            `json:"support"`
 }
 
 func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video, error) {
@@ -660,6 +663,7 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		arg.DownloadEnabled,
 		arg.PublishAfterTranscode,
 		arg.SensitiveReason,
+		arg.Support,
 	)
 	var i Video
 	err := row.Scan(
@@ -687,6 +691,7 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		&i.ShortCode,
 		&i.PeertubeUuid,
 		&i.TranscodeGeneration,
+		&i.Support,
 	)
 	return i, err
 }
@@ -703,7 +708,7 @@ func (q *Queries) DeleteVideo(ctx context.Context, id uuid.UUID) error {
 const getVideoByID = `-- name: GetVideoByID :one
 SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license, v.publish_at, v.originally_published_at,
-       v.is_sensitive, v.sensitive_reason,
+       v.is_sensitive, v.sensitive_reason, v.support,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
        c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
@@ -754,6 +759,7 @@ type GetVideoByIDRow struct {
 	OriginallyPublishedAt   pgtype.Timestamptz `json:"originally_published_at"`
 	IsSensitive             bool               `json:"is_sensitive"`
 	SensitiveReason         string             `json:"sensitive_reason"`
+	Support                 *string            `json:"support"`
 	CommentsPolicy          string             `json:"comments_policy"`
 	DownloadEnabled         bool               `json:"download_enabled"`
 	PublishAfterTranscode   bool               `json:"publish_after_transcode"`
@@ -788,6 +794,7 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 		&i.OriginallyPublishedAt,
 		&i.IsSensitive,
 		&i.SensitiveReason,
+		&i.Support,
 		&i.CommentsPolicy,
 		&i.DownloadEnabled,
 		&i.PublishAfterTranscode,
@@ -1104,7 +1111,7 @@ func (q *Queries) ListAdminVideos(ctx context.Context, arg ListAdminVideosParams
 }
 
 const listChannelOutboxVideos = `-- name: ListChannelOutboxVideos :many
-SELECT v.id, v.title, v.description, v.short_code,
+SELECT v.id, v.title, v.description, v.short_code, v.support,
        v.created_at, v.updated_at, v.publish_at, v.originally_published_at,
        vm.duration_seconds,
        EXISTS (
@@ -1162,6 +1169,7 @@ type ListChannelOutboxVideosRow struct {
 	Title                 string             `json:"title"`
 	Description           string             `json:"description"`
 	ShortCode             string             `json:"short_code"`
+	Support               *string            `json:"support"`
 	CreatedAt             time.Time          `json:"created_at"`
 	UpdatedAt             time.Time          `json:"updated_at"`
 	PublishAt             pgtype.Timestamptz `json:"publish_at"`
@@ -1208,6 +1216,7 @@ func (q *Queries) ListChannelOutboxVideos(ctx context.Context, arg ListChannelOu
 			&i.Title,
 			&i.Description,
 			&i.ShortCode,
+			&i.Support,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.PublishAt,
@@ -1233,6 +1242,33 @@ func (q *Queries) ListChannelOutboxVideos(ctx context.Context, arg ListChannelOu
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDownloadEnabledVideoIDs = `-- name: ListDownloadEnabledVideoIDs :many
+SELECT id FROM videos WHERE id = ANY($1::uuid[]) AND download_enabled
+`
+
+// Which of the given videos have their per-video download flag on. One batched
+// lookup for the podcast feed, so a render does not point-read every video
+// (ListPublicVideosByChannel rows do not carry download_enabled).
+func (q *Queries) ListDownloadEnabledVideoIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listDownloadEnabledVideoIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -1293,7 +1329,8 @@ JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
-WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+WHERE v.channel_id = $1 AND (v.privacy = 'public' OR (v.privacy = 'internal' AND $2::uuid IS NOT NULL))
+  AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   -- A16 ruling: the per-viewer mute/block clause, verbatim from
   -- ListPublicVideosSorted. It was missing here alone, so a muted account's own
@@ -1349,7 +1386,9 @@ type ListPublicVideosByChannelRow struct {
 	ShortCode          string    `json:"short_code"`
 }
 
-// A channel's public, published videos with discovery-card data.
+// A channel's public, published videos with discovery-card data — plus its
+// 'internal' ones when the viewer is signed in (viewer_id non-NULL; 0160: the
+// tier is visible to any signed-in account of this instance, never anonymous).
 func (q *Queries) ListPublicVideosByChannel(ctx context.Context, arg ListPublicVideosByChannelParams) ([]ListPublicVideosByChannelRow, error) {
 	rows, err := q.db.Query(ctx, listPublicVideosByChannel,
 		arg.ChannelID,
@@ -1528,7 +1567,8 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE (v.privacy = 'public' OR (v.privacy = 'internal' AND $1::uuid IS NOT NULL))
+      AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -1662,6 +1702,8 @@ type ListPublicVideosSortedRow struct {
 // tag/category/language filter excludes them; they have no local views, so
 // popular/trending sort them after viewed local videos. Blocked instances hide
 // remote rows for everyone; a signed-in viewer's muted instances hide them too.
+// A signed-in viewer (viewer_id non-NULL) also gets local 'internal' videos
+// (0160); an anonymous one, and every federated/RSS/sitemap caller, does not.
 func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVideosSortedParams) ([]ListPublicVideosSortedRow, error) {
 	rows, err := q.db.Query(ctx, listPublicVideosSorted,
 		arg.ViewerID,
@@ -1962,7 +2004,7 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE v.privacy IN ('public', 'internal') AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -2062,7 +2104,8 @@ type ListSubscriptionVideosRow struct {
 	ShortCode          string    `json:"short_code"`
 }
 
-// The "subscriptions" feed (remote-content §3): a UNION of public, published
+// The "subscriptions" feed (remote-content §3): a UNION of public (and, the
+// follower being signed in by definition, 'internal' — 0160), published
 // videos from the LOCAL channels the user follows and the ingested remote
 // videos of their ACCEPTED remote-channel follows, newest first, with the same
 // discovery-card shape as the main feed. Remote cards are flagged remote and
@@ -2616,7 +2659,7 @@ UPDATE videos
 SET state      = $1,
     updated_at = now()
 WHERE id = $2
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support
 `
 
 type SetVideoStateParams struct {
@@ -2652,6 +2695,7 @@ func (q *Queries) SetVideoState(ctx context.Context, arg SetVideoStateParams) (V
 		&i.ShortCode,
 		&i.PeertubeUuid,
 		&i.TranscodeGeneration,
+		&i.Support,
 	)
 	return i, err
 }
@@ -2671,13 +2715,15 @@ SET title       = COALESCE($1, title),
     download_enabled = COALESCE($11, download_enabled),
     publish_after_transcode = COALESCE($12, publish_after_transcode),
     originally_published_at = COALESCE($13, originally_published_at),
+    -- support (0159): NULL leaves it; '' clears it to NULL (the column's "unset").
+    support     = CASE WHEN $14::text IS NULL THEN support ELSE NULLIF($14::text, '') END,
     -- Move to another channel (T20). channel_id is the only ownership column a
     -- video has (owner is derived through channels), so this one assignment IS
     -- the move; authorization on both channels is the HTTP layer's job.
-    channel_id  = COALESCE($14, channel_id),
+    channel_id  = COALESCE($15, channel_id),
     updated_at  = now()
-WHERE id = $15
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation
+WHERE id = $16
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support
 `
 
 type UpdateVideoParams struct {
@@ -2694,6 +2740,7 @@ type UpdateVideoParams struct {
 	DownloadEnabled       *bool              `json:"download_enabled"`
 	PublishAfterTranscode *bool              `json:"publish_after_transcode"`
 	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
+	Support               *string            `json:"support"`
 	ChannelID             pgtype.UUID        `json:"channel_id"`
 	ID                    uuid.UUID          `json:"id"`
 }
@@ -2713,6 +2760,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		arg.DownloadEnabled,
 		arg.PublishAfterTranscode,
 		arg.OriginallyPublishedAt,
+		arg.Support,
 		arg.ChannelID,
 		arg.ID,
 	)
@@ -2742,6 +2790,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		&i.ShortCode,
 		&i.PeertubeUuid,
 		&i.TranscodeGeneration,
+		&i.Support,
 	)
 	return i, err
 }

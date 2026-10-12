@@ -319,7 +319,7 @@ func TestUnblockRequeuesCancelledCommentCreates(t *testing.T) {
 	inbox := "https://" + blockedHost + "/inbox"
 	payloads := map[string][]byte{}
 	for name, c := range map[string]sqlcgen.Comment{"resumable": keep, "on a private video": hidden} {
-		p, err := svc.buildNoteActivity("Create", "alice", c, "https://videos.example/videos/"+c.VideoID.String())
+		p, err := svc.buildNoteActivity("Create", "alice", c, "https://videos.example/videos/"+c.VideoID.String(), nil)
 		if err != nil {
 			t.Fatalf("buildNoteActivity: %v", err)
 		}

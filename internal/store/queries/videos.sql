@@ -1,7 +1,7 @@
 -- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation;
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason, support)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support;
 
 -- name: CountPublicVideos :one
 -- Public, published videos — the "local posts" count NodeInfo advertises. Only
@@ -25,7 +25,7 @@ SELECT count(*) FROM videos v WHERE v.channel_id = $1 AND v.privacy = 'public' A
 -- page becomes N+1 lookups.
 -- short_code builds the object's `url` (the human watch page). Its `id` stays
 -- the uuid form and must never move: remote servers key on it.
-SELECT v.id, v.title, v.description, v.short_code,
+SELECT v.id, v.title, v.description, v.short_code, v.support,
        v.created_at, v.updated_at, v.publish_at, v.originally_published_at,
        vm.duration_seconds,
        EXISTS (
@@ -99,7 +99,7 @@ WHERE v.id = $1;
 -- name: GetVideoByID :one
 SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license, v.publish_at, v.originally_published_at,
-       v.is_sensitive, v.sensitive_reason,
+       v.is_sensitive, v.sensitive_reason, v.support,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
        c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
@@ -200,7 +200,9 @@ SELECT count(*)::bigint FROM videos v WHERE v.channel_id = sqlc.arg('channel_id'
 SELECT id FROM videos WHERE channel_id = $1 ORDER BY id;
 
 -- name: ListPublicVideosByChannel :many
--- A channel's public, published videos with discovery-card data.
+-- A channel's public, published videos with discovery-card data — plus its
+-- 'internal' ones when the viewer is signed in (viewer_id non-NULL; 0160: the
+-- tier is visible to any signed-in account of this instance, never anonymous).
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,
        COALESCE(vc.views, 0)::bigint AS views,
@@ -216,7 +218,8 @@ JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
-WHERE v.channel_id = sqlc.arg('channel_id') AND v.privacy = 'public' AND v.state = 'published'
+WHERE v.channel_id = sqlc.arg('channel_id') AND (v.privacy = 'public' OR (v.privacy = 'internal' AND sqlc.narg('viewer_id')::uuid IS NOT NULL))
+  AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   -- A16 ruling: the per-viewer mute/block clause, verbatim from
   -- ListPublicVideosSorted. It was missing here alone, so a muted account's own
@@ -252,7 +255,8 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 SELECT count(*)::bigint
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
-WHERE v.channel_id = sqlc.arg('channel_id') AND v.privacy = 'public' AND v.state = 'published'
+WHERE v.channel_id = sqlc.arg('channel_id') AND (v.privacy = 'public' OR (v.privacy = 'internal' AND sqlc.narg('viewer_id')::uuid IS NOT NULL))
+  AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND NOT EXISTS (
       SELECT 1 FROM muted_accounts m
@@ -278,6 +282,8 @@ WHERE v.channel_id = sqlc.arg('channel_id') AND v.privacy = 'public' AND v.state
 -- tag/category/language filter excludes them; they have no local views, so
 -- popular/trending sort them after viewed local videos. Blocked instances hide
 -- remote rows for everyone; a signed-in viewer's muted instances hide them too.
+-- A signed-in viewer (viewer_id non-NULL) also gets local 'internal' videos
+-- (0160); an anonymous one, and every federated/RSS/sitemap caller, does not.
 SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
@@ -309,7 +315,8 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE (v.privacy = 'public' OR (v.privacy = 'internal' AND sqlc.narg('viewer_id')::uuid IS NOT NULL))
+      AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -423,7 +430,8 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE (v.privacy = 'public' OR (v.privacy = 'internal' AND sqlc.narg('viewer_id')::uuid IS NOT NULL))
+      AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -497,7 +505,8 @@ FROM (
 ) AS feed;
 
 -- name: ListSubscriptionVideos :many
--- The "subscriptions" feed (remote-content §3): a UNION of public, published
+-- The "subscriptions" feed (remote-content §3): a UNION of public (and, the
+-- follower being signed in by definition, 'internal' — 0160), published
 -- videos from the LOCAL channels the user follows and the ingested remote
 -- videos of their ACCEPTED remote-channel follows, newest first, with the same
 -- discovery-card shape as the main feed. Remote cards are flagged remote and
@@ -534,7 +543,7 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE v.privacy IN ('public', 'internal') AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -632,7 +641,7 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE v.privacy IN ('public', 'internal') AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -1108,20 +1117,22 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     download_enabled = COALESCE(sqlc.narg('download_enabled'), download_enabled),
     publish_after_transcode = COALESCE(sqlc.narg('publish_after_transcode'), publish_after_transcode),
     originally_published_at = COALESCE(sqlc.narg('originally_published_at'), originally_published_at),
+    -- support (0159): NULL leaves it; '' clears it to NULL (the column's "unset").
+    support     = CASE WHEN sqlc.narg('support')::text IS NULL THEN support ELSE NULLIF(sqlc.narg('support')::text, '') END,
     -- Move to another channel (T20). channel_id is the only ownership column a
     -- video has (owner is derived through channels), so this one assignment IS
     -- the move; authorization on both channels is the HTTP layer's job.
     channel_id  = COALESCE(sqlc.narg('channel_id'), channel_id),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support;
 
 -- name: SetVideoState :one
 UPDATE videos
 SET state      = sqlc.arg('state'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support;
 
 -- name: SetVideoPinnedComment :exec
 -- Set (or clear, when NULL) a video's pinned comment (YouTube-style creator pin,
@@ -1406,3 +1417,9 @@ SELECT id FROM videos
 WHERE id = $1 OR peertube_uuid = $1
 ORDER BY (id = $1) DESC
 LIMIT 1;
+
+-- name: ListDownloadEnabledVideoIDs :many
+-- Which of the given videos have their per-video download flag on. One batched
+-- lookup for the podcast feed, so a render does not point-read every video
+-- (ListPublicVideosByChannel rows do not carry download_enabled).
+SELECT id FROM videos WHERE id = ANY(sqlc.arg('ids')::uuid[]) AND download_enabled;
