@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -26,17 +30,18 @@ type approvalCast struct {
 	edID                         string
 	ledger                       *httpAuditFakeRepo
 	logs                         *bytes.Buffer
+	videos                       *videoFakeRepo
 	notifs                       *notifFakeRepo
 }
 
 func newApprovalCast(t *testing.T) approvalCast {
 	t.Helper()
-	srv, _, _, notifs, _ := videoServerFull(t, testConfig())
+	srv, _, _, notifs, videos := videoServerFull(t, testConfig())
 	var buf bytes.Buffer
 	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
 	ledger := &httpAuditFakeRepo{}
 	srv.auditLog = audit.NewService(ledger)
-	c := approvalCast{srv: srv, ledger: ledger, logs: &buf, notifs: notifs}
+	c := approvalCast{srv: srv, ledger: ledger, logs: &buf, videos: videos, notifs: notifs}
 	c.ada = createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	c.bob = createChannelFor(t, srv, "bob", "bob@example.test", "bob")
 	c.vid = createPublishedVideo(t, srv, c.bob, "bob",
@@ -78,8 +83,20 @@ func (c approvalCast) list(t *testing.T, tok string) commentListResponse {
 	return out
 }
 
+// approve approves the version of the comment the reviewer is looking at now
+// (its current updated_at), as the Studio queue and watch page do.
 func (c approvalCast) approve(tok, commentID string) *httpResponse {
-	rec := sendJSONAuth(c.srv, http.MethodPost, "/api/v1/videos/"+c.vid+"/comments/"+commentID+"/approve", "", tok)
+	version := "2000-01-01T00:00:00Z" // an unknown comment has no version
+	if id, err := uuid.Parse(commentID); err == nil {
+		if cm, err := c.srv.commentsvc.Get(context.Background(), id); err == nil {
+			version = cm.UpdatedAt.Format(time.RFC3339Nano)
+		}
+	}
+	return c.approveAt(tok, commentID, `{"updated_at":"`+version+`"}`)
+}
+
+func (c approvalCast) approveAt(tok, commentID, body string) *httpResponse {
+	rec := sendJSONAuth(c.srv, http.MethodPost, "/api/v1/videos/"+c.vid+"/comments/"+commentID+"/approve", body, tok)
 	return &httpResponse{code: rec.Code, body: rec.Body.String()}
 }
 
@@ -382,6 +399,53 @@ func TestRejectIsAuditedAndAHeldParentLooksUnknown(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].ResourceType != "comment" || rows[0].ResourceID != held.ID {
 		t.Errorf("reject audit rows = %+v, want exactly the reviewer's reject of %s", rows, held.ID)
+	}
+}
+
+// TestApproveRequiresTheReviewedVersion: approval names the version the
+// reviewer saw (updated_at); an edit that landed since answers 409 and
+// publishes nothing, a missing version is a 422, and the current one approves.
+func TestApproveRequiresTheReviewedVersion(t *testing.T) {
+	c := newApprovalCast(t)
+	held := c.post(t, c.eve, `{"body":"as reviewed"}`)
+	seen := held.UpdatedAt.Format(time.RFC3339Nano)
+	time.Sleep(2 * time.Millisecond) // the edit below must move updated_at
+	if rec := sendJSONAuth(c.srv, http.MethodPatch, "/api/v1/comments/"+held.ID, `{"body":"swapped after review"}`, c.eve); rec.Code != http.StatusOK {
+		t.Fatalf("edit = %d", rec.Code)
+	}
+	if r := c.approveAt(c.bob, held.ID, `{"updated_at":"`+seen+`"}`); r.code != http.StatusConflict {
+		t.Errorf("approve of a stale version = %d, want 409; body=%s", r.code, r.body)
+	}
+	if _, ok := hasComment(c.list(t, ""), held.ID); ok {
+		t.Error("a stale approval published the comment")
+	}
+	if r := c.approveAt(c.bob, held.ID, ``); r.code != http.StatusUnprocessableEntity {
+		t.Errorf("approve without a version = %d, want 422", r.code)
+	}
+	if r := c.approve(c.bob, held.ID); r.code != http.StatusOK {
+		t.Errorf("approve of the current version = %d, want 200; body=%s", r.code, r.body)
+	}
+}
+
+// TestEditFailsClosedWhenTheVideoLookupFails: if the edit path cannot tell
+// whether the comment's video requires approval, it refuses rather than
+// publishing the new body unreviewed.
+func TestEditFailsClosedWhenTheVideoLookupFails(t *testing.T) {
+	c := newApprovalCast(t)
+	cv := c.post(t, c.eve, `{"body":"approved"}`)
+	if r := c.approve(c.bob, cv.ID); r.code != http.StatusOK {
+		t.Fatalf("approve = %d", r.code)
+	}
+	vid := uuid.MustParse(c.vid)
+	saved := c.videos.videos[vid]
+	delete(c.videos.videos, vid) // the lookup now fails
+	rec := sendJSONAuth(c.srv, http.MethodPatch, "/api/v1/comments/"+cv.ID, `{"body":"unreviewed"}`, c.eve)
+	c.videos.videos[vid] = saved
+	if rec.Code < 500 {
+		t.Errorf("edit with a failed video lookup = %d, want 5xx", rec.Code)
+	}
+	if got, _ := c.srv.commentsvc.Get(context.Background(), uuid.MustParse(cv.ID)); got.Body != "approved" {
+		t.Errorf("body after the refused edit = %q, want it unchanged", got.Body)
 	}
 }
 
