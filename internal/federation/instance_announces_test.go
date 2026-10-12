@@ -291,3 +291,41 @@ func TestQueuedAnnounceForBlockedVideoIsNotDelivered(t *testing.T) {
 		}
 	}
 }
+
+// However many host names one server mints, this instance backfills at most
+// instanceBackfillDailyCap hosts a day. The follower is still accepted.
+func TestBackfillHasAnInstanceWideDailyCap(t *testing.T) {
+	repo := newInstanceInboxRepo()
+	repo.inst.outbox = []uuid.UUID{uuid.New()}
+	repo.inst.backfilledAt = map[string]time.Time{}
+	for i := 0; i < instanceBackfillDailyCap; i++ {
+		repo.inst.backfilledAt[uuid.NewString()+".example"] = time.Now()
+	}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.HandleInbox(context.Background(), ptInstance, instanceFollow(instanceFollowID)); err != nil {
+		t.Fatal(err)
+	}
+	if got := sent(t, repo); len(got["Accept"]) != 1 || len(got["Announce"]) != 0 {
+		t.Errorf("sent Accept %d, Announce %d; want accepted with no backfill over the cap", len(got["Accept"]), len(got["Announce"]))
+	}
+}
+
+// The backfill reads the follower's inboxes as they are now: re-pointed after
+// the Follow, they get nothing.
+func TestBackfillRechecksTheInboxHostAtSendTime(t *testing.T) {
+	repo := newInstanceInboxRepo()
+	repo.inst.outbox = []uuid.UUID{uuid.New()}
+	ra := repo.remoteActors[ptInstance]
+	// Only the personal inbox moved; the shared one, which a backfill would use,
+	// still looks right. Both must be on the follower's host.
+	shared := ptSharedInbox
+	ra.SharedInboxUrl = &shared
+	ra.InboxUrl = "https://third.example/inbox"
+	repo.remoteActors[ptInstance] = ra
+	if err := NewService(repo, WithBaseURL("https://videos.example")).backfillInstanceFollower(context.Background(), ptInstance); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.deliveries) != 0 {
+		t.Errorf("%d deliveries to a re-pointed inbox, want none", len(repo.deliveries))
+	}
+}

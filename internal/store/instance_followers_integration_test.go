@@ -253,7 +253,8 @@ func TestInstanceFollowerInboxesOnRealPG(t *testing.T) {
 	defer st.Close()
 	q := st.Queries()
 	accepted, pending := seedRemoteInstanceActor(t, st), seedRemoteInstanceActor(t, st)
-	shared := "https://shared-" + uuid.NewString()[:8] + ".example/inbox"
+	// The shared inbox lives on the follower's own host, as a real one does.
+	shared := strings.SplitN(accepted, "/accounts", 2)[0] + "/inbox"
 	if _, err := st.Pool.Exec(ctx, `UPDATE remote_actors SET shared_inbox_url = $2 WHERE actor_url = $1`, accepted, shared); err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +329,7 @@ func TestInstanceFollowerBackfillCooldownOnRealPG(t *testing.T) {
 	})
 	claim := func(h string) int64 {
 		t.Helper()
-		n, err := q.ClaimInstanceFollowerBackfill(ctx, sqlcgen.ClaimInstanceFollowerBackfillParams{Host: h, CooldownSeconds: 86400})
+		n, err := q.ClaimInstanceFollowerBackfill(ctx, sqlcgen.ClaimInstanceFollowerBackfillParams{Host: h, CooldownSeconds: 86400, DailyCap: 1 << 30})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -395,5 +396,94 @@ func TestInstanceFollowerDecisionsOnRealPG(t *testing.T) {
 	}
 	if d, err := q.DeleteInstanceFollowerByID(ctx, row.ID); err != nil || d.State != "rejected" {
 		t.Errorf("remove = %+v, %v", d, err)
+	}
+}
+
+// The instance-wide daily cap: once daily_cap hosts were backfilled in the last
+// day, a NEW host is refused too. (The baseline counts sibling tests' rows.)
+func TestInstanceBackfillDailyCapOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	a, b := "cap-a-"+uuid.NewString()[:8]+".example", "cap-b-"+uuid.NewString()[:8]+".example"
+	t.Cleanup(func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM instance_follower_backfills WHERE host IN ($1, $2)`, a, b)
+	})
+	var recent int32
+	if err := st.Pool.QueryRow(ctx, `SELECT count(*) FROM instance_follower_backfills WHERE last_backfill_at > now() - interval '1 day'`).Scan(&recent); err != nil {
+		t.Fatal(err)
+	}
+	claim := func(h string) int64 {
+		t.Helper()
+		n, err := q.ClaimInstanceFollowerBackfill(ctx, sqlcgen.ClaimInstanceFollowerBackfillParams{Host: h, CooldownSeconds: 86400, DailyCap: recent + 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if claim(a) != 1 || claim(b) != 0 {
+		t.Error("want the host under the cap backfilled and the next new host refused")
+	}
+}
+
+// Delivery targets are re-checked against the follower's host each time they
+// are resolved: an accepted follower whose cached actor is later re-pointed at
+// a third party's inbox — personal or shared — receives nothing.
+func TestInstanceFollowerInboxIsRecheckedAtSendTimeOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	actor := seedRemoteInstanceActor(t, st)
+	if _, err := q.InsertInstanceFollowerIfAbsent(ctx, sqlcgen.InsertInstanceFollowerIfAbsentParams{
+		RemoteActorUrl: actor, State: "accepted", FollowActivityUrl: "f",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reaches := func(want string) bool {
+		t.Helper()
+		inboxes, err := q.ListAcceptedInstanceFollowerInboxes(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, in := range inboxes {
+			if in == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !reaches(actor + "/inbox") {
+		t.Fatal("the follower's own inbox is not a delivery target (the test proves nothing)")
+	}
+	third := "https://third-" + uuid.NewString()[:8] + ".example/inbox"
+	repoint := func(inbox string, shared *string) {
+		t.Helper()
+		if _, err := st.Pool.Exec(ctx, `UPDATE remote_actors SET inbox_url = $2, shared_inbox_url = $3 WHERE actor_url = $1`, actor, inbox, shared); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repoint(third, nil)
+	if reaches(third) {
+		t.Error("a re-pointed personal inbox still receives deliveries")
+	}
+	repoint(actor+"/inbox", &third)
+	if reaches(third) || reaches(actor+"/inbox") {
+		t.Error("a re-pointed shared inbox still receives deliveries")
+	}
+	// userinfo cannot smuggle another host past the comparison.
+	smuggled := "https://third.example@" + strings.TrimPrefix(strings.SplitN(actor, "/accounts", 2)[0], "https://") + "/inbox"
+	repoint(smuggled, nil)
+	if reaches(smuggled) {
+		t.Error("a userinfo-prefixed inbox passed the host check")
 	}
 }
