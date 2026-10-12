@@ -1,7 +1,7 @@
 //go:build integration
 
 // Integration test for the three staff approval-queue fan-outs (migration
-// 0157). Every WHO-gets-told rule lives in SQL, so it is proved here on real
+// 0156). Every WHO-gets-told rule lives in SQL, so it is proved here on real
 // PostgreSQL. The DB is shared with sibling tests that leave staff behind, so
 // membership is asserted only over this test's own seeded users.
 package store

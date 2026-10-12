@@ -1,4 +1,4 @@
--- 0157: staff push signals for the three approval queues that used to fill up
+-- 0156: staff push signals for the three approval queues that used to fill up
 -- silently — new registration requests (approval mode), uploads parked by the
 -- quarantine gate, and remote follower requests (federation_follower_approval).
 -- Before this the admin only saw a pull-only pending-count badge, so an
@@ -13,8 +13,6 @@
 --     re-fired hook can never double-notify. Each is scoped to its own type.
 --
 -- notifications.type is unconstrained TEXT, so no enum/check change is needed.
--- Merges after the 0155 (#327) and 0156 PRs; the contiguity test shows a gap
--- until they land.
 ALTER TABLE notifications
     ADD COLUMN registration_request_id UUID REFERENCES registration_requests (id) ON DELETE CASCADE,
     ADD COLUMN remote_follow_id        UUID REFERENCES remote_follows (id) ON DELETE CASCADE;

@@ -54,7 +54,7 @@ const (
 	// — the moderation queue's push signal. Like new_video it is created by a
 	// set-based fan-out (NotifyNewReport); only staff ever receive it.
 	TypeNewReport = "new_report"
-	// The three staff approval-queue signals (migration 0157). Like new_report
+	// The three staff approval-queue signals (migration 0156). Like new_report
 	// they are set-based fan-outs that only staff ever receive; each tells staff
 	// that a queue they must work just gained an entry.
 	//
@@ -365,7 +365,7 @@ func (s *Service) NotifyNewReport(ctx context.Context, reportID uuid.UUID) (int6
 
 // NotifyNewRegistrationRequest tells staff who can work the registration queue
 // (admin + moderator) that a request awaits approval; it returns how many were
-// told. Set-based and idempotent exactly like NotifyNewReport (migration 0157);
+// told. Set-based and idempotent exactly like NotifyNewReport (migration 0156);
 // per-user opt-outs are honoured in the SQL. Best-effort: the caller treats an
 // error as non-fatal — it must never fail the registration request.
 func (s *Service) NotifyNewRegistrationRequest(ctx context.Context, requestID uuid.UUID) (int64, error) {

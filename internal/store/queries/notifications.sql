@@ -87,7 +87,7 @@ WHERE r.id = sqlc.arg('report_id')
 ON CONFLICT (user_id, report_id) WHERE type = 'new_report' DO NOTHING;
 
 -- name: NotifyStaffOfNewRegistrationRequest :execrows
--- Staff push signal for the registration approval queue (migration 0157), fired
+-- Staff push signal for the registration approval queue (migration 0156), fired
 -- when a request is filed. Set-based like NotifyStaffOfNewReport. Recipients are
 -- the roles that may work the queue (admin + moderator, matching the
 -- /admin/registration-requests route gate), active and non-deleted, minus anyone
@@ -108,7 +108,7 @@ WHERE rr.id = sqlc.arg('request_id')
 ON CONFLICT (user_id, registration_request_id) WHERE type = 'new_registration_request' DO NOTHING;
 
 -- name: NotifyStaffOfQuarantinedUpload :execrows
--- Staff push signal for the upload quarantine queue (migration 0157), fired when
+-- Staff push signal for the upload quarantine queue (migration 0156), fired when
 -- a finished upload parks in 'quarantined'. Recipients are the roles behind
 -- /admin/videos/quarantined (admin + moderator), minus the uploader (staff
 -- uploads bypass the gate, but a moderator-owned video never self-notifies) and
@@ -132,7 +132,7 @@ WHERE v.id = sqlc.arg('video_id')
 ON CONFLICT (user_id, video_id) WHERE type = 'upload_quarantined' DO NOTHING;
 
 -- name: NotifyStaffOfFederationFollowerRequest :execrows
--- Staff push signal for the federation follower-approval queue (migration 0157),
+-- Staff push signal for the federation follower-approval queue (migration 0156),
 -- fired when a remote actor's follow lands as 'pending'. The queue's routes are
 -- admin-only (/admin/federation/follower-requests), so ONLY admins are told —
 -- notifying a moderator of a queue they cannot open would be noise. The followed

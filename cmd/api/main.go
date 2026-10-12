@@ -2225,7 +2225,7 @@ func run() error {
 		// out new_report to staff, exactly as a local report does.
 		federation.WithFlagReporting(moderationsvc.ReportFromRemote, notifsvc.NotifyNewReport),
 		// A follow that lands in the approval queue pings the admins who
-		// approve it (migration 0157).
+		// approve it (migration 0156).
 		federation.WithFollowerRequestHook(staffQueueHook("federation_follower_request",
 			func(ctx context.Context, id uuid.UUID) (int64, error) {
 				return notifsvc.NotifyFederationFollowerRequest(ctx, id)
