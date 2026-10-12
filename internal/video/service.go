@@ -149,8 +149,13 @@ type Repository interface {
 	ListVideosByChannel(ctx context.Context, arg sqlcgen.ListVideosByChannelParams) ([]sqlcgen.ListVideosByChannelRow, error)
 	CountVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error)
 	ListVideoIDsByChannel(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error)
+	ListOwnerVideos(ctx context.Context, arg sqlcgen.ListOwnerVideosParams) ([]sqlcgen.ListOwnerVideosRow, error)
+	CountOwnerVideos(ctx context.Context, arg sqlcgen.CountOwnerVideosParams) (int64, error)
 	ListPublicVideosByChannel(ctx context.Context, arg sqlcgen.ListPublicVideosByChannelParams) ([]sqlcgen.ListPublicVideosByChannelRow, error)
+	ListDownloadEnabledVideoIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
 	CountPublicVideosByChannelVisible(ctx context.Context, arg sqlcgen.CountPublicVideosByChannelVisibleParams) (int64, error)
+	ListPublicVideosByOwner(ctx context.Context, arg sqlcgen.ListPublicVideosByOwnerParams) ([]sqlcgen.ListPublicVideosByOwnerRow, error)
+	CountPublicVideosByOwnerVisible(ctx context.Context, arg sqlcgen.CountPublicVideosByOwnerVisibleParams) (int64, error)
 	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
 	CountPublicVideosSorted(ctx context.Context, arg sqlcgen.CountPublicVideosSortedParams) (int64, error)
 	ListSubscriptionVideos(ctx context.Context, arg sqlcgen.ListSubscriptionVideosParams) ([]sqlcgen.ListSubscriptionVideosRow, error)
@@ -635,17 +640,17 @@ type CreateInput struct {
 	PublishAfterTranscode bool
 }
 
-// Per-video comment-policy values (config-parity W9). PeerTube's third tier
-// requires_approval is deliberately deferred (no comment-approval queue; see
-// the parity ledger §13).
+// Per-video comment-policy values (config-parity W9); requires_approval (0161)
+// holds comments from anyone but the video's reviewers until one approves it.
 const (
-	CommentsPolicyEnabled  = "enabled"
-	CommentsPolicyDisabled = "disabled"
+	CommentsPolicyEnabled          = "enabled"
+	CommentsPolicyDisabled         = "disabled"
+	CommentsPolicyRequiresApproval = "requires_approval"
 )
 
 // IsCommentsPolicy reports whether v is a valid per-video comment policy.
 func IsCommentsPolicy(v string) bool {
-	return v == CommentsPolicyEnabled || v == CommentsPolicyDisabled
+	return v == CommentsPolicyEnabled || v == CommentsPolicyDisabled || v == CommentsPolicyRequiresApproval
 }
 
 // PublishDefaults are the instance-level publish defaults (config-parity W9,
@@ -1518,16 +1523,16 @@ func (s *Service) PublishDue(ctx context.Context, limit int32) (int, error) {
 }
 
 // FileForView authorises serving a stored file of the given kind ("original",
-// "thumbnail", …) for a video and returns it. Visibility mirrors GetByID:
-// public/unlisted to anyone, private only to its owner; everyone else — and any
-// video without a stored file of that kind — gets ErrNotFound so existence is
-// not leaked.
+// "thumbnail", …) for a video and returns it. Visibility is PrivacyAdmits:
+// public/unlisted to anyone, internal to any signed-in account, private only to
+// its owner; everyone else — and any video without a stored file of that kind —
+// gets ErrNotFound so existence is not leaked.
 func (s *Service) FileForView(ctx context.Context, videoID, viewerID uuid.UUID, authed bool, kind string) (sqlcgen.VideoFile, error) {
 	v, err := s.GetByID(ctx, videoID)
 	if err != nil {
 		return sqlcgen.VideoFile{}, err // ErrNotFound
 	}
-	if v.Privacy == "private" && (!authed || viewerID != v.OwnerID) {
+	if !PrivacyAdmits(v.Privacy, authed, viewerID == v.OwnerID) {
 		return sqlcgen.VideoFile{}, ErrNotFound
 	}
 	f, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: kind})
@@ -1538,8 +1543,8 @@ func (s *Service) FileForView(ctx context.Context, videoID, viewerID uuid.UUID, 
 }
 
 // RecordView counts a view of a published video, deduping per viewer within a
-// window when a deduper is configured. Visibility mirrors GetByID (private →
-// owner only, else ErrNotFound). viewerKey identifies the viewer (already
+// window when a deduper is configured. Visibility is PrivacyAdmits (private →
+// owner only, internal → signed-in only, else ErrNotFound). viewerKey identifies the viewer (already
 // hashed by the caller). Non-published videos are a silent no-op (no error) so
 // owner previews do not inflate counts. The deduper is best-effort: an error is
 // treated as "count it".
@@ -1548,7 +1553,7 @@ func (s *Service) RecordView(ctx context.Context, videoID, viewerID uuid.UUID, a
 	if err != nil {
 		return err // ErrNotFound
 	}
-	if v.Privacy == "private" && (!authed || viewerID != v.OwnerID) {
+	if !PrivacyAdmits(v.Privacy, authed, viewerID == v.OwnerID) {
 		return ErrNotFound
 	}
 	if v.State != "published" {
@@ -2375,6 +2380,63 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, sort s
 	return items, total, nil
 }
 
+// OwnerListFilter narrows ListByOwner. A zero field is "no filter".
+type OwnerListFilter struct {
+	Query     string     // case-insensitive title substring (LIKE wildcards are literal)
+	Privacy   string     // exact privacy value
+	State     string     // exact lifecycle state
+	ChannelID *uuid.UUID // one of the owner's channels; a foreign id matches nothing
+}
+
+// likeEscaper makes %, _ and \ literal inside an ILIKE pattern.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// ListByOwner returns one page of EVERY video across the channels ownerID owns
+// (the studio "My videos" view: any state, drafts and private included) plus the
+// filtered total. Ownership is part of the query's WHERE, so a channel_id that
+// is not the caller's matches nothing instead of leaking another account's
+// rows. sort follows ListByChannel.
+func (s *Service) ListByOwner(ctx context.Context, ownerID uuid.UUID, f OwnerListFilter, sort string, limit, offset int32) ([]FeedItem, int64, error) {
+	var q, privacy, state *string
+	if t := strings.TrimSpace(f.Query); t != "" {
+		e := likeEscaper.Replace(t)
+		q = &e
+	}
+	if f.Privacy != "" {
+		privacy = &f.Privacy
+	}
+	if f.State != "" {
+		state = &f.State
+	}
+	var chID pgtype.UUID
+	if f.ChannelID != nil {
+		chID = pgtype.UUID{Bytes: *f.ChannelID, Valid: true}
+	}
+	rows, err := s.repo.ListOwnerVideos(ctx, sqlcgen.ListOwnerVideosParams{
+		OwnerID: ownerID, Q: q, Privacy: privacy, State: state, ChannelID: chID,
+		Sort: NormalizeChannelSort(sort), ResultLimit: limit, ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountOwnerVideos(ctx, sqlcgen.CountOwnerVideosParams{
+		OwnerID: ownerID, Q: q, Privacy: privacy, State: state, ChannelID: chID,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it.AuthorDisplayName = r.AuthorDisplayName
+		it.PublishAt = TimePtr(r.PublishAt)
+		it.Blocked = r.Blocked
+		it.BlockReason = r.BlockReason
+		items = append(items, it)
+	}
+	return items, total, nil
+}
+
 // ListPublicByChannel returns one page of a channel's public, published videos
 // (the public view) with discovery-card data, plus the matching total. When
 // hideSensitive is true, sensitive videos are excluded for the instance-level
@@ -2402,6 +2464,38 @@ func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID, 
 	}
 	total, err := s.repo.CountPublicVideosByChannelVisible(ctx, sqlcgen.CountPublicVideosByChannelVisibleParams{
 		ChannelID: channelID, ViewerID: viewer, HideSensitive: hideSensitive,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it.AuthorDisplayName = r.AuthorDisplayName
+		items = append(items, it)
+	}
+	return items, total, nil
+}
+
+// ListPublicByOwner lists an account's public, published videos across all of
+// its channels (the profile Videos tab) with the same visibility filters as
+// ListPublicByChannel: no private/unlisted/blocked/quarantined/unpublished
+// video, the per-viewer mute/block clause, and sensitive-content hiding.
+func (s *Service) ListPublicByOwner(ctx context.Context, ownerID uuid.UUID, viewerID uuid.UUID, viewerAuthed bool, hideSensitive bool, sort string, limit, offset int32) ([]FeedItem, int64, error) {
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
+	rows, err := s.repo.ListPublicVideosByOwner(ctx, sqlcgen.ListPublicVideosByOwnerParams{
+		OwnerID:       ownerID,
+		ViewerID:      viewer,
+		HideSensitive: hideSensitive,
+		Sort:          NormalizeChannelSort(sort),
+		ResultLimit:   limit,
+		ResultOffset:  offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountPublicVideosByOwnerVisible(ctx, sqlcgen.CountPublicVideosByOwnerVisibleParams{
+		OwnerID: ownerID, ViewerID: viewer, HideSensitive: hideSensitive,
 	})
 	if err != nil {
 		return nil, 0, err
@@ -2580,7 +2674,21 @@ func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter Fee
 // first, each carrying discovery-card data, with the matching total. The caller
 // clamps limit/offset.
 func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]FeedItem, int64, error) {
+	return s.listSubscriptions(ctx, userID, limit, offset, true)
+}
+
+// ListLocalSubscriptions is ListSubscriptions without the remote branch of the
+// UNION, filtered IN SQL so the LIMIT counts only rows the caller will keep (the
+// token-gated RSS feed cannot render remote cards, and filtering after the
+// LIMIT let a busy remote follow crowd local videos out of the window).
+func (s *Service) ListLocalSubscriptions(ctx context.Context, userID uuid.UUID, limit int32) ([]FeedItem, error) {
+	items, _, err := s.listSubscriptions(ctx, userID, limit, 0, false)
+	return items, err
+}
+
+func (s *Service) listSubscriptions(ctx context.Context, userID uuid.UUID, limit, offset int32, includeRemote bool) ([]FeedItem, int64, error) {
 	rows, err := s.repo.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{
+		LocalOnly:    !includeRemote,
 		FollowerID:   userID,
 		ResultLimit:  limit,
 		ResultOffset: offset,
@@ -2588,9 +2696,11 @@ func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := s.repo.CountSubscriptionVideos(ctx, userID)
-	if err != nil {
-		return nil, 0, err
+	var total int64
+	if includeRemote { // the total is only read by the paginated API
+		if total, err = s.repo.CountSubscriptionVideos(ctx, userID); err != nil {
+			return nil, 0, err
+		}
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
@@ -2599,6 +2709,23 @@ func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, total, nil
+}
+
+// DownloadEnabledSet reports, in one query, which of ids have the per-video
+// download flag on.
+func (s *Service) DownloadEnabledSet(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error) {
+	out := make(map[uuid.UUID]bool, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	on, err := s.repo.ListDownloadEnabledVideoIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range on {
+		out[id] = true
+	}
+	return out, nil
 }
 
 // Save adds videoID to userID's library (idempotent). The caller confirms the
@@ -3053,10 +3180,10 @@ var adminSorts = []string{
 func AdminSorts() []string { return append([]string(nil), adminSorts...) }
 
 // adminStates is the videos.state CHECK constraint's value set (migrations
-// 0006/0045/0048/0098), and adminPrivacies is videos.privacy's (0006/0074).
+// 0006/0045/0048/0098), and adminPrivacies is videos.privacy's (0006/0074/0160).
 var (
 	adminStates    = []string{"draft", "processing", "scheduled", "quarantined", "transcoding", "published", "failed"}
-	adminPrivacies = []string{"public", "unlisted", "private", "password"}
+	adminPrivacies = []string{"public", "unlisted", "private", "password", PrivacyInternal}
 )
 
 // AdminStates and AdminPrivacies are the accepted ?state / ?privacy filter

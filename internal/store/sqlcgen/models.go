@@ -250,6 +250,7 @@ type Comment struct {
 	RemoteObjectUrl  *string            `json:"remote_object_url"`
 	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
 	Hearted          bool               `json:"hearted"`
+	HeldForReview    bool               `json:"held_for_review"`
 }
 
 type Conversation struct {
@@ -640,6 +641,7 @@ type Notification struct {
 	ReportID              pgtype.UUID        `json:"report_id"`
 	RegistrationRequestID pgtype.UUID        `json:"registration_request_id"`
 	RemoteFollowID        pgtype.UUID        `json:"remote_follow_id"`
+	ReportMessageID       pgtype.UUID        `json:"report_message_id"`
 }
 
 type NotificationEmail struct {
@@ -938,6 +940,15 @@ type Report struct {
 	RemoteFlagActivityID   *string            `json:"remote_flag_activity_id"`
 }
 
+type ReportMessage struct {
+	ID          uuid.UUID   `json:"id"`
+	ReportID    uuid.UUID   `json:"report_id"`
+	AuthorID    pgtype.UUID `json:"author_id"`
+	IsModerator bool        `json:"is_moderator"`
+	Body        string      `json:"body"`
+	CreatedAt   time.Time   `json:"created_at"`
+}
+
 type SavedVideo struct {
 	UserID    uuid.UUID `json:"user_id"`
 	VideoID   uuid.UUID `json:"video_id"`
@@ -1137,6 +1148,12 @@ type UserBan struct {
 type UserBlock struct {
 	BlockerID uuid.UUID `json:"blocker_id"`
 	BlockedID uuid.UUID `json:"blocked_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type UserFeedToken struct {
+	UserID    uuid.UUID `json:"user_id"`
+	TokenHash string    `json:"token_hash"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

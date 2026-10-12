@@ -60,7 +60,7 @@ func (f *notifFakeRepo) CommentReplyRecipient(_ context.Context, commentID uuid.
 		return none, pgx.ErrNoRows
 	}
 	reply, ok := f.comments.comments[commentID]
-	if !ok || reply.DeletedAt.Valid || !reply.ParentID.Valid || !reply.UserID.Valid {
+	if !ok || reply.DeletedAt.Valid || reply.HeldForReview || !reply.ParentID.Valid || !reply.UserID.Valid {
 		return none, pgx.ErrNoRows
 	}
 	parent, ok := f.comments.comments[uuid.UUID(reply.ParentID.Bytes)]
@@ -102,7 +102,7 @@ func (f *notifFakeRepo) CommentVideoOwnerRecipient(_ context.Context, commentID 
 		return none, pgx.ErrNoRows
 	}
 	c, ok := f.comments.comments[commentID]
-	if !ok || c.DeletedAt.Valid || !c.UserID.Valid {
+	if !ok || c.DeletedAt.Valid || c.HeldForReview || !c.UserID.Valid {
 		return none, pgx.ErrNoRows
 	}
 	v, ok := f.videos.videos[c.VideoID]

@@ -23,6 +23,7 @@ import (
 	"github.com/vidra/vidra-core/internal/donation"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/feedtoken"
 	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/instancesettings"
@@ -100,6 +101,7 @@ func fullRouteOptions() []Option {
 		// configured already).
 		WithMailConfigService(mailconfig.NewService(nil, nil, mailconfig.EnvConfig{})),
 		WithInstanceDocumentsService(instancedocs.NewService(nil)),
+		WithFeedTokenService(feedtoken.NewService(nil)),
 		WithRemoteVideoService(remotevideo.NewService(nil, nil)),
 		// Mounts the WRITE side of comments on remote videos (migration 0147). The
 		// REST routes are contract surface; the AP object id (/remote-comments/{id})
@@ -302,9 +304,11 @@ var knownNonContractRoutes = map[string]string{
 	// PUBLIC_BASE_URL (+ wired video/channel services). Syndication formats
 	// answering XML/oEmbed JSON to feed readers, crawlers and embed resolvers,
 	// built from absolute public URLs. See internal/httpapi/distribution.go.
-	"GET /feeds/videos.xml": "syndication feed",
-	"GET /services/oembed":  "oEmbed provider",
-	"GET /sitemap.xml":      "crawler sitemap",
+	"GET /feeds/videos.xml":         "syndication feed",
+	"GET /feeds/podcast/videos.xml": "podcast syndication feed",
+	"GET /feeds/subscriptions.xml":  "token-gated syndication feed",
+	"GET /services/oembed":          "oEmbed provider",
+	"GET /sitemap.xml":              "crawler sitemap",
 
 	// DEV_MAIL_CAPTURE_ENABLED, and refused outright when Environment is
 	// "production". A development seam for reading account-security tokens

@@ -192,6 +192,55 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 -- How many rows ListVideosByChannel would return, ignoring pagination.
 SELECT count(*)::bigint FROM videos v WHERE v.channel_id = sqlc.arg('channel_id');
 
+-- name: ListOwnerVideos :many
+-- Every video across ALL channels the caller OWNS (owner_id is the channel's
+-- owner, so a foreign channel_id simply matches nothing — it can never widen
+-- the scope). Optional filters, each NULL = off: q (case-insensitive title
+-- substring, served by videos_title_trgm_idx; the caller escapes LIKE
+-- wildcards), privacy, state, channel_id. Same row shape and ordering rules as
+-- ListVideosByChannel so the studio list renders unchanged.
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at, v.publish_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code,
+       EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
+       COALESCE(
+           (SELECT b.reason FROM video_blocks b WHERE b.video_id = v.id),
+           ''
+       )::text AS block_reason
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE c.owner_id = sqlc.arg('owner_id')
+  AND (sqlc.narg('q')::text IS NULL OR v.title ILIKE '%' || sqlc.narg('q')::text || '%')
+  AND (sqlc.narg('privacy')::text IS NULL OR v.privacy = sqlc.narg('privacy')::text)
+  AND (sqlc.narg('state')::text IS NULL OR v.state = sqlc.narg('state')::text)
+  AND (sqlc.narg('channel_id')::uuid IS NULL OR v.channel_id = sqlc.narg('channel_id')::uuid)
+ORDER BY
+    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN v.created_at END ASC,
+    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN v.created_at END DESC,
+    v.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountOwnerVideos :one
+-- How many rows ListOwnerVideos would return, ignoring pagination.
+SELECT count(*)::bigint
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE c.owner_id = sqlc.arg('owner_id')
+  AND (sqlc.narg('q')::text IS NULL OR v.title ILIKE '%' || sqlc.narg('q')::text || '%')
+  AND (sqlc.narg('privacy')::text IS NULL OR v.privacy = sqlc.narg('privacy')::text)
+  AND (sqlc.narg('state')::text IS NULL OR v.state = sqlc.narg('state')::text)
+  AND (sqlc.narg('channel_id')::uuid IS NULL OR v.channel_id = sqlc.narg('channel_id')::uuid);
+
 -- name: ListVideoIDsByChannel :many
 -- Every video id in a channel, UNPAGINATED — the account-deletion sweep, which
 -- must visit all of them (a delete that stopped at the UI page size would leave
@@ -200,7 +249,9 @@ SELECT count(*)::bigint FROM videos v WHERE v.channel_id = sqlc.arg('channel_id'
 SELECT id FROM videos WHERE channel_id = $1 ORDER BY id;
 
 -- name: ListPublicVideosByChannel :many
--- A channel's public, published videos with discovery-card data.
+-- A channel's public, published videos with discovery-card data — plus its
+-- 'internal' ones when the viewer is signed in (viewer_id non-NULL; 0160: the
+-- tier is visible to any signed-in account of this instance, never anonymous).
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,
        COALESCE(vc.views, 0)::bigint AS views,
@@ -216,7 +267,8 @@ JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
-WHERE v.channel_id = sqlc.arg('channel_id') AND v.privacy = 'public' AND v.state = 'published'
+WHERE v.channel_id = sqlc.arg('channel_id') AND (v.privacy = 'public' OR (v.privacy = 'internal' AND sqlc.narg('viewer_id')::uuid IS NOT NULL))
+  AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   -- A16 ruling: the per-viewer mute/block clause, verbatim from
   -- ListPublicVideosSorted. It was missing here alone, so a muted account's own
@@ -252,7 +304,80 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 SELECT count(*)::bigint
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
-WHERE v.channel_id = sqlc.arg('channel_id') AND v.privacy = 'public' AND v.state = 'published'
+WHERE v.channel_id = sqlc.arg('channel_id') AND (v.privacy = 'public' OR (v.privacy = 'internal' AND sqlc.narg('viewer_id')::uuid IS NOT NULL))
+  AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+  )
+  AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive);
+
+-- name: ListPublicVideosByOwner :many
+-- TWIN of ListPublicVideosByChannel scoped to an ACCOUNT (every channel its
+-- owner has — the profile Videos tab): the only difference is the owner scope,
+-- so any visibility predicate edited there must be edited here and in the
+-- count below. An account's public, published videos with discovery-card data — plus its
+-- 'internal' ones when the viewer is signed in (viewer_id non-NULL; 0160: the
+-- tier is visible to any signed-in account of this instance, never anonymous).
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE c.owner_id = sqlc.arg('owner_id')::uuid AND (v.privacy = 'public' OR (v.privacy = 'internal' AND sqlc.narg('viewer_id')::uuid IS NOT NULL))
+  AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  -- A16 ruling: the per-viewer mute/block clause, verbatim from
+  -- ListPublicVideosSorted. It was missing here alone, so a muted account's own
+  -- channel page kept listing everything the mute hid everywhere else, and an
+  -- autosuggest channel hit linked straight to it. viewer_id is NULL for an
+  -- anonymous caller, which makes both NOT EXISTS trivially true.
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+  )
+  -- Sensitive-content "hide" moved INTO the query (it used to be a Go-side skip
+  -- over the whole result set). With a LIMIT that filter has to be in SQL or a
+  -- page would silently return fewer rows than asked for and the total would
+  -- count rows the caller can never see.
+  AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
+ORDER BY
+    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN v.created_at END ASC,
+    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN v.created_at END DESC,
+    v.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountPublicVideosByOwnerVisible :one
+-- How many rows ListPublicVideosByOwner would return, ignoring pagination.
+-- The block predicate must stay identical: CountPublicVideosByChannel above
+-- answers the AP outbox's question (it counts blocked videos too) and would
+-- over-report this list. Same for the per-viewer mute/block clause added with
+-- the A16 ruling — a total taken without it would promise the muter a page the
+-- list cannot serve. The channels JOIN exists only to reach c.owner_id.
+SELECT count(*)::bigint
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE c.owner_id = sqlc.arg('owner_id')::uuid AND (v.privacy = 'public' OR (v.privacy = 'internal' AND sqlc.narg('viewer_id')::uuid IS NOT NULL))
+  AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND NOT EXISTS (
       SELECT 1 FROM muted_accounts m
@@ -278,6 +403,8 @@ WHERE v.channel_id = sqlc.arg('channel_id') AND v.privacy = 'public' AND v.state
 -- tag/category/language filter excludes them; they have no local views, so
 -- popular/trending sort them after viewed local videos. Blocked instances hide
 -- remote rows for everyone; a signed-in viewer's muted instances hide them too.
+-- A signed-in viewer (viewer_id non-NULL) also gets local 'internal' videos
+-- (0160); an anonymous one, and every federated/RSS/sitemap caller, does not.
 SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
@@ -309,7 +436,8 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE (v.privacy = 'public' OR (v.privacy = 'internal' AND sqlc.narg('viewer_id')::uuid IS NOT NULL))
+      AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -423,7 +551,8 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE (v.privacy = 'public' OR (v.privacy = 'internal' AND sqlc.narg('viewer_id')::uuid IS NOT NULL))
+      AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -497,7 +626,8 @@ FROM (
 ) AS feed;
 
 -- name: ListSubscriptionVideos :many
--- The "subscriptions" feed (remote-content §3): a UNION of public, published
+-- The "subscriptions" feed (remote-content §3): a UNION of public (and, the
+-- follower being signed in by definition, 'internal' — 0160), published
 -- videos from the LOCAL channels the user follows and the ingested remote
 -- videos of their ACCEPTED remote-channel follows, newest first, with the same
 -- discovery-card shape as the main feed. Remote cards are flagged remote and
@@ -534,7 +664,7 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE v.privacy IN ('public', 'internal') AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -568,7 +698,10 @@ FROM (
            ''::text AS short_code
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
-    WHERE EXISTS (
+    -- local_only is the zero-value-safe polarity: a caller that sets nothing
+    -- (every direct query user) keeps the remote branch.
+    WHERE NOT sqlc.arg('local_only')::bool
+      AND EXISTS (
           SELECT 1 FROM remote_channel_follows rcf
           WHERE rcf.user_id = sqlc.arg('follower_id')
             AND rcf.remote_actor_url = rv.remote_actor_url
@@ -632,7 +765,7 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE v.privacy = 'public' AND v.state = 'published'
+    WHERE v.privacy IN ('public', 'internal') AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
@@ -1408,3 +1541,9 @@ SELECT id FROM videos
 WHERE id = $1 OR peertube_uuid = $1
 ORDER BY (id = $1) DESC
 LIMIT 1;
+
+-- name: ListDownloadEnabledVideoIDs :many
+-- Which of the given videos have their per-video download flag on. One batched
+-- lookup for the podcast feed, so a render does not point-read every video
+-- (ListPublicVideosByChannel rows do not carry download_enabled).
+SELECT id FROM videos WHERE id = ANY(sqlc.arg('ids')::uuid[]) AND download_enabled;

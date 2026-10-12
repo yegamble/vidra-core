@@ -36,6 +36,7 @@ import (
 	"github.com/vidra/vidra-core/internal/drm"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/feedtoken"
 	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/instancesettings"
@@ -93,7 +94,9 @@ type Server struct {
 	// (WithAuthRateLimiter), else a built-in, always-on in-memory default so the
 	// endpoint is never left unthrottled — even on a single-node deployment
 	// running without Redis. Always non-nil after New().
-	unlockLimit     *ratelimit.Limiter
+	unlockLimit *ratelimit.Limiter
+	// bulkVideosLimit throttles POST /me/videos/bulk PER USER (see ratelimit.go).
+	bulkVideosLimit *ratelimit.Limiter
 	attachmentLimit *ratelimit.Limiter
 	// contactLimit throttles the public contact form (POST /instance/contact) —
 	// its own fixed-window budget, 1 request/IP/hour in production (wired in
@@ -117,6 +120,9 @@ type Server struct {
 	// exhausted budget degrades that search to local-only — it never fails the
 	// request. Always non-nil after New().
 	searchResolveLimit *ratelimit.Limiter
+	// reportMessageLimit is the per-USER budget for posting to report threads:
+	// every reporter message notifies all staff. Always non-nil after New().
+	reportMessageLimit *ratelimit.Limiter
 	// contactMailer delivers contact-form messages to the operator (spec
 	// instance-platform-info). Nil when the deployment has no outbound mail
 	// path — the contact form then reports unavailable (409 / effective
@@ -214,6 +220,7 @@ type Server struct {
 	// emission entirely (it is a low-value signal).
 	searchWatchThrottle func(ctx context.Context, key string) bool
 	instancedocssvc     *instancedocs.Service
+	feedtokensvc        *feedtoken.Service
 	mediagcsvc          *mediagc.Service
 	storagemigrationsvc *storagemigration.Service
 	jobStatusSvc        jobStatusProvider
@@ -480,6 +487,12 @@ func WithContactRateLimiter(l *ratelimit.Limiter) Option {
 // nil/unset, the route falls back to the general limiter only.
 func WithMailTestRateLimiter(l *ratelimit.Limiter) Option {
 	return func(s *Server) { s.mailTestLimit = l }
+}
+
+// WithReportMessageRateLimiter overrides the per-user report-message budget
+// (cmd/api wires a Redis-backed one for multi-node correctness).
+func WithReportMessageRateLimiter(l *ratelimit.Limiter) Option {
+	return func(s *Server) { s.reportMessageLimit = l }
 }
 
 // WithSearchResolveRateLimiter overrides the per-caller budget applied to
@@ -1192,11 +1205,17 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	} else {
 		s.unlockLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultUnlockRateLimit, defaultUnlockRateWindow)
 	}
+	// Bulk video actions each run the full delete/update pipeline up to 100
+	// times, so they always carry a per-user budget, wired in-process like unlock.
+	s.bulkVideosLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultBulkVideosRateLimit, defaultBulkVideosRateWindow)
 	// Remote-URI search resolution (config-parity W13) triggers outbound
 	// fetches, so it always carries a per-caller budget: the wired limiter
 	// (Redis-backed in cmd/api) when present, else an in-memory default.
 	if s.searchResolveLimit == nil {
 		s.searchResolveLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultSearchResolveRateLimit, defaultSearchResolveRateWindow)
+	}
+	if s.reportMessageLimit == nil {
+		s.reportMessageLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultReportMessageRateLimit, time.Hour)
 	}
 	// Media falls back to the general limiter when no dedicated one was wired, so
 	// a server built without WithMediaRateLimiter (unit tests, embedders) behaves
@@ -1518,8 +1537,12 @@ func (s *Server) routes() {
 	// the health probes and nodeinfo discovery.
 	if s.cfg.PublicBaseURL != "" && s.videosvc != nil && s.channelsvc != nil {
 		s.echo.GET("/feeds/videos.xml", s.handleVideosFeed)
+		s.echo.GET("/feeds/podcast/videos.xml", s.handlePodcastFeed, s.feedRateLimit())
 		s.echo.GET("/services/oembed", s.handleOEmbed)
 		s.echo.GET("/sitemap.xml", s.handleSitemap)
+		if s.feedtokensvc != nil {
+			s.echo.GET("/feeds/subscriptions.xml", s.handleSubscriptionsFeed, s.feedRateLimit())
+		}
 	}
 
 	api := s.echo.Group(apiBasePath)
@@ -1727,6 +1750,9 @@ func (s *Server) routes() {
 		api.GET("/search/channels", s.handleSearchChannels, s.optionalAuth)
 		if s.authsvc != nil {
 			api.GET("/users/:username/profile", s.handleGetUserProfile, s.optionalAuth)
+			if s.videosvc != nil {
+				api.GET("/users/:username/videos", s.handleListUserVideos, s.optionalAuth)
+			}
 			// Account search. Mounted with the profile endpoint on purpose: they
 			// share one visibility rule, and the list must never outlive the
 			// single lookup's gate.
@@ -1790,6 +1816,13 @@ func (s *Server) routes() {
 		api.GET("/channels/:handle/videos", s.handleListChannelVideos, s.optionalAuth)
 		api.GET("/videos", s.handleListPublicVideos, s.optionalAuth)
 		api.GET("/me/subscriptions/videos", s.handleListSubscriptionVideos, s.requireAuth)
+		if s.feedtokensvc != nil {
+			api.GET("/me/feed-token", s.handleGetFeedToken, s.requireAuth)
+			api.POST("/me/feed-token", s.handleRotateFeedToken, s.requireAuth)
+			api.DELETE("/me/feed-token", s.handleRevokeFeedToken, s.requireAuth)
+		}
+		api.GET("/me/videos", s.handleListMyVideos, s.requireAuth)
+		api.POST("/me/videos/bulk", s.handleBulkMyVideos, s.requireAuth, s.bulkVideosRateLimit())
 		api.GET("/me/saved", s.handleListSavedVideos, s.requireAuth)
 		api.POST("/videos/:id/save", s.handleSaveVideo, s.requireAuth)
 		api.DELETE("/videos/:id/save", s.handleUnsaveVideo, s.requireAuth)
@@ -1930,6 +1963,8 @@ func (s *Server) routes() {
 		if s.commentsvc != nil {
 			api.GET("/videos/:id/comments", s.handleListComments, s.optionalAuth)
 			api.POST("/videos/:id/comments", s.handleCreateComment, s.requireAuth)
+			// Comment approval (0161): a video manager releases a held comment.
+			api.POST("/videos/:id/comments/:commentId/approve", s.handleApproveComment, s.requireAuth)
 			api.PATCH("/comments/:id", s.handleUpdateComment, s.requireAuth)
 			api.DELETE("/comments/:id", s.handleDeleteComment, s.requireAuth)
 			// Creator pin + heart (0099): the video owner/editor (or staff) pins at
@@ -2046,6 +2081,12 @@ func (s *Server) routes() {
 		api.POST("/videos/:id/report", s.handleReportVideo, s.requireAuth)
 		api.POST("/comments/:id/report", s.handleReportComment, s.requireAuth)
 		api.POST("/users/:id/report", s.handleReportAccount, s.requireAuth)
+		// A report's message thread: its local reporter and staff (404 to anyone
+		// else, so a report's existence never leaks).
+		api.GET("/reports/:id/messages", s.handleListReportMessages, s.requireAuth)
+		api.POST("/reports/:id/messages", s.handleCreateReportMessage, s.requireAuth, s.reportMessageRateLimit())
+		api.GET("/me/reports", s.handleListMyReports, s.requireAuth)
+		api.GET("/me/reports/:id", s.handleGetMyReport, s.requireAuth)
 		api.GET("/admin/reports", s.handleListReports, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/reports/:id/resolve", s.handleResolveReport, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		// Hard-delete is admin-only: moderators resolve, admins can purge.

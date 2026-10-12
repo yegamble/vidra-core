@@ -32,7 +32,8 @@ import (
 // validVideoPrivacy is the allowed privacy set; empty defaults to "private".
 // "password" (CORE-17) is accepted here, but the service additionally requires
 // the video to already hold >=1 password (else 400 password_required-style).
-var validVideoPrivacy = map[string]bool{"public": true, "unlisted": true, "private": true, "password": true}
+// "internal" is PeerTube's signed-in-accounts-only tier (video.PrivacyInternal).
+var validVideoPrivacy = map[string]bool{"public": true, "unlisted": true, "private": true, "password": true, video.PrivacyInternal: true}
 
 // maxSensitiveReasonLen caps the creator's content-warning text (§sensitive
 // content), measured on the trimmed value.
@@ -60,7 +61,7 @@ type createVideoRequest struct {
 	// frontend pairs them.
 	SensitiveReason string `json:"sensitive_reason"`
 	// CommentsPolicy is the per-video comment policy (config-parity W9):
-	// enabled|disabled. Omitted/empty seeds the instance's
+	// enabled|disabled|requires_approval. Omitted/empty seeds the instance's
 	// default_comment_policy setting.
 	CommentsPolicy string `json:"comments_policy"`
 	// DownloadEnabled is the per-video download policy (config-parity W9),
@@ -88,7 +89,7 @@ func (r createVideoRequest) Validate() []FieldError {
 		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private, password"})
 	}
 	if r.CommentsPolicy != "" && !video.IsCommentsPolicy(r.CommentsPolicy) {
-		fes = append(fes, FieldError{Field: "comments_policy", Message: "must be one of enabled, disabled"})
+		fes = append(fes, FieldError{Field: "comments_policy", Message: "must be one of enabled, disabled, requires_approval"})
 	}
 	if len(strings.TrimSpace(r.SensitiveReason)) > maxSensitiveReasonLen {
 		fes = append(fes, FieldError{Field: "sensitive_reason", Message: "must be at most 280 characters"})
@@ -223,7 +224,7 @@ type videoView struct {
 	// remote cards (no local account).
 	AuthorDisplayName *string `json:"author_display_name,omitempty"`
 	// CommentsPolicy is the per-video comment policy (config-parity W9):
-	// enabled|disabled. Present on the create/update/detail views; omitted on
+	// enabled|disabled|requires_approval. Present on the create/update/detail views; omitted on
 	// list/feed views and remote cards.
 	CommentsPolicy string `json:"comments_policy,omitempty"`
 	// CommentsEnabled is the EFFECTIVE comment availability on the DETAIL view:
@@ -613,7 +614,7 @@ func (s *Server) respondVideo(c echo.Context, id uuid.UUID) error {
 	// The EFFECTIVE comment availability (config-parity W9): the instance-wide
 	// comments_enabled toggle AND this video's comments_policy. The watch page
 	// shows/hides its composer from this one field.
-	commentsEnabled := s.commentsEnabled() && v.CommentsPolicy == video.CommentsPolicyEnabled
+	commentsEnabled := s.commentsEnabled() && v.CommentsPolicy != video.CommentsPolicyDisabled
 	view.CommentsEnabled = &commentsEnabled
 	if md, ok, err := s.videosvc.GetMetadata(c.Request().Context(), id); err == nil && ok {
 		view.DurationSeconds = md.DurationSeconds
@@ -1144,7 +1145,7 @@ func (r updateVideoRequest) Validate() []FieldError {
 		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private, password"})
 	}
 	if r.CommentsPolicy != nil && !video.IsCommentsPolicy(*r.CommentsPolicy) {
-		fes = append(fes, FieldError{Field: "comments_policy", Message: "must be one of enabled, disabled"})
+		fes = append(fes, FieldError{Field: "comments_policy", Message: "must be one of enabled, disabled, requires_approval"})
 	}
 	if r.SensitiveReason != nil && len(strings.TrimSpace(*r.SensitiveReason)) > maxSensitiveReasonLen {
 		fes = append(fes, FieldError{Field: "sensitive_reason", Message: "must be at most 280 characters"})
@@ -1184,6 +1185,23 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
+	v, err := s.applyVideoUpdate(c, userID, role, id, in)
+	if err != nil {
+		return err
+	}
+	view := newVideoView(v)
+	s.attachVideoTags(c.Request().Context(), &view, v.ID)
+	return c.JSON(http.StatusOK, view)
+}
+
+// applyVideoUpdate is the single-video PATCH pipeline shared by
+// handleUpdateVideo and the studio bulk endpoint (handleBulkVideos): the
+// ownership/collaborator/staff decision, the move check, the edge-purge
+// snapshots, UpdateForActor, the watched-words re-flag, the audit rows and the
+// post-write purge. The bulk path calls THIS, never a parallel copy, so every
+// side effect of a single edit still fires per item. Errors come back already
+// mapped to their HTTP form (videoError / ValidationError).
+func (s *Server) applyVideoUpdate(c echo.Context, userID uuid.UUID, role string, id uuid.UUID, in updateVideoRequest) (sqlcgen.Video, error) {
 	// Staff (admin/moderator) manage any local video via the moderation escape;
 	// an editor collaborator (migration 0097) manages their channel's videos.
 	// managedOther gates the moderation audit — it stays staff-only, so an
@@ -1210,7 +1228,7 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 			target := uuid.MustParse(*in.ChannelID) // Validate() proved it parses
 			if target != existing.ChannelID && (canManage || existing.OwnerID == userID) {
 				if !s.canManageChannelContent(c.Request().Context(), userID, target) {
-					return echo.NewHTTPError(http.StatusNotFound, "channel not found")
+					return sqlcgen.Video{}, echo.NewHTTPError(http.StatusNotFound, "channel not found")
 				}
 				moveTo, moveFrom = &target, existing.ChannelID
 			}
@@ -1262,9 +1280,9 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	}, canManage)
 	if err != nil {
 		if errors.Is(err, video.ErrPublished) {
-			return &ValidationError{Fields: []FieldError{{Field: "publish_at", Message: "cannot be set after the video is published"}}}
+			return sqlcgen.Video{}, &ValidationError{Fields: []FieldError{{Field: "publish_at", Message: "cannot be set after the video is published"}}}
 		}
-		return videoError(err)
+		return sqlcgen.Video{}, videoError(err)
 	}
 	// Re-flag the edited metadata against the watched-words list (best-effort;
 	// an edit can newly introduce a flagged term — §12).
@@ -1293,9 +1311,7 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		// visitor-facing answer is the AND of both.
 		s.purgeVideoEdgeCopies(c.Request().Context(), id, downloadPurge)
 	}
-	view := newVideoView(v)
-	s.attachVideoTags(c.Request().Context(), &view, v.ID)
-	return c.JSON(http.StatusOK, view)
+	return v, nil
 }
 
 // updateVideoFieldNames returns only the names present in a managed PATCH.
@@ -1362,6 +1378,18 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := s.applyVideoDelete(c, userID, role, id); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// applyVideoDelete is the single-video DELETE pipeline shared by
+// handleDeleteVideo and the studio bulk endpoint: the staff/editor decision,
+// the edge-purge snapshot, DeleteForActor (whose onDelete hooks drive the
+// federation Delete, search outbox and storage cleanup), the audit row and the
+// post-delete purge. Errors come back already mapped to their HTTP form.
+func (s *Server) applyVideoDelete(c echo.Context, userID uuid.UUID, role string, id uuid.UUID) error {
 	// Staff delete any local video (moderation escape); an editor collaborator
 	// (migration 0097) deletes their channel's videos.
 	ctx := c.Request().Context()
@@ -1381,7 +1409,7 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 	}
 	s.audit(c, observability.ActionVideoDelete, observability.ResultSuccess, userID.String(), id.String())
 	s.purgeVideoEdgeCopies(ctx, id, purge)
-	return c.NoContent(http.StatusNoContent)
+	return nil
 }
 
 // videoFileView is the public projection of a stored video file. The storage
@@ -1826,7 +1854,8 @@ func (s *Server) videoVisibleForMedia(c echo.Context, videoID uuid.UUID) (sqlcge
 }
 
 // videoReadBase applies the base read visibility (unknown id → 404; private →
-// owner only; blocked → moderators only; quarantined → owner + moderators;
+// owner only; internal → any signed-in account, else 401 sign_in_required;
+// blocked → moderators only; quarantined → owner + moderators;
 // scheduled → owner) WITHOUT the password gate. GET /embed-privacy uses it so the
 // embed page can read a password video's embed policy pre-unlock; every other
 // read path wraps it via videoVisibleForRead (which adds the password gate).
@@ -1838,14 +1867,18 @@ func (s *Server) videoReadBase(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVi
 		}
 		return sqlcgen.GetVideoByIDRow{}, err
 	}
-	if v.Privacy == "private" || v.State != "published" {
+	if v.Privacy == "private" || v.Privacy == video.PrivacyInternal || v.State != "published" {
 		s.restoreVideoReadPrincipal(c)
 	}
-	if v.Privacy == "private" {
-		userID, _, ok := principalFromContext(c)
-		if !ok || userID != v.OwnerID {
+	// An internal video refused to an anonymous caller is answered LAST, after
+	// the moderation gates below: a blocked or held internal video must stay the
+	// same indistinguishable 404 as any other hidden one.
+	signInRequired := false
+	if userID, _, ok := principalFromContext(c); !video.PrivacyAdmits(v.Privacy, ok, userID == v.OwnerID) {
+		if v.Privacy != video.PrivacyInternal {
 			return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
 		}
+		signInRequired = true
 	}
 	if hidden, err := s.videoHiddenByBlock(c, videoID); err != nil {
 		return sqlcgen.GetVideoByIDRow{}, err
@@ -1863,6 +1896,9 @@ func (s *Server) videoReadBase(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVi
 	}
 	if rejectedHidesVideo(c, v.State, v.OwnerID) {
 		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if signInRequired {
+		return sqlcgen.GetVideoByIDRow{}, &SignInRequiredError{}
 	}
 	return v, nil
 }

@@ -13,6 +13,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const approveComment = `-- name: ApproveComment :one
+UPDATE comments
+SET held_for_review = false
+WHERE id = $1 AND held_for_review AND updated_at = $2
+RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
+`
+
+type ApproveCommentParams struct {
+	ID                uuid.UUID `json:"id"`
+	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
+}
+
+// Release a held comment (0161). Conditional on the row STILL being held, so
+// repeated or concurrent approvals have exactly one winner (no row = nothing to
+// do) and the withheld side effects fire once. Never bumps updated_at.
+// expected_updated_at is the version the reviewer saw: an edit since then
+// (updated_at moved) is not approved.
+func (q *Queries) ApproveComment(ctx context.Context, arg ApproveCommentParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, approveComment, arg.ID, arg.ExpectedUpdatedAt)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.VideoID,
+		&i.UserID,
+		&i.Body,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ParentID,
+		&i.RemoteActorUrl,
+		&i.RemoteAuthorName,
+		&i.RemoteObjectUrl,
+		&i.DeletedAt,
+		&i.Hearted,
+		&i.HeldForReview,
+	)
+	return i, err
+}
+
 const countAdminComments = `-- name: CountAdminComments :one
 SELECT count(*)::bigint
 FROM comments c
@@ -33,11 +72,11 @@ func (q *Queries) CountAdminComments(ctx context.Context, query *string) (int64,
 }
 
 const countComments = `-- name: CountComments :one
-SELECT count(*) FROM comments WHERE user_id IS NOT NULL
+SELECT count(*) FROM comments WHERE user_id IS NOT NULL AND NOT held_for_review
 `
 
-// LOCAL comments only — the "local comments" count NodeInfo advertises.
-// Federated (remote-authored) comments are excluded.
+// LOCAL published comments only — the "local comments" count NodeInfo
+// advertises. Federated (remote-authored) and held (0161) comments are excluded.
 func (q *Queries) CountComments(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countComments)
 	var count int64
@@ -80,11 +119,17 @@ WHERE c.video_id = $1
       WHERE (rab.blocker_id = $2 OR rab.blocker_id IS NULL)
         AND rab.actor_url = c.remote_actor_url
   )
+  -- Held comments (0161): only their author, and callers the HTTP layer marked
+  -- as reviewers (include_held), see them — in the rows and in the count.
+  AND (NOT c.held_for_review
+       OR $3::boolean
+       OR c.user_id = $2)
 `
 
 type CountCommentsByVideoParams struct {
-	VideoID  uuid.UUID   `json:"video_id"`
-	ViewerID pgtype.UUID `json:"viewer_id"`
+	VideoID     uuid.UUID   `json:"video_id"`
+	ViewerID    pgtype.UUID `json:"viewer_id"`
+	IncludeHeld bool        `json:"include_held"`
 }
 
 // How many comments ListCommentsByVideo would return for the same viewer,
@@ -92,34 +137,39 @@ type CountCommentsByVideoParams struct {
 // the count is per-VIEWER, so counting the raw comments rows would tell a viewer
 // there are more comments than they can ever page to.
 func (q *Queries) CountCommentsByVideo(ctx context.Context, arg CountCommentsByVideoParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countCommentsByVideo, arg.VideoID, arg.ViewerID)
+	row := q.db.QueryRow(ctx, countCommentsByVideo, arg.VideoID, arg.ViewerID, arg.IncludeHeld)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
 }
 
 const createComment = `-- name: CreateComment :one
-INSERT INTO comments (video_id, user_id, body, parent_id)
-VALUES ($1, $2, $3, $4)
+INSERT INTO comments (video_id, user_id, body, parent_id, held_for_review)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 `
 
 type CreateCommentParams struct {
-	VideoID  uuid.UUID   `json:"video_id"`
-	UserID   pgtype.UUID `json:"user_id"`
-	Body     string      `json:"body"`
-	ParentID pgtype.UUID `json:"parent_id"`
+	VideoID       uuid.UUID   `json:"video_id"`
+	UserID        pgtype.UUID `json:"user_id"`
+	Body          string      `json:"body"`
+	ParentID      pgtype.UUID `json:"parent_id"`
+	HeldForReview bool        `json:"held_for_review"`
 }
 
 // parent_id is NULL for a top-level comment, or the id of the comment being
 // replied to (the service validates it references a comment on the same video).
+// held_for_review (0161) is decided by the caller from the video's
+// comments_policy and who is posting; a held comment stays out of every public
+// read until a manager approves it.
 func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (Comment, error) {
 	row := q.db.QueryRow(ctx, createComment,
 		arg.VideoID,
 		arg.UserID,
 		arg.Body,
 		arg.ParentID,
+		arg.HeldForReview,
 	)
 	var i Comment
 	err := row.Scan(
@@ -135,18 +185,23 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (C
 		&i.RemoteObjectUrl,
 		&i.DeletedAt,
 		&i.Hearted,
+		&i.HeldForReview,
 	)
 	return i, err
 }
 
 const createRemoteComment = `-- name: CreateRemoteComment :one
-INSERT INTO comments (video_id, body, parent_id, remote_actor_url, remote_author_name, remote_object_url)
+INSERT INTO comments (video_id, body, parent_id, remote_actor_url, remote_author_name, remote_object_url, held_for_review)
 VALUES ($1, $2, $3,
-        $4, $5, $6)
+        $4, $5, $6,
+        $7)
 ON CONFLICT (remote_object_url) DO UPDATE
-    SET body = EXCLUDED.body, updated_at = now()
+    SET body = EXCLUDED.body, updated_at = now(),
+        held_for_review = comments.held_for_review
+            OR (EXCLUDED.held_for_review AND comments.body IS DISTINCT FROM EXCLUDED.body)
+    WHERE comments.video_id = EXCLUDED.video_id
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 `
 
 type CreateRemoteCommentParams struct {
@@ -156,12 +211,15 @@ type CreateRemoteCommentParams struct {
 	RemoteActorUrl   *string     `json:"remote_actor_url"`
 	RemoteAuthorName *string     `json:"remote_author_name"`
 	RemoteObjectUrl  *string     `json:"remote_object_url"`
+	HeldForReview    bool        `json:"held_for_review"`
 }
 
 // Store an inbound federated Note as a comment (remote-content §6): attributed
 // to a remote actor (with a display-name snapshot) instead of a local user.
 // Idempotent by the Note's ActivityPub object id — a re-delivered or updated
-// Note refreshes the body.
+// Note refreshes the body — only on the comment's OWN video (no row otherwise),
+// so the hold decision always comes from the stored row's video (0161): passed
+// true there, a CHANGED body re-holds an approved comment; nothing releases one.
 func (q *Queries) CreateRemoteComment(ctx context.Context, arg CreateRemoteCommentParams) (Comment, error) {
 	row := q.db.QueryRow(ctx, createRemoteComment,
 		arg.VideoID,
@@ -170,6 +228,7 @@ func (q *Queries) CreateRemoteComment(ctx context.Context, arg CreateRemoteComme
 		arg.RemoteActorUrl,
 		arg.RemoteAuthorName,
 		arg.RemoteObjectUrl,
+		arg.HeldForReview,
 	)
 	var i Comment
 	err := row.Scan(
@@ -185,6 +244,7 @@ func (q *Queries) CreateRemoteComment(ctx context.Context, arg CreateRemoteComme
 		&i.RemoteObjectUrl,
 		&i.DeletedAt,
 		&i.Hearted,
+		&i.HeldForReview,
 	)
 	return i, err
 }
@@ -246,7 +306,7 @@ func (q *Queries) DeleteCommentsByAuthor(ctx context.Context, arg DeleteComments
 
 const getComment = `-- name: GetComment :one
 SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
-       remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
+       remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 FROM comments
 WHERE id = $1
 `
@@ -267,6 +327,7 @@ func (q *Queries) GetComment(ctx context.Context, id uuid.UUID) (Comment, error)
 		&i.RemoteObjectUrl,
 		&i.DeletedAt,
 		&i.Hearted,
+		&i.HeldForReview,
 	)
 	return i, err
 }
@@ -287,7 +348,7 @@ func (q *Queries) GetCommentAuthorIDByUsername(ctx context.Context, lower string
 
 const getCommentByRemoteObjectURL = `-- name: GetCommentByRemoteObjectURL :one
 SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
-       remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
+       remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 FROM comments
 WHERE remote_object_url = $1::text
 `
@@ -311,12 +372,14 @@ func (q *Queries) GetCommentByRemoteObjectURL(ctx context.Context, remoteObjectU
 		&i.RemoteObjectUrl,
 		&i.DeletedAt,
 		&i.Hearted,
+		&i.HeldForReview,
 	)
 	return i, err
 }
 
 const getCommentWithMeta = `-- name: GetCommentWithMeta :one
 SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at, c.deleted_at, c.hearted,
+       c.held_for_review,
        (c.id IS NOT DISTINCT FROM v.pinned_comment_id)::boolean AS pinned,
        COALESCE(u.username, '')::text AS author_username,
        COALESCE(u.display_name, '')::text AS author_display_name,
@@ -340,6 +403,7 @@ type GetCommentWithMetaRow struct {
 	UpdatedAt         time.Time          `json:"updated_at"`
 	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
 	Hearted           bool               `json:"hearted"`
+	HeldForReview     bool               `json:"held_for_review"`
 	Pinned            bool               `json:"pinned"`
 	AuthorUsername    string             `json:"author_username"`
 	AuthorDisplayName string             `json:"author_display_name"`
@@ -365,6 +429,7 @@ func (q *Queries) GetCommentWithMeta(ctx context.Context, id uuid.UUID) (GetComm
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.Hearted,
+		&i.HeldForReview,
 		&i.Pinned,
 		&i.AuthorUsername,
 		&i.AuthorDisplayName,
@@ -449,6 +514,7 @@ func (q *Queries) ListAdminComments(ctx context.Context, arg ListAdminCommentsPa
 
 const listCommentsByVideo = `-- name: ListCommentsByVideo :many
 SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at, c.deleted_at, c.hearted,
+       c.held_for_review,
        (c.id IS NOT DISTINCT FROM v.pinned_comment_id)::boolean AS pinned,
        COALESCE(u.username, '')::text AS author_username,
        COALESCE(u.display_name, '')::text AS author_display_name,
@@ -489,13 +555,19 @@ WHERE c.video_id = $1
       WHERE (rab.blocker_id = $2 OR rab.blocker_id IS NULL)
         AND rab.actor_url = c.remote_actor_url
   )
+  -- Held comments (0161): only their author, and callers the HTTP layer marked
+  -- as reviewers (include_held), see them — in the rows and in the count.
+  AND (NOT c.held_for_review
+       OR $3::boolean
+       OR c.user_id = $2)
 ORDER BY (c.id IS NOT DISTINCT FROM v.pinned_comment_id) DESC, c.created_at DESC, c.id DESC
-LIMIT $4 OFFSET $3
+LIMIT $5 OFFSET $4
 `
 
 type ListCommentsByVideoParams struct {
 	VideoID      uuid.UUID   `json:"video_id"`
 	ViewerID     pgtype.UUID `json:"viewer_id"`
+	IncludeHeld  bool        `json:"include_held"`
 	ResultOffset int32       `json:"result_offset"`
 	ResultLimit  int32       `json:"result_limit"`
 }
@@ -510,6 +582,7 @@ type ListCommentsByVideoRow struct {
 	UpdatedAt         time.Time          `json:"updated_at"`
 	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
 	Hearted           bool               `json:"hearted"`
+	HeldForReview     bool               `json:"held_for_review"`
 	Pinned            bool               `json:"pinned"`
 	AuthorUsername    string             `json:"author_username"`
 	AuthorDisplayName string             `json:"author_display_name"`
@@ -532,6 +605,7 @@ func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVid
 	rows, err := q.db.Query(ctx, listCommentsByVideo,
 		arg.VideoID,
 		arg.ViewerID,
+		arg.IncludeHeld,
 		arg.ResultOffset,
 		arg.ResultLimit,
 	)
@@ -552,6 +626,7 @@ func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVid
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.Hearted,
+			&i.HeldForReview,
 			&i.Pinned,
 			&i.AuthorUsername,
 			&i.AuthorDisplayName,
@@ -574,7 +649,7 @@ UPDATE comments
 SET hearted = $1
 WHERE id = $2
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 `
 
 type SetCommentHeartedParams struct {
@@ -602,6 +677,7 @@ func (q *Queries) SetCommentHearted(ctx context.Context, arg SetCommentHeartedPa
 		&i.RemoteObjectUrl,
 		&i.DeletedAt,
 		&i.Hearted,
+		&i.HeldForReview,
 	)
 	return i, err
 }
@@ -623,13 +699,15 @@ func (q *Queries) TombstoneUserComments(ctx context.Context, userID pgtype.UUID)
 const updateComment = `-- name: UpdateComment :one
 
 UPDATE comments
-SET body = $1, updated_at = now()
-WHERE id = $2
+SET held_for_review = held_for_review OR ($1::boolean AND body IS DISTINCT FROM $2),
+    body = $2, updated_at = now()
+WHERE id = $3
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 `
 
 type UpdateCommentParams struct {
+	Hold bool      `json:"hold"`
 	Body string    `json:"body"`
 	ID   uuid.UUID `json:"id"`
 }
@@ -637,9 +715,11 @@ type UpdateCommentParams struct {
 // NOTE: keep the column list of the two queries above in lock-step; both project
 // the full comments row so sqlc maps them to the Comment model.
 // Edit a comment's body (author-only; enforced in the service). Bumps updated_at
-// so clients can show an "edited" marker (updated_at > created_at).
+// so clients can show an "edited" marker (updated_at > created_at). hold
+// (0161): a body CHANGE that must be reviewed (a non-reviewer's edit on a
+// requires_approval video) sends the comment back to held; never releases one.
 func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (Comment, error) {
-	row := q.db.QueryRow(ctx, updateComment, arg.Body, arg.ID)
+	row := q.db.QueryRow(ctx, updateComment, arg.Hold, arg.Body, arg.ID)
 	var i Comment
 	err := row.Scan(
 		&i.ID,
@@ -654,6 +734,7 @@ func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (C
 		&i.RemoteObjectUrl,
 		&i.DeletedAt,
 		&i.Hearted,
+		&i.HeldForReview,
 	)
 	return i, err
 }

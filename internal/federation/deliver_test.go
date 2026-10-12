@@ -282,12 +282,15 @@ func TestRedeliverAfterUnblock(t *testing.T) {
 
 	publicVideo := sqlcgen.GetVideoByIDRow{ID: uuid.New(), ChannelID: channelID, Privacy: "public", State: "published"}
 	privatedVideo := sqlcgen.GetVideoByIDRow{ID: uuid.New(), ChannelID: channelID, Privacy: "private", State: "published"}
+	// Members-only now: still watchable HERE, so the redeliver arm has to treat
+	// it as withdrawn rather than reading "not private" as "public".
+	internaledVideo := sqlcgen.GetVideoByIDRow{ID: uuid.New(), ChannelID: channelID, Privacy: "internal", State: "published"}
 	deletedVideoID := uuid.New()
 
 	repo := fakeRepo{
 		channels:       map[string]sqlcgen.Channel{"films": ch},
 		channelsByID:   map[uuid.UUID]sqlcgen.Channel{channelID: ch},
-		videosByID:     map[uuid.UUID]sqlcgen.GetVideoByIDRow{publicVideo.ID: publicVideo, privatedVideo.ID: privatedVideo},
+		videosByID:     map[uuid.UUID]sqlcgen.GetVideoByIDRow{publicVideo.ID: publicVideo, privatedVideo.ID: privatedVideo, internaledVideo.ID: internaledVideo},
 		deliveries:     map[uuid.UUID]*fakeDelivery{},
 		blockedDomains: map[string]bool{blockedHost: true},
 	}
@@ -326,6 +329,8 @@ func TestRedeliverAfterUnblock(t *testing.T) {
 		{"Create of a still-public video", inbox, build(t, "Create", publicVideo), true},
 		{"Update of a still-public video", inbox, build(t, "Update", publicVideo), true},
 		{"Create of a video that went private", inbox, build(t, "Create", privatedVideo), false},
+		{"Create of a video that went internal", inbox, build(t, "Create", internaledVideo), false},
+		{"Update of a video that went internal", inbox, build(t, "Update", internaledVideo), false},
 		{"Create of a video that is gone", inbox, gonePayload, false},
 		{"Delete, which can only reduce what the remote holds", inbox, deletePayload, true},
 		{"Accept, which strands a granted follow if dropped", inbox, acceptPayload, true},

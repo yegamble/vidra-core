@@ -211,6 +211,7 @@ func TestEnqueueForVideoGating(t *testing.T) {
 		{"public+auto+linked", "public", true, true, true},
 		{"unlisted", "unlisted", true, true, false},
 		{"private", "private", true, true, false},
+		{"internal (signed-in members only)", "internal", true, true, false},
 		{"autopost off", "public", false, true, false},
 		{"not linked", "public", true, false, false},
 	}
