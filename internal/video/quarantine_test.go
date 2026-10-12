@@ -3,6 +3,8 @@ package video
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"sort"
 	"strings"
 	"testing"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -219,5 +222,64 @@ func TestQuarantineHookFiresOnlyWhenParked(t *testing.T) {
 				t.Errorf("quarantine hook calls = %v, want %d", parked, tc.want)
 			}
 		})
+	}
+}
+
+// failingQuarantineRepo fails the transition INTO 'quarantined' only.
+type failingQuarantineRepo struct{ *fakeRepo }
+
+func (f failingQuarantineRepo) SetVideoState(ctx context.Context, a sqlcgen.SetVideoStateParams) (sqlcgen.Video, error) {
+	if a.State == "quarantined" {
+		return sqlcgen.Video{}, errors.New("state write failed")
+	}
+	return f.fakeRepo.SetVideoState(ctx, a)
+}
+
+// TestQuarantineHookSkippedWhenStateWriteFails: staff must not be told about a
+// queue entry that was never created.
+func TestQuarantineHookSkippedWhenStateWriteFails(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	repo.requiresQuarantine = true
+	calls := 0
+	svc := NewService(failingQuarantineRepo{repo}, memBackend(t),
+		WithQuarantineNewUploads(true),
+		WithQuarantineHook(func(context.Context, uuid.UUID) { calls++ }))
+	v, err := svc.CreateDraft(context.Background(), uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, file, err := svc.AttachOriginal(context.Background(), owner, v.ID, UploadInput{
+		Filename: "clip.mp4", ContentType: "video/mp4", Reader: strings.NewReader("bytes"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Process(context.Background(), v.ID, file.StorageKey); err == nil {
+		t.Fatal("Process succeeded despite failing state write")
+	}
+	if calls != 0 {
+		t.Errorf("hook fired %d times after a failed transition, want 0", calls)
+	}
+}
+
+// TestQuarantineSurvivesPanickingHook: a panicking (wrapped) hook does not fail Process.
+func TestQuarantineSurvivesPanickingHook(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	repo.requiresQuarantine = true
+	hook := notification.StaffQueueHook(slog.New(slog.NewTextHandler(io.Discard, nil)), "upload_quarantined",
+		func(context.Context, uuid.UUID) (int64, error) { panic("boom") })
+	svc := NewService(repo, memBackend(t), WithQuarantineNewUploads(true), WithQuarantineHook(hook))
+	v, _ := svc.CreateDraft(context.Background(), uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	_, file, err := svc.AttachOriginal(context.Background(), owner, v.ID, UploadInput{
+		Filename: "clip.mp4", ContentType: "video/mp4", Reader: strings.NewReader("bytes"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Process(context.Background(), v.ID, file.StorageKey)
+	if err != nil || got.State != "quarantined" {
+		t.Fatalf("Process = (%q, %v), want quarantined, nil", got.State, err)
 	}
 }

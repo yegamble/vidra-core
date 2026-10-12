@@ -3,10 +3,14 @@ package auth
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/notification"
 )
 
 func regInput(name, email string) RegisterInput {
@@ -312,5 +316,16 @@ func TestRequestRegistrationFiresHookOnlyForNewRequests(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != req.ID {
 		t.Errorf("hook calls = %v, want exactly [%s]", got, req.ID)
+	}
+}
+
+// TestRequestRegistrationSurvivesPanickingHook: a panicking staff-notification
+// hook (wrapped as main.go wraps it) must not fail the registration request.
+func TestRequestRegistrationSurvivesPanickingHook(t *testing.T) {
+	hook := notification.StaffQueueHook(slog.New(slog.NewTextHandler(io.Discard, nil)), "registration_request",
+		func(context.Context, uuid.UUID) (int64, error) { panic("boom") })
+	svc := NewService(newFakeRepo(), newTestIssuer(), time.Hour, WithRegistrationRequestHook(hook))
+	if _, err := svc.RequestRegistration(context.Background(), regInput("bob", "bob@example.test"), ""); err != nil {
+		t.Fatalf("RequestRegistration with panicking hook: %v", err)
 	}
 }

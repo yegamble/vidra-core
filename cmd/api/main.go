@@ -454,15 +454,12 @@ func run() error {
 	// nil-guarded, the same deferred-service seam as the publish hooks.
 	var notifsvc *notification.Service
 	staffQueueHook := func(what string, fan func(context.Context, uuid.UUID) (int64, error)) func(context.Context, uuid.UUID) {
-		return func(ctx context.Context, id uuid.UUID) {
+		return notification.StaffQueueHook(logger, what, func(ctx context.Context, id uuid.UUID) (int64, error) {
 			if notifsvc == nil {
-				return
+				return 0, nil
 			}
-			// Best-effort: a notification failure never fails the action.
-			if _, err := fan(ctx, id); err != nil {
-				logger.Warn("staff queue notification failed", "queue", what, "queue_item_id", id, "error", err)
-			}
-		}
+			return fan(ctx, id)
+		})
 	}
 	var authOpts []auth.Option
 	authOpts = append(authOpts, auth.WithRegistrationRequestHook(staffQueueHook("registration_request",
