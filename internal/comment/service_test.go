@@ -538,3 +538,35 @@ func TestRemoveByAccount(t *testing.T) {
 		}
 	}
 }
+
+// A client disconnect or proxy timeout cancels the request context after the
+// DELETE has committed; the federation fan-out must still reach every comment
+// or the Notes stay alive on remote instances.
+func TestRemoveByAccountFansOutOnCancelledRequestContext(t *testing.T) {
+	repo := newFakeRepo()
+	var ctxErrs []error
+	svc := NewService(repo, WithDeleteHook(func(ctx context.Context, _, _, _ uuid.UUID) {
+		ctxErrs = append(ctxErrs, ctx.Err())
+	}))
+	video, spammer := uuid.New(), uuid.New()
+	repo.authors[spammer] = author{"spam", ""}
+	for i := 0; i < 3; i++ {
+		if _, err := svc.Create(context.Background(), video, spammer, "x", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	n, _, err := svc.RemoveByAccount(ctx, "spam")
+	if err != nil || n != 3 {
+		t.Fatalf("RemoveByAccount = %d, %v; want 3, nil", n, err)
+	}
+	if len(ctxErrs) != 3 {
+		t.Fatalf("hooks ran %d times, want 3", len(ctxErrs))
+	}
+	for _, e := range ctxErrs {
+		if e != nil {
+			t.Errorf("hook ctx was cancelled (%v); fan-out must not inherit request cancellation", e)
+		}
+	}
+}

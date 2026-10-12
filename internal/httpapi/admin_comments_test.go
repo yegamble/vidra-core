@@ -123,6 +123,11 @@ func TestBulkRemoveCommentsOf(t *testing.T) {
 	if rec := sendJSONAuth(srv, http.MethodPost, path, `{"account":"spammer"}`, bob); rec.Code != http.StatusForbidden {
 		t.Errorf("non-mod = %d, want 403", rec.Code)
 	}
+	// The real removal below runs as a MODERATOR (not only an admin).
+	modTok, modID := registerAndUser(t, srv, `{"username":"mia","email":"mia@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+modID, `{"role":"moderator"}`, admin); rec.Code != http.StatusOK {
+		t.Fatalf("promote moderator = %d; body=%s", rec.Code, rec.Body.String())
+	}
 	if rec := sendJSONAuth(srv, http.MethodPost, path, `{"account":"spammer"}`, ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("anon = %d, want 401", rec.Code)
 	}
@@ -138,7 +143,7 @@ func TestBulkRemoveCommentsOf(t *testing.T) {
 		t.Errorf("unknown account = %d, want 404", rec.Code)
 	}
 
-	rec := sendJSONAuth(srv, http.MethodPost, path, `{"account":"Spammer"}`, admin)
+	rec := sendJSONAuth(srv, http.MethodPost, path, `{"account":"Spammer"}`, modTok)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("bulk remove = %d; body=%s", rec.Code, rec.Body.String())
 	}

@@ -275,6 +275,11 @@ func (s *Service) RemoveByAccount(ctx context.Context, account string) (int, uui
 		return 0, uuid.Nil, err
 	}
 	if s.onDelete != nil {
+		// The rows are already gone, so the fan-out must not die with the
+		// request: a proxy timeout or client disconnect cancels ctx, and the
+		// remaining Deletes would be silently dropped, leaving the Notes alive on
+		// remote instances. (Hooks log their own failures; they return nothing.)
+		ctx := context.WithoutCancel(ctx)
 		for _, r := range rows {
 			if r.UserID.Valid {
 				s.onDelete(ctx, r.ID, r.VideoID, uuid.UUID(r.UserID.Bytes))
