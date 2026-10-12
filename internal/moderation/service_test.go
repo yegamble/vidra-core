@@ -2,6 +2,7 @@ package moderation
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -28,6 +29,8 @@ type reportRow struct {
 	note           string
 	createdAt      time.Time
 	resolvedAt     pgtype.Timestamptz
+	// A remote Flag report (0153) has no reporterID, these instead.
+	remoteActor, remoteDomain, flagID string
 }
 
 // fakeRepo is an in-memory moderation.Repository.
@@ -43,6 +46,7 @@ type fakeRepo struct {
 	remoteVideoErr   error // returned by the remote-video writes when set (e.g. a FK violation)
 	remoteBlocked    map[uuid.UUID]string
 	remoteBlockOrder []uuid.UUID
+	flagMissing      bool // CreateRemoteFlagReport answers a FK violation
 }
 
 func (f *fakeRepo) CreateVideoReport(_ context.Context, a sqlcgen.CreateVideoReportParams) (uuid.UUID, error) {
@@ -123,6 +127,10 @@ func (f *fakeRepo) ListReports(_ context.Context, a sqlcgen.ListReportsParams) (
 			ModeratorNote: r.note, ResolvedAt: r.resolvedAt, CreatedAt: r.createdAt,
 			ReporterUsername: "reporter",
 		}
+		if r.remoteActor != "" {
+			row.ReporterUsername = "" // COALESCE(u.username, '') over the LEFT JOIN
+			row.RemoteReporterActorUrl, row.RemoteReporterDomain = &r.remoteActor, &r.remoteDomain
+		}
 		if r.reportedUserID.Valid {
 			name := "target"
 			row.ReportedUsername = &name
@@ -132,16 +140,51 @@ func (f *fakeRepo) ListReports(_ context.Context, a sqlcgen.ListReportsParams) (
 	return rows, nil
 }
 
-func (f *fakeRepo) ResolveReport(_ context.Context, a sqlcgen.ResolveReportParams) (uuid.UUID, error) {
+func (f *fakeRepo) ResolveReport(_ context.Context, a sqlcgen.ResolveReportParams) (pgtype.UUID, error) {
 	for i := range f.reports {
 		if f.reports[i].id == a.ID {
 			f.reports[i].status = a.Status
 			f.reports[i].note = a.ModeratorNote
 			f.reports[i].resolvedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-			return f.reports[i].reporterID, nil
+			if f.reports[i].remoteActor != "" {
+				return pgtype.UUID{}, nil // RETURNING a NULL reporter_id
+			}
+			return pgtype.UUID{Bytes: f.reports[i].reporterID, Valid: true}, nil
 		}
 	}
-	return uuid.Nil, pgx.ErrNoRows
+	return pgtype.UUID{}, pgx.ErrNoRows
+}
+
+// CreateRemoteFlagReport mirrors the SQL: one report per (Flag id, target), a
+// repeat yielding no row; flagMissing simulates the target FK failing.
+func (f *fakeRepo) CreateRemoteFlagReport(_ context.Context, a sqlcgen.CreateRemoteFlagReportParams) (uuid.UUID, error) {
+	if f.flagMissing {
+		return uuid.Nil, &pgconn.PgError{Code: "23503"}
+	}
+	target := a.VideoID
+	if a.CommentID.Valid {
+		target = a.CommentID
+	} else if a.ReportedUserID.Valid {
+		target = a.ReportedUserID
+	}
+	for _, r := range f.reports {
+		got := r.videoID
+		if r.commentID.Valid {
+			got = r.commentID
+		} else if r.reportedUserID.Valid {
+			got = r.reportedUserID
+		}
+		if r.flagID == a.FlagActivityID && r.targetType == a.TargetType && got == target {
+			return uuid.Nil, pgx.ErrNoRows
+		}
+	}
+	id := uuid.New()
+	f.reports = append(f.reports, reportRow{
+		id: id, targetType: a.TargetType, videoID: a.VideoID, commentID: a.CommentID,
+		reportedUserID: a.ReportedUserID, reason: a.Reason, status: StatusOpen, createdAt: time.Now(),
+		remoteActor: a.ActorUrl, remoteDomain: a.Domain, flagID: a.FlagActivityID,
+	})
+	return id, nil
 }
 
 func (f *fakeRepo) DeleteReport(_ context.Context, id uuid.UUID) (int64, error) {
@@ -524,4 +567,73 @@ func (f *fakeRepo) CountBlockedVideos(ctx context.Context) (int64, error) {
 func (f *fakeRepo) CountBlockedRemoteVideos(ctx context.Context) (int64, error) {
 	rows, err := f.ListBlockedRemoteVideos(ctx, sqlcgen.ListBlockedRemoteVideosParams{ResultLimit: 1 << 30})
 	return int64(len(rows)), err
+}
+
+// A report filed by another instance (an inbound ActivityPub Flag) lands in
+// the same queue: no local reporter, the remote actor + domain instead, each
+// target kind stored against its own column, idempotent per (Flag, target).
+func TestReportFromRemote(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	ctx := context.Background()
+	vid, cid, uid := uuid.New(), uuid.New(), uuid.New()
+	base := RemoteReport{
+		FlagActivityID: "https://peertube.example/admin/abuses/7",
+		ActorURL:       "https://peertube.example/accounts/peertube",
+		Domain:         "peertube.example",
+		Reason:         "[spamOrMisleading] spam",
+	}
+	for _, tc := range []struct {
+		typ string
+		id  uuid.UUID
+	}{{TargetVideo, vid}, {TargetComment, cid}, {TargetAccount, uid}} {
+		r := base
+		r.TargetType, r.TargetID = tc.typ, tc.id
+		id, err := svc.ReportFromRemote(ctx, r)
+		if err != nil || id == uuid.Nil {
+			t.Fatalf("ReportFromRemote(%s) = %s, %v; want a new report id", tc.typ, id, err)
+		}
+		if again, err := svc.ReportFromRemote(ctx, r); err != nil || again != uuid.Nil {
+			t.Errorf("repeat ReportFromRemote(%s) = %s, %v; want uuid.Nil (already filed)", tc.typ, again, err)
+		}
+	}
+	if len(repo.reports) != 3 {
+		t.Fatalf("stored %d reports, want 3", len(repo.reports))
+	}
+	if r := repo.reports[0]; !r.videoID.Valid || r.commentID.Valid || r.reportedUserID.Valid {
+		t.Errorf("video report stored targets v=%v c=%v u=%v, want only video_id", r.videoID.Valid, r.commentID.Valid, r.reportedUserID.Valid)
+	}
+	if r := repo.reports[2]; uuid.UUID(r.reportedUserID.Bytes) != uid || r.targetType != TargetAccount {
+		t.Errorf("account report = %+v", r)
+	}
+
+	items, _, err := svc.List(ctx, StatusOpen, 20, 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	it := items[0]
+	if it.ReporterUsername != "" || it.RemoteReporterActorURL != base.ActorURL || it.RemoteReporterDomain != "peertube.example" {
+		t.Errorf("queue item reporter = %q / %q / %q, want the remote actor + domain and no local username",
+			it.ReporterUsername, it.RemoteReporterActorURL, it.RemoteReporterDomain)
+	}
+
+	// Resolving a remote report has no local reporter to notify.
+	who, err := svc.Resolve(ctx, uuid.New(), it.ID, StatusAccepted, "")
+	if err != nil || who != uuid.Nil {
+		t.Errorf("Resolve(remote report) = %s, %v; want uuid.Nil, nil", who, err)
+	}
+
+	// Only video/comment/account are reportable from a remote Flag; a target
+	// the FK no longer finds is ErrInvalidTarget.
+	bad := base
+	bad.TargetType, bad.TargetID = TargetMessage, uuid.New()
+	if _, err := svc.ReportFromRemote(ctx, bad); !errors.Is(err, ErrInvalidTarget) {
+		t.Errorf("ReportFromRemote(message) err = %v, want ErrInvalidTarget", err)
+	}
+	repo.flagMissing = true
+	gone := base
+	gone.TargetType, gone.TargetID = TargetVideo, uuid.New()
+	if _, err := svc.ReportFromRemote(ctx, gone); !errors.Is(err, ErrInvalidTarget) {
+		t.Errorf("ReportFromRemote(unknown video) err = %v, want ErrInvalidTarget", err)
+	}
 }

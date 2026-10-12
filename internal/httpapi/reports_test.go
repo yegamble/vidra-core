@@ -19,6 +19,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/instancesettings"
+	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -40,6 +41,8 @@ type modReportRow struct {
 	note        string
 	createdAt   time.Time
 	resolvedAt  pgtype.Timestamptz
+	// A remote Flag report (0153) has no reporterID, these instead.
+	remoteActor, remoteDomain, flagID string
 }
 
 // moderationFakeRepo is an in-memory moderation.Repository that resolves the
@@ -152,6 +155,9 @@ func (f *moderationFakeRepo) ListReports(_ context.Context, a sqlcgen.ListReport
 		if u, err := f.auth.GetUserByID(context.Background(), r.reporterID); err == nil {
 			row.ReporterUsername = u.Username
 		}
+		if r.remoteActor != "" {
+			row.RemoteReporterActorUrl, row.RemoteReporterDomain = &r.remoteActor, &r.remoteDomain
+		}
 		if r.reportedUserID.Valid {
 			if u, err := f.auth.GetUserByID(context.Background(), uuid.UUID(r.reportedUserID.Bytes)); err == nil {
 				un := u.Username
@@ -251,16 +257,36 @@ func (f *moderationFakeRepo) ListBlockedRemoteVideos(_ context.Context, a sqlcge
 	return rows, nil
 }
 
-func (f *moderationFakeRepo) ResolveReport(_ context.Context, a sqlcgen.ResolveReportParams) (uuid.UUID, error) {
+func (f *moderationFakeRepo) ResolveReport(_ context.Context, a sqlcgen.ResolveReportParams) (pgtype.UUID, error) {
 	for i := range f.reports {
 		if f.reports[i].id == a.ID {
 			f.reports[i].status = a.Status
 			f.reports[i].note = a.ModeratorNote
 			f.reports[i].resolvedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-			return f.reports[i].reporterID, nil
+			if f.reports[i].remoteActor != "" {
+				return pgtype.UUID{}, nil // a remote report RETURNs a NULL reporter_id
+			}
+			return pgtype.UUID{Bytes: f.reports[i].reporterID, Valid: true}, nil
 		}
 	}
-	return uuid.Nil, pgx.ErrNoRows
+	return pgtype.UUID{}, pgx.ErrNoRows
+}
+
+// CreateRemoteFlagReport mirrors the SQL: idempotent per (Flag id, target).
+func (f *moderationFakeRepo) CreateRemoteFlagReport(_ context.Context, a sqlcgen.CreateRemoteFlagReportParams) (uuid.UUID, error) {
+	for _, r := range f.reports {
+		if r.flagID == a.FlagActivityID && r.targetType == a.TargetType &&
+			r.videoID == a.VideoID && r.commentID == a.CommentID && r.reportedUserID == a.ReportedUserID {
+			return uuid.Nil, pgx.ErrNoRows
+		}
+	}
+	id := uuid.New()
+	f.reports = append(f.reports, modReportRow{
+		id: id, targetType: a.TargetType, videoID: a.VideoID, commentID: a.CommentID,
+		reportedUserID: a.ReportedUserID, reason: a.Reason, status: "open", createdAt: time.Now(),
+		remoteActor: a.ActorUrl, remoteDomain: a.Domain, flagID: a.FlagActivityID,
+	})
+	return id, nil
 }
 
 func (f *moderationFakeRepo) DeleteReport(_ context.Context, id uuid.UUID) (int64, error) {
@@ -944,5 +970,68 @@ func TestReportsStatusFilterIsValidated(t *testing.T) {
 	// An unrecognised status is rejected instead of quietly meaning "all".
 	if rec := listReports(srv, "?status=nonsense", admin); rec.Code != http.StatusBadRequest {
 		t.Errorf("status=nonsense = %d, want 400", rec.Code)
+	}
+}
+
+// A report filed by another instance through an inbound ActivityPub Flag (T07)
+// sits in the same admin queue. Its reporter is the remote actor: the queue
+// says so (remote, actor_url, domain), and reporter.username carries the
+// reporting instance's domain so a client that predates the remote fields
+// still reads "reported by peertube.example" rather than an empty name.
+// Resolving it notifies nobody — there is no local reporter.
+func TestRemoteFlagReportInAdminQueue(t *testing.T) {
+	srv, _, _, notifRepo := videoServerEnv(t, testConfig())
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	const actor = "https://peertube.example/accounts/peertube"
+	if _, err := moderation.NewService(notifRepo.reports).ReportFromRemote(context.Background(), moderation.RemoteReport{
+		FlagActivityID: "https://peertube.example/admin/abuses/7", ActorURL: actor, Domain: "peertube.example",
+		TargetType: moderation.TargetVideo, TargetID: uuid.MustParse(vid), Reason: "[rights] re-upload",
+	}); err != nil {
+		t.Fatalf("ReportFromRemote: %v", err)
+	}
+
+	rec := listReports(srv, "?status=open", admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var raw struct {
+		Reports []map[string]any `json:"reports"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &raw)
+	if len(raw.Reports) != 1 {
+		t.Fatalf("reports = %d, want 1; body=%s", len(raw.Reports), rec.Body.String())
+	}
+	got := raw.Reports[0]
+	reporter, _ := got["reporter"].(map[string]any)
+	if reporter["username"] != "peertube.example" || reporter["remote"] != true ||
+		reporter["actor_url"] != actor || reporter["domain"] != "peertube.example" {
+		t.Errorf("reporter = %v, want the remote actor, its domain, and remote=true", reporter)
+	}
+	if got["video_id"] != vid || got["video_title"] != "Clip" || got["reason"] != "[rights] re-upload" {
+		t.Errorf("report = %v, want the local video target and the Flag's reason", got)
+	}
+	id, _ := got["id"].(string)
+
+	before := len(notifRepo.notifs)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/reports/"+id+"/resolve", `{"status":"accepted"}`, admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("resolve = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	for _, n := range notifRepo.notifs[before:] {
+		t.Errorf("resolving a remote report notified %s (%s); there is no local reporter", n.UserID, n.Type)
+	}
+
+	// A local report keeps its plain reporter: no remote fields at all.
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"spam"}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("local report = %d", rec.Code)
+	}
+	_ = json.Unmarshal(listReports(srv, "?status=open", admin).Body.Bytes(), &raw)
+	if len(raw.Reports) != 1 {
+		t.Fatalf("open reports = %d, want the local one", len(raw.Reports))
+	}
+	if r, _ := raw.Reports[0]["reporter"].(map[string]any); len(r) != 1 || r["username"] != "bob" {
+		t.Errorf("local reporter = %v, want exactly {username: bob}", r)
 	}
 }

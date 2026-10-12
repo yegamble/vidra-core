@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/httpsig"
+	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -274,6 +276,62 @@ func TestBlockedInstanceInboxRefusalIsAudited(t *testing.T) {
 			if str, ok := v.(string); ok && strings.Contains(str, forbidden) {
 				t.Errorf("audit field %q leaked the refused activity: %q", k, str)
 			}
+		}
+	}
+}
+
+// T07: an inbound Flag over the real signed inbox. From an actor the admin
+// blocked instance-wide it is answered 202 and leaves the same
+// federation.inbox.rejected audit row as an instance block, filing nothing;
+// from anyone else it files the report. Either way the report's reason — the
+// reporter's prose — reaches no log line (hard rule 6).
+func TestInboundFlagOverSignedInbox(t *testing.T) {
+	const reason = "SECRET-REPORT-PROSE about this video"
+	for _, blocked := range []bool{true, false} {
+		var buf bytes.Buffer
+		key, pubPEM := signerKeyPEM(t)
+		cfg := fedTestConfig()
+		repo := newFedRepoFor(cfg)
+		repo.remoteActors[bobActor] = sqlcgen.RemoteActor{ActorUrl: bobActor, PublicKeyPem: pubPEM}
+		if blocked {
+			repo.adminActorBlocks = map[string]string{bobActor: "abuse"}
+		}
+		var filed []moderation.RemoteReport
+		file := func(_ context.Context, r moderation.RemoteReport) (uuid.UUID, error) {
+			filed = append(filed, r)
+			return uuid.New(), nil
+		}
+		notify := func(context.Context, uuid.UUID) (int64, error) { return 1, nil }
+		srv := New(cfg, nil, nil,
+			WithFederationService(federation.NewService(repo, federation.WithBaseURL(cfg.PublicBaseURL),
+				federation.WithFlagReporting(file, notify), federation.WithLogger(slog.New(slog.NewJSONHandler(&buf, nil))))),
+			WithLogger(slog.New(slog.NewJSONHandler(&buf, nil))),
+		)
+		body := []byte(`{"id":"https://remote.example/abuses/1","type":"Flag","actor":"` + bobActor +
+			`","content":"` + reason + `","object":"https://videos.example/videos/watch/` + uuid.NewString() + `"}`)
+		req := httptest.NewRequest(http.MethodPost, "https://videos.example/inbox", bytes.NewReader(body))
+		if err := (httpsig.Signer{KeyID: bobActor + "#main-key", Priv: key}).Sign(req, body); err != nil {
+			t.Fatalf("Sign: %v", err)
+		}
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("blocked=%v: status = %d, want 202", blocked, rec.Code)
+		}
+		ev := findAudit(auditEvents(t, &buf), observability.ActionFederationInboxRejected, observability.ResultSuccess)
+		if blocked {
+			if len(filed) != 0 {
+				t.Errorf("a Flag from an admin-blocked actor filed %d reports", len(filed))
+			}
+			if ev == nil || ev["reason"] != "domain=remote.example" {
+				t.Errorf("blocked Flag audit = %v, want federation.inbox.rejected with domain=remote.example", ev)
+			}
+		} else if len(filed) != 1 || filed[0].Reason != reason || ev != nil {
+			t.Errorf("unblocked Flag filed %+v (audit %v), want one report carrying the reason and no refusal", filed, ev)
+		}
+		if strings.Contains(buf.String(), "SECRET-REPORT-PROSE") {
+			t.Errorf("blocked=%v: the report reason reached the logs", blocked)
 		}
 	}
 }

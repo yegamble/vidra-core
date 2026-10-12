@@ -905,22 +905,25 @@ type RemoteVideoComment struct {
 }
 
 type Report struct {
-	ID                  uuid.UUID          `json:"id"`
-	ReporterID          uuid.UUID          `json:"reporter_id"`
-	TargetType          string             `json:"target_type"`
-	VideoID             pgtype.UUID        `json:"video_id"`
-	CommentID           pgtype.UUID        `json:"comment_id"`
-	Reason              string             `json:"reason"`
-	Status              string             `json:"status"`
-	ModeratorNote       string             `json:"moderator_note"`
-	ResolvedBy          pgtype.UUID        `json:"resolved_by"`
-	ResolvedAt          pgtype.Timestamptz `json:"resolved_at"`
-	CreatedAt           time.Time          `json:"created_at"`
-	UpdatedAt           time.Time          `json:"updated_at"`
-	ReportedUserID      pgtype.UUID        `json:"reported_user_id"`
-	RemoteVideoID       pgtype.UUID        `json:"remote_video_id"`
-	MessageID           pgtype.UUID        `json:"message_id"`
-	MessageBodySnapshot string             `json:"message_body_snapshot"`
+	ID                     uuid.UUID          `json:"id"`
+	ReporterID             pgtype.UUID        `json:"reporter_id"`
+	TargetType             string             `json:"target_type"`
+	VideoID                pgtype.UUID        `json:"video_id"`
+	CommentID              pgtype.UUID        `json:"comment_id"`
+	Reason                 string             `json:"reason"`
+	Status                 string             `json:"status"`
+	ModeratorNote          string             `json:"moderator_note"`
+	ResolvedBy             pgtype.UUID        `json:"resolved_by"`
+	ResolvedAt             pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt              time.Time          `json:"created_at"`
+	UpdatedAt              time.Time          `json:"updated_at"`
+	ReportedUserID         pgtype.UUID        `json:"reported_user_id"`
+	RemoteVideoID          pgtype.UUID        `json:"remote_video_id"`
+	MessageID              pgtype.UUID        `json:"message_id"`
+	MessageBodySnapshot    string             `json:"message_body_snapshot"`
+	RemoteReporterActorUrl *string            `json:"remote_reporter_actor_url"`
+	RemoteReporterDomain   *string            `json:"remote_reporter_domain"`
+	RemoteFlagActivityID   *string            `json:"remote_flag_activity_id"`
 }
 
 type SavedVideo struct {

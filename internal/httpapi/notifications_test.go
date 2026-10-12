@@ -309,7 +309,7 @@ func (f *notifFakeRepo) NotifyStaffOfNewReport(_ context.Context, reportID uuid.
 		}
 		f.notifs = append(f.notifs, sqlcgen.Notification{
 			ID: uuid.New(), UserID: u.ID, Type: notification.TypeNewReport,
-			ActorID:   pgtype.UUID{Bytes: r.reporterID, Valid: true},
+			ActorID:   pgtype.UUID{Bytes: r.reporterID, Valid: r.remoteActor == ""},
 			ReportID:  pgtype.UUID{Bytes: reportID, Valid: true},
 			CreatedAt: time.Now(),
 		})

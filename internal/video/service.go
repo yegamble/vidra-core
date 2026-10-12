@@ -120,6 +120,12 @@ func (e *EmbedValidationError) Error() string { return e.Message }
 // off would have retroactively rejected containers vidra always accepted).
 var baseVideoExts = map[string]bool{
 	".mp4": true, ".webm": true, ".ogv": true, ".ogg": true,
+	// Audio-only containers (podcasts, music). The transcoder packages a
+	// source with no video stream as a single audio rendition on the CMAF
+	// packager (media.Metadata.AudioOnly), so these are base, not "additional":
+	// they are not exotic video containers, and PeerTube accepts them always.
+	".mp3": true, ".m4a": true, ".m4b": true, ".aac": true, ".flac": true,
+	".wav": true, ".opus": true,
 }
 
 // additionalVideoExts is the extended container set (PT's "additional
@@ -977,12 +983,14 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 	durationHint := 0
 	var md media.Metadata
 	probed := false
+	audioOnly := false
 	if s.prober != nil {
 		md, err = s.prober.Probe(ctx, key)
 		if err != nil {
 			return reject("the file is not a playable video")
 		}
 		durationHint = md.DurationSeconds
+		audioOnly = md.AudioOnly()
 		probed = true
 	}
 
@@ -1020,7 +1028,7 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 	// Storyboard regeneration is best-effort and honors the runtime
 	// storyboards_enabled gate; the (possibly creator-picked) thumbnail is
 	// deliberately kept.
-	if s.storyboarder != nil && (s.storyboardGate == nil || s.storyboardGate()) {
+	if !audioOnly && s.storyboarder != nil && (s.storyboardGate == nil || s.storyboardGate()) {
 		s.generateStoryboard(ctx, videoID, key, durationHint)
 	}
 	// The video row itself is unchanged apart from updated_at; re-assert the
@@ -1145,22 +1153,27 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 			s.dropRejectedOriginal(ctx, videoID, originalKey)
 		}
 	}
+	audioOnly := false
 	if state == "published" && s.prober != nil {
 		md, err := s.prober.Probe(ctx, originalKey)
 		if err != nil {
 			state = "failed"
 		} else {
+			audioOnly = md.AudioOnly()
 			durationHint = md.DurationSeconds
 			if _, err := s.repo.UpsertVideoMetadata(ctx, metadataParams(videoID, md)); err != nil {
 				return sqlcgen.Video{}, err
 			}
 		}
 	}
-	if state == "published" && s.thumbnailer != nil {
+	// An audio-only source has no frame to grab: running ffmpeg for a poster or
+	// a sprite sheet would only fail and be swallowed, so skip it. The video is
+	// published with no poster (the UI falls back to the channel avatar/placeholder).
+	if state == "published" && s.thumbnailer != nil && !audioOnly {
 		// Thumbnail generation is best-effort: a failure must not block publish.
 		s.generateThumbnail(ctx, videoID, originalKey, durationHint)
 	}
-	if state == "published" && s.storyboarder != nil && (s.storyboardGate == nil || s.storyboardGate()) {
+	if state == "published" && !audioOnly && s.storyboarder != nil && (s.storyboardGate == nil || s.storyboardGate()) {
 		// Storyboard generation is best-effort: a failure must not block publish.
 		// The gate is the runtime storyboards_enabled toggle (config-parity W8);
 		// already stored storyboards keep serving when it is off.
@@ -1895,6 +1908,21 @@ var videoContentTypeExts = map[string]string{
 	"video/x-flv":      ".flv",
 	"video/x-ms-wmv":   ".wmv",
 	"video/3gpp":       ".3gp",
+	// Audio-only media types; each maps to an extension in baseVideoExts.
+	"audio/mpeg":   ".mp3",
+	"audio/mp3":    ".mp3",
+	"audio/mp4":    ".m4a",
+	"audio/x-m4a":  ".m4a",
+	"audio/m4a":    ".m4a",
+	"audio/x-m4b":  ".m4b",
+	"audio/aac":    ".aac",
+	"audio/flac":   ".flac",
+	"audio/x-flac": ".flac",
+	"audio/wav":    ".wav",
+	"audio/x-wav":  ".wav",
+	"audio/wave":   ".wav",
+	"audio/ogg":    ".ogg",
+	"audio/opus":   ".opus",
 }
 
 // AcceptedVideoContentType reports the canonical extension for a video-container

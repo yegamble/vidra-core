@@ -20915,9 +20915,21 @@ components:
           maxLength: 2000
     ReportReporter:
       type: object
+      description: >-
+        Who filed the report. A report another instance sent as an ActivityPub
+        Flag (PeerTube, Mastodon, ...) has remote=true, actor_url and domain,
+        and username carries that domain.
       required: [username]
       properties:
         username:
+          type: string
+        remote:
+          type: boolean
+        actor_url:
+          type: string
+          format: uri
+          description: The remote reporter's ActivityPub actor (remote reports only).
+        domain:
           type: string
     Report:
       type: object

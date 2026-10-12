@@ -237,7 +237,8 @@ func (s *Service) resolveNoteTarget(ctx context.Context, inReplyTo string) (uuid
 }
 
 // videoIsPubliclyVisible reports whether a local video exists and is public +
-// published (the only videos that carry public interactions).
+// published and not moderator-blocked (the only videos that carry public
+// interactions; a block unfederates the video and its whole thread, T13).
 func (s *Service) videoIsPubliclyVisible(ctx context.Context, videoID uuid.UUID) (bool, error) {
 	v, err := s.repo.GetVideoByID(ctx, videoID)
 	if err != nil {
@@ -246,7 +247,7 @@ func (s *Service) videoIsPubliclyVisible(ctx context.Context, videoID uuid.UUID)
 		}
 		return false, err
 	}
-	return v.Privacy == "public" && v.State == "published", nil
+	return v.Privacy == "public" && v.State == "published" && !v.Blocked, nil
 }
 
 // flagRemoteComment runs the watched-words moderation flagging over a stored

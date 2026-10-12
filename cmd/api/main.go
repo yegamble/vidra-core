@@ -2201,6 +2201,10 @@ func run() error {
 		// Inbound federated comments run the same watched-words flagging as
 		// local ones (remote-content §6).
 		federation.WithCommentFlagger(watchwordsvc),
+		// An inbound ActivityPub Flag (a fediverse user reporting our video,
+		// comment or account) lands in the local moderation queue and fans
+		// out new_report to staff, exactly as a local report does.
+		federation.WithFlagReporting(moderationsvc.ReportFromRemote, notifsvc.NotifyNewReport),
 		// Federation policy gates (config-parity W12): runtime provider funcs
 		// over the settings overlay, read per inbound activity so an admin
 		// change applies without a restart. All gate the ActivityPub inbox
@@ -2231,6 +2235,9 @@ func run() error {
 	}
 	fedsvc = federation.NewService(db.Queries(), fedOpts...)
 	opts = append(opts, httpapi.WithFederationService(fedsvc))
+	if cfg.FederationEnabled {
+		opts = append(opts, httpapi.WithVideoFederation(fedsvc))
+	}
 
 	// ATProto / Bluesky extension (P10.2, .ralph/specs/atproto.md) — v1 outbound
 	// cross-posting only. Always constructed so the /me/atproto routes are a stable

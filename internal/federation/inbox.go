@@ -32,6 +32,9 @@ type inboxActivity struct {
 	Type   string          `json:"type"`
 	Actor  string          `json:"actor"`
 	Object json.RawMessage `json:"object"`
+	// Read only by Flag; raw so an odd shape never fails other activities.
+	Content json.RawMessage `json:"content"`
+	Tag     json.RawMessage `json:"tag"`
 }
 
 // HandleInbox dispatches a signature-verified inbound activity. signerActorURL is
@@ -115,6 +118,8 @@ func (s *Service) dispatchActivity(ctx context.Context, act inboxActivity, signe
 		return s.handleAccept(ctx, act, signerActorURL)
 	case "Reject":
 		return s.handleReject(ctx, act, signerActorURL)
+	case "Flag":
+		return s.handleFlag(ctx, act, signerActorURL)
 	default:
 		return nil // unhandled activity types are accepted-and-ignored
 	}
