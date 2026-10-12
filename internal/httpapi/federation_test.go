@@ -553,7 +553,7 @@ func TestActorResponsesVaryOnAccept(t *testing.T) {
 	srv := fedServer(fedTestConfig())
 	for name, accept := range map[string]string{"html": "text/html", "ap": apAccept, "other": "application/json"} {
 		rec := getAccept(t, srv, "/accounts/ada", accept)
-		if got := rec.Header().Get("Vary"); !strings.Contains(got, "Accept") {
+		if got := strings.Join(rec.Header().Values("Vary"), ", "); !strings.Contains(got, "Accept") {
 			t.Errorf("%s (%d): Vary = %q, want it to include Accept", name, rec.Code, got)
 		}
 	}
