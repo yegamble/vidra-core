@@ -47,6 +47,11 @@ type Repository interface {
 	GetComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)
 	UpdateComment(ctx context.Context, arg sqlcgen.UpdateCommentParams) (sqlcgen.Comment, error)
 	DeleteComment(ctx context.Context, id uuid.UUID) error
+	// Moderator bulk removal: resolve a username to an account id (any
+	// is_active state), and delete every comment of one account / remote actor
+	// in one statement, returning the removed rows' ids.
+	GetCommentAuthorIDByUsername(ctx context.Context, username string) (uuid.UUID, error)
+	DeleteCommentsByAuthor(ctx context.Context, arg sqlcgen.DeleteCommentsByAuthorParams) ([]sqlcgen.DeleteCommentsByAuthorRow, error)
 	// Creator pin + heart (0099): local metadata, no federation. GetCommentWithMeta
 	// resolves a single comment with author identity + heart flag + whether it is
 	// its video's pinned comment; SetCommentHearted flips the heart flag;
@@ -238,6 +243,45 @@ func (s *Service) Delete(ctx context.Context, commentID, userID uuid.UUID, isMod
 		s.onDelete(ctx, commentID, c.VideoID, uuid.UUID(c.UserID.Bytes))
 	}
 	return nil
+}
+
+// RemoveByAccount deletes EVERY comment authored by one account in a single
+// set-based statement and returns how many went. account is a local username
+// (case-insensitive, deactivated accounts included) or, when it starts with
+// http:// or https://, a remote actor URL (federated comments). The end state
+// per comment is exactly Delete's: a hard delete, so replies, reports and
+// notifications cascade and a pin on the video clears. As in Delete, only LOCAL
+// authors' comments fire the federation delete hook; a remote author's are
+// removed locally only. An unknown local username is ErrNotFound; a remote
+// actor with no comments removes 0 (the actor row may be gone). The returned id is the local account's
+// (uuid.Nil for a remote actor), for the caller's audit trail.
+func (s *Service) RemoveByAccount(ctx context.Context, account string) (int, uuid.UUID, error) {
+	account = strings.TrimSpace(account)
+	if account == "" {
+		return 0, uuid.Nil, ErrNotFound
+	}
+	var arg sqlcgen.DeleteCommentsByAuthorParams
+	if strings.HasPrefix(account, "http://") || strings.HasPrefix(account, "https://") {
+		arg.RemoteActorUrl = &account
+	} else {
+		id, err := s.repo.GetCommentAuthorIDByUsername(ctx, strings.TrimPrefix(account, "@"))
+		if err != nil {
+			return 0, uuid.Nil, ErrNotFound
+		}
+		arg.UserID = pgtype.UUID{Bytes: id, Valid: true}
+	}
+	rows, err := s.repo.DeleteCommentsByAuthor(ctx, arg)
+	if err != nil {
+		return 0, uuid.Nil, err
+	}
+	if s.onDelete != nil {
+		for _, r := range rows {
+			if r.UserID.Valid {
+				s.onDelete(ctx, r.ID, r.VideoID, uuid.UUID(r.UserID.Bytes))
+			}
+		}
+	}
+	return len(rows), uuid.UUID(arg.UserID.Bytes), nil
 }
 
 // Edit changes a comment's body. Only the author may edit their own comment

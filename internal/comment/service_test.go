@@ -144,6 +144,30 @@ func (f *fakeRepo) DeleteComment(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (f *fakeRepo) GetCommentAuthorIDByUsername(_ context.Context, username string) (uuid.UUID, error) {
+	for id, a := range f.authors {
+		if strings.EqualFold(a.username, username) {
+			return id, nil
+		}
+	}
+	return uuid.Nil, errors.New("not found")
+}
+
+func (f *fakeRepo) DeleteCommentsByAuthor(_ context.Context, a sqlcgen.DeleteCommentsByAuthorParams) ([]sqlcgen.DeleteCommentsByAuthorRow, error) {
+	var rows []sqlcgen.DeleteCommentsByAuthorRow
+	for id, c := range f.comments {
+		byUser := a.UserID.Valid && c.UserID == a.UserID
+		byActor := a.RemoteActorUrl != nil && c.RemoteActorUrl != nil && *c.RemoteActorUrl == *a.RemoteActorUrl
+		if byUser || byActor {
+			rows = append(rows, sqlcgen.DeleteCommentsByAuthorRow{ID: id, VideoID: c.VideoID, UserID: c.UserID})
+		}
+	}
+	for _, r := range rows {
+		delete(f.comments, r.ID)
+	}
+	return rows, nil
+}
+
 func TestCreateAndListByVideo(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo)
@@ -469,4 +493,48 @@ func (f *fakeRepo) CountCommentsByVideo(ctx context.Context, a sqlcgen.CountComm
 func (f *fakeRepo) CountAdminComments(ctx context.Context, query *string) (int64, error) {
 	rows, err := f.ListAdminComments(ctx, sqlcgen.ListAdminCommentsParams{Query: query, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
+}
+
+func TestRemoveByAccount(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	type del struct{ cid, vid, aid uuid.UUID }
+	var hooks []del
+	svc := NewService(repo, WithDeleteHook(func(_ context.Context, c, v, a uuid.UUID) { hooks = append(hooks, del{c, v, a}) }))
+	video, spammer, other := uuid.New(), uuid.New(), uuid.New()
+	repo.authors[spammer] = author{"Spam-Bot", ""}
+	repo.authors[other] = author{"ada", ""}
+	for _, u := range []uuid.UUID{spammer, spammer, other} {
+		if _, err := svc.Create(ctx, video, u, "x", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	remote := seedRemoteComment(repo, video)
+
+	// A local username is case-insensitive, covers all its comments, and fires
+	// the federation hook once per LOCAL comment.
+	n, id, err := svc.RemoveByAccount(ctx, "@spam-bot")
+	if err != nil || n != 2 || id != spammer {
+		t.Fatalf("RemoveByAccount = %d, %s, %v; want 2, %s, nil", n, id, err, spammer)
+	}
+	if len(hooks) != 2 || hooks[0].aid != spammer || hooks[0].vid != video {
+		t.Errorf("hooks = %+v, want 2 for the spammer", hooks)
+	}
+	if len(repo.comments) != 2 {
+		t.Errorf("remaining = %d, want 2 (ada's + the remote one)", len(repo.comments))
+	}
+
+	// A remote actor URL removes its federated comments locally, no hook.
+	hooks = nil
+	n, id, err = svc.RemoveByAccount(ctx, *remote.RemoteActorUrl)
+	if err != nil || n != 1 || id != uuid.Nil || len(hooks) != 0 {
+		t.Fatalf("remote = %d, %s, %v, hooks=%d; want 1, nil-uuid, nil, 0", n, id, err, len(hooks))
+	}
+
+	// Unknown local account is ErrNotFound; blank too.
+	for _, acct := range []string{"nobody", "  "} {
+		if _, _, err := svc.RemoveByAccount(ctx, acct); !errors.Is(err, ErrNotFound) {
+			t.Errorf("RemoveByAccount(%q) err = %v, want ErrNotFound", acct, err)
+		}
+	}
 }

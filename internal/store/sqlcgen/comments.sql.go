@@ -199,6 +199,51 @@ func (q *Queries) DeleteComment(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const deleteCommentsByAuthor = `-- name: DeleteCommentsByAuthor :many
+DELETE FROM comments
+WHERE ($1::uuid IS NOT NULL AND user_id = $1::uuid)
+   OR ($2::text IS NOT NULL AND remote_actor_url = $2::text)
+RETURNING id, video_id, user_id
+`
+
+type DeleteCommentsByAuthorParams struct {
+	UserID         pgtype.UUID `json:"user_id"`
+	RemoteActorUrl *string     `json:"remote_actor_url"`
+}
+
+type DeleteCommentsByAuthorRow struct {
+	ID      uuid.UUID   `json:"id"`
+	VideoID uuid.UUID   `json:"video_id"`
+	UserID  pgtype.UUID `json:"user_id"`
+}
+
+// Set-based form of DeleteComment for the moderator bulk removal: every comment
+// authored by one local account (user_id) OR one remote actor
+// (remote_actor_url), in one statement. It is the same hard DELETE as
+// DeleteComment, so the same FKs fire per row: replies (parent_id), reports,
+// notifications and watched-word matches CASCADE, and videos.pinned_comment_id
+// is SET NULL. RETURNING hands the caller the ids the rows no longer hold, so
+// LOCAL authors' deletions can still be federated.
+func (q *Queries) DeleteCommentsByAuthor(ctx context.Context, arg DeleteCommentsByAuthorParams) ([]DeleteCommentsByAuthorRow, error) {
+	rows, err := q.db.Query(ctx, deleteCommentsByAuthor, arg.UserID, arg.RemoteActorUrl)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DeleteCommentsByAuthorRow
+	for rows.Next() {
+		var i DeleteCommentsByAuthorRow
+		if err := rows.Scan(&i.ID, &i.VideoID, &i.UserID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getComment = `-- name: GetComment :one
 SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
        remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
@@ -224,6 +269,20 @@ func (q *Queries) GetComment(ctx context.Context, id uuid.UUID) (Comment, error)
 		&i.Hearted,
 	)
 	return i, err
+}
+
+const getCommentAuthorIDByUsername = `-- name: GetCommentAuthorIDByUsername :one
+SELECT id FROM users WHERE lower(username) = lower($1)
+`
+
+// Resolve a username to its account id for the bulk comment removal. Unlike
+// GetUserByUsername this does NOT filter on is_active: a moderator cleaning up
+// after a spam wave is usually doing so for an account already disabled.
+func (q *Queries) GetCommentAuthorIDByUsername(ctx context.Context, lower string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getCommentAuthorIDByUsername, lower)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getCommentByRemoteObjectURL = `-- name: GetCommentByRemoteObjectURL :one

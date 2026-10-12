@@ -81,6 +81,10 @@ const (
 	// actually removed.
 	ActionAdminWatchedWordCreate = "admin.watched_word.create"
 	ActionAdminWatchedWordDelete = "admin.watched_word.delete"
+	// ActionAdminCommentBulkRemove records a moderator removing every comment of
+	// one account in one request. The resource is the account (id, or a
+	// fingerprint for a remote actor URL); metadata carries only the count.
+	ActionAdminCommentBulkRemove = "moderation.comment.bulk_remove"
 	ActionReportDelete           = "moderation.report.delete"
 	ActionVideoBlock             = "moderation.video.block"
 	ActionVideoUnblock           = "moderation.video.unblock"

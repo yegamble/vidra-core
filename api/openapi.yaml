@@ -9832,6 +9832,63 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/comments/bulk-remove:
+    post:
+      operationId: bulkRemoveAdminComments
+      summary: Remove every comment by one account
+      description: >-
+        Spam-wave cleanup (PeerTube's bulk/remove-comments-of). Hard-deletes every
+        comment authored by one account, instance-wide, in one set-based
+        statement; the end state per comment is identical to
+        DELETE /api/v1/comments/{id} (replies, reports and notifications under it
+        are removed, a pin on the video clears). `account` is a local username
+        (case-insensitive, deactivated accounts included) or, for federated
+        comments, a remote actor URL starting with http:// or https://. Comments
+        by local authors are federated as a Delete exactly as a single delete is;
+        remote authors' comments are removed locally only. Restricted to
+        moderators/admins. An unknown local username is 404; a remote actor with
+        no comments yields removed=0. Audited as moderation.comment.bulk_remove
+        (actor, target account, count; never comment bodies).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkRemoveCommentsRequest"
+      responses:
+        "200":
+          description: The comments were removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkRemoveCommentsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such local account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/videos:
     get:
       operationId: listAdminVideos
@@ -20589,6 +20646,23 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
+    BulkRemoveCommentsRequest:
+      type: object
+      required: [account]
+      properties:
+        account:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: A local username, or a remote actor URL (http:// or https://).
+    BulkRemoveCommentsResponse:
+      type: object
+      required: [removed]
+      properties:
+        removed:
+          type: integer
+          minimum: 0
+          description: How many comments were removed.
     ResolveReportRequest:
       type: object
       required: [status]

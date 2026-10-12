@@ -1930,6 +1930,7 @@ func (s *Server) routes() {
 			api.PUT("/comments/:id/heart", s.handleHeartComment, s.requireAuth)
 			api.DELETE("/comments/:id/heart", s.handleUnheartComment, s.requireAuth)
 			api.GET("/admin/comments", s.handleListAdminComments, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+			api.POST("/admin/comments/bulk-remove", s.handleBulkRemoveComments, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		}
 
 		// Ratings (like/dislike) are scoped to a (public, published) video.
