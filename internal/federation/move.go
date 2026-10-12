@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -87,6 +89,63 @@ func (s *Service) verifyMoveTarget(ctx context.Context, origin, target string) e
 	}
 	_, err = s.cacheFetchedActor(ctx, target, fa)
 	return err
+}
+
+// maxMoveFollows bounds the edges one worker batch re-points (a Follow + Undo each).
+const maxMoveFollows = 200
+
+// DrainMoves re-points one batch of the follows of the move whose turn it is,
+// and reports how many were re-pointed (plus one when a move finished), so the
+// worker's drain stops when a batch makes no progress. A follow that fails
+// stays on the old actor and is retried on a later pass.
+func (s *Service) DrainMoves(ctx context.Context) (int, error) {
+	mv, err := s.repo.NextMovingRemoteActorMove(ctx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	} else if err != nil {
+		return 0, err
+	}
+	edges, err := s.repo.ListRemoteChannelFollowsOfActor(ctx, sqlcgen.ListRemoteChannelFollowsOfActorParams{
+		RemoteActorUrl: mv.OriginActorUrl, TargetActorUrl: mv.TargetActorUrl, ResultLimit: maxMoveFollows,
+	})
+	if err != nil {
+		return 0, err
+	}
+	target, err := s.repo.GetRemoteActor(ctx, mv.TargetActorUrl)
+	if len(edges) == 0 || errors.Is(err, pgx.ErrNoRows) { // done, or the target was deleted since
+		return 1, s.repo.SetRemoteActorMoveState(ctx, sqlcgen.SetRemoteActorMoveStateParams{OriginActorUrl: mv.OriginActorUrl, State: "done"})
+	} else if err != nil {
+		return 0, err
+	}
+	moved := 0
+	for _, f := range edges {
+		if s.moveFollow(ctx, f, target) {
+			moved++
+		}
+	}
+	return moved, nil
+}
+
+// moveFollow re-points one edge: Follow the target as the user, then Undo the
+// old follow. Best-effort: a failed edge stays on the old actor for a later pass.
+func (s *Service) moveFollow(ctx context.Context, f sqlcgen.ListRemoteChannelFollowsOfActorRow, target sqlcgen.RemoteActor) bool {
+	if blocked, err := s.remoteActorBlockedBy(ctx, f.UserID, target.ActorUrl); err != nil || blocked {
+		return false
+	}
+	u, err := s.repo.GetUserActorByID(ctx, f.UserID)
+	if err == nil {
+		_, err = s.followResolvedActor(ctx, f.UserID, u.Username, target)
+	}
+	if err == nil {
+		if err = s.UnfollowRemoteChannel(ctx, f.UserID, f.ID); errors.Is(err, ErrFollowNotFound) {
+			err = nil // unfollowed meanwhile: the new follow stands
+		}
+	}
+	if err != nil {
+		s.logMove("federation: Move could not re-point a follow", "", target.ActorUrl, "follow_id", f.ID, "error", err)
+		return false
+	}
+	return true
 }
 
 func (s *Service) logMove(msg, origin, target string, args ...any) {

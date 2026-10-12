@@ -89,6 +89,15 @@ func (f fakeRepo) SetRemoteActorMoveState(_ context.Context, arg sqlcgen.SetRemo
 	return nil
 }
 
+func (f fakeRepo) NextMovingRemoteActorMove(context.Context) (sqlcgen.NextMovingRemoteActorMoveRow, error) {
+	for origin, st := range f.moveStates {
+		if st == "moving" {
+			return sqlcgen.NextMovingRemoteActorMoveRow{OriginActorUrl: origin, TargetActorUrl: f.moveClaims[origin]}, nil
+		}
+	}
+	return sqlcgen.NextMovingRemoteActorMoveRow{}, pgx.ErrNoRows
+}
+
 func (f fakeRepo) CarryRemoteActorBlocks(_ context.Context, arg sqlcgen.CarryRemoteActorBlocksParams) (int64, error) {
 	var n int64
 	for key := range f.remoteBlocks {
