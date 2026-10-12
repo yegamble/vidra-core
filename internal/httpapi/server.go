@@ -1922,6 +1922,8 @@ func (s *Server) routes() {
 		if s.commentsvc != nil {
 			api.GET("/videos/:id/comments", s.handleListComments, s.optionalAuth)
 			api.POST("/videos/:id/comments", s.handleCreateComment, s.requireAuth)
+			// Comment approval (0161): a video manager releases a held comment.
+			api.POST("/videos/:id/comments/:commentId/approve", s.handleApproveComment, s.requireAuth)
 			api.PATCH("/comments/:id", s.handleUpdateComment, s.requireAuth)
 			api.DELETE("/comments/:id", s.handleDeleteComment, s.requireAuth)
 			// Creator pin + heart (0099): the video owner/editor (or staff) pins at

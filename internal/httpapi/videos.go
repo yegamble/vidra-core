@@ -55,7 +55,7 @@ type createVideoRequest struct {
 	// frontend pairs them.
 	SensitiveReason string `json:"sensitive_reason"`
 	// CommentsPolicy is the per-video comment policy (config-parity W9):
-	// enabled|disabled. Omitted/empty seeds the instance's
+	// enabled|disabled|requires_approval. Omitted/empty seeds the instance's
 	// default_comment_policy setting.
 	CommentsPolicy string `json:"comments_policy"`
 	// DownloadEnabled is the per-video download policy (config-parity W9),
@@ -83,7 +83,7 @@ func (r createVideoRequest) Validate() []FieldError {
 		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private, password"})
 	}
 	if r.CommentsPolicy != "" && !video.IsCommentsPolicy(r.CommentsPolicy) {
-		fes = append(fes, FieldError{Field: "comments_policy", Message: "must be one of enabled, disabled"})
+		fes = append(fes, FieldError{Field: "comments_policy", Message: "must be one of enabled, disabled, requires_approval"})
 	}
 	if len(strings.TrimSpace(r.SensitiveReason)) > maxSensitiveReasonLen {
 		fes = append(fes, FieldError{Field: "sensitive_reason", Message: "must be at most 280 characters"})
@@ -208,7 +208,7 @@ type videoView struct {
 	// remote cards (no local account).
 	AuthorDisplayName *string `json:"author_display_name,omitempty"`
 	// CommentsPolicy is the per-video comment policy (config-parity W9):
-	// enabled|disabled. Present on the create/update/detail views; omitted on
+	// enabled|disabled|requires_approval. Present on the create/update/detail views; omitted on
 	// list/feed views and remote cards.
 	CommentsPolicy string `json:"comments_policy,omitempty"`
 	// CommentsEnabled is the EFFECTIVE comment availability on the DETAIL view:
@@ -590,8 +590,9 @@ func (s *Server) respondVideo(c echo.Context, id uuid.UUID) error {
 	view := videoViewFromRow(v)
 	// The EFFECTIVE comment availability (config-parity W9): the instance-wide
 	// comments_enabled toggle AND this video's comments_policy. The watch page
-	// shows/hides its composer from this one field.
-	commentsEnabled := s.commentsEnabled() && v.CommentsPolicy == video.CommentsPolicyEnabled
+	// shows/hides its composer from this one field; requires_approval (0161)
+	// still accepts comments, it only holds them for review.
+	commentsEnabled := s.commentsEnabled() && v.CommentsPolicy != video.CommentsPolicyDisabled
 	view.CommentsEnabled = &commentsEnabled
 	if md, ok, err := s.videosvc.GetMetadata(c.Request().Context(), id); err == nil && ok {
 		view.DurationSeconds = md.DurationSeconds
@@ -1120,7 +1121,7 @@ func (r updateVideoRequest) Validate() []FieldError {
 		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private, password"})
 	}
 	if r.CommentsPolicy != nil && !video.IsCommentsPolicy(*r.CommentsPolicy) {
-		fes = append(fes, FieldError{Field: "comments_policy", Message: "must be one of enabled, disabled"})
+		fes = append(fes, FieldError{Field: "comments_policy", Message: "must be one of enabled, disabled, requires_approval"})
 	}
 	if r.SensitiveReason != nil && len(strings.TrimSpace(*r.SensitiveReason)) > maxSensitiveReasonLen {
 		fes = append(fes, FieldError{Field: "sensitive_reason", Message: "must be at most 280 characters"})

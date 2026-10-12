@@ -11,8 +11,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/comment"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -50,6 +52,11 @@ type commentView struct {
 	Pinned bool `json:"pinned"`
 	// Hearted is true when the video's creator has hearted this comment (0099).
 	Hearted bool `json:"hearted"`
+	// HeldForReview is true while the comment waits for approval (0161, a
+	// requires_approval video). Only its author, the video's managers and staff
+	// ever receive a held comment: the author's client shows it as pending, a
+	// manager's offers Approve.
+	HeldForReview bool `json:"held_for_review"`
 }
 
 // tombstoneBody is what views render in place of a §1-tombstoned comment body.
@@ -69,6 +76,7 @@ func newCommentView(c sqlcgen.Comment, authorUsername, authorDisplayName string)
 		UpdatedAt:         c.UpdatedAt,
 		Edited:            c.UpdatedAt.After(c.CreatedAt),
 		Hearted:           c.Hearted,
+		HeldForReview:     c.HeldForReview,
 	}
 	if c.DeletedAt.Valid {
 		v.Deleted = true
@@ -153,9 +161,16 @@ func (r createCommentRequest) parentID() *uuid.UUID {
 	return &id
 }
 
+// canReviewComments reports whether the caller may see and approve the HELD
+// comments on v (0161): staff, the channel owner, or an editor member — the
+// same people who may pin and heart. Their own comments are never held.
+func (s *Server) canReviewComments(ctx context.Context, userID uuid.UUID, role string, v sqlcgen.GetVideoByIDRow) bool {
+	return isStaff(role) || v.OwnerID == userID || s.canManageChannelContent(ctx, userID, v.ChannelID)
+}
+
 // handleCreateComment posts a comment on a public, published video. Behind requireAuth.
 func (s *Server) handleCreateComment(c echo.Context) error {
-	userID, _, err := mustPrincipal(c)
+	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
 	}
@@ -194,13 +209,42 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 		}
 		return err
 	}
-	created, err := s.commentsvc.Create(ctx, videoID, userID, strings.TrimSpace(in.Body), in.parentID())
+	// Comment approval (0161): on a requires_approval video a comment from
+	// anyone who cannot review the thread is HELD — stored, shown to its author
+	// and the reviewers, and announced to nobody else until approved.
+	create := s.commentsvc.Create
+	held := v.CommentsPolicy == video.CommentsPolicyRequiresApproval && !s.canReviewComments(ctx, userID, role, v)
+	if held {
+		create = s.commentsvc.CreateHeld
+	}
+	created, err := create(ctx, videoID, userID, strings.TrimSpace(in.Body), in.parentID())
 	if err != nil {
-		if errors.Is(err, comment.ErrParentNotFound) {
+		switch {
+		case errors.Is(err, comment.ErrParentNotFound):
 			return &ValidationError{Fields: []FieldError{{Field: "parent_id", Message: "is not a comment on this video"}}}
+		case errors.Is(err, comment.ErrParentHeld):
+			return &ValidationError{Fields: []FieldError{{Field: "parent_id", Message: "is awaiting approval and cannot be replied to yet"}}}
 		}
 		return err
 	}
+	if !held {
+		s.notifyCommentPublished(ctx, userID, created.ID, v.OwnerID, false)
+	}
+	// Flag the comment against the moderation watched-words list (best-effort;
+	// records matches for the admin review queue — never blocks the post).
+	if s.watchwordsvc != nil {
+		if _, werr := s.watchwordsvc.FlagComment(ctx, created.ID, created.Body); werr != nil {
+			s.logger.WarnContext(ctx, "watched-word flagging failed", "error", werr, "comment_id", created.ID)
+		}
+	}
+	return c.JSON(http.StatusCreated, newCommentView(created, author.Username, author.DisplayName))
+}
+
+// notifyCommentPublished raises the notifications a comment earns the moment
+// the public can read it — on create, or (0161) when a held one is approved.
+// ownerKnows suppresses the video owner's notice when the owner is the one who
+// just approved it. Best-effort: a notification failure never fails the write.
+func (s *Server) notifyCommentPublished(ctx context.Context, authorID, commentID, ownerID uuid.UUID, ownerKnows bool) {
 	// Tell the PARENT COMMENT'S AUTHOR that they were replied to (best-effort).
 	// This is a different recipient from the video owner below: the person being
 	// answered usually does not own the video, and before this existed a reply
@@ -212,9 +256,9 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 	// never matches a real owner id.
 	notifiedReplyTo := uuid.Nil
 	if s.notifsvc != nil {
-		recipient, nerr := s.notifsvc.NotifyCommentReply(ctx, userID, created.ID)
+		recipient, nerr := s.notifsvc.NotifyCommentReply(ctx, authorID, commentID)
 		if nerr != nil {
-			s.logger.WarnContext(ctx, "notify comment reply failed", "error", nerr, "video_id", videoID)
+			s.logger.WarnContext(ctx, "notify comment reply failed", "error", nerr, "comment_id", commentID)
 		} else {
 			notifiedReplyTo = recipient
 		}
@@ -224,20 +268,12 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 	// comment's author just above — one reply, one notification). Who the owner
 	// is, and whether they have muted or blocked the commenter, is resolved
 	// inside the notifier's SQL; the owner id here is only the mutual-exclusion
-	// key, and comes from the video already loaded by publicVideo.
-	if s.notifsvc != nil && v.OwnerID != notifiedReplyTo {
-		if _, nerr := s.notifsvc.NotifyComment(ctx, userID, created.ID); nerr != nil {
-			s.logger.WarnContext(ctx, "notify comment failed", "error", nerr, "video_id", videoID)
+	// key, and comes from the video the caller already loaded.
+	if s.notifsvc != nil && ownerID != notifiedReplyTo && !ownerKnows {
+		if _, nerr := s.notifsvc.NotifyComment(ctx, authorID, commentID); nerr != nil {
+			s.logger.WarnContext(ctx, "notify comment failed", "error", nerr, "comment_id", commentID)
 		}
 	}
-	// Flag the comment against the moderation watched-words list (best-effort;
-	// records matches for the admin review queue — never blocks the post).
-	if s.watchwordsvc != nil {
-		if _, werr := s.watchwordsvc.FlagComment(ctx, created.ID, created.Body); werr != nil {
-			s.logger.WarnContext(ctx, "watched-word flagging failed", "error", werr, "comment_id", created.ID)
-		}
-	}
-	return c.JSON(http.StatusCreated, newCommentView(created, author.Username, author.DisplayName))
 }
 
 // commentListResponse is the paginated comment list for a video.
@@ -250,13 +286,17 @@ type commentListResponse struct {
 // Auth is optional (optionalAuth): a signed-in viewer's muted accounts are hidden;
 // anonymous viewers see all. Pagination via ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListComments(c echo.Context) error {
-	videoID, err := s.publicVideoID(c)
+	v, err := s.publicVideo(c)
 	if err != nil {
 		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	viewerID, _, authed := principalFromContext(c)
-	items, total, err := s.commentsvc.ListByVideo(c.Request().Context(), videoID, viewerID, authed, false, page.Limit32(), page.Offset32())
+	ctx := c.Request().Context()
+	viewerID, role, authed := principalFromContext(c)
+	// Held comments (0161) reach the video's reviewers; the SQL adds each
+	// viewer's own held comments on its own.
+	includeHeld := authed && s.canReviewComments(ctx, viewerID, role, v)
+	items, total, err := s.commentsvc.ListByVideo(ctx, v.ID, viewerID, authed, includeHeld, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -410,6 +450,8 @@ func (s *Server) commentCreatorAction(c echo.Context, action func(context.Contex
 			return &ValidationError{Fields: []FieldError{{Field: "id", Message: "only a top-level comment can be pinned"}}}
 		case errors.Is(err, comment.ErrTombstoned):
 			return &ValidationError{Fields: []FieldError{{Field: "id", Message: "cannot pin or heart a deleted comment"}}}
+		case errors.Is(err, comment.ErrHeld):
+			return &ValidationError{Fields: []FieldError{{Field: "id", Message: "approve the comment before pinning it"}}}
 		}
 		return err
 	}
@@ -442,4 +484,57 @@ func (s *Server) handleHeartComment(c echo.Context) error {
 // handleUnheartComment removes the creator heart. Behind requireAuth.
 func (s *Server) handleUnheartComment(c echo.Context) error {
 	return s.commentCreatorAction(c, s.commentsvc.Unheart)
+}
+
+// handleApproveComment releases a comment held for review (0161). Behind
+// requireAuth. The caller must be able to review the video's comments (owner,
+// editor member, staff — 403 otherwise), and the comment must be on THIS video
+// (404 otherwise). Idempotent: a comment that is no longer held answers 200
+// with no side effects. Only the transition fires what was withheld while the
+// comment was held — the reply/owner notifications here, the federation
+// announce through the comment service's create hook — and only it is audited.
+func (s *Server) handleApproveComment(c echo.Context) error {
+	userID, role, err := mustPrincipal(c)
+	if err != nil {
+		return err
+	}
+	videoID, err := pathUUID(c, "id", "comment not found")
+	if err != nil {
+		return err
+	}
+	commentID, err := pathUUID(c, "commentId", "comment not found")
+	if err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+	cmt, err := s.commentsvc.Get(ctx, commentID)
+	if err != nil || cmt.VideoID != videoID {
+		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+	}
+	v, err := s.videosvc.GetByID(ctx, videoID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+	}
+	if !s.canReviewComments(ctx, userID, role, v) {
+		return echo.NewHTTPError(http.StatusForbidden, "not allowed to manage this video's comments")
+	}
+	wa, released, err := s.commentsvc.Approve(ctx, commentID)
+	if err != nil {
+		if errors.Is(err, comment.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+		}
+		return err
+	}
+	if released {
+		if wa.Comment.UserID.Valid {
+			s.notifyCommentPublished(ctx, uuid.UUID(wa.Comment.UserID.Bytes), commentID, v.OwnerID, v.OwnerID == userID)
+		}
+		s.auditEvent(c, audit.Event{
+			Action: observability.ActionCommentApprove, Result: observability.ResultSuccess,
+			ActorID: userID.String(), ResourceType: "comment", ResourceID: commentID.String(),
+		})
+	}
+	view := newCommentView(wa.Comment, wa.AuthorUsername, wa.AuthorDisplayName)
+	view.Remote, view.AuthorDomain, view.Pinned = wa.Remote, wa.AuthorDomain, wa.Pinned
+	return c.JSON(http.StatusOK, view)
 }

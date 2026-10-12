@@ -629,17 +629,18 @@ type CreateInput struct {
 	PublishAfterTranscode bool
 }
 
-// Per-video comment-policy values (config-parity W9). PeerTube's third tier
-// requires_approval is deliberately deferred (no comment-approval queue; see
-// the parity ledger §13).
+// Per-video comment-policy values (config-parity W9). requires_approval
+// (migration 0161, PeerTube's third tier) accepts comments but holds every one
+// not written by the video's managers or staff until a manager approves it.
 const (
-	CommentsPolicyEnabled  = "enabled"
-	CommentsPolicyDisabled = "disabled"
+	CommentsPolicyEnabled          = "enabled"
+	CommentsPolicyDisabled         = "disabled"
+	CommentsPolicyRequiresApproval = "requires_approval"
 )
 
 // IsCommentsPolicy reports whether v is a valid per-video comment policy.
 func IsCommentsPolicy(v string) bool {
-	return v == CommentsPolicyEnabled || v == CommentsPolicyDisabled
+	return v == CommentsPolicyEnabled || v == CommentsPolicyDisabled || v == CommentsPolicyRequiresApproval
 }
 
 // PublishDefaults are the instance-level publish defaults (config-parity W9,
@@ -649,7 +650,7 @@ func IsCommentsPolicy(v string) bool {
 type PublishDefaults struct {
 	Privacy         string // one of public|unlisted|private
 	License         string // taxonomy licence id; "" = no default licence
-	CommentsPolicy  string // CommentsPolicyEnabled | CommentsPolicyDisabled
+	CommentsPolicy  string // one of the CommentsPolicy* values
 	DownloadEnabled bool
 }
 

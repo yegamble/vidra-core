@@ -163,6 +163,11 @@ const (
 	ActionVideoCaptionGenerate = "content.video.caption_generate"
 	ActionChannelDelete        = "content.channel.delete"
 	ActionMediaGC              = "admin.media.gc"
+	// ActionCommentApprove records a video manager (or staff) releasing a
+	// comment held for review (0161). The resource is the comment id; the body
+	// is never recorded. Only the held -> published transition is audited — a
+	// repeated approval is a no-op and leaves no row.
+	ActionCommentApprove = "content.comment.approve"
 	// ActionAuditRetentionPrune is the audit trail recording its own retention
 	// sweep. It is written once per run that actually deleted something, with
 	// the row count in the `count` metadata field — audit_log carries no prose,
