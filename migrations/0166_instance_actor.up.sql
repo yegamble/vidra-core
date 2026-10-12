@@ -83,3 +83,14 @@ CREATE INDEX instance_following_listing_idx ON instance_following (created_at DE
 CREATE UNIQUE INDEX notifications_federation_instance_follower_request_unread_idx
     ON notifications (user_id)
     WHERE type = 'federation_follower_request' AND remote_follow_id IS NULL AND read_at IS NULL;
+
+-- (7) The backfill cooldown: when each remote instance actor was last pushed
+-- the new-follower backfill (up to 50 signed Announces). At most one per actor
+-- per window, so a Follow/Undo loop cannot turn this instance into a delivery
+-- amplifier. Kept apart from instance_followers on purpose — Undo deletes the
+-- follower row, and the loop is exactly what this must outlive — and with no
+-- foreign key, since the follower could Delete its own actor to clear it.
+CREATE TABLE instance_follower_backfills (
+    remote_actor_url TEXT        PRIMARY KEY,
+    last_backfill_at TIMESTAMPTZ NOT NULL
+);

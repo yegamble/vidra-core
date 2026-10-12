@@ -397,6 +397,11 @@ type InstanceFollower struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
+type InstanceFollowerBackfill struct {
+	RemoteActorUrl string    `json:"remote_actor_url"`
+	LastBackfillAt time.Time `json:"last_backfill_at"`
+}
+
 type InstanceFollowing struct {
 	ID                uuid.UUID `json:"id"`
 	RemoteActorUrl    string    `json:"remote_actor_url"`

@@ -251,6 +251,40 @@ func TestInstanceFollowerInboxesOnRealPG(t *testing.T) {
 	}
 }
 
+// The backfill cooldown is a database fact: one claim per actor per window,
+// outliving the follower row (an Undo deletes that) and the actor cache row.
+func TestInstanceFollowerBackfillCooldownOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	actor := "https://pt-" + uuid.NewString()[:8] + ".example/accounts/peertube"
+	t.Cleanup(func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM instance_follower_backfills WHERE remote_actor_url = $1`, actor)
+	})
+	claim := func() int64 {
+		t.Helper()
+		n, err := q.ClaimInstanceFollowerBackfill(ctx, sqlcgen.ClaimInstanceFollowerBackfillParams{RemoteActorUrl: actor, CooldownSeconds: 86400})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if claim() != 1 || claim() != 0 {
+		t.Fatal("want the first claim granted and a second one inside the window refused")
+	}
+	if _, err := st.Pool.Exec(ctx, `UPDATE instance_follower_backfills SET last_backfill_at = now() - interval '25 hours' WHERE remote_actor_url = $1`, actor); err != nil {
+		t.Fatal(err)
+	}
+	if claim() != 1 || claim() != 0 {
+		t.Error("want a claim granted again once the window has passed, and only one")
+	}
+}
+
 // The admin's decisions apply only to the states they name, and a listing
 // filters by state.
 func TestInstanceFollowerDecisionsOnRealPG(t *testing.T) {
