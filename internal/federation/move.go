@@ -10,26 +10,17 @@ import (
 )
 
 // Inbound Move (T53): a remote actor local users follow announces it now lives
-// at another actor (Mastodon's account migration). Without it they keep
-// following an actor that will never post again. It asks this instance to
+// at another actor (Mastodon's account migration). It asks this instance to
 // follow somebody on its users' behalf, so it is untrusted and bounded:
-//
-//   - signer == actor == object (it moves only itself);
-//   - the target is not local, not on a blocked instance, not admin-blocked,
-//     and neither is the origin;
-//   - an origin nobody here follows costs one indexed read: no claim, no fetch;
-//   - one Move per origin per cooldown (0167), claimed BEFORE the fetch;
-//   - the target is fetched fresh through the SSRF guard, must state the id it
-//     was fetched as, and must list the origin in alsoKnownAs — the target
-//     vouching, without which anyone could claim to be anyone's new home;
-//   - at most maxMoveFollows edges per Move (the rest stay for a later one);
-//   - a user who blocks the target keeps the old follow.
-
-// maxMoveFollows bounds the edges one Move re-points (a Follow + Undo each).
-const maxMoveFollows = 200
+// signer == actor == object; target and origin not refused here; an origin
+// nobody here follows or blocks costs no claim and no fetch; one Move per
+// origin per cooldown (0167), claimed before the SSRF-guarded fetch and
+// released if the target does not verify (its id, inboxes on its own host,
+// alsoKnownAs naming the origin). The handler does O(1) work — it records the
+// move and carries blocks; the federation worker re-points the follows.
 
 // errMoveUnverified means the target does not vouch for the move.
-var errMoveUnverified = errors.New("federation: Move target does not name the origin in alsoKnownAs")
+var errMoveUnverified = errors.New("federation: Move target does not verify (id, inboxes or alsoKnownAs)")
 
 func (s *Service) handleMove(ctx context.Context, act inboxActivity, signerActorURL string) error {
 	origin := act.Actor
@@ -49,10 +40,7 @@ func (s *Service) handleMove(ctx context.Context, act inboxActivity, signerActor
 			return err
 		}
 	}
-	follows, err := s.repo.ListRemoteChannelFollowsOfActor(ctx, sqlcgen.ListRemoteChannelFollowsOfActorParams{
-		RemoteActorUrl: origin, ResultLimit: maxMoveFollows,
-	})
-	if err != nil || len(follows) == 0 {
+	if relevant, err := s.moveIsRelevant(ctx, origin, target); err != nil || !relevant {
 		return err
 	}
 	if n, err := s.repo.ClaimRemoteActorMove(ctx, sqlcgen.ClaimRemoteActorMoveParams{
@@ -60,54 +48,45 @@ func (s *Service) handleMove(ctx context.Context, act inboxActivity, signerActor
 	}); err != nil || n == 0 {
 		return err
 	}
-	ra, err := s.verifiedMoveTarget(ctx, origin, target)
-	if err != nil {
+	if err := s.verifyMoveTarget(ctx, origin, target); err != nil {
 		s.logMove("federation: Move refused", origin, target, "error", err)
-		return nil
+		return s.repo.ReleaseRemoteActorMove(ctx, origin)
 	}
-	moved := 0
-	for _, f := range follows {
-		if s.moveFollow(ctx, f, ra) {
-			moved++
-		}
+	if _, err := s.repo.CarryRemoteActorBlocks(ctx, sqlcgen.CarryRemoteActorBlocksParams{
+		OriginActorUrl: origin, TargetActorUrl: target,
+	}); err != nil {
+		return err
 	}
-	s.logMove("federation: Move applied", origin, target, "moved", moved, "edges", len(follows))
-	return nil
+	s.logMove("federation: Move accepted", origin, target)
+	return s.repo.SetRemoteActorMoveState(ctx, sqlcgen.SetRemoteActorMoveStateParams{OriginActorUrl: origin, State: "moving"})
 }
 
-// verifiedMoveTarget fetches the target fresh (a cached copy may predate the
-// alsoKnownAs that proves the move) and caches it only once it vouches.
-func (s *Service) verifiedMoveTarget(ctx context.Context, origin, target string) (sqlcgen.RemoteActor, error) {
+// moveIsRelevant: does anyone here follow the origin, or block it?
+func (s *Service) moveIsRelevant(ctx context.Context, origin, target string) (bool, error) {
+	follows, err := s.repo.ListRemoteChannelFollowsOfActor(ctx, sqlcgen.ListRemoteChannelFollowsOfActorParams{
+		RemoteActorUrl: origin, TargetActorUrl: target, ResultLimit: 1,
+	})
+	if err != nil || len(follows) > 0 {
+		return len(follows) > 0, err
+	}
+	return s.repo.IsRemoteActorBlockedByAnyone(ctx, origin)
+}
+
+// verifyMoveTarget fetches the target fresh (a cached copy may predate the
+// alsoKnownAs that proves the move) and caches it only once it vouches. Its
+// inboxes must be on its own host — the rule #361 adds as inboxesOnOwnHost;
+// dedupe once that lands.
+func (s *Service) verifyMoveTarget(ctx context.Context, origin, target string) error {
 	fa, err := s.fetchActor(ctx, target)
 	if err != nil {
-		return sqlcgen.RemoteActor{}, err
+		return err
 	}
-	if fa.ID != target || !slices.Contains(attributedActors(fa.AlsoKnownAs), origin) {
-		return sqlcgen.RemoteActor{}, errMoveUnverified
+	ownHost := sameHost(fa.Inbox, target) && (fa.Endpoints.SharedInbox == "" || sameHost(fa.Endpoints.SharedInbox, target))
+	if fa.ID != target || !ownHost || !slices.Contains(attributedActors(fa.AlsoKnownAs), origin) {
+		return errMoveUnverified
 	}
-	return s.cacheFetchedActor(ctx, target, fa)
-}
-
-// moveFollow re-points one edge: Follow the target as the user, then Undo the
-// old follow. Best-effort: a failed edge stays on the old actor for a later Move.
-func (s *Service) moveFollow(ctx context.Context, f sqlcgen.ListRemoteChannelFollowsOfActorRow, target sqlcgen.RemoteActor) bool {
-	if blocked, err := s.remoteActorBlockedBy(ctx, f.UserID, target.ActorUrl); err != nil || blocked {
-		return false
-	}
-	u, err := s.repo.GetUserActorByID(ctx, f.UserID)
-	if err == nil {
-		_, err = s.followResolvedActor(ctx, f.UserID, u.Username, target)
-	}
-	if err == nil {
-		if err = s.UnfollowRemoteChannel(ctx, f.UserID, f.ID); errors.Is(err, ErrFollowNotFound) {
-			err = nil // unfollowed meanwhile: the new follow stands
-		}
-	}
-	if err != nil {
-		s.logMove("federation: Move could not re-point a follow", "", target.ActorUrl, "follow_id", f.ID, "error", err)
-		return false
-	}
-	return true
+	_, err = s.cacheFetchedActor(ctx, target, fa)
+	return err
 }
 
 func (s *Service) logMove(msg, origin, target string, args ...any) {
