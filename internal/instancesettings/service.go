@@ -257,7 +257,7 @@ const (
 	KeyFederationAcceptRemoteComments  = "federation_accept_remote_comments"  // off = inbound Create/Update{Note} dropped after the blocked-domain check
 	KeyFederationAllowChannelFollowers = "federation_allow_channel_followers" // off = inbound channel Follows answered with a Reject
 	KeyFederationFollowerApproval      = "federation_follower_approval"       // on = new channel Follows wait PENDING in the admin queue (Accept sent on approval)
-	KeyFederationAutoFollowBack        = "federation_auto_follow_back"        // on = an accepted channel Follow triggers a follow-back FROM THAT CHANNEL'S ACTOR (vidra has no instance actor)
+	KeyFederationAutoFollowBack        = "federation_auto_follow_back"        // on = an accepted channel Follow triggers a follow-back FROM THAT CHANNEL'S ACTOR (instance followers are not followed back yet)
 
 	// Remote-URI search gates (config-parity W13). A URI- or handle-shaped
 	// search query ("https://…", "@user@host", "user@host") is resolved through

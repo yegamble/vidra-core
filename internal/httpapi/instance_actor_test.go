@@ -22,6 +22,8 @@ type instanceFedRepo struct {
 	outbox []uuid.UUID
 	// followers are instance_followers rows by id (admin_instance_follows_test.go).
 	followers map[uuid.UUID]*sqlcgen.ListInstanceFollowersRow
+	// following are instance_following rows by id (admin_instance_following_test.go).
+	following map[uuid.UUID]*sqlcgen.InstanceFollowing
 }
 
 func (r *instanceFedRepo) InstanceActorNameReserved(_ context.Context, name string) (bool, error) {

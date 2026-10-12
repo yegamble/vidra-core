@@ -57,6 +57,14 @@ type InstanceRepository interface {
 	AcceptPendingInstanceFollowerByID(ctx context.Context, id uuid.UUID) (sqlcgen.AcceptPendingInstanceFollowerByIDRow, error)
 	RejectInstanceFollowerByID(ctx context.Context, id uuid.UUID) (sqlcgen.RejectInstanceFollowerByIDRow, error)
 	DeleteInstanceFollowerByID(ctx context.Context, id uuid.UUID) (sqlcgen.DeleteInstanceFollowerByIDRow, error)
+	// Outbound instance follows (instance_following.go).
+	UpsertInstanceFollowing(ctx context.Context, arg sqlcgen.UpsertInstanceFollowingParams) (sqlcgen.InstanceFollowing, error)
+	ListInstanceFollowing(ctx context.Context, arg sqlcgen.ListInstanceFollowingParams) ([]sqlcgen.ListInstanceFollowingRow, error)
+	CountInstanceFollowing(ctx context.Context, state *string) (int64, error)
+	DeleteInstanceFollowingByID(ctx context.Context, id uuid.UUID) (sqlcgen.DeleteInstanceFollowingByIDRow, error)
+	AcceptInstanceFollowingByActivity(ctx context.Context, arg sqlcgen.AcceptInstanceFollowingByActivityParams) (int64, error)
+	RejectInstanceFollowingByActivity(ctx context.Context, arg sqlcgen.RejectInstanceFollowingByActivityParams) (int64, error)
+	HasAcceptedInstanceFollowingForHost(ctx context.Context, lower string) (bool, error)
 }
 
 // The production repository provides it; a drift here is a compile error, not

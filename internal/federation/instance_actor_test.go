@@ -27,6 +27,8 @@ type fakeInstance struct {
 	followers map[string]*sqlcgen.GetInstanceFollowerByActorRow
 	// outbox is ListInstanceOutboxVideoIDs' answer, newest first.
 	outbox []uuid.UUID
+	// following are instance_following rows, keyed by remote actor url.
+	following map[string]*sqlcgen.InstanceFollowing
 }
 
 // ListAcceptedInstanceFollowerInboxes mirrors the SQL: accepted followers'
@@ -120,7 +122,8 @@ func (f fakeRepo) DeleteInstanceFollowerByActor(_ context.Context, actor string)
 
 func newInstanceRepo() fakeRepo {
 	repo := newActorRepo()
-	repo.inst = &fakeInstance{reserved: true, followers: map[string]*sqlcgen.GetInstanceFollowerByActorRow{}}
+	repo.inst = &fakeInstance{reserved: true, followers: map[string]*sqlcgen.GetInstanceFollowerByActorRow{},
+		following: map[string]*sqlcgen.InstanceFollowing{}}
 	return repo
 }
 
