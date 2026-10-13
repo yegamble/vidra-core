@@ -734,7 +734,7 @@ func feedItemView(it video.FeedItem) videoView {
 }
 
 // handleListPublicVideos returns the public cross-channel feed. No auth
-// required. Ordered by ?sort (recent|popular|trending|likes|originally_published_at|name, default recent; unknown
+// required. Ordered by ?sort (recent|popular|trending|originally_published_at|name, default recent; unknown
 // values fall back to recent). ?scope=local|all (default local; unknown values
 // fall back to local): "all" adds federated remote videos to the feed for
 // discovery (remote-content §4), flagged remote with origin domain +

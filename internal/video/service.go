@@ -2589,7 +2589,7 @@ func remoteCard(it FeedItem, remote bool, domain, watchURL string, streamURL *st
 // the age-decayed engagement sort — a second name for it would be dishonest.
 var feedSorts = map[string]bool{
 	"recent": true, "popular": true, "trending": true,
-	"likes": true, "originally_published_at": true, "name": true,
+	"originally_published_at": true, "name": true,
 }
 
 // NormalizeFeedSort returns sort when it is a recognised mode, else "recent".
@@ -2629,7 +2629,7 @@ type FeedFilter struct {
 }
 
 // ListPublic returns the cross-channel public feed in the requested order
-// (recent|popular|trending|likes|originally_published_at|name; unknown → recent), optionally narrowed by filter,
+// (recent|popular|trending|originally_published_at|name; unknown → recent), optionally narrowed by filter,
 // each item carrying its view count and poster availability. scope=all
 // (remote-content §4) adds federated remote videos (excluded whenever a
 // tag/category/language filter is active — remote videos carry no local

@@ -12,7 +12,7 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// TestListPublicVideosSortedNewSorts proves the likes / originally_published_at
+// TestListPublicVideosSortedNewSorts proves the originally_published_at
 // / name orderings in the SQL itself (a fake cannot): the like-count subquery,
 // the COALESCE fallback to created_at, case-insensitive A-Z, and the
 // created_at/id tiebreak that keeps equal keys deterministic.
@@ -24,7 +24,7 @@ func TestListPublicVideosSortedNewSorts(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer st.Close()
-	userID, channelID, cleanup := seedUserAndChannel(t, st)
+	_, channelID, cleanup := seedUserAndChannel(t, st)
 	defer cleanup()
 
 	now := time.Now().UTC().Truncate(time.Second)
@@ -47,23 +47,6 @@ func TestListPublicVideosSortedNewSorts(t *testing.T) {
 	a := mk(p+"banana", now.Add(-1*time.Hour), ptr(now.Add(-365*24*time.Hour)))
 	b := mk(p+"Apple", now.Add(-30*time.Minute), ptr(old))
 	c := mk(p+"cherry", now.Add(-2*time.Hour), nil)
-
-	// Likes: a=2 (two users), b=1, c=0.
-	var u2 uuid.UUID
-	if err := st.Pool.QueryRow(ctx,
-		`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
-		"lk-"+p, "lk-"+p+"@example.test").Scan(&u2); err != nil {
-		t.Fatalf("seed user2: %v", err)
-	}
-	defer func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, u2) }()
-	for _, r := range []struct {
-		v, u   uuid.UUID
-		rating string
-	}{{a, userID, "like"}, {a, u2, "like"}, {b, userID, "like"}, {c, userID, "dislike"}} {
-		if _, err := st.Pool.Exec(ctx, `INSERT INTO video_ratings (video_id, user_id, rating) VALUES ($1,$2,$3)`, r.v, r.u, r.rating); err != nil {
-			t.Fatalf("rate: %v", err)
-		}
-	}
 
 	order := func(sort string) []uuid.UUID {
 		t.Helper()
@@ -93,7 +76,6 @@ func TestListPublicVideosSortedNewSorts(t *testing.T) {
 			}
 		}
 	}
-	check("likes", a, b, c)
 	check("name", b, a, c) // Apple < banana < cherry, case-insensitive
 	// b original 2d ago, c created 2h ago (no original), a original a year ago.
 	check("originally_published_at", c, b, a)

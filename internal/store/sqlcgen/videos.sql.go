@@ -63,7 +63,6 @@ FROM (
            0::int AS web_video_count,
            0::bigint AS size_bytes,
            EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked,
-           0::bigint AS like_count,
            0::bigint AS comment_count
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -1024,7 +1023,6 @@ FROM (
            0::bigint AS size_bytes,
            EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked,
            ''::text AS moderation_note,
-           0::bigint AS like_count,
            0::bigint AS comment_count
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -1867,10 +1865,6 @@ FROM (
            v.created_at, v.updated_at,
            COALESCE(vc.views, 0)::bigint AS views,
            COALESCE(v.originally_published_at, v.created_at) AS sort_at,
-           CASE WHEN $1::text = 'likes'
-                THEN (SELECT count(*) FROM video_ratings vr
-                       WHERE vr.video_id = v.id AND vr.rating = 'like')
-                ELSE 0 END::bigint AS like_count,
            EXISTS (
                SELECT 1 FROM video_files f
                WHERE f.video_id = v.id AND f.kind = 'thumbnail'
@@ -1889,28 +1883,28 @@ FROM (
     JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
-    WHERE (v.privacy = 'public' OR (v.privacy = 'internal' AND $2::uuid IS NOT NULL))
+    WHERE (v.privacy = 'public' OR (v.privacy = 'internal' AND $1::uuid IS NOT NULL))
       AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_accounts m
-          WHERE m.muter_id = $2 AND m.muted_id = c.owner_id
+          WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
       )
       -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
       AND NOT EXISTS (
           SELECT 1 FROM user_blocks ub
-          WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
+          WHERE ub.blocker_id = $1 AND ub.blocked_id = c.owner_id
       )
-      AND ($3::text IS NULL OR EXISTS (
-          SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $3
+      AND ($2::text IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $2
       ))
-      AND ($4::text IS NULL OR v.category = $4)
-      AND ($5::text IS NULL OR v.language = $5)
+      AND ($3::text IS NULL OR v.category = $3)
+      AND ($4::text IS NULL OR v.language = $4)
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND (NOT $6::bool OR NOT v.is_sensitive)
+      AND (NOT $5::bool OR NOT v.is_sensitive)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -1919,7 +1913,6 @@ FROM (
            COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
            0::bigint AS views,
            COALESCE(rv.published_at, rv.fetched_at) AS sort_at,
-           0::bigint AS like_count,
            (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
            (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
            ra.preferred_username AS channel_display_name,
@@ -1933,17 +1926,17 @@ FROM (
            ''::text AS short_code
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
-    WHERE $7::bool
+    WHERE $6::bool
+      AND $2::text IS NULL
       AND $3::text IS NULL
       AND $4::text IS NULL
-      AND $5::text IS NULL
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
-      AND (NOT $6::bool OR NOT rv.is_sensitive)
+      AND (NOT $5::bool OR NOT rv.is_sensitive)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
-          WHERE mi.muter_id = $2 AND mi.domain = ra.domain
+          WHERE mi.muter_id = $1 AND mi.domain = ra.domain
       )
       -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
       -- only control a viewer had against one remote person was blocking their
@@ -1961,31 +1954,30 @@ FROM (
       -- only the admin half, which is exactly the difference between the scopes.
       AND NOT EXISTS (
           SELECT 1 FROM remote_actor_block_reach rab
-          WHERE (rab.blocker_id = $2 OR rab.blocker_id IS NULL)
+          WHERE (rab.blocker_id = $1 OR rab.blocker_id IS NULL)
             AND rab.actor_url = rv.remote_actor_url
       )
 ) AS feed
 ORDER BY
-    CASE WHEN $1::text = 'popular' THEN feed.views END DESC,
-    CASE WHEN $1::text = 'trending'
+    CASE WHEN $7::text = 'popular' THEN feed.views END DESC,
+    CASE WHEN $7::text = 'trending'
          THEN feed.views::float8
               / power(EXTRACT(EPOCH FROM (now() - feed.created_at)) / 3600.0 + 2.0, 1.5)
     END DESC,
-    CASE WHEN $1::text = 'likes' THEN feed.like_count END DESC,
-    CASE WHEN $1::text = 'originally_published_at' THEN feed.sort_at END DESC,
-    CASE WHEN $1::text = 'name' THEN lower(feed.title) END ASC,
+    CASE WHEN $7::text = 'originally_published_at' THEN feed.sort_at END DESC,
+    CASE WHEN $7::text = 'name' THEN lower(feed.title) END ASC,
     feed.created_at DESC, feed.id DESC
 LIMIT $9 OFFSET $8
 `
 
 type ListPublicVideosSortedParams struct {
-	Sort          string      `json:"sort"`
 	ViewerID      pgtype.UUID `json:"viewer_id"`
 	Tag           *string     `json:"tag"`
 	Category      *string     `json:"category"`
 	Language      *string     `json:"language"`
 	HideSensitive bool        `json:"hide_sensitive"`
 	IncludeRemote bool        `json:"include_remote"`
+	Sort          string      `json:"sort"`
 	ResultOffset  int32       `json:"result_offset"`
 	ResultLimit   int32       `json:"result_limit"`
 }
@@ -2020,14 +2012,12 @@ type ListPublicVideosSortedRow struct {
 //	recent   -> newest first (the NULL CASE terms fall through to created_at)
 //	popular  -> most all-time views first
 //	trending -> views decayed by age (Hacker-News-style gravity)
-//	likes    -> most 'like' ratings first (remote rows carry none: 0)
 //	originally_published_at -> newest first by the creator-declared original
 //	            date, falling back to created_at when unset (and for remote rows)
 //	name     -> title A-Z, case-insensitive
 //
 // Every mode ends in the same created_at DESC, id DESC tiebreak, so a page
-// boundary is deterministic. The like count is a correlated subquery evaluated
-// ONLY under sort=likes (the CASE guard), so the other modes pay nothing.
+// boundary is deterministic. (No likes sort: it needs a denormalised counter.)
 // Optional filters (NULL = off): tag (exact, tags are stored lowercased),
 // category, and language (taxonomy ids; validated by the HTTP layer).
 // include_remote (feed ?scope=all, remote-content §4) UNIONs in federated
@@ -2040,13 +2030,13 @@ type ListPublicVideosSortedRow struct {
 // (0160); an anonymous one, and every federated/RSS/sitemap caller, does not.
 func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVideosSortedParams) ([]ListPublicVideosSortedRow, error) {
 	rows, err := q.db.Query(ctx, listPublicVideosSorted,
-		arg.Sort,
 		arg.ViewerID,
 		arg.Tag,
 		arg.Category,
 		arg.Language,
 		arg.HideSensitive,
 		arg.IncludeRemote,
+		arg.Sort,
 		arg.ResultOffset,
 		arg.ResultLimit,
 	)
