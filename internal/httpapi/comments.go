@@ -166,6 +166,21 @@ func (s *Server) canReviewComments(ctx context.Context, userID uuid.UUID, role s
 	return isStaff(role) || v.OwnerID == userID || s.canManageChannelContent(ctx, userID, v.ChannelID)
 }
 
+// watchedWordHolds: does body match a "hold" watched-word list for videoID
+// (instance lists + the video owner's)? Best-effort — a lookup failure must not
+// block the comment, so it fails open (published, still flagged afterwards).
+func (s *Server) watchedWordHolds(ctx context.Context, videoID uuid.UUID, body string) bool {
+	if s.watchwordsvc == nil {
+		return false
+	}
+	hold, err := s.watchwordsvc.ShouldHold(ctx, videoID, body)
+	if err != nil {
+		s.logger.WarnContext(ctx, "watched-word hold check failed", "error", err, "video_id", videoID)
+		return false
+	}
+	return hold
+}
+
 // handleCreateComment posts a comment on a public, published video. Behind requireAuth.
 func (s *Server) handleCreateComment(c echo.Context) error {
 	userID, role, err := mustPrincipal(c)
@@ -209,11 +224,18 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 	}
 	// requires_approval (0161): a non-reviewer's comment is HELD until approved.
 	create := s.commentsvc.Create
+	body := strings.TrimSpace(in.Body)
 	held := v.CommentsPolicy == video.CommentsPolicyRequiresApproval && !s.canReviewComments(ctx, userID, role, v)
+	// A "hold" watched-word list (0172) parks the comment through this SAME path.
+	// Decided before the write, so a held comment is never announced; the people
+	// who manage the video are exempt, exactly as they are from the policy.
+	if !held && s.watchedWordHolds(ctx, videoID, body) && !s.canReviewComments(ctx, userID, role, v) {
+		held = true
+	}
 	if held {
 		create = s.commentsvc.CreateHeld
 	}
-	created, err := create(ctx, videoID, userID, strings.TrimSpace(in.Body), in.parentID())
+	created, err := create(ctx, videoID, userID, body, in.parentID())
 	if err != nil {
 		// A held parent answers exactly like an unknown one (0161).
 		if errors.Is(err, comment.ErrParentNotFound) || errors.Is(err, comment.ErrParentHeld) {
@@ -427,10 +449,12 @@ func (s *Server) handleUpdateComment(c echo.Context) error {
 	if lookupErr != nil && !errors.Is(lookupErr, comment.ErrNotFound) {
 		return lookupErr
 	}
-	if lookupErr == nil && !reviewer && v.CommentsPolicy == video.CommentsPolicyRequiresApproval {
+	editBody := strings.TrimSpace(in.Body)
+	if lookupErr == nil && !reviewer &&
+		(v.CommentsPolicy == video.CommentsPolicyRequiresApproval || s.watchedWordHolds(ctx, v.ID, editBody)) {
 		edit = s.commentsvc.EditForReview
 	}
-	updated, err := edit(ctx, id, userID, strings.TrimSpace(in.Body))
+	updated, err := edit(ctx, id, userID, editBody)
 	if err != nil {
 		switch {
 		case errors.Is(err, comment.ErrNotFound):

@@ -1402,6 +1402,17 @@ type WatchedWord struct {
 	Word      string      `json:"word"`
 	CreatedBy pgtype.UUID `json:"created_by"`
 	CreatedAt time.Time   `json:"created_at"`
+	ListID    pgtype.UUID `json:"list_id"`
+}
+
+type WatchedWordList struct {
+	ID        uuid.UUID   `json:"id"`
+	OwnerID   pgtype.UUID `json:"owner_id"`
+	Name      string      `json:"name"`
+	Action    string      `json:"action"`
+	IsDefault bool        `json:"is_default"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
 }
 
 type WatchedWordMatch struct {
@@ -1420,4 +1431,7 @@ type WatchedWordMatch struct {
 	ResolvedBy              pgtype.UUID        `json:"resolved_by"`
 	ResolvedAt              pgtype.Timestamptz `json:"resolved_at"`
 	AuthoredRemoteCommentID pgtype.UUID        `json:"authored_remote_comment_id"`
+	ListID                  pgtype.UUID        `json:"list_id"`
+	ListName                string             `json:"list_name"`
+	ListOwnerID             pgtype.UUID        `json:"list_owner_id"`
 }

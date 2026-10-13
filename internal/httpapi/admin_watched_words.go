@@ -142,6 +142,7 @@ func (s *Server) handleDeleteWatchedWord(c echo.Context) error {
 type watchedWordMatchView struct {
 	ID                      string     `json:"id"`
 	Word                    string     `json:"word"`
+	ListName                string     `json:"list_name,omitempty"`
 	Type                    string     `json:"type"`
 	CommentID               string     `json:"comment_id,omitempty"`
 	AuthoredRemoteCommentID string     `json:"authored_remote_comment_id,omitempty"`
@@ -195,6 +196,7 @@ func (s *Server) handleListWatchedWordMatches(c echo.Context) error {
 		view := watchedWordMatchView{
 			ID:                 m.ID.String(),
 			Word:               m.Word,
+			ListName:           m.ListName,
 			Type:               m.Type,
 			VideoID:            m.VideoID.String(),
 			VideoTitle:         m.VideoTitle,

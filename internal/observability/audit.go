@@ -91,6 +91,12 @@ const (
 	// actually removed.
 	ActionAdminWatchedWordCreate = "admin.watched_word.create"
 	ActionAdminWatchedWordDelete = "admin.watched_word.delete"
+	// ActionAdminWatchedWordList* record a moderator creating / changing /
+	// deleting a named INSTANCE list (0172); the resource is the list id and no
+	// name or term is recorded. A creator's own lists are theirs and not audited.
+	ActionAdminWatchedWordListCreate = "admin.watched_word_list.create"
+	ActionAdminWatchedWordListUpdate = "admin.watched_word_list.update"
+	ActionAdminWatchedWordListDelete = "admin.watched_word_list.delete"
 	// ActionAdminCommentBulkRemove records a moderator removing every comment of
 	// one account in one request. The resource is the account (id, or a
 	// fingerprint for a remote actor URL); metadata carries only the count.
