@@ -71,6 +71,13 @@ type fakeRepo struct {
 	// adminActorBlocks are the instance-wide per-actor blocks (0142), keyed by
 	// actor url.
 	adminActorBlocks map[string]string
+	// backfillIDs are the videos ListChannelBackfillVideoIDs returns per channel
+	// (the canonical-predicate SQL is proven by the integration test; the fake
+	// serves what that query would), already ordered newest first.
+	backfillIDs map[uuid.UUID][]uuid.UUID
+	// backfillClaims records the host|channel pairs the cooldown ledger holds (nil = every
+	// claim succeeds).
+	backfillClaims map[string]bool
 	// inst is the instance actor's 0166 state (instance_actor_test.go); nil =
 	// the name is not the instance actor's, so it is not served.
 	inst *fakeInstance
@@ -78,6 +85,35 @@ type fakeRepo struct {
 	// never expires inside a test.
 	moveClaims map[string]string
 	moveStates map[string]string // origin → claimed | moving | done (absent = claimed)
+}
+
+func (f fakeRepo) ListChannelBackfillVideoIDs(_ context.Context, arg sqlcgen.ListChannelBackfillVideoIDsParams) ([]uuid.UUID, error) {
+	ids := f.backfillIDs[arg.ChannelID]
+	if int32(len(ids)) > arg.ResultLimit {
+		ids = ids[:arg.ResultLimit]
+	}
+	return ids, nil
+}
+
+func (f fakeRepo) ClaimChannelFollowerBackfill(_ context.Context, arg sqlcgen.ClaimChannelFollowerBackfillParams) (int64, error) {
+	if f.backfillClaims == nil {
+		return 1, nil
+	}
+	key := arg.Host + "|" + arg.ChannelID.String()
+	if f.backfillClaims[key] {
+		return 0, nil
+	}
+	n := int32(0)
+	for k := range f.backfillClaims {
+		if strings.HasPrefix(k, arg.Host+"|") {
+			n++
+		}
+	}
+	if n >= arg.HostChannelCap {
+		return 0, nil
+	}
+	f.backfillClaims[key] = true
+	return 1, nil
 }
 
 func (f fakeRepo) ReleaseRemoteActorMove(_ context.Context, origin string) error {

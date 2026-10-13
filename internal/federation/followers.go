@@ -95,6 +95,7 @@ func (s *Service) ApproveFollowerRequest(ctx context.Context, id uuid.UUID) erro
 	if err := s.enqueueAcceptFollow(ctx, ch.ID, ch.Handle, row.RemoteActorUrl, row.FollowActivityUrl); err != nil {
 		return err
 	}
+	s.backfillAfterAccept(ctx, ch.ID, ch.Handle, row.RemoteActorUrl)
 	return s.maybeAutoFollowBack(ctx, ch.ID, ch.Handle, row.RemoteActorUrl)
 }
 
