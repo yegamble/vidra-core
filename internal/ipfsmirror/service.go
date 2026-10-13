@@ -209,6 +209,9 @@ type Config struct {
 	// Service.collectGarbage for why this is off by default and what leaving it off
 	// costs a moderator.
 	GCAfterUnpin bool
+	// RepoBudgetBytes is the unmanaged-node ceiling (IPFS_REPO_BUDGET_BYTES, 0 =
+	// none). See Service.unmanagedAdmits.
+	RepoBudgetBytes int64
 	// Catalog is the read-only source the one-shot admin backfill (P19.6) scans to
 	// seed pin intents for pre-existing eligible objects. Nil except in the wiring
 	// that serves POST /admin/ipfs/reconcile; Backfill errors cleanly when it is nil.
@@ -238,6 +241,7 @@ type Service struct {
 	control             *ipfscontrol.Service
 	pauseMu             sync.Mutex
 	pauseReason         string // last admission-pause reason logged (observeAdmission)
+	repoBudget          int64  // unmanaged-node ceiling in repo/stat bytes; 0 = none (F3)
 	legacyPublicEnabled bool
 	repo                Repository
 	lookups             Lookups
@@ -315,6 +319,7 @@ func New(repo Repository, lookups Lookups, blobs storage.Backend, client ipfs.Cl
 		// no-ops only when both are off.
 		enabled:        cfg.Enabled || cfg.PrivateEnabled,
 		gcAfterUnpin:   cfg.GCAfterUnpin,
+		repoBudget:     cfg.RepoBudgetBytes,
 		gatewayURL:     cfg.GatewayURL,
 		clusterEnabled: cfg.ClusterEnabled,
 		addTimeout:     cfg.AddTimeout,
@@ -1226,6 +1231,9 @@ func (s *Service) drainNetwork(ctx context.Context, nc netClient, batch int) (in
 		go func(row sqlcgen.ClaimDueIPFSPinsRow) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			if row.State == "pending" && !s.unmanagedAdmits(ctx, nc) {
+				return // over the F3 ceiling: the claim's lease is the retry delay
+			}
 			if !s.process(ctx, nc, row) {
 				return
 			}

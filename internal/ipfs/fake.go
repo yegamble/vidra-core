@@ -49,6 +49,9 @@ type FakeIPFSClient struct {
 	// to assert that a failed collection never moves a ledger row.
 	GCErr error
 
+	// RepoSizeBytes is what RepoSize reports (the F3 budget tests set it).
+	RepoSizeBytes int64
+
 	// content maps CID → stored bytes; pins is the set of currently-pinned CIDs.
 	content map[string][]byte
 	pins    map[string]bool
@@ -61,6 +64,7 @@ type FakeIPFSClient struct {
 }
 
 var _ Client = (*FakeIPFSClient)(nil)
+var _ RepoSizer = (*FakeIPFSClient)(nil)
 
 // errNodeDown is returned by every method when Down is set.
 var errNodeDown = errors.New("ipfs: fake node is down")
@@ -238,6 +242,16 @@ func (f *FakeIPFSClient) ListPins(ctx context.Context, max int) (map[string]stru
 // half of a takedown that A31 measured by hand: after an unpin the bytes are
 // STILL there (Content still answers, a gateway would still serve them) until
 // this runs.
+// RepoSize reports RepoSizeBytes (and fails when the node is Down).
+func (f *FakeIPFSClient) RepoSize(ctx context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.Down {
+		return 0, errNodeDown
+	}
+	return f.RepoSizeBytes, nil
+}
+
 func (f *FakeIPFSClient) RepoGC(ctx context.Context) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -260,3 +260,25 @@ func TestIntegrationPublicVideoRoundTrip(t *testing.T) {
 
 	getViaPublicGatewayEventually(t, publicGateway, res.CID, data)
 }
+
+// TestIntegrationRepoSizeMatchesRepoStat: F3's budget reads this; it must be the
+// node's own RepoSize and it must grow when a block is added.
+func TestIntegrationRepoSizeMatchesRepoStat(t *testing.T) {
+	c, _ := testClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	before, err := c.RepoSize(ctx)
+	if err != nil || before <= 0 {
+		t.Fatalf("RepoSize = %d, %v", before, err)
+	}
+	payload := bytes.Repeat([]byte(fmt.Sprintf("repo-size-%d-", time.Now().UnixNano())), 4096)
+	res, err := c.Add(ctx, "repo-size.bin", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Unpin(context.Background(), res.CID) })
+	after, err := c.RepoSize(ctx)
+	if err != nil || after < before+int64(len(payload)) {
+		t.Fatalf("RepoSize after add = %d, %v; want at least %d", after, err, before+int64(len(payload)))
+	}
+}

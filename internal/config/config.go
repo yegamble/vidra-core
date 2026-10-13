@@ -950,6 +950,14 @@ type Config struct {
 	// 404. An operator who needs a takedown to complete on their own gateway
 	// promptly turns this on, or runs the node with --enable-gc.
 	IPFSGCAfterUnpin bool
+	// IPFSRepoBudgetBytes is the ceiling for an UNMANAGED node (Tier A F3): when the
+	// node's repo/stat RepoSize reaches it, the legacy drain stops ADDING (unpins
+	// still run). 0, the default, is no ceiling — the behaviour before this knob
+	// existed. It is a repo-size budget, not a free-space floor: core cannot statvfs
+	// a node it only reaches over RPC, so set it below disk size minus database
+	// growth minus media scratch. Ignored once a managed policy is adopted (the
+	// managed budget governs then).
+	IPFSRepoBudgetBytes int64
 	// IPFSMirrorPrivate is the master opt-in for the PRIVATE mirroring tier
 	// (fix_plan P19.P, .ralph/specs/ipfs-media-private.md). It defaults false and,
 	// when true, REQUIRES a dedicated private-swarm kubo at IPFSPrivateAPIURL —
@@ -1346,6 +1354,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		IPFSReconcileInterval:                  p.Duration("IPFS_RECONCILE_INTERVAL", 5*time.Minute),
 		IPFSHealthProbeInterval:                p.Duration("IPFS_HEALTH_PROBE_INTERVAL", DefaultIPFSHealthProbeInterval),
 		IPFSGCAfterUnpin:                       p.Bool("IPFS_GC_AFTER_UNPIN", false),
+		IPFSRepoBudgetBytes:                    p.Int64("IPFS_REPO_BUDGET_BYTES", 0),
 		IPFSMirrorPrivate:                      p.Bool("IPFS_MIRROR_PRIVATE", false),
 		IPFSClusterAPIURL:                      strings.TrimRight(getEnv("IPFS_CLUSTER_API_URL", ""), "/"),
 		IPFSClusterToken:                       getEnv("IPFS_CLUSTER_TOKEN", ""),
@@ -2235,6 +2244,10 @@ func (c *Config) validateIPFS() error {
 		errs = append(errs, varErrorf("IPFS_HEALTH_PROBE_INTERVAL",
 			"config: IPFS_HEALTH_PROBE_INTERVAL must be at least %s (got %s): each probe is a gateway fetch plus one pin/ls per swarm, in every process, so a shorter interval is a load generator rather than a health check; the default is %s",
 			MinIPFSHealthProbeInterval, c.IPFSHealthProbeInterval, DefaultIPFSHealthProbeInterval))
+	}
+	if c.IPFSRepoBudgetBytes < 0 {
+		errs = append(errs, varErrorf("IPFS_REPO_BUDGET_BYTES",
+			"config: IPFS_REPO_BUDGET_BYTES must be 0 (no ceiling) or a positive byte count (got %d)", c.IPFSRepoBudgetBytes))
 	}
 	if !c.IPFSEnabled && c.IPFSManagerSocket == "" {
 		return errors.Join(errs...)
