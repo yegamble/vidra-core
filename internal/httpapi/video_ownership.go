@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -11,7 +12,7 @@ import (
 )
 
 // Video ownership changes (T21, migration 0165): the owner offers a video to
-// another local user, who accepts or refuses. Writes
+// another local user, who answers from GET /me/video-ownership-changes. Writes
 // ride the general API rate limit every other route here does.
 
 type giveOwnershipRequest struct {
@@ -70,6 +71,53 @@ func (s *Server) handleCancelVideoOwnership(c echo.Context) error {
 		return ownershipError(err)
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+type ownershipVideoView struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+type ownershipInitiatorView struct {
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+}
+
+type videoOwnershipChangeView struct {
+	ID        string                 `json:"id"`
+	Status    string                 `json:"status"`
+	CreatedAt time.Time              `json:"created_at"`
+	UpdatedAt time.Time              `json:"updated_at"`
+	Video     ownershipVideoView     `json:"video"`
+	Initiator ownershipInitiatorView `json:"initiator"`
+}
+
+type videoOwnershipChangeListResponse struct {
+	Changes []videoOwnershipChangeView `json:"changes"`
+	pageMeta
+}
+
+// handleListVideoOwnershipChanges: GET /me/video-ownership-changes — the
+// requests addressed to the caller, newest first, standard page envelope.
+func (s *Server) handleListVideoOwnershipChanges(c echo.Context) error {
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
+	}
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	rows, total, err := s.videosvc.ListIncomingOwnershipChanges(c.Request().Context(), userID, page.Limit32(), page.Offset32())
+	if err != nil {
+		return ownershipError(err)
+	}
+	views := make([]videoOwnershipChangeView, 0, len(rows))
+	for _, r := range rows {
+		views = append(views, videoOwnershipChangeView{
+			ID: r.ID.String(), Status: r.Status, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			Video:     ownershipVideoView{ID: r.VideoID.String(), Title: r.VideoTitle},
+			Initiator: ownershipInitiatorView{Username: r.InitiatorUsername, DisplayName: r.InitiatorDisplayName},
+		})
+	}
+	return c.JSON(http.StatusOK, videoOwnershipChangeListResponse{Changes: views, pageMeta: page.meta(total)})
 }
 
 // ownershipError maps the ownership-change sentinels; anything else falls

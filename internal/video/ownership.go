@@ -47,6 +47,8 @@ type OwnershipRepository interface {
 	HasPendingVideoOwnershipChange(ctx context.Context, videoID uuid.UUID) (bool, error)
 	HasRecentOwnershipRefusal(ctx context.Context, arg sqlcgen.HasRecentOwnershipRefusalParams) (bool, error)
 	CancelVideoOwnershipChange(ctx context.Context, arg sqlcgen.CancelVideoOwnershipChangeParams) (int64, error)
+	ListIncomingVideoOwnershipChanges(ctx context.Context, arg sqlcgen.ListIncomingVideoOwnershipChangesParams) ([]sqlcgen.ListIncomingVideoOwnershipChangesRow, error)
+	CountIncomingVideoOwnershipChanges(ctx context.Context, nextOwnerID uuid.UUID) (int64, error)
 }
 
 const (
@@ -139,6 +141,25 @@ func (s *Service) GiveOwnership(ctx context.Context, actorID, videoID uuid.UUID,
 		return sqlcgen.VideoOwnershipChange{}, false, err
 	}
 	return oc, !to.MutedInitiator, nil
+}
+
+// ListIncomingOwnershipChanges pages the requests addressed to userID, newest
+// first, with the total for the page envelope. Titles are the snapshot taken
+// when each was offered; a pending request that can no longer be accepted reads
+// 'expired'.
+func (s *Service) ListIncomingOwnershipChanges(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]sqlcgen.ListIncomingVideoOwnershipChangesRow, int64, error) {
+	if s.own == nil {
+		return nil, 0, ErrOwnershipUnavailable
+	}
+	rows, err := s.own.ListIncomingVideoOwnershipChanges(ctx, sqlcgen.ListIncomingVideoOwnershipChangesParams{
+		NextOwnerID: userID, ExpiredBefore: time.Now().Add(-OwnershipOfferWindow),
+		ResultLimit: limit, ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.own.CountIncomingVideoOwnershipChanges(ctx, userID)
+	return rows, total, err
 }
 
 // CancelOwnershipChange withdraws the caller's pending offer of videoID.
