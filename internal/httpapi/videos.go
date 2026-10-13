@@ -27,6 +27,7 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
+	"github.com/vidra/vidra-core/internal/viewerprefs"
 )
 
 // validVideoPrivacy is the allowed privacy set; empty defaults to "private".
@@ -764,7 +765,9 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 	filter := video.FeedFilter{
 		Tag:      strings.TrimSpace(c.QueryParam("tag")),
 		Category: strings.TrimSpace(c.QueryParam("category")),
-		Language: strings.TrimSpace(c.QueryParam("language")),
+		// ?language takes one id or a comma-separated list (a viewer's
+		// preferred languages); a video matches ANY of them.
+		Languages: splitLanguages(c.QueryParam("language")),
 		// Sensitive-content policy "hide" is enforced server-side on the public
 		// discovery surfaces only (instance-platform-info), now per-viewer (0100):
 		// a signed-in caller's override wins, else the instance policy.
@@ -777,8 +780,14 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 	if filter.Category != "" && !video.IsCategory(filter.Category) {
 		fes = append(fes, FieldError{Field: "category", Message: "unknown category"})
 	}
-	if filter.Language != "" && !video.IsLanguage(filter.Language) {
-		fes = append(fes, FieldError{Field: "language", Message: "unknown language"})
+	for _, l := range filter.Languages {
+		if !video.IsLanguage(l) {
+			fes = append(fes, FieldError{Field: "language", Message: "unknown language"})
+			break
+		}
+	}
+	if len(filter.Languages) > viewerprefs.MaxPreferredLanguages {
+		fes = append(fes, FieldError{Field: "language", Message: "at most 10 languages"})
 	}
 	if len(fes) > 0 {
 		return &ValidationError{Fields: fes}
@@ -2227,4 +2236,16 @@ func validateSensitiveFlags(flags []string) []FieldError {
 		}
 	}
 	return nil
+}
+
+// splitLanguages parses ?language: one id or a comma-separated list, trimmed,
+// empties dropped.
+func splitLanguages(raw string) []string {
+	var out []string
+	for _, l := range strings.Split(raw, ",") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
 }

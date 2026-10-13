@@ -2664,6 +2664,10 @@ type FeedFilter struct {
 	Tag      string
 	Category string
 	Language string
+	// Languages (browse feed only; search uses the single Language) are
+	// language taxonomy ids: a video matches when its language is ANY of them.
+	// Empty = no filter.
+	Languages []string
 	// License is a taxonomy id honoured by the SEARCH path only — the feed
 	// queries have no predicate for it, so it is ignored by ListPublic.
 	License string
@@ -2682,7 +2686,10 @@ type FeedFilter struct {
 func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, int64, error) {
 	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
 	includeRemote := NormalizeFeedScope(scope) == FeedScopeAll
-	tag, category, language := nilIfEmpty(strings.ToLower(filter.Tag)), nilIfEmpty(filter.Category), nilIfEmpty(filter.Language)
+	tag, category, language := nilIfEmpty(strings.ToLower(filter.Tag)), nilIfEmpty(filter.Category), filter.Languages
+	if len(language) == 0 {
+		language = nil // NULL = no filter; an empty array would match nothing
+	}
 	rows, err := s.repo.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
 		Sort:          NormalizeFeedSort(sort),
 		IncludeRemote: includeRemote,

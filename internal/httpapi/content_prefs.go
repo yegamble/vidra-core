@@ -12,12 +12,15 @@ import (
 // contentPrefsResponse is the GET/PUT /me/content-preferences body.
 type contentPrefsResponse struct {
 	SensitiveFlagPolicies map[string]string `json:"sensitive_flag_policies"`
+	PreferredLanguages    []string          `json:"preferred_languages"`
 }
 
-// updateContentPrefsRequest replaces the viewer's per-flag overrides; an empty
-// value for a flag means inherit.
+// updateContentPrefsRequest is a merge: an omitted field keeps its stored
+// value. sensitive_flag_policies replaces the overrides (an empty value for a
+// flag means inherit); preferred_languages replaces the list ([] clears).
 type updateContentPrefsRequest struct {
 	SensitiveFlagPolicies map[string]string `json:"sensitive_flag_policies"`
+	PreferredLanguages    *[]string         `json:"preferred_languages"`
 }
 
 func (s *Server) handleGetContentPrefs(c echo.Context) error {
@@ -29,7 +32,7 @@ func (s *Server) handleGetContentPrefs(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, contentPrefsResponse{SensitiveFlagPolicies: p.SensitiveFlagPolicies})
+	return c.JSON(http.StatusOK, contentPrefsResponse{SensitiveFlagPolicies: p.SensitiveFlagPolicies, PreferredLanguages: p.PreferredLanguages})
 }
 
 func (s *Server) handleUpdateContentPrefs(c echo.Context) error {
@@ -41,7 +44,9 @@ func (s *Server) handleUpdateContentPrefs(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	p, err := s.viewerprefssvc.SetSensitiveFlagPolicies(c.Request().Context(), userID, in.SensitiveFlagPolicies)
+	p, err := s.viewerprefssvc.Update(c.Request().Context(), userID, viewerprefs.Patch{
+		SensitiveFlagPolicies: in.SensitiveFlagPolicies, PreferredLanguages: in.PreferredLanguages,
+	})
 	if err != nil {
 		var ve *viewerprefs.ValidationError
 		if errors.As(err, &ve) {
@@ -49,5 +54,5 @@ func (s *Server) handleUpdateContentPrefs(c echo.Context) error {
 		}
 		return err
 	}
-	return c.JSON(http.StatusOK, contentPrefsResponse{SensitiveFlagPolicies: p.SensitiveFlagPolicies})
+	return c.JSON(http.StatusOK, contentPrefsResponse{SensitiveFlagPolicies: p.SensitiveFlagPolicies, PreferredLanguages: p.PreferredLanguages})
 }

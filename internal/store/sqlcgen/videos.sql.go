@@ -295,7 +295,7 @@ FROM (
           SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $2
       ))
       AND ($3::text IS NULL OR v.category = $3)
-      AND ($4::text IS NULL OR v.language = $4)
+      AND ($4::text[] IS NULL OR v.language = ANY($4::text[]))
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
@@ -323,7 +323,7 @@ FROM (
     WHERE $6::bool
       AND $2::text IS NULL
       AND $3::text IS NULL
-      AND $4::text IS NULL
+      AND $4::text[] IS NULL
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
@@ -358,7 +358,7 @@ type CountPublicVideosSortedParams struct {
 	ViewerID      pgtype.UUID `json:"viewer_id"`
 	Tag           *string     `json:"tag"`
 	Category      *string     `json:"category"`
-	Language      *string     `json:"language"`
+	Language      []string    `json:"language"`
 	HideSensitive bool        `json:"hide_sensitive"`
 	IncludeRemote bool        `json:"include_remote"`
 }
@@ -1920,7 +1920,7 @@ FROM (
           SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $2
       ))
       AND ($3::text IS NULL OR v.category = $3)
-      AND ($4::text IS NULL OR v.language = $4)
+      AND ($4::text[] IS NULL OR v.language = ANY($4::text[]))
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
@@ -1950,7 +1950,7 @@ FROM (
     WHERE $6::bool
       AND $2::text IS NULL
       AND $3::text IS NULL
-      AND $4::text IS NULL
+      AND $4::text[] IS NULL
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
@@ -1995,7 +1995,7 @@ type ListPublicVideosSortedParams struct {
 	ViewerID      pgtype.UUID `json:"viewer_id"`
 	Tag           *string     `json:"tag"`
 	Category      *string     `json:"category"`
-	Language      *string     `json:"language"`
+	Language      []string    `json:"language"`
 	HideSensitive bool        `json:"hide_sensitive"`
 	IncludeRemote bool        `json:"include_remote"`
 	Sort          string      `json:"sort"`

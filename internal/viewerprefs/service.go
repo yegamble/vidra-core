@@ -19,7 +19,7 @@ import (
 // Querier is the slice of the sqlc queries the service needs.
 type Querier interface {
 	GetUserContentPrefs(ctx context.Context, userID uuid.UUID) (sqlcgen.UserContentPref, error)
-	UpsertUserSensitiveFlagPolicies(ctx context.Context, arg sqlcgen.UpsertUserSensitiveFlagPoliciesParams) (sqlcgen.UserContentPref, error)
+	UpsertUserContentPrefs(ctx context.Context, arg sqlcgen.UpsertUserContentPrefsParams) (sqlcgen.UserContentPref, error)
 }
 
 // ValidationError is a rejected value; the HTTP layer maps it to 400.
@@ -32,7 +32,21 @@ type Prefs struct {
 	// SensitiveFlagPolicies maps a flag (violent|shocking|sex) to
 	// hide|warn|blur|display. An absent flag inherits the viewer's base policy.
 	SensitiveFlagPolicies map[string]string
+	// PreferredLanguages are the video language ids the viewer wants in their
+	// feeds (empty = no filter). The client sends them as the feed's ?language.
+	PreferredLanguages []string
 }
+
+// Patch is a partial update: nil leaves a field as stored.
+type Patch struct {
+	// SensitiveFlagPolicies REPLACES the overrides when non-nil.
+	SensitiveFlagPolicies map[string]string
+	// PreferredLanguages REPLACES the language list when non-nil ([] clears).
+	PreferredLanguages *[]string
+}
+
+// MaxPreferredLanguages bounds the list; the feed filter is an ANY() over it.
+const MaxPreferredLanguages = 10
 
 // Service reads and writes viewer preferences.
 type Service struct{ q Querier }
@@ -43,14 +57,18 @@ func NewService(q Querier) *Service { return &Service{q: q} }
 func decode(row sqlcgen.UserContentPref) Prefs {
 	m := map[string]string{}
 	_ = json.Unmarshal(row.SensitiveFlagPolicies, &m)
-	return Prefs{SensitiveFlagPolicies: m}
+	langs := row.PreferredLanguages
+	if langs == nil {
+		langs = []string{}
+	}
+	return Prefs{SensitiveFlagPolicies: m, PreferredLanguages: langs}
 }
 
 // Get returns the viewer's preferences (empty for a user who never saved).
 func (s *Service) Get(ctx context.Context, userID uuid.UUID) (Prefs, error) {
 	row, err := s.q.GetUserContentPrefs(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Prefs{SensitiveFlagPolicies: map[string]string{}}, nil
+		return Prefs{SensitiveFlagPolicies: map[string]string{}, PreferredLanguages: []string{}}, nil
 	}
 	if err != nil {
 		return Prefs{}, err
@@ -58,28 +76,49 @@ func (s *Service) Get(ctx context.Context, userID uuid.UUID) (Prefs, error) {
 	return decode(row), nil
 }
 
-// SetSensitiveFlagPolicies REPLACES the viewer's overrides. An empty value
-// for a flag means inherit and is not stored; an unknown flag or policy is a
-// ValidationError.
-func (s *Service) SetSensitiveFlagPolicies(ctx context.Context, userID uuid.UUID, in map[string]string) (Prefs, error) {
-	clean := map[string]string{}
-	for flag, policy := range in {
-		if !video.IsSensitiveFlag(flag) {
-			return Prefs{}, &ValidationError{Message: "unknown sensitive flag " + flag}
+// Update applies a Patch in a single upsert statement. In the flag map an empty value
+// means inherit and is not stored; an unknown flag, policy or language is a
+// ValidationError and nothing is written.
+func (s *Service) Update(ctx context.Context, userID uuid.UUID, in Patch) (Prefs, error) {
+	arg := sqlcgen.UpsertUserContentPrefsParams{UserID: userID}
+	if in.SensitiveFlagPolicies != nil {
+		clean := map[string]string{}
+		for flag, policy := range in.SensitiveFlagPolicies {
+			if !video.IsSensitiveFlag(flag) {
+				return Prefs{}, &ValidationError{Message: "unknown sensitive flag " + flag}
+			}
+			if policy == "" {
+				continue
+			}
+			if !video.IsSensitivePolicy(policy) {
+				return Prefs{}, &ValidationError{Message: "policy must be one of hide, warn, blur, display, or empty to inherit"}
+			}
+			clean[flag] = policy
 		}
-		if policy == "" {
-			continue
+		raw, err := json.Marshal(clean)
+		if err != nil {
+			return Prefs{}, err
 		}
-		if !video.IsSensitivePolicy(policy) {
-			return Prefs{}, &ValidationError{Message: "policy must be one of hide, warn, blur, display, or empty to inherit"}
-		}
-		clean[flag] = policy
+		arg.SensitiveFlagPolicies = raw
 	}
-	raw, err := json.Marshal(clean)
-	if err != nil {
-		return Prefs{}, err
+	if in.PreferredLanguages != nil {
+		seen := map[string]bool{}
+		langs := []string{}
+		for _, l := range *in.PreferredLanguages {
+			if !video.IsLanguage(l) {
+				return Prefs{}, &ValidationError{Message: "unknown language " + l}
+			}
+			if !seen[l] {
+				seen[l] = true
+				langs = append(langs, l)
+			}
+		}
+		if len(langs) > MaxPreferredLanguages {
+			return Prefs{}, &ValidationError{Message: "at most 10 preferred languages"}
+		}
+		arg.PreferredLanguages = langs
 	}
-	row, err := s.q.UpsertUserSensitiveFlagPolicies(ctx, sqlcgen.UpsertUserSensitiveFlagPoliciesParams{UserID: userID, SensitiveFlagPolicies: raw})
+	row, err := s.q.UpsertUserContentPrefs(ctx, arg)
 	if err != nil {
 		return Prefs{}, err
 	}

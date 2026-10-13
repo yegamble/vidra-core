@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1368,8 +1369,8 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 		if a.Category != nil && (r.Category == nil || *r.Category != *a.Category) {
 			continue
 		}
-		if a.Language != nil && (r.Language == nil || *r.Language != *a.Language) {
-			continue
+		if a.Language != nil && (r.Language == nil || !slices.Contains(a.Language, *r.Language)) {
+			continue // ANY of the viewer's languages, as the SQL's = ANY()
 		}
 		if a.HideSensitive && r.IsSensitive {
 			continue // sensitive-content policy "hide" mirrors the SQL filter

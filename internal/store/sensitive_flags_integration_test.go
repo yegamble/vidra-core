@@ -109,3 +109,84 @@ func TestSensitiveFlagsGridHiding(t *testing.T) {
 	// An anonymous request ignores any viewer's overrides.
 	check("anonymous", shown(true, false), map[uuid.UUID]bool{plain: true, unflagged: false, violent: false, both: false})
 }
+
+// The browse feed's ?language is = ANY(): a viewer's several preferred
+// languages select videos in any of them, and an unset filter selects all.
+func TestFeedLanguageFilterMatchesAny(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	count := func(langs []string) int64 {
+		n, err := q.CountPublicVideosSorted(ctx, sqlcgen.CountPublicVideosSortedParams{Language: langs})
+		if err != nil {
+			t.Fatalf("CountPublicVideosSorted: %v", err)
+		}
+		return n
+	}
+	en0, fr0, enfr0, de0 := count([]string{"en"}), count([]string{"fr"}), count([]string{"en", "fr"}), count([]string{"de"})
+
+	suf := uuid.NewString()[:8]
+	u, err := q.CreateUser(ctx, sqlcgen.CreateUserParams{Username: "lang_" + suf, Email: "lang_" + suf + "@example.test", PasswordHash: "x", Role: "user"})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	defer func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, u.ID) }()
+	ch, err := q.CreateChannel(ctx, sqlcgen.CreateChannelParams{OwnerID: u.ID, Handle: "lang" + suf, DisplayName: "L"})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	for _, l := range []string{"en", "fr", "de"} {
+		lang := l
+		v, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{ChannelID: ch.ID, Title: "v " + l, Privacy: "public", CommentsPolicy: "enabled", Language: &lang})
+		if err != nil {
+			t.Fatalf("CreateVideo: %v", err)
+		}
+		if _, err := q.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: v.ID, State: "published"}); err != nil {
+			t.Fatalf("SetVideoState: %v", err)
+		}
+	}
+	for name, d := range map[string][2]int64{
+		"en":    {count([]string{"en"}) - en0, 1},
+		"fr":    {count([]string{"fr"}) - fr0, 1},
+		"de":    {count([]string{"de"}) - de0, 1},
+		"en+fr": {count([]string{"en", "fr"}) - enfr0, 2},
+	} {
+		if d[0] != d[1] {
+			t.Errorf("language %s: count moved by %d, want %d", name, d[0], d[1])
+		}
+	}
+}
+
+// UpsertUserContentPrefs merges in one statement: a NULL argument keeps the
+// stored value, so two PUTs touching different fields cannot erase each other.
+func TestUpsertUserContentPrefsKeepsOmittedFields(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	suf := uuid.NewString()[:8]
+	u, err := q.CreateUser(ctx, sqlcgen.CreateUserParams{Username: "cp_" + suf, Email: "cp_" + suf + "@example.test", PasswordHash: "x", Role: "user"})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	defer func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, u.ID) }()
+	if _, err := q.UpsertUserContentPrefs(ctx, sqlcgen.UpsertUserContentPrefsParams{UserID: u.ID, PreferredLanguages: []string{"fr"}}); err != nil {
+		t.Fatal(err)
+	}
+	row, err := q.UpsertUserContentPrefs(ctx, sqlcgen.UpsertUserContentPrefsParams{UserID: u.ID, SensitiveFlagPolicies: []byte(`{"sex":"hide"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(row.PreferredLanguages) != 1 || row.PreferredLanguages[0] != "fr" || string(row.SensitiveFlagPolicies) != `{"sex": "hide"}` {
+		t.Errorf("got langs %v flags %s, want fr kept and sex=hide set", row.PreferredLanguages, row.SensitiveFlagPolicies)
+	}
+}
