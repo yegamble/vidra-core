@@ -207,7 +207,9 @@ func TestEmailDrainLogsReasonNotRawError(t *testing.T) {
 	if _, err := newTestDrain(store, &fakeEmailSender{err: refusal}, true, &logs).DrainOnce(context.Background()); err != nil {
 		t.Fatalf("DrainOnce: %v", err)
 	}
-	if strings.Contains(logs.String(), "ada@example.test") || strings.Contains(logs.String(), "550") {
+	// "550 5.1.1", not a bare "550": the logged notification id is a random
+	// UUID, and ~0.7% of them contain the hex run "550".
+	if strings.Contains(logs.String(), "ada@example.test") || strings.Contains(logs.String(), "550 5.1.1") {
 		t.Errorf("a log line carries the transport's raw text:\n%s", logs.String())
 	}
 	if !strings.Contains(logs.String(), "reason=rejected") || !strings.Contains(logs.String(), row.NotificationID.String()) {
