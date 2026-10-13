@@ -339,6 +339,7 @@ type Service struct {
 	onMove               []func(ctx context.Context, videoID, fromChannelID uuid.UUID, wasFederated bool)
 	onDelete             []func(context.Context, uuid.UUID, uuid.UUID, bool)
 	onMediaReplaced      []func(context.Context, uuid.UUID, string)
+	onCaptionChange      []func(ctx context.Context, videoID uuid.UUID, storageKey string, deleted bool)
 	// uploadUsageRecorder appends a rolling daily-upload-quota ledger event
 	// (config-parity W7) after AttachOriginal stores an original. Best-effort;
 	// nil = no daily accounting.
@@ -557,6 +558,24 @@ func WithDeleteHook(fn func(context.Context, uuid.UUID, uuid.UUID, bool)) Option
 // poster replacement spends nothing.
 func WithMediaReplacedHook(fn func(context.Context, uuid.UUID, string)) Option {
 	return func(s *Service) { s.onMediaReplaced = append(s.onMediaReplaced, fn) }
+}
+
+// WithCaptionChangeHook registers a callback invoked (best-effort, synchronously)
+// after a caption track is stored or replaced (deleted=false) and after one is
+// removed (deleted=true), with the track's storage key. The IPFS mirror is the
+// consumer: a caption is pinned under its stable key, so a deleted track stayed
+// pinned and retrievable and a replaced one stayed pinned under its old bytes
+// (Tier A F5). Unlike WithMediaReplacedHook it carries no edge fence — whether
+// the video is mirror-eligible is the consumer's decision.
+func WithCaptionChangeHook(fn func(ctx context.Context, videoID uuid.UUID, storageKey string, deleted bool)) Option {
+	return func(s *Service) { s.onCaptionChange = append(s.onCaptionChange, fn) }
+}
+
+// fireCaptionChange runs the caption hooks.
+func (s *Service) fireCaptionChange(ctx context.Context, videoID uuid.UUID, key string, deleted bool) {
+	for _, hook := range s.onCaptionChange {
+		hook(ctx, videoID, key, deleted)
+	}
 }
 
 // fireMediaReplaced runs the replacement hooks for a video that an edge could be

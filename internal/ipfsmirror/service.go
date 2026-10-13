@@ -478,33 +478,42 @@ type SyncResult struct {
 	Rearmed  int
 }
 
+// videoNetwork resolves which swarm a video's derivatives belong on right now
+// (NetworkNone = none), from the three visibility facts every caller of the sync
+// seam must agree on: privacy+state, the owner being unlisted, and the moderator
+// block (2026-09-09 ruling — see Subject.VideoBlocked, which neither privacy nor
+// state can express). ok=false means the video does not exist.
+//
+// A representative video-derived class decides the WHOLE video's swarm (every
+// derivative shares one routing gate). effectiveNetwork tier-gates the result, so
+// with the private tier off a private/unlisted video routes to NONE (unpin all) —
+// identical to pre-P19.P.
+func (s *Service) videoNetwork(ctx context.Context, videoID uuid.UUID) (string, bool, error) {
+	privacy, state, ownerID, ok, err := s.lookups.VideoVisibility(ctx, videoID)
+	if err != nil || !ok {
+		return "", false, err
+	}
+	ownerUnlisted, err := s.ownerUnlistedForVideo(ctx, ownerID)
+	if err != nil {
+		return "", false, err
+	}
+	blocked, err := s.lookups.VideoBlocked(ctx, videoID)
+	if err != nil {
+		return "", false, err
+	}
+	return s.effectiveNetwork(Subject{Class: ClassVideoOriginal, VideoPrivacy: privacy, VideoState: state, OwnerUnlisted: ownerUnlisted, VideoBlocked: blocked}), true, nil
+}
+
 // SyncVideoCounted is SyncVideo with the tally. See SyncVideo for the semantics.
 func (s *Service) SyncVideoCounted(ctx context.Context, videoID uuid.UUID) (SyncResult, error) {
 	var res SyncResult
 	if !s.enabled {
 		return res, nil
 	}
-	privacy, state, ownerID, ok, err := s.lookups.VideoVisibility(ctx, videoID)
+	net, ok, err := s.videoNetwork(ctx, videoID)
 	if err != nil || !ok {
 		return res, err
 	}
-	ownerUnlisted, err := s.ownerUnlistedForVideo(ctx, ownerID)
-	if err != nil {
-		return res, err
-	}
-	// The moderator block, which neither privacy nor state can express (2026-09-09
-	// ruling — see Subject.VideoBlocked). Read here, with the other two visibility
-	// facts, so every caller of this one seam gets the same answer: the publish and
-	// update hooks, the moderation handlers, and the re-eval fan-out.
-	blocked, err := s.lookups.VideoBlocked(ctx, videoID)
-	if err != nil {
-		return res, err
-	}
-	// A representative video-derived class decides the WHOLE video's swarm (every
-	// derivative shares one routing gate). effectiveNetwork tier-gates the result, so
-	// with the private tier off a private/unlisted video routes to NONE (unpin all) —
-	// identical to pre-P19.P.
-	net := s.effectiveNetwork(Subject{Class: ClassVideoOriginal, VideoPrivacy: privacy, VideoState: state, OwnerUnlisted: ownerUnlisted, VideoBlocked: blocked})
 	if net == NetworkNone {
 		n, uerr := s.unpinAllForVideoCounted(ctx, videoID)
 		res.Unpinned = n
@@ -567,6 +576,21 @@ func (s *Service) SyncVideoCounted(ctx context.Context, videoID uuid.UUID) (Sync
 				return res, rerr
 			}
 			res.Rearmed++
+			continue
+		}
+		if MediaClass(r.MediaClass) == ClassCaption {
+			// A caption row whose key is no longer one of the video's captions was
+			// deleted. RouteIPFSPinIntent would flip an 'unpinning' row back to
+			// 'pending' and re-publish a track the creator removed, so a deleted
+			// caption is never re-armed here — and any still-live pin on it (a row
+			// from before OnCaptionChanged existed) is taken down now, so the next
+			// edit of the video heals what a delete used to leave behind (F5).
+			if uerr := s.repo.EnqueueIPFSUnpin(ctx, r.ObjectKey); uerr != nil {
+				return res, uerr
+			}
+			if r.State == "pinned" || r.State == "pending" {
+				res.Unpinned++
+			}
 			continue
 		}
 		if perr := s.routePin(ctx, r.ObjectKey, MediaClass(r.MediaClass), videoID, uuid.Nil, net); perr != nil {
@@ -928,12 +952,20 @@ func (s *Service) EnqueuePlaylistCover(ctx context.Context, playlistID uuid.UUID
 // to EnqueueUserImage. Keeping the mapping here lets profileimage depend on a
 // small structural interface rather than importing this package's class enum.
 func (s *Service) EnqueueUserImagePin(ctx context.Context, userID uuid.UUID, kind, objectKey string) error {
-	return s.EnqueueUserImage(ctx, userID, userImageClass(kind), objectKey)
+	class := userImageClass(kind)
+	if err := s.EnqueueUserImage(ctx, userID, class, objectKey); err != nil {
+		return err
+	}
+	return s.rearmReplacedImage(ctx, objectKey, class)
 }
 
 // EnqueueChannelImagePin is the kind-keyed convenience for channel avatars/banners.
 func (s *Service) EnqueueChannelImagePin(ctx context.Context, channelID uuid.UUID, kind, objectKey string) error {
-	return s.EnqueueChannelImage(ctx, channelID, channelImageClass(kind), objectKey)
+	class := channelImageClass(kind)
+	if err := s.EnqueueChannelImage(ctx, channelID, class, objectKey); err != nil {
+		return err
+	}
+	return s.rearmReplacedImage(ctx, objectKey, class)
 }
 
 // userImageClass / channelImageClass map the "avatar"/"banner" kind to the class

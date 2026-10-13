@@ -1436,6 +1436,19 @@ func run() error {
 					logger.Warn("ipfs mirror delete unpin failed", "video_id", videoID, "error", err)
 				}
 			}),
+			// Tier A F5: captions, posters and storyboards are pinned under stable keys,
+			// so a delete or an in-place replacement changes nothing the mirror watches
+			// on its own. These two hooks are the only things that tell it.
+			video.WithCaptionChangeHook(func(ctx context.Context, videoID uuid.UUID, key string, deleted bool) {
+				if err := ipfsMirror.OnCaptionChanged(ctx, videoID, key, deleted); err != nil {
+					logger.Warn("ipfs mirror caption change failed", "video_id", videoID, "deleted", deleted, "error", err)
+				}
+			}),
+			video.WithMediaReplacedHook(func(ctx context.Context, videoID uuid.UUID, kind string) {
+				if err := ipfsMirror.OnMediaReplaced(ctx, videoID, kind); err != nil {
+					logger.Warn("ipfs mirror media replacement failed", "video_id", videoID, "kind", kind, "error", err)
+				}
+			}),
 		)
 	}
 	// Search indexing hooks (search-service W4): publish + metadata/privacy edit
