@@ -64,16 +64,18 @@ func TestUploadSessionQueriesPersist(t *testing.T) {
 	videoID, cleanup := seedVideoRow(t, st)
 	defer cleanup()
 
-	// user_id = the video's owner; look it up.
-	var userID uuid.UUID
+	// user_id = the video's owner; look it up (with the channel the session is
+	// opened against).
+	var userID, channelID uuid.UUID
 	if err := st.Pool.QueryRow(ctx,
-		`SELECT c.owner_id FROM videos v JOIN channels c ON c.id = v.channel_id WHERE v.id = $1`, videoID,
-	).Scan(&userID); err != nil {
+		`SELECT c.owner_id, c.id FROM videos v JOIN channels c ON c.id = v.channel_id WHERE v.id = $1`, videoID,
+	).Scan(&userID, &channelID); err != nil {
 		t.Fatalf("owner lookup: %v", err)
 	}
 
 	sess, err := q.CreateUploadSession(ctx, sqlcgen.CreateUploadSessionParams{
 		VideoID:   videoID,
+		ChannelID: channelID,
 		UserID:    userID,
 		Filename:  "clip.mp4",
 		TotalSize: 40,

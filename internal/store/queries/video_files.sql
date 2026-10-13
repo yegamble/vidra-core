@@ -58,6 +58,37 @@ JOIN videos v ON v.id = vf.video_id
 JOIN channels c ON c.id = v.channel_id
 WHERE c.owner_id = $1;
 
+-- name: SwapVideoOriginalIfOwner :one
+-- Makes a stored replacement the video's original — in ONE statement, and only
+-- while the video still belongs to owner_id (its owner when the replacement
+-- began). The UPDATE takes the video row lock that accepting an ownership
+-- change also takes, so a transfer either commits first (the owner check then
+-- fails and nothing is swapped: pgx.ErrNoRows) or waits until the swap is done.
+WITH owned AS (
+    UPDATE videos v SET updated_at = now()
+    FROM channels c
+    WHERE v.id = sqlc.arg('video_id')
+      AND c.id = v.channel_id
+      AND c.owner_id = sqlc.arg('owner_id')
+    RETURNING v.id
+), dropped AS (
+    DELETE FROM video_files vf
+    USING owned
+    WHERE vf.video_id = owned.id AND vf.kind = 'original'
+)
+INSERT INTO video_files (video_id, kind, storage_key, content_type, original_name, size_bytes, sha256)
+SELECT owned.id, 'original', sqlc.arg('storage_key'), sqlc.arg('content_type'),
+       sqlc.arg('original_name'), sqlc.arg('size_bytes'), sqlc.arg('sha256')
+FROM owned
+RETURNING id, video_id, kind, storage_key, content_type, original_name, size_bytes, created_at, sha256;
+
+-- name: SumVideoStorageUsage :one
+-- One video's share of SumUserStorageUsage: what moving it to another owner
+-- adds to theirs (the quota check on accepting an ownership change, 0165).
+SELECT COALESCE(SUM(size_bytes), 0)::bigint AS used_bytes
+FROM video_files
+WHERE video_id = $1;
+
 -- name: SumAllStorageUsage :one
 -- Instance-wide media storage: the total stored bytes of every video file
 -- (originals, renditions, thumbnails) across all accounts — the "media stored"

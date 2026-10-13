@@ -470,6 +470,10 @@ x-api-env: &api-env
   # LIVE_RTMP_URL is the base RTMP ingest URL returned to a streamer alongside a
   # freshly minted stream key (informational; empty by default).
   LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}
+  # LIVE_RTMPS_URL is the optional TLS twin (rtmps://host:1936/live) offered to
+  # streamers ahead of LIVE_RTMP_URL so the stream key is not sent in cleartext.
+  # It only advertises the URL; the TLS listener is the meta repo's `rtmps` service.
+  LIVE_RTMPS_URL: ${LIVE_RTMPS_URL:-}
   # LIVE_INGEST_SECRET is the shared secret the media server (RTMP ingest) presents
   # on the media-server-facing /live/ingest hooks. When empty (default) the hooks
   # are disabled (404). Set it to enable them (dev/test harnesses; a real deploy
@@ -686,6 +690,10 @@ x-api-env: &api-env
   # block — is still served by this node's own gateway until some later GC; turn it
   # on (or run the node with --enable-gc) if a takedown must complete promptly.
   IPFS_GC_AFTER_UNPIN: ${IPFS_GC_AFTER_UNPIN:-false}
+  # Ceiling for an UNMANAGED node, in bytes of repo/stat RepoSize (0 = none, the
+  # historical behaviour): at it the pin drain stops adding; unpins still run. Set
+  # it below disk size minus database growth minus media scratch.
+  IPFS_REPO_BUDGET_BYTES: ${IPFS_REPO_BUDGET_BYTES:-0}
   # Optional IPFS Cluster replication of the PUBLIC tier (STOR-05). IPFS_CLUSTER_TOKEN
   # is a SECRET (Bearer) — never commit a real value.
   IPFS_CLUSTER_API_URL: ${IPFS_CLUSTER_API_URL:-}
