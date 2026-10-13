@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -67,6 +68,21 @@ func (w moveWorld) move(t *testing.T, id, signer, actor, object, target string) 
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"id": id, "type": "Move", "actor": actor, "object": object, "target": target})
 	return w.svc.HandleInbox(context.Background(), signer, body)
+}
+
+// drain runs the worker's pass until it reports no progress, returning each count.
+func (w moveWorld) drain(t *testing.T) []int {
+	t.Helper()
+	var counts []int
+	for {
+		n, err := w.svc.DrainMoves(context.Background())
+		if err != nil {
+			t.Fatalf("DrainMoves: %v", err)
+		}
+		if counts = append(counts, n); n == 0 || len(counts) > 10 {
+			return counts
+		}
+	}
 }
 
 // following returns the actor each user follows (one edge each here).
@@ -159,6 +175,92 @@ func TestInboundMoveRefusals(t *testing.T) {
 			}
 			if after := w.following(); len(w.repo.deliveries) != 0 || !maps.Equal(after, before) {
 				t.Errorf("a refused Move changed follows: %v → %v, %d deliveries", before, after, len(w.repo.deliveries))
+			}
+		})
+	}
+}
+
+// The worker re-points every follow but carol's (she blocks the target) and
+// finishes the move; the inbox and the worker together send a Follow to the
+// target and an Undo to the origin per follow.
+func TestInboundMoveRepointsLocalFollows(t *testing.T) {
+	w := newMoveWorld(t, []string{"https://elsewhere.example/users/x", moveOrigin})
+	if err := w.move(t, "https://old.example/moves/1", moveOrigin, moveOrigin, moveOrigin, w.target); err != nil {
+		t.Fatalf("Move: %v", err)
+	}
+	// The inbox only records the move and carries blocks; the worker re-points.
+	if len(w.repo.deliveries) != 0 || w.repo.moveStates[moveOrigin] != "moving" || !w.repo.remoteBlocks[w.dave.String()+"|"+w.target] {
+		t.Fatalf("after the Move: %d deliveries, state %q, dave's block carried %v", len(w.repo.deliveries), w.repo.moveStates[moveOrigin], w.repo.remoteBlocks[w.dave.String()+"|"+w.target])
+	}
+	if got := w.drain(t); !slices.Equal(got, []int{2, 1, 0}) {
+		t.Errorf("drain counts = %v, want [2 1 0] (two re-pointed, then done)", got)
+	}
+	got := w.following()
+	if got[w.ada] != w.target || got[w.bob] != w.target || got[w.carl] != moveOrigin {
+		t.Errorf("follows = ada %q, bob %q, carol %q; want ada/bob on the target and carol (who blocks it) kept", got[w.ada], got[w.bob], got[w.carl])
+	}
+	follows, undos := 0, 0
+	for _, d := range w.repo.deliveries {
+		var act struct{ Type string }
+		_ = json.Unmarshal(d.row.Payload, &act)
+		switch {
+		case act.Type == "Follow" && d.row.InboxUrl == w.target+"/inbox":
+			follows++
+		case act.Type == "Undo" && d.row.InboxUrl == "https://old.example/channel-inbox":
+			undos++
+		}
+	}
+	if follows != 2 || undos != 2 || len(w.repo.deliveries) != 4 || w.repo.moveStates[moveOrigin] != "done" {
+		t.Errorf("%d Follow, %d Undo, %d total, state %q; want 2, 2, 4, done", follows, undos, len(w.repo.deliveries), w.repo.moveStates[moveOrigin])
+	}
+	// One Move per origin per cooldown: a second one fetches nothing.
+	w.followOrigin(w.ada, "accepted", 0)
+	if err := w.move(t, "https://old.example/moves/2", moveOrigin, moveOrigin, moveOrigin, w.target); err != nil || w.fetches.Load() != 1 {
+		t.Errorf("second Move: err %v, %d fetches; want accepted and ignored after 1 fetch", err, w.fetches.Load())
+	}
+}
+
+// Every follow moves, however many: the worker takes them in bounded batches.
+func TestInboundMoveRepointsEveryFollowInBatches(t *testing.T) {
+	w := newMoveWorld(t, moveOrigin)
+	for i := 0; i < maxMoveFollows+5; i++ {
+		u := uuid.New()
+		w.repo.usersByID[u] = sqlcgen.GetUserActorByIDRow{ID: u, Username: "u" + u.String()[:8]}
+		w.repo.acctKeys[u] = sqlcgen.GetAccountActorKeyRow{PublicKeyPem: "PEM"} // no RSA keygen per user
+		w.followOrigin(u, "accepted", time.Duration(i)*time.Second)
+	}
+	if err := w.move(t, "https://old.example/moves/1", moveOrigin, moveOrigin, moveOrigin, w.target); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.drain(t); !slices.Equal(got, []int{maxMoveFollows, 7, 1, 0}) {
+		t.Errorf("drain counts = %v, want [%d 7 1 0]", got, maxMoveFollows)
+	}
+	left := 0
+	for u, actor := range w.following() {
+		if actor == moveOrigin && u != w.carl {
+			left++
+		}
+	}
+	if left != 0 || w.repo.moveStates[moveOrigin] != "done" {
+		t.Errorf("%d follows left on the old actor, state %q; want 0, done", left, w.repo.moveStates[moveOrigin])
+	}
+}
+
+// An admin block of the target (or its instance) mid-move abandons the move:
+// it is marked done and no further Follow goes out.
+func TestInboundMoveAbandonedWhenTargetBlockedMidMove(t *testing.T) {
+	for name, block := range map[string]func(*moveWorld){
+		"actor":    func(w *moveWorld) { w.repo.adminActorBlocks[w.target] = "" },
+		"instance": func(w *moveWorld) { w.repo.blockedDomains[hostOf(w.target)] = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newMoveWorld(t, moveOrigin)
+			if err := w.move(t, "https://old.example/moves/1", moveOrigin, moveOrigin, moveOrigin, w.target); err != nil {
+				t.Fatal(err)
+			}
+			block(&w)
+			if got := w.drain(t); !slices.Equal(got, []int{1, 0}) || w.repo.moveStates[moveOrigin] != "done" || len(w.repo.deliveries) != 0 {
+				t.Errorf("drain %v, state %q, %d deliveries; want [1 0], done, 0", got, w.repo.moveStates[moveOrigin], len(w.repo.deliveries))
 			}
 		})
 	}

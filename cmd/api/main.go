@@ -3223,6 +3223,13 @@ func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsv
 			Run: func(ctx context.Context, _ time.Time) (int, error) {
 				return fedsvc.DrainDeliveries(ctx, batch)
 			},
+		}, {
+			// Inbound Moves: re-point local follows of a remote actor that moved,
+			// a bounded batch per pass, until every one is done (0167).
+			FailMsg: "federation move drain failed",
+			DoneMsg: "federation move follows re-pointed",
+			Drain:   true,
+			Run:     func(ctx context.Context, _ time.Time) (int, error) { return fedsvc.DrainMoves(ctx) },
 		}},
 	}.Run(ctx, logger)
 }

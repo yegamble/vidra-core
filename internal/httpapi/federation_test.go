@@ -146,6 +146,9 @@ func (f fakeFedRepo) ReleaseRemoteActorMove(context.Context, string) error { ret
 func (f fakeFedRepo) SetRemoteActorMoveState(context.Context, sqlcgen.SetRemoteActorMoveStateParams) error {
 	return nil
 }
+func (f fakeFedRepo) NextMovingRemoteActorMove(context.Context) (sqlcgen.NextMovingRemoteActorMoveRow, error) {
+	return sqlcgen.NextMovingRemoteActorMoveRow{}, pgx.ErrNoRows
+}
 func (f fakeFedRepo) CarryRemoteActorBlocks(context.Context, sqlcgen.CarryRemoteActorBlocksParams) (int64, error) {
 	return 0, nil
 }

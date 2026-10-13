@@ -98,6 +98,7 @@ type Repository interface {
 	ListRemoteChannelFollowsOfActor(ctx context.Context, arg sqlcgen.ListRemoteChannelFollowsOfActorParams) ([]sqlcgen.ListRemoteChannelFollowsOfActorRow, error)
 	ReleaseRemoteActorMove(ctx context.Context, originActorUrl string) error
 	SetRemoteActorMoveState(ctx context.Context, arg sqlcgen.SetRemoteActorMoveStateParams) error
+	NextMovingRemoteActorMove(ctx context.Context) (sqlcgen.NextMovingRemoteActorMoveRow, error)
 	CarryRemoteActorBlocks(ctx context.Context, arg sqlcgen.CarryRemoteActorBlocksParams) (int64, error)
 	// Federated comments (remote-content §6): inbound Create/Update{Note}
 	// storage + the comment reads outbound fan-out needs.
