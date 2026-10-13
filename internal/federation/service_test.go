@@ -71,6 +71,9 @@ type fakeRepo struct {
 	// adminActorBlocks are the instance-wide per-actor blocks (0142), keyed by
 	// actor url.
 	adminActorBlocks map[string]string
+	// inst is the instance actor's 0166 state (instance_actor_test.go); nil =
+	// the name is not the instance actor's, so it is not served.
+	inst *fakeInstance
 }
 
 // GetRemoteVideoByID resolves the VIDEO behind a mirrored comment — the origin

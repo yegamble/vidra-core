@@ -42,13 +42,19 @@ type nodeInfoDiscovery struct {
 	Links []nodeInfoLink `json:"links"`
 }
 
+// applicationActorRel is the NodeInfo discovery link PeerTube reads to find
+// the instance actor it follows when an admin follows a host
+// (getApplicationActorOfHost).
+const applicationActorRel = "https://www.w3.org/ns/activitystreams#Application"
+
 // handleNodeInfoDiscovery serves /.well-known/nodeinfo — the pointer to the
-// versioned document.
+// versioned document, plus the instance actor when this instance serves one.
 func (s *Server) handleNodeInfoDiscovery(c echo.Context) error {
-	return c.JSON(http.StatusOK, nodeInfoDiscovery{Links: []nodeInfoLink{{
-		Rel:  nodeInfo21Rel,
-		Href: s.cfg.PublicBaseURL + "/nodeinfo/2.1",
-	}}})
+	links := []nodeInfoLink{{Rel: nodeInfo21Rel, Href: s.cfg.PublicBaseURL + "/nodeinfo/2.1"}}
+	if id, ok := s.fedsvc.InstanceActorAvailable(c.Request().Context()); ok {
+		links = append(links, nodeInfoLink{Rel: applicationActorRel, Href: id})
+	}
+	return c.JSON(http.StatusOK, nodeInfoDiscovery{Links: links})
 }
 
 type nodeInfoSoftware struct {
@@ -144,6 +150,11 @@ func (s *Server) serveActor(c echo.Context, fetch func(context.Context, string) 
 			}
 			if err != nil {
 				return err
+			}
+			if actor.Type == "Application" {
+				// The instance actor has no profile; its human page is the
+				// instance's own about page.
+				return c.Redirect(http.StatusFound, "/about/instance")
 			}
 			return c.Redirect(http.StatusFound, profilePrefix+url.PathEscape(actor.PreferredUsername))
 		}
