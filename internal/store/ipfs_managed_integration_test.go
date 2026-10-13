@@ -118,7 +118,7 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 		blobs = s3
 		defer s3.DeletePrefix(context.Background(), "streaming-playlists/hls/"+id.String())
 	}
-	for object, data := range map[string]string{master: "#EXTM3U\n720/seg.ts", strings.TrimSuffix(master, "imported-master.m3u8") + "720/seg.ts": "media"} {
+	for object, data := range map[string]string{master: "#EXTM3U\n720-seg.mp4", strings.TrimSuffix(master, "imported-master.m3u8") + "720-seg.mp4": "media"} {
 		if _, err = blobs.Put(ctx, object, strings.NewReader(data)); err != nil {
 			t.Fatal(err)
 		}
@@ -242,7 +242,7 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 		}
 		changeDuringCopy.Store(change)
 		if change == 3 {
-			if _, err = blobs.Put(ctx, strings.TrimSuffix(master, "imported-master.m3u8")+"720/seg.ts", strings.NewReader("different payload")); err != nil {
+			if _, err = blobs.Put(ctx, strings.TrimSuffix(master, "imported-master.m3u8")+"720-seg.mp4", strings.NewReader("different payload")); err != nil {
 				t.Fatal(err)
 			}
 		}

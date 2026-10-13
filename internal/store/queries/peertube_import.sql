@@ -315,6 +315,15 @@ INSERT INTO channel_follows (follower_id, channel_id)
 VALUES ($1, $2)
 ON CONFLICT (follower_id, channel_id) DO NOTHING;
 
+-- name: ImportInsertRemoteFollow :exec
+-- A remote actor's follow the SOURCE had already accepted, carried as accepted.
+-- Unlike the inbox's InsertRemoteFollow an existing row wins outright: a follow
+-- this instance recorded itself (pending in the approval queue, or accepted
+-- with its own Follow id) is newer than the source's and is never rewritten.
+INSERT INTO remote_follows (channel_id, remote_actor_url, state, follow_activity_url)
+VALUES ($1, $2, 'accepted', $3)
+ON CONFLICT (channel_id, remote_actor_url) DO NOTHING;
+
 -- name: ImportUpsertAccountActorKey :exec
 -- Federation-continuity: carry the source account's ActivityPub keypair so the
 -- migrated instance keeps signing as the same actor. private_key_pem is a SECRET

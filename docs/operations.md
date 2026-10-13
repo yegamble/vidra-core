@@ -1434,6 +1434,30 @@ bytes:
   A CID is unpinned only after a reference check confirms no other live pin shares
   it (content-address dedupe), so neither remedy can collect bytes another object
   still publishes.
+- **Capacity visibility and the unmanaged ceiling.** With the metrics endpoint on,
+  `vidra_ipfs_budget_bytes`, `vidra_ipfs_repo_used_bytes`,
+  `vidra_ipfs_filesystem_free_bytes` and `vidra_ipfs_admission_paused{reason}` (1
+  only while paused) track the mirror's disk; the worker logs `ipfs_admission_paused`
+  / `ipfs_admission_resumed` once per transition, and `/admin/system`'s `ipfs`
+  component carries the numbers and the reason in its detail. An **unmanaged** node
+  (no adopted publication policy) used to have no ceiling at all — the pin queue
+  filled the volume, which usually also holds Postgres and the media scratch. Set
+  `IPFS_REPO_BUDGET_BYTES` (default `0` = none): at that `repo/stat` RepoSize the
+  mirror stops *adding* (unpins always run) and resumes by itself when space frees.
+  It is a repo-size budget, not a free-space floor — core cannot see the node's
+  filesystem and RepoSize excludes flatfs slack — so set it **below disk size minus
+  database growth minus media scratch**. It is probed once per drain tick (over it the drain claims removals only), so a
+  tick's adds can overshoot it. Only the public node is
+  budgeted.
+- **What an HLS tree pins — playback files only.** The mirror wraps exactly the
+  files the HLS routes serve (master, variant playlists, init and media segments,
+  trick-play, the DASH manifest); it does **not** pin each rendition's progressive
+  `video.mp4` / `video-only.mp4`, the `audio.m4a`, or `vp9.webm`. The downloads are
+  never referenced by a playlist and are served from primary storage under the
+  download policy, not through the mirror. **A video pinned before this change keeps
+  its old, larger root until it is re-pinned** (a re-transcode does it; there is no
+  bulk re-pin yet). Once a row has moved to the new root, the superseded root's
+  blocks are freed only by a garbage collection — see "Node GC" above.
 - **Probe cadence.** `IPFS_HEALTH_PROBE_INTERVAL` (default `5m`, minimum `10s`) is
   how often **every** role re-asks the gateway whether it is serving and re-compares
   the pin ledger against the node's pinset. It is the bound on how long the api

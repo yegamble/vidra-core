@@ -51,9 +51,10 @@ func (f *commentFakeRepo) CreateComment(_ context.Context, a sqlcgen.CreateComme
 
 // ApproveComment mirrors the conditional UPDATE (0161): only a still-held row
 // is released; anything else is pgx.ErrNoRows.
-func (f *commentFakeRepo) ApproveComment(_ context.Context, id uuid.UUID) (sqlcgen.Comment, error) {
+func (f *commentFakeRepo) ApproveComment(_ context.Context, a sqlcgen.ApproveCommentParams) (sqlcgen.Comment, error) {
+	id := a.ID
 	c, ok := f.comments[id]
-	if !ok || !c.HeldForReview {
+	if !ok || !c.HeldForReview || !c.UpdatedAt.Equal(a.ExpectedUpdatedAt) {
 		return sqlcgen.Comment{}, pgx.ErrNoRows
 	}
 	c.HeldForReview = false
@@ -181,6 +182,7 @@ func (f *commentFakeRepo) UpdateComment(_ context.Context, a sqlcgen.UpdateComme
 	if !ok {
 		return sqlcgen.Comment{}, errors.New("not found")
 	}
+	c.HeldForReview = c.HeldForReview || (a.Hold && c.Body != a.Body) // mirrors the SQL
 	c.Body = a.Body
 	c.UpdatedAt = time.Now()
 	f.comments[a.ID] = c
@@ -673,4 +675,33 @@ func TestCommentWritesRefuseADisabledAccount(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "after deactivation") {
 		t.Errorf("a disabled account's write reached the thread: %s", rec.Body.String())
 	}
+}
+
+// ListManagedVideoComments mirrors the review-queue SQL (0161): comments on
+// videos whose channel the caller owns or is an editor member of, newest
+// first, with the held filter; no viewer mute filtering.
+func (f *commentFakeRepo) ListManagedVideoComments(_ context.Context, a sqlcgen.ListManagedVideoCommentsParams) ([]sqlcgen.ListManagedVideoCommentsRow, error) {
+	var rows []sqlcgen.ListManagedVideoCommentsRow
+	for _, c := range f.comments {
+		v, ok := f.videos.videos[c.VideoID]
+		if !ok || (a.Held != nil && c.HeldForReview != *a.Held) {
+			continue
+		}
+		if manages, _ := f.videos.channels.IsChannelManager(context.Background(), sqlcgen.IsChannelManagerParams{ChannelID: v.ChannelID, UserID: a.UserID}); !manages {
+			continue
+		}
+		username, display := f.author(uuid.UUID(c.UserID.Bytes))
+		rows = append(rows, sqlcgen.ListManagedVideoCommentsRow{
+			ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body, ParentID: c.ParentID,
+			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, HeldForReview: c.HeldForReview,
+			AuthorUsername: username, AuthorDisplayName: display, VideoTitle: v.Title,
+		})
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	return rows, nil
+}
+
+func (f *commentFakeRepo) CountManagedVideoComments(ctx context.Context, a sqlcgen.CountManagedVideoCommentsParams) (int64, error) {
+	rows, err := f.ListManagedVideoComments(ctx, sqlcgen.ListManagedVideoCommentsParams{UserID: a.UserID, Held: a.Held})
+	return int64(len(rows)), err
 }

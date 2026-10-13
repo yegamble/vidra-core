@@ -78,3 +78,30 @@ func TestManagedIPFSSystemHealthDistinguishesPauseFromMissingConfiguration(t *te
 		})
 	}
 }
+
+// TestManagedIPFSSystemHealthSurfacesAFullBudgetWithoutDemotingTheComponent: F4.
+// A budget-exhausted mirror used to look identical to a healthy one here. The
+// reason and the numbers are now in Detail; the status deliberately stays "ok"
+// until vidra-user decides how a degraded component should read.
+func TestManagedIPFSSystemHealthSurfacesAFullBudgetWithoutDemotingTheComponent(t *testing.T) {
+	now := time.Now()
+	used, reason := int64(900), "budget_exhausted"
+	f := &managedHealthControl{
+		fakeIPFSControl: fakeIPFSControl{doc: ipfscontrol.Document{Revision: 2, PolicyActive: true, Config: ipfscontrol.Config{Provider: "internal", Enabled: true}}},
+		runtime: ipfscontrol.Runtime{ConfigRevision: 2,
+			Management: ipfscontrol.Management{Available: true, ObservedState: "running", AppliedConfigRevision: 2, ObservedAt: &now},
+			Capacity:   ipfscontrol.Capacity{BudgetBytes: 1000, RepoUsedBytes: &used, AdmissionPausedReason: &reason}},
+	}
+	h := &stubIPFSHealth{public: okHealth()}
+	cfg := testConfig()
+	cfg.IPFSEnabled = true
+	srv := ipfsServer(t, cfg, WithIPFSControl(f), WithIPFSHealth(h))
+	components, _ := srv.systemComponents(context.Background())
+	got := components["ipfs"]
+	if got.Status != "ok" {
+		t.Fatalf("status=%q, want ok (additive detail only): %s", got.Status, got.Error)
+	}
+	if got.Detail["admission_paused_reason"] != "budget_exhausted" || got.Detail["repo_used_bytes"] != "900" || got.Detail["budget_bytes"] != "1000" {
+		t.Fatalf("capacity facts missing from detail: %v", got.Detail)
+	}
+}
