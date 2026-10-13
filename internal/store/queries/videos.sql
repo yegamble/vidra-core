@@ -1421,6 +1421,7 @@ FROM (
            0::bigint AS size_bytes,
            EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked,
            ''::text AS moderation_note,
+           0::bigint AS like_count,
            0::bigint AS comment_count
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -1512,6 +1513,7 @@ FROM (
            0::int AS web_video_count,
            0::bigint AS size_bytes,
            EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked,
+           0::bigint AS like_count,
            0::bigint AS comment_count
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
