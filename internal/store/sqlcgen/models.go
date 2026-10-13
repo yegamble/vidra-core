@@ -107,6 +107,7 @@ type BlockedInstance struct {
 	Reason    string      `json:"reason"`
 	BlockedBy pgtype.UUID `json:"blocked_by"`
 	CreatedAt time.Time   `json:"created_at"`
+	Source    string      `json:"source"`
 }
 
 type BlockedRemoteActor struct {
@@ -114,6 +115,30 @@ type BlockedRemoteActor struct {
 	BlockedBy      pgtype.UUID `json:"blocked_by"`
 	Reason         string      `json:"reason"`
 	CreatedAt      time.Time   `json:"created_at"`
+}
+
+type BlocklistAllowlist struct {
+	Domain    string      `json:"domain"`
+	AddedBy   pgtype.UUID `json:"added_by"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
+type BlocklistSubscription struct {
+	ID            uuid.UUID          `json:"id"`
+	Url           string             `json:"url"`
+	Label         string             `json:"label"`
+	Format        string             `json:"format"`
+	Enabled       bool               `json:"enabled"`
+	Etag          string             `json:"etag"`
+	LastAttemptAt pgtype.Timestamptz `json:"last_attempt_at"`
+	LastSyncedAt  pgtype.Timestamptz `json:"last_synced_at"`
+	LastStatus    string             `json:"last_status"`
+	LastError     string             `json:"last_error"`
+	LastAdded     int32              `json:"last_added"`
+	LastRemoved   int32              `json:"last_removed"`
+	EntryCount    int32              `json:"entry_count"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     time.Time          `json:"created_at"`
 }
 
 type Caption struct {
