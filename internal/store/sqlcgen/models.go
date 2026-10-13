@@ -33,10 +33,11 @@ type AccountExport struct {
 }
 
 type ActorHandle struct {
-	HandleLower string      `json:"handle_lower"`
-	UserID      pgtype.UUID `json:"user_id"`
-	ChannelID   pgtype.UUID `json:"channel_id"`
-	CreatedAt   time.Time   `json:"created_at"`
+	HandleLower   string      `json:"handle_lower"`
+	UserID        pgtype.UUID `json:"user_id"`
+	ChannelID     pgtype.UUID `json:"channel_id"`
+	CreatedAt     time.Time   `json:"created_at"`
+	InstanceActor bool        `json:"instance_actor"`
 }
 
 type AtprotoAccount struct {
@@ -351,6 +352,7 @@ type FederationDelivery struct {
 	RequestID               string      `json:"request_id"`
 	CorrelationID           string      `json:"correlation_id"`
 	AuthoredRemoteCommentID pgtype.UUID `json:"authored_remote_comment_id"`
+	SigningInstanceActor    bool        `json:"signing_instance_actor"`
 }
 
 type FederationInboxActivity struct {
@@ -372,12 +374,41 @@ type ImportJob struct {
 	Stage         string    `json:"stage"`
 }
 
+type InstanceActorKey struct {
+	Singleton     bool      `json:"singleton"`
+	PublicKeyPem  string    `json:"public_key_pem"`
+	PrivateKeyPem string    `json:"private_key_pem"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type InstanceDocument struct {
 	Name      string      `json:"name"`
 	Body      string      `json:"body"`
 	Sha256    string      `json:"sha256"`
 	UpdatedBy pgtype.UUID `json:"updated_by"`
 	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+type InstanceFollower struct {
+	ID                uuid.UUID `json:"id"`
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	State             string    `json:"state"`
+	FollowActivityUrl string    `json:"follow_activity_url"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+type InstanceFollowerBackfill struct {
+	Host           string    `json:"host"`
+	LastBackfillAt time.Time `json:"last_backfill_at"`
+}
+
+type InstanceFollowing struct {
+	ID                uuid.UUID `json:"id"`
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	Host              string    `json:"host"`
+	State             string    `json:"state"`
+	FollowActivityUrl string    `json:"follow_activity_url"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type InstanceIdentity struct {
@@ -392,6 +423,11 @@ type InstanceImage struct {
 	SizeBytes   int64     `json:"size_bytes"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type InstanceOutboxVideo struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type InstanceSetting struct {
@@ -1264,6 +1300,17 @@ type VideoMetadatum struct {
 	Width           *int32    `json:"width"`
 	Height          *int32    `json:"height"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type VideoOwnershipChange struct {
+	ID          uuid.UUID `json:"id"`
+	VideoID     uuid.UUID `json:"video_id"`
+	InitiatorID uuid.UUID `json:"initiator_id"`
+	NextOwnerID uuid.UUID `json:"next_owner_id"`
+	VideoTitle  string    `json:"video_title"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type VideoPassword struct {

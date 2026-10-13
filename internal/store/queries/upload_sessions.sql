@@ -3,8 +3,21 @@
 -- these rows are the resume contract + sweeper input.
 
 -- name: CreateUploadSession :one
+-- Opens a session only while the video is still in channel_id, the channel the
+-- caller was authorised against, and under the video row lock that accepting an
+-- ownership change also takes (AcceptVideoOwnershipChange runs after locking the
+-- same row). Either the session is committed first and the accept sees it, or
+-- the accept commits first and this re-check sees the video's new channel and
+-- inserts nothing (pgx.ErrNoRows).
+WITH locked AS (
+    SELECT lv.id AS video_id FROM videos lv
+    WHERE lv.id = sqlc.arg('video_id') AND lv.channel_id = sqlc.arg('channel_id')
+    FOR UPDATE
+)
 INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, expires_at, file_fingerprint, purpose)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+SELECT locked.video_id, sqlc.arg('user_id'), sqlc.arg('filename'), sqlc.arg('total_size'), sqlc.arg('chunk_size'),
+       sqlc.arg('expires_at'), sqlc.arg('file_fingerprint'), sqlc.arg('purpose')
+FROM locked
 RETURNING *;
 
 -- name: GetUploadSession :one
