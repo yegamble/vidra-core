@@ -12,6 +12,29 @@ import (
 	"github.com/google/uuid"
 )
 
+const deleteUserDailyQuota = `-- name: DeleteUserDailyQuota :exec
+DELETE FROM user_daily_quotas WHERE user_id = $1
+`
+
+// Reset the account to the instance default.
+func (q *Queries) DeleteUserDailyQuota(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUserDailyQuota, userID)
+	return err
+}
+
+const getUserDailyQuota = `-- name: GetUserDailyQuota :one
+SELECT daily_quota_bytes FROM user_daily_quotas WHERE user_id = $1
+`
+
+// The admin's per-user rolling-24h quota override. No row (pgx.ErrNoRows) =
+// the instance default applies; 0 = unlimited for this account.
+func (q *Queries) GetUserDailyQuota(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, getUserDailyQuota, userID)
+	var daily_quota_bytes int64
+	err := row.Scan(&daily_quota_bytes)
+	return daily_quota_bytes, err
+}
+
 const pruneUploadUsageEvents = `-- name: PruneUploadUsageEvents :execrows
 DELETE FROM upload_usage_events
 WHERE user_id = $1 AND created_at < $2
@@ -71,4 +94,21 @@ func (q *Queries) SumUploadUsageSince(ctx context.Context, arg SumUploadUsageSin
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const upsertUserDailyQuota = `-- name: UpsertUserDailyQuota :exec
+INSERT INTO user_daily_quotas (user_id, daily_quota_bytes)
+VALUES ($1, $2)
+ON CONFLICT (user_id) DO UPDATE
+SET daily_quota_bytes = EXCLUDED.daily_quota_bytes, updated_at = now()
+`
+
+type UpsertUserDailyQuotaParams struct {
+	UserID          uuid.UUID `json:"user_id"`
+	DailyQuotaBytes int64     `json:"daily_quota_bytes"`
+}
+
+func (q *Queries) UpsertUserDailyQuota(ctx context.Context, arg UpsertUserDailyQuotaParams) error {
+	_, err := q.db.Exec(ctx, upsertUserDailyQuota, arg.UserID, arg.DailyQuotaBytes)
+	return err
 }

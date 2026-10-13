@@ -175,11 +175,27 @@ func (s *Service) handleAnnounce(ctx context.Context, act inboxActivity, signerA
 // hasAcceptedFollowEdge consults the ingestion gate (remote-content §2): by
 // default the repository's accepted remote_channel_follows edges; a wired
 // FollowEdgeChecker (tests) overrides it.
+//
+// Following an INSTANCE (0166) asks for everything it announces, whichever of
+// its actors signs the activity — PeerTube's Announce comes from its
+// Application actor, its Update from the video's account — so an accepted
+// instance follow of the actor's host opens the gate too, except for an actor
+// an admin blocked instance-wide.
 func (s *Service) hasAcceptedFollowEdge(ctx context.Context, remoteActorURL string) (bool, error) {
+	var ok bool
+	var err error
 	if s.edges != nil {
-		return s.edges.HasAcceptedFollow(ctx, remoteActorURL)
+		ok, err = s.edges.HasAcceptedFollow(ctx, remoteActorURL)
+	} else {
+		ok, err = s.repo.HasAcceptedRemoteChannelFollow(ctx, remoteActorURL)
 	}
-	return s.repo.HasAcceptedRemoteChannelFollow(ctx, remoteActorURL)
+	if err != nil || ok || s.inst == nil {
+		return ok, err
+	}
+	if blocked, err := s.repo.IsRemoteActorBlockedInstanceWide(ctx, remoteActorURL); err != nil || blocked {
+		return false, err
+	}
+	return s.inst.HasAcceptedInstanceFollowingForHost(ctx, hostOf(remoteActorURL))
 }
 
 // storeRemoteVideo bounds the object's fields, upserts it by object_url
