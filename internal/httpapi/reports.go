@@ -19,6 +19,11 @@ const maxReportReasonLen = 2000
 // createReportRequest is the body for reporting a video or comment.
 type createReportRequest struct {
 	Reason string `json:"reason"`
+	// Video reports only (0170): PeerTube-style predefined reasons and an
+	// optional timestamp range in whole seconds.
+	Reasons      []string `json:"reasons"`
+	StartSeconds *int32   `json:"start_seconds"`
+	EndSeconds   *int32   `json:"end_seconds"`
 }
 
 func (r createReportRequest) Validate() []FieldError {
@@ -29,7 +34,28 @@ func (r createReportRequest) Validate() []FieldError {
 	case len(reason) > maxReportReasonLen:
 		return []FieldError{{Field: "reason", Message: "must be at most 2000 characters"}}
 	}
+	for _, x := range r.Reasons {
+		if !moderation.IsPredefinedReason(x) {
+			return []FieldError{{Field: "reasons", Message: "must be a known reason"}}
+		}
+	}
 	return nil
+}
+
+func (r createReportRequest) hasVideoDetail() bool {
+	return len(r.Reasons) > 0 || r.StartSeconds != nil || r.EndSeconds != nil
+}
+
+func (r createReportRequest) videoDetail() moderation.VideoReportDetail {
+	return moderation.VideoReportDetail{Reasons: r.Reasons, StartSeconds: r.StartSeconds, EndSeconds: r.EndSeconds}
+}
+
+// videoOnlyDetailError is the 422 for reasons/timestamps on a non-video report.
+func (r createReportRequest) videoOnlyDetailError() error {
+	if !r.hasVideoDetail() {
+		return nil
+	}
+	return &ValidationError{Fields: []FieldError{{Field: "reasons", Message: "predefined reasons and timestamps apply to video reports only"}}}
 }
 
 // reportEmailAlertsAvailable is the EFFECTIVE report-email gate: a mailer is
@@ -80,7 +106,7 @@ func (s *Server) handleReportVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	videoID, err := s.publicVideoID(c)
+	video, err := s.publicVideo(c)
 	if err != nil {
 		return err
 	}
@@ -88,7 +114,10 @@ func (s *Server) handleReportVideo(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	reportID, err := s.moderationsvc.ReportVideo(c.Request().Context(), userID, videoID, strings.TrimSpace(in.Reason))
+	if field, msg := in.videoDetail().ValidateRange(video.MetadataDurationSeconds); field != "" {
+		return &ValidationError{Fields: []FieldError{{Field: field, Message: msg}}}
+	}
+	reportID, err := s.moderationsvc.ReportVideoDetailed(c.Request().Context(), userID, video.ID, strings.TrimSpace(in.Reason), in.videoDetail())
 	if err != nil {
 		return err
 	}
@@ -109,6 +138,9 @@ func (s *Server) handleReportComment(c echo.Context) error {
 	}
 	var in createReportRequest
 	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	if err := in.videoOnlyDetailError(); err != nil {
 		return err
 	}
 	reportID, err := s.moderationsvc.ReportComment(c.Request().Context(), userID, commentID, strings.TrimSpace(in.Reason))
@@ -135,6 +167,9 @@ func (s *Server) handleReportAccount(c echo.Context) error {
 	}
 	var in createReportRequest
 	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	if err := in.videoOnlyDetailError(); err != nil {
 		return err
 	}
 	reportID, err := s.moderationsvc.ReportAccount(c.Request().Context(), userID, targetID, strings.TrimSpace(in.Reason))
@@ -196,6 +231,10 @@ type reportView struct {
 	// the sender deleting it. MessageID empties once the row is hard-deleted.
 	MessageID   string `json:"message_id,omitempty"`
 	MessageBody string `json:"message_body,omitempty"`
+	// Predefined reasons (never null) and the optional reported video range.
+	Reasons      []string `json:"reasons"`
+	StartSeconds *int32   `json:"start_seconds,omitempty"`
+	EndSeconds   *int32   `json:"end_seconds,omitempty"`
 }
 
 func newReportView(it moderation.Item) reportView {
@@ -219,6 +258,9 @@ func newReportView(it moderation.Item) reportView {
 		RemoteVideoDomain: it.RemoteVideoDomain,
 		MessageID:         it.MessageID,
 		MessageBody:       it.MessageBody,
+		Reasons:           nonNilStrings(it.Reasons),
+		StartSeconds:      it.VideoStartSeconds,
+		EndSeconds:        it.VideoEndSeconds,
 	}
 }
 
@@ -243,8 +285,12 @@ func (s *Server) handleListReports(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	reason := strings.TrimSpace(c.QueryParam("reason"))
+	if reason != "" && !moderation.IsPredefinedReason(reason) {
+		return echo.NewHTTPError(http.StatusBadRequest, "reason must be one of "+strings.Join(moderation.PredefinedReasons, ", "))
+	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	items, total, err := s.moderationsvc.List(c.Request().Context(), listFilterValue(status), page.Limit32(), page.Offset32())
+	items, total, err := s.moderationsvc.List(c.Request().Context(), listFilterValue(status), reason, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}

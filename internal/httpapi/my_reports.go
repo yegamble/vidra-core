@@ -26,13 +26,17 @@ type myReportView struct {
 	VideoTitle       string     `json:"video_title,omitempty"`
 	ReportedUsername string     `json:"reported_username,omitempty"`
 	RemoteVideoTitle string     `json:"remote_video_title,omitempty"`
+	Reasons          []string   `json:"reasons"`
+	StartSeconds     *int32     `json:"start_seconds,omitempty"`
+	EndSeconds       *int32     `json:"end_seconds,omitempty"`
 }
 
 func newMyReportView(r moderation.MyReport) myReportView {
 	return myReportView{ID: r.ID.String(), TargetType: r.TargetType, Status: r.Status, Reason: r.Reason,
 		CreatedAt: r.CreatedAt, ResolvedAt: r.ResolvedAt, LastActivityAt: r.LastActivityAt, MessageCount: r.MessageCount,
 		VideoID: r.VideoID, VideoTitle: r.VideoTitle, ReportedUsername: r.ReportedUsername,
-		RemoteVideoTitle: r.RemoteVideoTitle}
+		RemoteVideoTitle: r.RemoteVideoTitle, Reasons: nonNilStrings(r.Reasons),
+		StartSeconds: r.VideoStartSeconds, EndSeconds: r.VideoEndSeconds}
 }
 
 type myReportListResponse struct {

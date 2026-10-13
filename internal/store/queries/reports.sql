@@ -4,8 +4,11 @@
 -- (pgx.ErrNoRows), which the service maps to "already reported" so the staff
 -- fan-out fires only for genuinely new reports. The ::uuid casts keep a local
 -- report's reporter_id required although the column is nullable since 0153.
-INSERT INTO reports (reporter_id, target_type, video_id, reason)
-VALUES (sqlc.arg('reporter_id')::uuid, 'video', sqlc.arg('video_id'), sqlc.arg('reason'))
+INSERT INTO reports (reporter_id, target_type, video_id, reason, predefined_reasons,
+                     video_start_seconds, video_end_seconds)
+VALUES (sqlc.arg('reporter_id')::uuid, 'video', sqlc.arg('video_id'), sqlc.arg('reason'),
+        COALESCE(sqlc.arg('predefined_reasons')::text[], '{}'), sqlc.narg('video_start_seconds')::int,
+        sqlc.narg('video_end_seconds')::int)
 ON CONFLICT (reporter_id, video_id) WHERE video_id IS NOT NULL DO NOTHING
 RETURNING id;
 
@@ -52,10 +55,10 @@ RETURNING id;
 -- name: CreateRemoteFlagReport :one
 -- A remote Flag report (0153). No row for a repeat (Flag, target) or while the
 -- domain has an open report on the target; an unknown target violates the FK.
-INSERT INTO reports (target_type, video_id, comment_id, reported_user_id, reason,
+INSERT INTO reports (target_type, video_id, comment_id, reported_user_id, reason, predefined_reasons,
                      remote_reporter_actor_url, remote_reporter_domain, remote_flag_activity_id)
 VALUES (sqlc.arg('target_type'), sqlc.narg('video_id'), sqlc.narg('comment_id'), sqlc.narg('reported_user_id'),
-        sqlc.arg('reason'), sqlc.arg('actor_url')::text, sqlc.arg('domain')::text, sqlc.arg('flag_activity_id')::text)
+        sqlc.arg('reason'), COALESCE(sqlc.arg('predefined_reasons')::text[], '{}'), sqlc.arg('actor_url')::text, sqlc.arg('domain')::text, sqlc.arg('flag_activity_id')::text)
 ON CONFLICT DO NOTHING
 RETURNING id;
 
@@ -69,7 +72,7 @@ RETURNING id;
 -- silently returned the whole queue.
 SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reported_user_id, r.remote_video_id,
        r.message_id, r.message_body_snapshot,
-       r.reason, r.status,
+       r.reason, r.status, r.predefined_reasons, r.video_start_seconds, r.video_end_seconds,
        r.moderator_note, r.resolved_at, r.created_at,
        COALESCE(u.username, '')::text AS reporter_username,
        r.remote_reporter_actor_url, r.remote_reporter_domain,
@@ -90,11 +93,13 @@ WHERE (sqlc.narg('status')::text IS NULL
        -- is open/accepted/rejected, so "resolved" means "no longer open".
        OR (sqlc.narg('status')::text = 'resolved' AND r.status <> 'open')
        OR r.status = sqlc.narg('status')::text)
+  AND (sqlc.narg('predefined_reason')::text IS NULL
+       OR sqlc.narg('predefined_reason')::text = ANY(r.predefined_reasons))
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: CountReports :one
--- How many rows ListReports would return for the same status filter, ignoring
+-- How many rows ListReports would return for the same status/reason filter, ignoring
 -- pagination. The WHERE must stay identical to it (its joins are all LEFT).
 SELECT count(*)::bigint
 FROM reports r
@@ -102,7 +107,9 @@ WHERE (sqlc.narg('status')::text IS NULL
        -- 'resolved' is the queue's other half, not a stored value: reports.status
        -- is open/accepted/rejected, so "resolved" means "no longer open".
        OR (sqlc.narg('status')::text = 'resolved' AND r.status <> 'open')
-       OR r.status = sqlc.narg('status')::text);
+       OR r.status = sqlc.narg('status')::text)
+  AND (sqlc.narg('predefined_reason')::text IS NULL
+       OR sqlc.narg('predefined_reason')::text = ANY(r.predefined_reasons));
 
 -- name: DeleteReport :execrows
 -- Hard-delete a report row (admin purge). Notifications referencing it cascade
@@ -129,6 +136,7 @@ RETURNING reporter_id;
 -- while the video passes the public check (videos.sql: public, published, not
 -- blocked). report_id narrows to one (NULL = all).
 SELECT r.id, r.target_type, r.status, r.reason, r.created_at, r.resolved_at,
+       r.predefined_reasons, r.video_start_seconds, r.video_end_seconds,
        r.video_id,
        COALESCE(CASE WHEN v.privacy = 'public' AND v.state = 'published'
                       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)

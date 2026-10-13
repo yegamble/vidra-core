@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +44,8 @@ type modReportRow struct {
 	resolvedAt  pgtype.Timestamptz
 	// A remote Flag report (0153) has no reporterID, these instead.
 	remoteActor, remoteDomain, flagID string
+	reasons                           []string
+	startSeconds, endSeconds          *int32
 }
 
 // moderationFakeRepo is an in-memory moderation.Repository that resolves the
@@ -82,6 +85,7 @@ func (f *moderationFakeRepo) CreateVideoReport(_ context.Context, a sqlcgen.Crea
 	f.reports = append(f.reports, modReportRow{
 		id: id, reporterID: a.ReporterID, targetType: "video",
 		videoID: a.VideoID, reason: a.Reason, status: "open", createdAt: time.Now(),
+		reasons: a.PredefinedReasons, startSeconds: a.VideoStartSeconds, endSeconds: a.VideoEndSeconds,
 	})
 	return id, nil
 }
@@ -148,7 +152,11 @@ func (f *moderationFakeRepo) ListReports(_ context.Context, a sqlcgen.ListReport
 				continue
 			}
 		}
+		if a.PredefinedReason != nil && !slices.Contains(r.reasons, *a.PredefinedReason) {
+			continue
+		}
 		row := sqlcgen.ListReportsRow{
+			PredefinedReasons: r.reasons, VideoStartSeconds: r.startSeconds, VideoEndSeconds: r.endSeconds,
 			ID: r.id, TargetType: r.targetType, VideoID: r.videoID, CommentID: r.commentID,
 			ReportedUserID: r.reportedUserID, RemoteVideoID: r.remoteVideoID,
 			MessageID: r.messageID, MessageBodySnapshot: r.messageBody,
@@ -901,8 +909,8 @@ func TestNewReportEmailsOperator(t *testing.T) {
 
 // Each Count delegates to its List so the fake pair cannot disagree — the same
 // invariant the real Count/List SQL pairs must hold.
-func (f *moderationFakeRepo) CountReports(ctx context.Context, status *string) (int64, error) {
-	rows, err := f.ListReports(ctx, sqlcgen.ListReportsParams{Status: status, ResultLimit: 1 << 30})
+func (f *moderationFakeRepo) CountReports(ctx context.Context, a sqlcgen.CountReportsParams) (int64, error) {
+	rows, err := f.ListReports(ctx, sqlcgen.ListReportsParams{Status: a.Status, PredefinedReason: a.PredefinedReason, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
 }
 
@@ -1036,5 +1044,54 @@ func TestRemoteFlagReportInAdminQueue(t *testing.T) {
 	}
 	if r, _ := raw.Reports[0]["reporter"].(map[string]any); len(r) != 1 || r["username"] != "bob" {
 		t.Errorf("local reporter = %v, want exactly {username: bob}", r)
+	}
+}
+
+func TestReportVideoReasonsAndRange(t *testing.T) {
+	srv := videoServer(t)
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip","privacy":"public"}`)
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	path := "/api/v1/videos/" + vid + "/report"
+
+	for name, body := range map[string]string{
+		"unknown reason": `{"reason":"x","reasons":["nope"]}`,
+		"negative start": `{"reason":"x","start_seconds":-1}`,
+		"end <= start":   `{"reason":"x","start_seconds":10,"end_seconds":10}`,
+		"end w/o start":  `{"reason":"x","end_seconds":10}`,
+	} {
+		if rec := sendJSONAuth(srv, http.MethodPost, path, body, bob); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s = %d, want 422; body=%s", name, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, path, `{"reason":"x","reasons":["spamOrMisleading","captions","captions"],"start_seconds":5,"end_seconds":9}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("report = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var all, filtered, miss reportListResponse
+	_ = json.Unmarshal(listReports(srv, "", admin).Body.Bytes(), &all)
+	if len(all.Reports) != 1 {
+		t.Fatalf("reports = %d, want 1", len(all.Reports))
+	}
+	r := all.Reports[0]
+	if len(r.Reasons) != 2 || r.Reasons[0] != "spamOrMisleading" || r.Reasons[1] != "captions" ||
+		r.StartSeconds == nil || *r.StartSeconds != 5 || r.EndSeconds == nil || *r.EndSeconds != 9 {
+		t.Errorf("report detail = %+v", r)
+	}
+	_ = json.Unmarshal(listReports(srv, "?reason=captions", admin).Body.Bytes(), &filtered)
+	_ = json.Unmarshal(listReports(srv, "?reason=privacy", admin).Body.Bytes(), &miss)
+	if len(filtered.Reports) != 1 || filtered.Total != 1 || len(miss.Reports) != 0 || miss.Total != 0 {
+		t.Errorf("reason filter: hit=%d/%d miss=%d/%d", len(filtered.Reports), filtered.Total, len(miss.Reports), miss.Total)
+	}
+	if rec := listReports(srv, "?reason=bogus", admin); rec.Code != http.StatusBadRequest {
+		t.Errorf("bogus reason filter = %d, want 400", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/users/"+uuid.New().String()+"/report", `{"reason":"x","reasons":["privacy"]}`, bob); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("account report with reasons = %d, want 422", rec.Code)
+	}
+	var mine myReportListResponse
+	_ = json.Unmarshal(sendJSONAuth(srv, http.MethodGet, "/api/v1/me/reports", "", bob).Body.Bytes(), &mine)
+	if len(mine.Reports) != 1 || len(mine.Reports[0].Reasons) != 2 {
+		t.Errorf("my reports = %+v", mine.Reports)
 	}
 }
