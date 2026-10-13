@@ -110,5 +110,9 @@ func (s *Service) ResetPassword(ctx context.Context, rawToken, newPassword strin
 	// used or to revoke sessions must not fail the reset.
 	_ = s.repo.MarkPasswordResetTokenUsed(ctx, row.ID)
 	_ = s.repo.RevokeAllUserSessions(ctx, row.UserID)
+	// Possession of the mailbox just proved ownership: lift any failed-login lock.
+	if s.lockStore != nil {
+		_, _ = s.lockStore.ClearLoginThrottles(ctx, row.UserID)
+	}
 	return nil
 }

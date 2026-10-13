@@ -342,3 +342,24 @@ func TestClearLockoutUnknownUserIs404EvenWithoutAStore(t *testing.T) {
 		t.Fatalf("err = %v, want ErrAccountNotFound", err)
 	}
 }
+
+func TestPasswordResetClearsLoginLockout(t *testing.T) {
+	e := newLockEnv(t)
+	mailer := &captureMailer{}
+	WithMailer(mailer)(e.svc)
+	for i := 0; i < prefixThreshold; i++ {
+		_ = e.login("203.0.113.7", "wrong")
+	}
+	if err := e.login("203.0.113.7", "supersecret"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected locked: %v", err)
+	}
+	if err := e.svc.RequestPasswordReset(context.Background(), "alice@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ResetPassword(context.Background(), mailer.token, "brand-new-pass"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.login("203.0.113.7", "brand-new-pass"); err != nil {
+		t.Fatalf("reset must lift the lockout: %v", err)
+	}
+}
