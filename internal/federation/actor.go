@@ -109,6 +109,9 @@ const SubscribeRel = "http://ostatus.org/schema/1.0/subscribe"
 // AccountActor returns the ActivityPub Person document for a local account,
 // minting its keypair on first request. Unknown/inactive username → ErrNotFound.
 func (s *Service) AccountActor(ctx context.Context, username string) (*Actor, error) {
+	if s.isInstanceActorName(ctx, strings.TrimSpace(username)) {
+		return s.InstanceActor(ctx)
+	}
 	u, err := s.repo.GetUserActorByUsername(ctx, strings.TrimSpace(username))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -293,7 +296,9 @@ func (s *Service) WebFinger(ctx context.Context, resource string) (*JRD, error) 
 		return nil, ErrNotFound
 	}
 	var accountURL, channelURL string
-	if u, err := s.repo.GetUserActorByUsername(ctx, name); err == nil {
+	if s.isInstanceActorName(ctx, name) {
+		accountURL = s.InstanceActorURL()
+	} else if u, err := s.repo.GetUserActorByUsername(ctx, name); err == nil {
 		accountURL = s.baseURL + "/accounts/" + u.Username
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err

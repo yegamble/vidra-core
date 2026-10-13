@@ -175,6 +175,7 @@ type Repository interface {
 	CreateVideoFile(ctx context.Context, arg sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error)
 	GetVideoFileByKind(ctx context.Context, arg sqlcgen.GetVideoFileByKindParams) (sqlcgen.VideoFile, error)
 	DeleteVideoFilesByVideoAndKind(ctx context.Context, arg sqlcgen.DeleteVideoFilesByVideoAndKindParams) error
+	SwapVideoOriginalIfOwner(ctx context.Context, arg sqlcgen.SwapVideoOriginalIfOwnerParams) (sqlcgen.VideoFile, error)
 	UpsertCaption(ctx context.Context, arg sqlcgen.UpsertCaptionParams) (sqlcgen.Caption, error)
 	ListCaptionsByVideo(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.Caption, error)
 	GetCaptionByLang(ctx context.Context, arg sqlcgen.GetCaptionByLangParams) (sqlcgen.Caption, error)
@@ -339,6 +340,10 @@ type Service struct {
 	onMove               []func(ctx context.Context, videoID, fromChannelID uuid.UUID, wasFederated bool)
 	onDelete             []func(context.Context, uuid.UUID, uuid.UUID, bool)
 	onMediaReplaced      []func(context.Context, uuid.UUID, string)
+	onCaptionChange      []func(ctx context.Context, videoID uuid.UUID, storageKey string, deleted bool)
+	// own persists ownership change requests (T21, 0165); nil = the routes
+	// answer ErrOwnershipUnavailable.
+	own OwnershipRepository
 	// uploadUsageRecorder appends a rolling daily-upload-quota ledger event
 	// (config-parity W7) after AttachOriginal stores an original. Best-effort;
 	// nil = no daily accounting.
@@ -557,6 +562,24 @@ func WithDeleteHook(fn func(context.Context, uuid.UUID, uuid.UUID, bool)) Option
 // poster replacement spends nothing.
 func WithMediaReplacedHook(fn func(context.Context, uuid.UUID, string)) Option {
 	return func(s *Service) { s.onMediaReplaced = append(s.onMediaReplaced, fn) }
+}
+
+// WithCaptionChangeHook registers a callback invoked (best-effort, synchronously)
+// after a caption track is stored or replaced (deleted=false) and after one is
+// removed (deleted=true), with the track's storage key. The IPFS mirror is the
+// consumer: a caption is pinned under its stable key, so a deleted track stayed
+// pinned and retrievable and a replaced one stayed pinned under its old bytes
+// (Tier A F5). Unlike WithMediaReplacedHook it carries no edge fence — whether
+// the video is mirror-eligible is the consumer's decision.
+func WithCaptionChangeHook(fn func(ctx context.Context, videoID uuid.UUID, storageKey string, deleted bool)) Option {
+	return func(s *Service) { s.onCaptionChange = append(s.onCaptionChange, fn) }
+}
+
+// fireCaptionChange runs the caption hooks.
+func (s *Service) fireCaptionChange(ctx context.Context, videoID uuid.UUID, key string, deleted bool) {
+	for _, hook := range s.onCaptionChange {
+		hook(ctx, videoID, key, deleted)
+	}
 }
 
 // fireMediaReplaced runs the replacement hooks for a video that an edge could be
@@ -1061,21 +1084,26 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 	// The swap: from here the new source is the video's original. Downloads and
 	// progressive playback follow the file row immediately; HLS keeps serving
 	// the previous generation until the re-transcode promotes the new one.
-	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
-		VideoID: videoID,
-		Kind:    "original",
-	}); err != nil {
-		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
-	}
-	file, err := s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+	//
+	// One statement, and only while the video still belongs to the owner it had
+	// when this replacement began (v.OwnerID): ownership is derived from the
+	// channel, and an accepted ownership change can land while the file is
+	// stored, scanned and probed. Then nothing is swapped, the new blob is
+	// dropped like any other refused replacement, and the caller sees
+	// ErrReplaceConflict.
+	file, err := s.repo.SwapVideoOriginalIfOwner(ctx, sqlcgen.SwapVideoOriginalIfOwnerParams{
 		VideoID:      videoID,
-		Kind:         "original",
+		OwnerID:      v.OwnerID,
 		StorageKey:   key,
 		ContentType:  strings.TrimSpace(in.ContentType),
 		OriginalName: strings.TrimSpace(in.Filename),
 		SizeBytes:    size,
 		Sha256:       sum,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = s.blobs.Delete(ctx, key)
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrReplaceConflict
+	}
 	if err != nil {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
 	}
@@ -2267,19 +2295,27 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 			updated.State = "published"
 		}
 	}
-	// v is the PRE-edit row: whether this video was public+published before the
-	// edit is the fact federation needs to tell a retraction from a video no
-	// peer ever held (see WithUpdateHook).
+	s.fireUpdateHooks(ctx, v, moved)
+	return updated, nil
+}
+
+// fireUpdateHooks runs the side effects of an edit — the update hooks (search
+// reindex, federation Update, IPFS sync) and, for a channel move, the move hooks
+// (federation retract to the old channel's followers). v is the PRE-edit row:
+// whether this video was public+published before the edit is the fact
+// federation needs to tell a retraction from a video no peer ever held (see
+// WithUpdateHook), and v.ChannelID is the channel a move left. Shared by the
+// same-owner move above and the cross-owner one (AcceptOwnershipChange).
+func (s *Service) fireUpdateHooks(ctx context.Context, v sqlcgen.GetVideoByIDRow, moved bool) {
 	wasFederated := v.Privacy == "public" && v.State == "published"
 	for _, hook := range s.onUpdate {
-		hook(ctx, id, wasFederated)
+		hook(ctx, v.ID, wasFederated)
 	}
 	if moved {
 		for _, hook := range s.onMove {
-			hook(ctx, id, v.ChannelID, wasFederated)
+			hook(ctx, v.ID, v.ChannelID, wasFederated)
 		}
 	}
-	return updated, nil
 }
 
 // PrefillMetadata fills a video's title/description from an importer's metadata
@@ -2583,7 +2619,14 @@ func remoteCard(it FeedItem, remote bool, domain, watchURL string, streamURL *st
 }
 
 // feedSorts are the accepted feed ordering modes.
-var feedSorts = map[string]bool{"recent": true, "popular": true, "trending": true}
+//
+// "hot" is deliberately absent: a windowed engagement score needs per-window
+// view/like counters (only all-time totals exist), and "trending" already is
+// the age-decayed engagement sort — a second name for it would be dishonest.
+var feedSorts = map[string]bool{
+	"recent": true, "popular": true, "trending": true,
+	"originally_published_at": true, "name": true,
+}
 
 // NormalizeFeedSort returns sort when it is a recognised mode, else "recent".
 func NormalizeFeedSort(sort string) string {
@@ -2622,7 +2665,7 @@ type FeedFilter struct {
 }
 
 // ListPublic returns the cross-channel public feed in the requested order
-// (recent|popular|trending; unknown → recent), optionally narrowed by filter,
+// (recent|popular|trending|originally_published_at|name; unknown → recent), optionally narrowed by filter,
 // each item carrying its view count and poster availability. scope=all
 // (remote-content §4) adds federated remote videos (excluded whenever a
 // tag/category/language filter is active — remote videos carry no local
