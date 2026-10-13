@@ -161,3 +161,32 @@ func TestFeedLanguageFilterMatchesAny(t *testing.T) {
 		}
 	}
 }
+
+// UpsertUserContentPrefs merges in one statement: a NULL argument keeps the
+// stored value, so two PUTs touching different fields cannot erase each other.
+func TestUpsertUserContentPrefsKeepsOmittedFields(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	suf := uuid.NewString()[:8]
+	u, err := q.CreateUser(ctx, sqlcgen.CreateUserParams{Username: "cp_" + suf, Email: "cp_" + suf + "@example.test", PasswordHash: "x", Role: "user"})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	defer func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, u.ID) }()
+	if _, err := q.UpsertUserContentPrefs(ctx, sqlcgen.UpsertUserContentPrefsParams{UserID: u.ID, PreferredLanguages: []string{"fr"}}); err != nil {
+		t.Fatal(err)
+	}
+	row, err := q.UpsertUserContentPrefs(ctx, sqlcgen.UpsertUserContentPrefsParams{UserID: u.ID, SensitiveFlagPolicies: []byte(`{"sex":"hide"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(row.PreferredLanguages) != 1 || row.PreferredLanguages[0] != "fr" || string(row.SensitiveFlagPolicies) != `{"sex": "hide"}` {
+		t.Errorf("got langs %v flags %s, want fr kept and sex=hide set", row.PreferredLanguages, row.SensitiveFlagPolicies)
+	}
+}

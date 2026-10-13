@@ -76,14 +76,11 @@ func (s *Service) Get(ctx context.Context, userID uuid.UUID) (Prefs, error) {
 	return decode(row), nil
 }
 
-// Update applies a Patch (read-modify-write). In the flag map an empty value
+// Update applies a Patch in a single upsert statement. In the flag map an empty value
 // means inherit and is not stored; an unknown flag, policy or language is a
 // ValidationError and nothing is written.
 func (s *Service) Update(ctx context.Context, userID uuid.UUID, in Patch) (Prefs, error) {
-	cur, err := s.Get(ctx, userID)
-	if err != nil {
-		return Prefs{}, err
-	}
+	arg := sqlcgen.UpsertUserContentPrefsParams{UserID: userID}
 	if in.SensitiveFlagPolicies != nil {
 		clean := map[string]string{}
 		for flag, policy := range in.SensitiveFlagPolicies {
@@ -98,7 +95,11 @@ func (s *Service) Update(ctx context.Context, userID uuid.UUID, in Patch) (Prefs
 			}
 			clean[flag] = policy
 		}
-		cur.SensitiveFlagPolicies = clean
+		raw, err := json.Marshal(clean)
+		if err != nil {
+			return Prefs{}, err
+		}
+		arg.SensitiveFlagPolicies = raw
 	}
 	if in.PreferredLanguages != nil {
 		seen := map[string]bool{}
@@ -115,15 +116,9 @@ func (s *Service) Update(ctx context.Context, userID uuid.UUID, in Patch) (Prefs
 		if len(langs) > MaxPreferredLanguages {
 			return Prefs{}, &ValidationError{Message: "at most 10 preferred languages"}
 		}
-		cur.PreferredLanguages = langs
+		arg.PreferredLanguages = langs
 	}
-	raw, err := json.Marshal(cur.SensitiveFlagPolicies)
-	if err != nil {
-		return Prefs{}, err
-	}
-	row, err := s.q.UpsertUserContentPrefs(ctx, sqlcgen.UpsertUserContentPrefsParams{
-		UserID: userID, SensitiveFlagPolicies: raw, PreferredLanguages: cur.PreferredLanguages,
-	})
+	row, err := s.q.UpsertUserContentPrefs(ctx, arg)
 	if err != nil {
 		return Prefs{}, err
 	}

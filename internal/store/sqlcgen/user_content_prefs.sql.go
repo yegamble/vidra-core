@@ -33,10 +33,12 @@ func (q *Queries) GetUserContentPrefs(ctx context.Context, userID uuid.UUID) (Us
 
 const upsertUserContentPrefs = `-- name: UpsertUserContentPrefs :one
 INSERT INTO user_content_prefs (user_id, sensitive_flag_policies, preferred_languages)
-VALUES ($1, $2, COALESCE($3::text[], '{}'))
+VALUES ($1,
+        COALESCE($2::jsonb, '{}'),
+        COALESCE($3::text[], '{}'))
 ON CONFLICT (user_id) DO UPDATE SET
-    sensitive_flag_policies = EXCLUDED.sensitive_flag_policies,
-    preferred_languages = EXCLUDED.preferred_languages,
+    sensitive_flag_policies = COALESCE($2::jsonb, user_content_prefs.sensitive_flag_policies),
+    preferred_languages = COALESCE($3::text[], user_content_prefs.preferred_languages),
     updated_at = now()
 RETURNING user_id, sensitive_flag_policies, preferred_languages, updated_at
 `
@@ -47,8 +49,10 @@ type UpsertUserContentPrefsParams struct {
 	PreferredLanguages    []string  `json:"preferred_languages"`
 }
 
-// Replace the caller's content preferences (the service validates, and does the
-// read-modify-write that keeps an omitted field). Creates the row on first save.
+// Merge into the caller's content preferences in ONE statement, so two
+// concurrent PUTs touching different fields cannot overwrite each other (a
+// read-modify-write in Go could). A NULL argument leaves that field as stored
+// (or the empty default on first save); the service validates beforehand.
 func (q *Queries) UpsertUserContentPrefs(ctx context.Context, arg UpsertUserContentPrefsParams) (UserContentPref, error) {
 	row := q.db.QueryRow(ctx, upsertUserContentPrefs, arg.UserID, arg.SensitiveFlagPolicies, arg.PreferredLanguages)
 	var i UserContentPref

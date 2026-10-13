@@ -27,7 +27,17 @@ func (f *contentPrefsFake) GetUserContentPrefs(_ context.Context, id uuid.UUID) 
 }
 
 func (f *contentPrefsFake) UpsertUserContentPrefs(_ context.Context, a sqlcgen.UpsertUserContentPrefsParams) (sqlcgen.UserContentPref, error) {
-	r := sqlcgen.UserContentPref{UserID: a.UserID, SensitiveFlagPolicies: a.SensitiveFlagPolicies, PreferredLanguages: a.PreferredLanguages}
+	// Mirrors the SQL: a NULL argument keeps the stored value (empty on first save).
+	r, ok := f.rows[a.UserID]
+	if !ok {
+		r = sqlcgen.UserContentPref{UserID: a.UserID, SensitiveFlagPolicies: []byte("{}"), PreferredLanguages: []string{}}
+	}
+	if a.SensitiveFlagPolicies != nil {
+		r.SensitiveFlagPolicies = a.SensitiveFlagPolicies
+	}
+	if a.PreferredLanguages != nil {
+		r.PreferredLanguages = a.PreferredLanguages
+	}
 	f.rows[a.UserID] = r
 	return r, nil
 }

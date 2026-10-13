@@ -6,12 +6,16 @@ FROM user_content_prefs
 WHERE user_id = $1;
 
 -- name: UpsertUserContentPrefs :one
--- Replace the caller's content preferences (the service validates, and does the
--- read-modify-write that keeps an omitted field). Creates the row on first save.
+-- Merge into the caller's content preferences in ONE statement, so two
+-- concurrent PUTs touching different fields cannot overwrite each other (a
+-- read-modify-write in Go could). A NULL argument leaves that field as stored
+-- (or the empty default on first save); the service validates beforehand.
 INSERT INTO user_content_prefs (user_id, sensitive_flag_policies, preferred_languages)
-VALUES (sqlc.arg('user_id'), sqlc.arg('sensitive_flag_policies'), COALESCE(sqlc.arg('preferred_languages')::text[], '{}'))
+VALUES (sqlc.arg('user_id'),
+        COALESCE(sqlc.narg('sensitive_flag_policies')::jsonb, '{}'),
+        COALESCE(sqlc.narg('preferred_languages')::text[], '{}'))
 ON CONFLICT (user_id) DO UPDATE SET
-    sensitive_flag_policies = EXCLUDED.sensitive_flag_policies,
-    preferred_languages = EXCLUDED.preferred_languages,
+    sensitive_flag_policies = COALESCE(sqlc.narg('sensitive_flag_policies')::jsonb, user_content_prefs.sensitive_flag_policies),
+    preferred_languages = COALESCE(sqlc.narg('preferred_languages')::text[], user_content_prefs.preferred_languages),
     updated_at = now()
 RETURNING user_id, sensitive_flag_policies, preferred_languages, updated_at;
