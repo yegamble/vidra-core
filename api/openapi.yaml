@@ -9320,6 +9320,65 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/content-preferences:
+    get:
+      operationId: getContentPreferences
+      summary: Get the caller's content preferences
+      description: >-
+        The signed-in viewer's per-flag sensitive-content policy overrides,
+        layered on their own sensitive_content_policy (else the instance
+        policy). A flag with no entry inherits that base policy. Always 200.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's content preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentPreferences"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateContentPreferences
+      summary: Replace the caller's per-flag sensitive policies
+      description: >-
+        Replaces sensitive_flag_policies wholesale. A flag set to an empty
+        string (or omitted) inherits the base policy. Unknown flag or policy
+        -> 400.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContentPreferences"
+      responses:
+        "200":
+          description: The saved content preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentPreferences"
+        "400":
+          description: Malformed body, unknown flag, or invalid policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/player-settings:
     get:
       operationId: getPlayerSettings
@@ -19585,6 +19644,18 @@ components:
             When the instance sensitive_content_policy is "hide", flagged
             videos are excluded from the public feed and search server-side;
             under warn/blur the frontend applies the matching presentation.
+        sensitive_flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveFlag"
+          description: >-
+            The kinds of sensitive content (PeerTube 7.2 nsfwFlags), always present
+            ([] when none; a flag implies is_sensitive). The viewer's per-flag
+            policy (GET /me/content-preferences) overrides their base policy for
+            that flag; with several flags the most restrictive applies. "hide" is
+            enforced server-side in browse and search; blur and warn are
+            presentation.
+
         sensitive_reason:
           type: string
           description: >-
@@ -20467,6 +20538,14 @@ components:
           description: >-
             Mark the video as sensitive content (defaults to false). See the
             Video schema for how the instance policy treats flagged videos.
+        sensitive_flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveFlag"
+          description: >-
+            The kinds of sensitive content. Any flag also marks the video sensitive.
+            An unknown flag -> 422.
+
         sensitive_reason:
           type: string
           maxLength: 280
@@ -20552,6 +20631,14 @@ components:
         is_sensitive:
           type: boolean
           description: Set or clear the sensitive-content flag (omit to leave unchanged).
+        sensitive_flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveFlag"
+          description: >-
+            Replace the sensitive-content kinds (omit to leave unchanged; [] clears).
+            A non-empty set also marks the video sensitive. An unknown flag -> 422.
+
         sensitive_reason:
           type: string
           maxLength: 280
@@ -20922,6 +21009,13 @@ components:
             The origin flagged this video sensitive (ActivityStreams
             `sensitive`). The viewer's sensitive-content policy applies as to a
             local video's is_sensitive: under "hide" it is excluded from search.
+        sensitive_flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveFlag"
+          description: >-
+            The origin's PeerTube SensitiveTag flags (explicitSex maps to sex);
+            unknown names are dropped.
     ATProtoLinkRequest:
       type: object
       required: [handle, app_password]
@@ -21765,6 +21859,25 @@ components:
           additionalProperties:
             type: boolean
           example: { new_video: true }
+    SensitiveFlag:
+      type: string
+      enum: [violent, shocking, sex]
+      description: >-
+        A kind of sensitive content. On the wire to PeerTube these are
+        SensitiveTag entries (sex is explicitSex); `sensitive` stays the boolean
+        Mastodon reads.
+    ContentPreferences:
+      type: object
+      required: [sensitive_flag_policies]
+      properties:
+        sensitive_flag_policies:
+          type: object
+          description: >-
+            Per-flag viewer policy overrides. Keys are SensitiveFlag values;
+            each value is hide, warn, blur or display (empty string = inherit).
+          additionalProperties:
+            type: string
+            enum: [hide, warn, blur, display, ""]
     PlayerSettings:
       type: object
       description: >-

@@ -65,6 +65,7 @@ import (
 	"github.com/vidra/vidra-core/internal/uploadfinalize"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
+	"github.com/vidra/vidra-core/internal/viewerprefs"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
@@ -140,6 +141,7 @@ type Server struct {
 	ratingsvc         *rating.Service
 	notifsvc          *notification.Service
 	playersettingssvc *playersettings.Service
+	viewerprefssvc    *viewerprefs.Service
 	playlistsvc       *playlist.Service
 	moderationsvc     *moderation.Service
 	mutesvc           *mute.Service
@@ -551,6 +553,12 @@ func WithRatingService(svc *rating.Service) Option {
 // registered and no notifications are created.
 func WithNotificationService(svc *notification.Service) Option {
 	return func(s *Server) { s.notifsvc = svc }
+}
+
+// WithViewerPrefsService mounts GET/PUT /me/content-preferences and makes the
+// sensitive-content resolution honour the viewer's per-flag overrides.
+func WithViewerPrefsService(svc *viewerprefs.Service) Option {
+	return func(s *Server) { s.viewerprefssvc = svc }
 }
 
 // WithPlayerSettingsService mounts the per-user player-settings endpoints
@@ -2025,6 +2033,10 @@ func (s *Server) routes() {
 	// Per-user player settings (PLAY-07): the signed-in user's playback defaults
 	// (speed, autoplay-next, quality, captions/theater). GET always returns the
 	// full effective object (defaults for a fresh user); PUT is a merge.
+	if s.viewerprefssvc != nil {
+		api.GET("/me/content-preferences", s.handleGetContentPrefs, s.requireAuth)
+		api.PUT("/me/content-preferences", s.handleUpdateContentPrefs, s.requireAuth)
+	}
 	if s.playersettingssvc != nil {
 		api.GET("/me/player-settings", s.handleGetPlayerSettings, s.requireAuth)
 		api.PUT("/me/player-settings", s.handleUpdatePlayerSettings, s.requireAuth)

@@ -1,7 +1,7 @@
 -- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason, support)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support;
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason, support, sensitive_flags)
+VALUES (sqlc.arg('channel_id'), sqlc.arg('title'), sqlc.arg('description'), sqlc.arg('privacy'), sqlc.arg('category'), sqlc.arg('language'), sqlc.arg('license'), sqlc.arg('publish_at'), sqlc.arg('is_sensitive'), sqlc.arg('comments_policy'), sqlc.arg('download_enabled'), sqlc.arg('publish_after_transcode'), sqlc.arg('sensitive_reason'), sqlc.arg('support'), COALESCE(sqlc.arg('sensitive_flags')::text[], '{}'))
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support, sensitive_flags;
 
 -- name: CountPublicVideos :one
 -- Public, published videos — the "local posts" count NodeInfo advertises. Only
@@ -45,7 +45,7 @@ SELECT v.id, v.title, v.description, v.short_code, v.support,
        ) AS has_hls,
        -- The PeerTube-required facts GetVideoFederationFacts carries for the
        -- pushed object (T05), so the walked outbox and the push agree.
-       v.category, v.language, v.license, v.is_sensitive, v.comments_policy,
+       v.category, v.language, v.license, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.comments_policy,
        v.download_enabled, v.publish_after_transcode,
        au.username AS owner_username,
        COALESCE(vc.views, 0)::bigint AS views,
@@ -99,7 +99,7 @@ WHERE v.id = $1;
 -- name: GetVideoByID :one
 SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license, v.publish_at, v.originally_published_at,
-       v.is_sensitive, v.sensitive_reason, v.support,
+       v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.support,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
        c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
@@ -160,7 +160,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code,
        -- A moderator block changes neither state nor privacy, so without this
        -- column the owner's own management list shows a blocked video as
        -- 'published' while it 404s for everyone including them (A16 slice 2).
@@ -208,7 +208,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code,
        EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
        COALESCE(
            (SELECT b.reason FROM video_blocks b WHERE b.video_id = v.id),
@@ -261,7 +261,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -287,7 +287,7 @@ WHERE v.channel_id = sqlc.arg('channel_id') AND (v.privacy = 'public' OR (v.priv
   -- over the whole result set). With a LIMIT that filter has to be in SQL or a
   -- page would silently return fewer rows than asked for and the total would
   -- count rows the caller can never see.
-  AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
+  AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid)
 ORDER BY
     CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN v.created_at END ASC,
     CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN v.created_at END DESC,
@@ -315,7 +315,7 @@ WHERE v.channel_id = sqlc.arg('channel_id') AND (v.privacy = 'public' OR (v.priv
       SELECT 1 FROM user_blocks ub
       WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
   )
-  AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive);
+  AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid);
 
 -- name: ListPublicVideosByOwner :many
 -- TWIN of ListPublicVideosByChannel scoped to an ACCOUNT (every channel its
@@ -333,7 +333,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -359,7 +359,7 @@ WHERE c.owner_id = sqlc.arg('owner_id')::uuid AND (v.privacy = 'public' OR (v.pr
   -- over the whole result set). With a LIMIT that filter has to be in SQL or a
   -- page would silently return fewer rows than asked for and the total would
   -- count rows the caller can never see.
-  AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
+  AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid)
 ORDER BY
     CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN v.created_at END ASC,
     CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN v.created_at END DESC,
@@ -387,7 +387,7 @@ WHERE c.owner_id = sqlc.arg('owner_id')::uuid AND (v.privacy = 'public' OR (v.pr
       SELECT 1 FROM user_blocks ub
       WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
   )
-  AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive);
+  AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid);
 
 -- name: ListPublicVideosSorted :many
 -- The public feed, joined with view counts and thumbnail availability so cards
@@ -415,7 +415,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive, feed.sensitive_reason, feed.short_code
+       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.short_code
 FROM (
     SELECT v.id,
            false AS remote,
@@ -434,7 +434,7 @@ FROM (
            ''::text AS domain,
            ''::text AS watch_url,
            NULL::text AS stream_url,
-           v.is_sensitive,
+           v.is_sensitive, v.sensitive_flags,
            v.sensitive_reason,
            v.short_code
     FROM videos v
@@ -463,7 +463,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
+      AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -480,7 +480,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           rv.is_sensitive,
+           rv.is_sensitive, rv.sensitive_flags,
            ''::text AS sensitive_reason,
            ''::text AS short_code
     FROM remote_videos rv
@@ -492,7 +492,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
-      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT rv.is_sensitive)
+      AND NOT vidra_sensitive_hidden(rv.is_sensitive, rv.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
@@ -553,7 +553,7 @@ FROM (
            ''::text AS domain,
            ''::text AS watch_url,
            NULL::text AS stream_url,
-           v.is_sensitive,
+           v.is_sensitive, v.sensitive_flags,
            v.sensitive_reason
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
@@ -581,7 +581,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
+      AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -597,7 +597,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           rv.is_sensitive,
+           rv.is_sensitive, rv.sensitive_flags,
            ''::text AS sensitive_reason
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -608,7 +608,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
-      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT rv.is_sensitive)
+      AND NOT vidra_sensitive_hidden(rv.is_sensitive, rv.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
@@ -647,7 +647,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive, feed.sensitive_reason, feed.short_code
+       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.short_code
 FROM (
     SELECT v.id,
            false AS remote,
@@ -665,7 +665,7 @@ FROM (
            ''::text AS domain,
            ''::text AS watch_url,
            NULL::text AS stream_url,
-           v.is_sensitive,
+           v.is_sensitive, v.sensitive_flags,
            v.sensitive_reason,
            v.short_code
     FROM videos v
@@ -702,7 +702,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           rv.is_sensitive,
+           rv.is_sensitive, rv.sensitive_flags,
            ''::text AS sensitive_reason,
            ''::text AS short_code
     FROM remote_videos rv
@@ -767,7 +767,7 @@ FROM (
            ''::text AS domain,
            ''::text AS watch_url,
            NULL::text AS stream_url,
-           v.is_sensitive,
+           v.is_sensitive, v.sensitive_flags,
            v.sensitive_reason
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
@@ -803,7 +803,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           rv.is_sensitive,
+           rv.is_sensitive, rv.sensitive_flags,
            ''::text AS sensitive_reason
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -869,7 +869,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive, feed.sensitive_reason, feed.short_code
+       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.short_code
 FROM (
     SELECT v.id,
            false AS remote,
@@ -887,7 +887,7 @@ FROM (
            ''::text AS domain,
            ''::text AS watch_url,
            NULL::text AS stream_url,
-           v.is_sensitive,
+           v.is_sensitive, v.sensitive_flags,
            v.sensitive_reason,
            v.short_code,
            similarity(v.title, sqlc.arg('query')) AS search_rank
@@ -941,7 +941,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
+      AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -957,7 +957,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           rv.is_sensitive,
+           rv.is_sensitive, rv.sensitive_flags,
            ''::text AS sensitive_reason,
            ''::text AS short_code,
            similarity(rv.title, sqlc.arg('query')) AS search_rank
@@ -977,7 +977,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
-      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT rv.is_sensitive)
+      AND NOT vidra_sensitive_hidden(rv.is_sensitive, rv.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
@@ -1038,7 +1038,7 @@ FROM (
            ''::text AS domain,
            ''::text AS watch_url,
            NULL::text AS stream_url,
-           v.is_sensitive,
+           v.is_sensitive, v.sensitive_flags,
            v.sensitive_reason,
            similarity(v.title, sqlc.arg('query')) AS search_rank
     FROM videos v
@@ -1091,7 +1091,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
+      AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -1107,7 +1107,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           rv.is_sensitive,
+           rv.is_sensitive, rv.sensitive_flags,
            ''::text AS sensitive_reason,
            similarity(rv.title, sqlc.arg('query')) AS search_rank
     FROM remote_videos rv
@@ -1126,7 +1126,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
-      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT rv.is_sensitive)
+      AND NOT vidra_sensitive_hidden(rv.is_sensitive, rv.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
@@ -1172,7 +1172,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -1190,7 +1190,7 @@ WHERE v.id = ANY (sqlc.arg('ids')::uuid[])
       WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
   )
   AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
-  AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive);
+  AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid);
 
 -- name: ListRelatedVideosFallback :many
 -- Server-side "related videos" fallback (search-service W4) when vidra-search is
@@ -1208,7 +1208,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code,
        (v.channel_id = sqlc.arg('channel_id'))::bool AS same_channel
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
@@ -1227,7 +1227,7 @@ WHERE v.privacy = 'public' AND v.state = 'published'
       WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
   )
   AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
-  AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
+  AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid)
   AND (
       v.channel_id = sqlc.arg('channel_id')
       OR (sqlc.narg('category')::text IS NOT NULL AND v.category = sqlc.narg('category'))
@@ -1246,6 +1246,7 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     publish_at  = COALESCE(sqlc.narg('publish_at'), publish_at),
     is_sensitive = COALESCE(sqlc.narg('is_sensitive'), is_sensitive),
     sensitive_reason = COALESCE(sqlc.narg('sensitive_reason'), sensitive_reason),
+    sensitive_flags = COALESCE(sqlc.narg('sensitive_flags')::text[], sensitive_flags),
     comments_policy  = COALESCE(sqlc.narg('comments_policy'), comments_policy),
     download_enabled = COALESCE(sqlc.narg('download_enabled'), download_enabled),
     publish_after_transcode = COALESCE(sqlc.narg('publish_after_transcode'), publish_after_transcode),
@@ -1258,14 +1259,14 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     channel_id  = COALESCE(sqlc.narg('channel_id'), channel_id),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support, sensitive_flags;
 
 -- name: SetVideoState :one
 UPDATE videos
 SET state      = sqlc.arg('state'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support, sensitive_flags;
 
 -- name: SetVideoPinnedComment :exec
 -- Set (or clear, when NULL) a video's pinned comment (YouTube-style creator pin,
@@ -1376,7 +1377,7 @@ FROM (
            true AS is_local,
            ''::text AS origin_domain,
            ''::text AS watch_url,
-           v.is_sensitive,
+           v.is_sensitive, v.sensitive_flags,
            EXISTS (SELECT 1 FROM import_jobs ij WHERE ij.video_id = v.id) AS external_link,
            EXISTS (SELECT 1 FROM video_files f WHERE f.video_id = v.id AND f.kind = 'thumbnail') AS has_thumbnail,
            EXISTS (SELECT 1 FROM video_files f WHERE f.video_id = v.id AND f.kind = 'original') AS has_original,
@@ -1412,7 +1413,7 @@ FROM (
            false AS is_local,
            ra.domain AS origin_domain,
            rv.watch_url,
-           rv.is_sensitive,
+           rv.is_sensitive, rv.sensitive_flags,
            false AS external_link,
            (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
            false AS has_original,
@@ -1474,7 +1475,7 @@ FROM (
            true AS is_local,
            ''::text AS origin_domain,
            ''::text AS watch_url,
-           v.is_sensitive,
+           v.is_sensitive, v.sensitive_flags,
            EXISTS (SELECT 1 FROM import_jobs ij WHERE ij.video_id = v.id) AS external_link,
            EXISTS (SELECT 1 FROM video_files f WHERE f.video_id = v.id AND f.kind = 'thumbnail') AS has_thumbnail,
            EXISTS (SELECT 1 FROM video_files f WHERE f.video_id = v.id AND f.kind = 'original') AS has_original,
@@ -1505,7 +1506,7 @@ FROM (
            false AS is_local,
            ra.domain AS origin_domain,
            rv.watch_url,
-           rv.is_sensitive,
+           rv.is_sensitive, rv.sensitive_flags,
            false AS external_link,
            (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
            false AS has_original,

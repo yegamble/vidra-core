@@ -895,6 +895,7 @@ type RemoteVideo struct {
 	FetchedAt       time.Time          `json:"fetched_at"`
 	UpdatedAt       time.Time          `json:"updated_at"`
 	IsSensitive     bool               `json:"is_sensitive"`
+	SensitiveFlags  []string           `json:"sensitive_flags"`
 }
 
 type RemoteVideoBlock struct {
@@ -1151,6 +1152,13 @@ type UserBlock struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type UserContentPref struct {
+	UserID                uuid.UUID `json:"user_id"`
+	SensitiveFlagPolicies []byte    `json:"sensitive_flag_policies"`
+	PreferredLanguages    []string  `json:"preferred_languages"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
 type UserFeedToken struct {
 	UserID    uuid.UUID `json:"user_id"`
 	TokenHash string    `json:"token_hash"`
@@ -1212,6 +1220,7 @@ type Video struct {
 	PeertubeUuid          pgtype.UUID        `json:"peertube_uuid"`
 	TranscodeGeneration   int32              `json:"transcode_generation"`
 	Support               *string            `json:"support"`
+	SensitiveFlags        []string           `json:"sensitive_flags"`
 }
 
 type VideoBlock struct {

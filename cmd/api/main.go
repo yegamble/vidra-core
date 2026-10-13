@@ -91,6 +91,7 @@ import (
 	"github.com/vidra/vidra-core/internal/version"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
+	"github.com/vidra/vidra-core/internal/viewerprefs"
 	"github.com/vidra/vidra-core/internal/watchword"
 	"github.com/vidra/vidra-core/internal/ytdlp"
 )
@@ -1688,6 +1689,7 @@ func run() error {
 			return settingssvc.Bool(instancesettings.KeyVideoCardPreviewsDefaultEnabled)
 		}))
 	opts = append(opts, httpapi.WithPlayerSettingsService(playersettingssvc))
+	opts = append(opts, httpapi.WithViewerPrefsService(viewerprefs.NewService(db.Queries())))
 
 	playlistsvc := playlist.NewService(db.Queries(), playlist.WithStorage(blobs), playlist.WithMirror(ipfsMirror))
 	opts = append(opts, httpapi.WithPlaylistService(playlistsvc))

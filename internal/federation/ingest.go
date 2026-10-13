@@ -17,6 +17,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 // Bounded remote-video fields (.ralph/specs/federation-remote-content.md §1):
@@ -44,6 +45,37 @@ type apVideoObject struct {
 	// Sensitive is RAW: PeerTube accepts "true"/"false" strings too
 	// (misc.ts:77-79), and a typed bool would fail the whole object's decode.
 	Sensitive json.RawMessage `json:"sensitive"`
+	// Tag is RAW for the same reason: a malformed `tag` must not fail the
+	// object. Only its SensitiveTag entries are read (PeerTube 7.2 nsfwFlags).
+	Tag json.RawMessage `json:"tag"`
+}
+
+// apSensitiveFlags reads PeerTube's SensitiveTag entries from `tag` and maps
+// them to vidra's flags (explicitSex -> sex). Unknown names are dropped, and a
+// video that is not sensitive carries no flags (PeerTube does the same).
+func apSensitiveFlags(raw json.RawMessage, sensitive bool) []string {
+	if !sensitive {
+		return nil
+	}
+	var tags []struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(raw, &tags) != nil {
+		return nil
+	}
+	var flags []string
+	for _, t := range tags {
+		if t.Type != "SensitiveTag" {
+			continue
+		}
+		name := t.Name
+		if name == "explicitSex" {
+			name = "sex"
+		}
+		flags = append(flags, name)
+	}
+	return video.NormalizeSensitiveFlags(flags)
 }
 
 // apSensitive reads AS `sensitive` the way PeerTube's isBooleanValid does:
@@ -173,6 +205,7 @@ func (s *Service) storeRemoteVideo(ctx context.Context, ownerActorURL string, ob
 		WatchUrl:        watchURL,
 		StreamUrl:       streamURL,
 		IsSensitive:     apSensitive(obj.Sensitive),
+		SensitiveFlags:  apSensitiveFlags(obj.Tag, apSensitive(obj.Sensitive)),
 	})
 	if err != nil {
 		return sqlcgen.UpsertRemoteVideoRow{}, err
