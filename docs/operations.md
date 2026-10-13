@@ -1449,6 +1449,15 @@ bytes:
   database growth minus media scratch**. It is probed once per drain tick (over it the drain claims removals only), so a
   tick's adds can overshoot it. Only the public node is
   budgeted.
+- **What an HLS tree pins — playback files only.** The mirror wraps exactly the
+  files the HLS routes serve (master, variant playlists, init and media segments,
+  trick-play, the DASH manifest); it does **not** pin each rendition's progressive
+  `video.mp4` / `video-only.mp4`, the `audio.m4a`, or `vp9.webm`. The downloads are
+  never referenced by a playlist and are served from primary storage under the
+  download policy, not through the mirror. **A video pinned before this change keeps
+  its old, larger root until it is re-pinned** (a re-transcode does it; there is no
+  bulk re-pin yet). Once a row has moved to the new root, the superseded root's
+  blocks are freed only by a garbage collection — see "Node GC" above.
 - **Probe cadence.** `IPFS_HEALTH_PROBE_INTERVAL` (default `5m`, minimum `10s`) is
   how often **every** role re-asks the gateway whether it is serving and re-compares
   the pin ledger against the node's pinset. It is the bound on how long the api

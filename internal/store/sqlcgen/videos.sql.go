@@ -1866,6 +1866,7 @@ FROM (
            v.title, v.description, v.privacy, v.state,
            v.created_at, v.updated_at,
            COALESCE(vc.views, 0)::bigint AS views,
+           COALESCE(v.originally_published_at, v.created_at) AS sort_at,
            EXISTS (
                SELECT 1 FROM video_files f
                WHERE f.video_id = v.id AND f.kind = 'thumbnail'
@@ -1913,6 +1914,7 @@ FROM (
            rv.title, rv.description, ''::text AS privacy, ''::text AS state,
            COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
            0::bigint AS views,
+           COALESCE(rv.published_at, rv.fetched_at) AS sort_at,
            (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
            (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
            ra.preferred_username AS channel_display_name,
@@ -1964,6 +1966,8 @@ ORDER BY
          THEN feed.views::float8
               / power(EXTRACT(EPOCH FROM (now() - feed.created_at)) / 3600.0 + 2.0, 1.5)
     END DESC,
+    CASE WHEN $7::text = 'originally_published_at' THEN feed.sort_at END DESC,
+    CASE WHEN $7::text = 'name' THEN lower(feed.title) END ASC,
     feed.created_at DESC, feed.id DESC
 LIMIT $9 OFFSET $8
 `
@@ -2010,7 +2014,12 @@ type ListPublicVideosSortedRow struct {
 //	recent   -> newest first (the NULL CASE terms fall through to created_at)
 //	popular  -> most all-time views first
 //	trending -> views decayed by age (Hacker-News-style gravity)
+//	originally_published_at -> newest first by the creator-declared original
+//	            date, falling back to created_at when unset (and for remote rows)
+//	name     -> title A-Z, case-insensitive
 //
+// Every mode ends in the same created_at DESC, id DESC tiebreak, so a page
+// boundary is deterministic. (No likes sort: it needs a denormalised counter.)
 // Optional filters (NULL = off): tag (exact, tags are stored lowercased),
 // category, and language (taxonomy ids; validated by the HTTP layer).
 // include_remote (feed ?scope=all, remote-content §4) UNIONs in federated

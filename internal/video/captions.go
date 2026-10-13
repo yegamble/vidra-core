@@ -80,12 +80,19 @@ func (s *Service) AddCaption(ctx context.Context, ownerID, videoID uuid.UUID, in
 	if _, err := s.blobs.Put(ctx, key, bytes.NewReader(data)); err != nil {
 		return sqlcgen.Caption{}, err
 	}
-	return s.repo.UpsertCaption(ctx, sqlcgen.UpsertCaptionParams{
+	capt, err := s.repo.UpsertCaption(ctx, sqlcgen.UpsertCaptionParams{
 		VideoID:    videoID,
 		Language:   lang,
 		Label:      strings.TrimSpace(in.Label),
 		StorageKey: key,
 	})
+	if err != nil {
+		return sqlcgen.Caption{}, err
+	}
+	// AFTER the row commits: the key is stable per language, so a replacement keeps
+	// its key and anything holding the old bytes (the IPFS mirror) must be told.
+	s.fireCaptionChange(ctx, videoID, key, false)
+	return capt, nil
 }
 
 // ListCaptions returns a video's caption tracks (metadata), ordered by language.
@@ -121,11 +128,20 @@ func (s *Service) DeleteCaption(ctx context.Context, ownerID, videoID uuid.UUID,
 	}
 	lang := normalizeLang(language)
 	// Best-effort blob cleanup: look up the key, delete the row, then the object.
-	if capt, gerr := s.repo.GetCaptionByLang(ctx, sqlcgen.GetCaptionByLangParams{VideoID: videoID, Language: lang}); gerr == nil && s.blobs != nil {
-		_ = s.blobs.Delete(ctx, capt.StorageKey)
+	var key string
+	if capt, gerr := s.repo.GetCaptionByLang(ctx, sqlcgen.GetCaptionByLangParams{VideoID: videoID, Language: lang}); gerr == nil {
+		key = capt.StorageKey
+		if s.blobs != nil {
+			_ = s.blobs.Delete(ctx, key)
+		}
 	}
-	_, err = s.repo.DeleteCaption(ctx, sqlcgen.DeleteCaptionParams{VideoID: videoID, Language: lang})
-	return err
+	if _, err = s.repo.DeleteCaption(ctx, sqlcgen.DeleteCaptionParams{VideoID: videoID, Language: lang}); err != nil {
+		return err
+	}
+	if key != "" {
+		s.fireCaptionChange(ctx, videoID, key, true)
+	}
+	return nil
 }
 
 // isWebVTT reports whether data begins with the WebVTT signature (optionally

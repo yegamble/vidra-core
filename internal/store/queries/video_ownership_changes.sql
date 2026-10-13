@@ -127,6 +127,17 @@ SELECT count(*)::bigint
 FROM video_ownership_changes
 WHERE next_owner_id = $1;
 
+-- name: LockOwnershipChangeVideo :one
+-- Takes the row lock on the video a request is about. The accept runs in the
+-- same transaction right after it, so its snapshot is taken only once nothing
+-- else holding that lock (a session being opened, a replacement being swapped
+-- in) is still in flight.
+SELECT v.id
+FROM videos v
+JOIN video_ownership_changes oc ON oc.video_id = v.id
+WHERE oc.id = $1
+FOR UPDATE OF v;
+
 -- name: AcceptVideoOwnershipChange :one
 -- Accept AND move, in one statement, so a request can never read 'accepted'
 -- for a video that did not move (or the reverse). The request flips only while

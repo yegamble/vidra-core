@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -115,6 +116,10 @@ var (
 	// UPLOAD-10). The HTTP layer maps it to 429 with a stable code a batch client
 	// queues on; cancelling or completing an in-flight session frees a slot.
 	ErrTooManyActiveSessions = errors.New("upload: too many active sessions")
+	// ErrVideoChanged means the video left the channel the caller was
+	// authorised against before the session could be opened (it moved, or
+	// changed owner); nothing was opened. The HTTP layer answers 409.
+	ErrVideoChanged = errors.New("upload: the video changed")
 )
 
 // Repository is the data access the upload service needs. *sqlcgen.Queries
@@ -198,7 +203,11 @@ func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service
 // purpose is PurposeUpload for the shipped attach-and-publish flow or
 // PurposeReplace for a source replacement (W14); anything else falls back to
 // PurposeUpload.
-func (s *Service) CreateSession(ctx context.Context, videoID, userID uuid.UUID, filename string, size int64, fileFingerprint, purpose string) (sqlcgen.UploadSession, error) {
+//
+// channelID is the channel the caller was authorised against: the session is
+// opened only while the video is still in it, under the video row lock an
+// ownership transfer also takes (see CreateUploadSession), else ErrVideoChanged.
+func (s *Service) CreateSession(ctx context.Context, videoID, channelID, userID uuid.UUID, filename string, size int64, fileFingerprint, purpose string) (sqlcgen.UploadSession, error) {
 	if purpose != PurposeReplace {
 		purpose = PurposeUpload
 	}
@@ -220,8 +229,9 @@ func (s *Service) CreateSession(ctx context.Context, videoID, userID uuid.UUID, 
 			return sqlcgen.UploadSession{}, ErrTooManyActiveSessions
 		}
 	}
-	return s.repo.CreateUploadSession(ctx, sqlcgen.CreateUploadSessionParams{
+	sess, err := s.repo.CreateUploadSession(ctx, sqlcgen.CreateUploadSessionParams{
 		VideoID:         videoID,
+		ChannelID:       channelID,
 		UserID:          userID,
 		Filename:        filename,
 		TotalSize:       size,
@@ -230,6 +240,10 @@ func (s *Service) CreateSession(ctx context.Context, videoID, userID uuid.UUID, 
 		FileFingerprint: fileFingerprint,
 		Purpose:         purpose,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sqlcgen.UploadSession{}, ErrVideoChanged
+	}
+	return sess, err
 }
 
 // HasActiveReplaceSession reports whether a replace-purpose session is already

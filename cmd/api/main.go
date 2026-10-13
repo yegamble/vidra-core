@@ -1052,6 +1052,9 @@ func run() error {
 		logger.Warn("storyboard generation disabled (ffmpeg/ffprobe not on PATH); videos publish without a storyboard")
 	}
 	vopts = append(vopts, video.WithViewDeduper(cache.NewDeduper(rdb.Client)))
+	// Video ownership changes (T21, migration 0165). The accept runs under the
+	// video row lock (see store.OwnershipRepo).
+	vopts = append(vopts, video.WithOwnershipRepository(db.OwnershipRepository()))
 	// The durable audit trail (also mounted on the admin API below) lets the video
 	// service record a content.upload.malware_rejected event when a scan keeps an
 	// upload out of published (infection / unscannable under a non-publishing mode).
@@ -1436,6 +1439,19 @@ func run() error {
 			video.WithDeleteHook(func(ctx context.Context, videoID, channelID uuid.UUID, wasPublic bool) {
 				if err := ipfsMirror.UnpinVideo(ctx, videoID); err != nil {
 					logger.Warn("ipfs mirror delete unpin failed", "video_id", videoID, "error", err)
+				}
+			}),
+			// Tier A F5: captions, posters and storyboards are pinned under stable keys,
+			// so a delete or an in-place replacement changes nothing the mirror watches
+			// on its own. These two hooks are the only things that tell it.
+			video.WithCaptionChangeHook(func(ctx context.Context, videoID uuid.UUID, key string, deleted bool) {
+				if err := ipfsMirror.OnCaptionChanged(ctx, videoID, key, deleted); err != nil {
+					logger.Warn("ipfs mirror caption change failed", "video_id", videoID, "deleted", deleted, "error", err)
+				}
+			}),
+			video.WithMediaReplacedHook(func(ctx context.Context, videoID uuid.UUID, kind string) {
+				if err := ipfsMirror.OnMediaReplaced(ctx, videoID, kind); err != nil {
+					logger.Warn("ipfs mirror media replacement failed", "video_id", videoID, "kind", kind, "error", err)
 				}
 			}),
 		)
@@ -3015,6 +3031,7 @@ func run() error {
 					// restart rather than at the end of the run.
 					ReloadSettings: settingssvc.Load,
 					Logger:         logger,
+					PublicBaseURL:  cfg.PublicBaseURL,
 					// Remote followers' inboxes and keys come from their own
 					// actor documents, fetched the way federation fetches them.
 					ResolveRemoteActor: fedsvc.ResolveRemoteActor,

@@ -71,7 +71,8 @@ func (s *Service) admissionInventory(ctx context.Context, row sqlcgen.MediaIpfsP
 			return nil, "", 0, err
 		}
 		for _, object := range objects {
-			if path.Base(object.Key) != media.VP9WebMFilename {
+			// The SAME filter as pinDirectory: reserve for what will be added.
+			if hlsServed(path.Dir(master)+"/", master, object.Key) {
 				files[object.Key] = object.Size
 			}
 		}
