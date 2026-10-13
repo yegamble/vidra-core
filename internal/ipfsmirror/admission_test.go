@@ -37,6 +37,29 @@ func TestAdmissionInventoryOnlyCurrentGeneration(t *testing.T) {
 	}
 }
 
+// TestReservationBytesIsTheMeasuredFactor pins F1: the reservation is the payload
+// plus ~2% plus the per-file and fixed terms — not 2x. The first case is the
+// shape that mattered: 1 GiB of segments in 200 files used to reserve ~2.003 GiB.
+func TestReservationBytesIsTheMeasuredFactor(t *testing.T) {
+	const gib = int64(1) << 30
+	got := reservationBytes(gib, 200)
+	want := gib + gib/50 + 200*16384 + 1<<20
+	if got != want {
+		t.Fatalf("reservationBytes = %d, want %d", got, want)
+	}
+	if got >= gib*21/20 {
+		t.Fatalf("reserved %d for %d payload bytes: more than 5%% over, the 2x model is back", got, gib)
+	}
+	// Still covers the worst overhead ever measured (spike T5, 1.0137x).
+	if got < gib+gib*137/10000 {
+		t.Fatalf("reservation %d is below the measured worst-case growth", got)
+	}
+	// The cap the caller enforces (1<<50 payload) must not overflow.
+	if r := reservationBytes(1<<50, 100000); r <= 1<<50 {
+		t.Fatalf("overflow: %d", r)
+	}
+}
+
 // TestAdmissionInventoryReservesOnlyServedFiles: the reservation is sized from
 // the same set pinDirectory adds (F6), so a native tree's downloads are neither
 // reserved for nor copied.

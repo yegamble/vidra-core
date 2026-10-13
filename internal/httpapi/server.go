@@ -65,6 +65,7 @@ import (
 	"github.com/vidra/vidra-core/internal/uploadfinalize"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
+	"github.com/vidra/vidra-core/internal/viewerprefs"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
@@ -146,6 +147,7 @@ type Server struct {
 	ratingsvc         *rating.Service
 	notifsvc          *notification.Service
 	playersettingssvc *playersettings.Service
+	viewerprefssvc    *viewerprefs.Service
 	playlistsvc       *playlist.Service
 	moderationsvc     *moderation.Service
 	mutesvc           *mute.Service
@@ -557,6 +559,12 @@ func WithRatingService(svc *rating.Service) Option {
 // registered and no notifications are created.
 func WithNotificationService(svc *notification.Service) Option {
 	return func(s *Server) { s.notifsvc = svc }
+}
+
+// WithViewerPrefsService mounts GET/PUT /me/content-preferences and makes the
+// sensitive-content resolution honour the viewer's per-flag overrides.
+func WithViewerPrefsService(svc *viewerprefs.Service) Option {
+	return func(s *Server) { s.viewerprefssvc = svc }
 }
 
 // WithPlayerSettingsService mounts the per-user player-settings endpoints
@@ -1518,7 +1526,7 @@ func (s *Server) routes() {
 			s.echo.GET("/accounts/:handle/"+kind, s.accountCollection(kind))
 		}
 		s.echo.GET("/video-channels/:handle/outbox", s.channelOutbox)
-		s.echo.GET("/accounts/:handle/outbox", s.accountCollection("outbox"))
+		s.echo.GET("/accounts/:handle/outbox", s.accountOutbox)
 		// The OBJECT ids vidra mints (A29-F2). They live on frontend paths, so
 		// they are reachable here only when the operator's proxy
 		// content-negotiates an ActivityPub Accept to the api — which the
@@ -2037,6 +2045,10 @@ func (s *Server) routes() {
 	// Per-user player settings (PLAY-07): the signed-in user's playback defaults
 	// (speed, autoplay-next, quality, captions/theater). GET always returns the
 	// full effective object (defaults for a fresh user); PUT is a merge.
+	if s.viewerprefssvc != nil {
+		api.GET("/me/content-preferences", s.handleGetContentPrefs, s.requireAuth)
+		api.PUT("/me/content-preferences", s.handleUpdateContentPrefs, s.requireAuth)
+	}
 	if s.playersettingssvc != nil {
 		api.GET("/me/player-settings", s.handleGetPlayerSettings, s.requireAuth)
 		api.PUT("/me/player-settings", s.handleUpdatePlayerSettings, s.requireAuth)
@@ -2216,6 +2228,16 @@ func (s *Server) routes() {
 		api.GET("/admin/federation/follower-requests", s.handleListFederationFollowerRequests, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/federation/follower-requests/:id/approve", s.handleApproveFederationFollowerRequest, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/federation/follower-requests/:id/reject", s.handleRejectFederationFollowerRequest, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// Instance follows (migration 0166): the instances following ours —
+		// PeerTube's /server/followers. Admin only, like the queue above.
+		api.GET("/admin/federation/instance-followers", s.handleListInstanceFollowers, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/instance-followers/:id/accept", s.instanceFollowDecision(s.fedsvc.AcceptInstanceFollower, observability.ActionFederationInstanceFollowerAccept), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/instance-followers/:id/reject", s.instanceFollowDecision(s.fedsvc.RejectInstanceFollower, observability.ActionFederationInstanceFollowerReject), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/federation/instance-followers/:id", s.instanceFollowDecision(s.fedsvc.RemoveInstanceFollower, observability.ActionFederationInstanceFollowerRemove), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// ...and the instances ours follows — PeerTube's /server/following.
+		api.GET("/admin/federation/instance-following", s.handleListInstanceFollowing, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/instance-following", s.handleFollowInstance, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/federation/instance-following/:id", s.instanceFollowDecision(s.fedsvc.UnfollowInstance, observability.ActionFederationInstanceUnfollow), s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// ATProto / Bluesky link (P10.2 extension): the caller links/inspects/unlinks
@@ -2241,6 +2263,17 @@ func (s *Server) routes() {
 		api.GET("/admin/watched-words", s.handleListWatchedWords, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/watched-words", s.handleAddWatchedWord, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.DELETE("/admin/watched-words/:id", s.handleDeleteWatchedWord, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.GET("/admin/watched-word-lists", s.handleAdminListWordLists, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/watched-word-lists", s.handleAdminCreateWordList, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.GET("/admin/watched-word-lists/:id", s.handleAdminGetWordList, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.PATCH("/admin/watched-word-lists/:id", s.handleAdminUpdateWordList, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.DELETE("/admin/watched-word-lists/:id", s.handleAdminDeleteWordList, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		// A creator's own lists (0172): applied to comments on their own videos only.
+		api.GET("/me/watched-word-lists", s.handleMyListWordLists, s.requireAuth)
+		api.POST("/me/watched-word-lists", s.handleMyCreateWordList, s.requireAuth)
+		api.GET("/me/watched-word-lists/:id", s.handleMyGetWordList, s.requireAuth)
+		api.PATCH("/me/watched-word-lists/:id", s.handleMyUpdateWordList, s.requireAuth)
+		api.DELETE("/me/watched-word-lists/:id", s.handleMyDeleteWordList, s.requireAuth)
 		api.GET("/admin/watched-word-matches", s.handleListWatchedWordMatches, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/watched-word-matches/:id/resolve", s.handleResolveWatchedWordMatch, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
@@ -2440,6 +2473,9 @@ func (s *Server) routes() {
 		// Public "Live now" listing (home rail): currently-live PUBLIC streams
 		// across all channels. Public read; unlisted/private never listed.
 		api.GET("/live", s.handleListLivePublicStreams, s.optionalAuth)
+		// Public "Upcoming" listing (scheduled lives, migration 0168). Static
+		// segment, registered beside /live/:id — Echo prefers the static route.
+		api.GET("/live/upcoming", s.handleListUpcomingLiveStreams, s.optionalAuth)
 		api.GET("/live/:id", s.handleGetLiveStream, s.optionalAuth)
 		api.PATCH("/live/:id", s.handleUpdateLiveStream, s.requireAuth)
 		api.POST("/live/:id/key", s.handleRegenerateLiveStreamKey, s.requireAuth)

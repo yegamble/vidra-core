@@ -4,10 +4,10 @@ package httpapi
 // registration-requests queue: while federation_follower_approval is on, new
 // inbound ActivityPub channel Follows wait PENDING here; approving delivers
 // the Accept (plus the auto follow-back when that gate is on), rejecting
-// delivers a Reject. This is a vidra deviation from PeerTube recorded in the
-// parity ledger: approval applies to CHANNEL followers, because vidra has no
-// instance-level AP actor. The queue governs the ActivityPub inbox only — the
-// ATProto integration is outbound cross-posting and has no inbound path.
+// delivers a Reject. This queue holds CHANNEL followers; the same setting holds
+// INSTANCE followers, which are decided in admin_instance_follows.go. The queue
+// governs the ActivityPub inbox only — the ATProto integration is outbound
+// cross-posting and has no inbound path.
 
 import (
 	"errors"

@@ -132,10 +132,11 @@ type Pipeline interface {
 	PrefillMetadata(ctx context.Context, videoID uuid.UUID, title, description string) error
 }
 
-// QuotaChecker reports a user's remaining storage headroom (limited=false means
+// QuotaChecker reports a user's remaining ingest headroom - the tighter of the
+// total storage quota and the rolling-24h daily quota (limited=false means
 // unlimited). Optional; when nil, imports are not quota-checked.
 type QuotaChecker interface {
-	Remaining(ctx context.Context, userID uuid.UUID) (remaining int64, limited bool, err error)
+	IngestRemaining(ctx context.Context, userID uuid.UUID) (remaining int64, limited bool, err error)
 }
 
 // Service holds the URL-import logic.
@@ -451,7 +452,7 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 	// Resolve the owner's storage headroom before fetching (< 0 = unlimited).
 	quotaRemaining := int64(-1)
 	if s.quota != nil {
-		remaining, limited, qerr := s.quota.Remaining(ctx, v.OwnerID)
+		remaining, limited, qerr := s.quota.IngestRemaining(ctx, v.OwnerID)
 		if qerr != nil {
 			return s.internalf("import quota lookup", qerr)
 		}
@@ -483,7 +484,7 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 		return safeerr.New("the file is too large")
 	}
 	if quotaRemaining >= 0 && media.knownSize > quotaRemaining {
-		return safeerr.New("storing the file would exceed your storage quota")
+		return safeerr.New("storing the file would exceed your storage or daily upload quota")
 	}
 
 	body := io.Reader(media.body)
@@ -505,7 +506,7 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 		case errors.Is(err, errImportTooLarge):
 			return safeerr.New("the file is too large")
 		case errors.Is(err, errImportOverQuota):
-			return safeerr.New("storing the file would exceed your storage quota")
+			return safeerr.New("storing the file would exceed your storage or daily upload quota")
 		case errors.Is(err, video.ErrUnsupportedMedia):
 			return safeerr.New("the URL is not an accepted video container")
 		case errors.Is(err, video.ErrNotFound), errors.Is(err, video.ErrForbidden):

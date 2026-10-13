@@ -87,14 +87,20 @@ func (s *Service) FollowRemoteChannel(ctx context.Context, userID uuid.UUID, tar
 	if err != nil {
 		return RemoteFollow{}, fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 	}
+	return s.followResolvedActor(ctx, userID, u.Username, ra)
+}
 
+// followResolvedActor follows an already-resolved remote actor as a local user:
+// the pending row, then a signed Follow on a fresh insert only. Shared by a
+// user's own follow and by an inbound Move re-pointing their follow.
+func (s *Service) followResolvedActor(ctx context.Context, userID uuid.UUID, username string, ra sqlcgen.RemoteActor) (RemoteFollow, error) {
 	// Mint the account keypair up front: the queued Follow is signed as this
 	// account at send time.
 	if _, err := s.ensureAccountKey(ctx, userID); err != nil {
 		return RemoteFollow{}, err
 	}
 
-	accountActor := s.baseURL + "/accounts/" + u.Username
+	accountActor := s.baseURL + "/accounts/" + username
 	followID := accountActor + "/activities/follow/" + uuid.NewString()
 	row, err := s.repo.UpsertRemoteChannelFollow(ctx, sqlcgen.UpsertRemoteChannelFollowParams{
 		UserID:            userID,
@@ -118,7 +124,7 @@ func (s *Service) FollowRemoteChannel(ctx context.Context, userID uuid.UUID, tar
 		if err != nil {
 			return RemoteFollow{}, err
 		}
-		if err := s.enqueueAccountDelivery(ctx, userID, u.Username, inbox, payload); err != nil {
+		if err := s.enqueueAccountDelivery(ctx, userID, username, inbox, payload); err != nil {
 			return RemoteFollow{}, err
 		}
 	}
@@ -430,11 +436,14 @@ func (s *Service) handleAccept(ctx context.Context, act inboxActivity, signerAct
 	// The Accept may also answer one of our channel follow-backs
 	// (federation_auto_follow_back, config-parity W12): same signer-is-the-
 	// followed-actor predicate, disjoint activity-id namespaces.
-	_, err := s.repo.AcceptChannelFollowBackByActivity(ctx, sqlcgen.AcceptChannelFollowBackByActivityParams{
+	if _, err := s.repo.AcceptChannelFollowBackByActivity(ctx, sqlcgen.AcceptChannelFollowBackByActivityParams{
 		FollowActivityUrl: followURL,
 		RemoteActorUrl:    signerActorURL,
-	})
-	return err
+	}); err != nil {
+		return err
+	}
+	// ...or our instance actor's follow of a remote instance (0166).
+	return s.answerInstanceFollowing(ctx, true, followURL, signerActorURL)
 }
 
 // handleReject processes an inbound Reject{Follow}: the mirror of handleAccept,
@@ -459,11 +468,13 @@ func (s *Service) handleReject(ctx context.Context, act inboxActivity, signerAct
 	// A Reject may also answer one of our channel follow-backs (W12): the
 	// refused follow-back row goes away. (A later re-follow by that actor may
 	// mint a fresh follow-back — the insert-if-absent guard has been cleared.)
-	_, err := s.repo.DeleteChannelFollowBackByActivity(ctx, sqlcgen.DeleteChannelFollowBackByActivityParams{
+	if _, err := s.repo.DeleteChannelFollowBackByActivity(ctx, sqlcgen.DeleteChannelFollowBackByActivityParams{
 		FollowActivityUrl: followURL,
 		RemoteActorUrl:    signerActorURL,
-	})
-	return err
+	}); err != nil {
+		return err
+	}
+	return s.answerInstanceFollowing(ctx, false, followURL, signerActorURL)
 }
 
 // acceptedFollowID extracts the embedded Follow's id from an Accept/Reject and

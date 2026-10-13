@@ -58,7 +58,7 @@ type Repository interface {
 	CreateAccountReport(ctx context.Context, arg sqlcgen.CreateAccountReportParams) (uuid.UUID, error)
 	CreateMessageReport(ctx context.Context, arg sqlcgen.CreateMessageReportParams) (uuid.UUID, error)
 	ListReports(ctx context.Context, arg sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error)
-	CountReports(ctx context.Context, status *string) (int64, error)
+	CountReports(ctx context.Context, arg sqlcgen.CountReportsParams) (int64, error)
 	ResolveReport(ctx context.Context, arg sqlcgen.ResolveReportParams) (pgtype.UUID, error)
 	CreateRemoteFlagReport(ctx context.Context, arg sqlcgen.CreateRemoteFlagReportParams) (uuid.UUID, error)
 	DeleteReport(ctx context.Context, id uuid.UUID) (int64, error)
@@ -123,6 +123,9 @@ type Item struct {
 	MessageBody string
 	// Set only for a remote Flag report (no local reporter; ReporterUsername "").
 	RemoteReporterActorURL, RemoteReporterDomain string
+	// Optional structure (0170). Reasons is never nil; the range is video-only.
+	Reasons                            []string
+	VideoStartSeconds, VideoEndSeconds *int32
 }
 
 // newReportID normalises the Create*Report result for the Report* methods: a
@@ -141,10 +144,20 @@ func newReportID(id uuid.UUID, err error) (uuid.UUID, error) {
 // already reported the video. The caller confirms the video is reportable
 // first.
 func (s *Service) ReportVideo(ctx context.Context, reporterID, videoID uuid.UUID, reason string) (uuid.UUID, error) {
+	return s.ReportVideoDetailed(ctx, reporterID, videoID, reason, VideoReportDetail{})
+}
+
+// ReportVideoDetailed is ReportVideo with predefined reasons and a timestamp
+// range. The caller has validated the detail (VideoReportDetail.ValidateRange
+// against the video's duration); the reasons are normalised here.
+func (s *Service) ReportVideoDetailed(ctx context.Context, reporterID, videoID uuid.UUID, reason string, d VideoReportDetail) (uuid.UUID, error) {
 	return newReportID(s.repo.CreateVideoReport(ctx, sqlcgen.CreateVideoReportParams{
-		ReporterID: reporterID,
-		VideoID:    pgconv.UUID(videoID),
-		Reason:     reason,
+		ReporterID:        reporterID,
+		VideoID:           pgconv.UUID(videoID),
+		Reason:            reason,
+		PredefinedReasons: NormalizeReasons(d.Reasons),
+		VideoStartSeconds: d.StartSeconds,
+		VideoEndSeconds:   d.EndSeconds,
 	}))
 }
 
@@ -221,13 +234,15 @@ type RemoteReport struct {
 	TargetType                       string // TargetVideo, TargetComment or TargetAccount
 	TargetID                         uuid.UUID
 	Reason                           string
+	PredefinedReasons                []string // unknown values are dropped
 }
 
 // ReportFromRemote files r (idempotent per Flag + target; uuid.Nil on a
 // repeat). Another target type, or an unknown target → ErrInvalidTarget.
 func (s *Service) ReportFromRemote(ctx context.Context, r RemoteReport) (uuid.UUID, error) {
 	arg := sqlcgen.CreateRemoteFlagReportParams{TargetType: r.TargetType, Reason: r.Reason,
-		ActorUrl: r.ActorURL, Domain: r.Domain, FlagActivityID: r.FlagActivityID}
+		PredefinedReasons: NormalizeReasons(r.PredefinedReasons),
+		ActorUrl:          r.ActorURL, Domain: r.Domain, FlagActivityID: r.FlagActivityID}
 	switch target := pgconv.UUID(r.TargetID); r.TargetType {
 	case TargetVideo:
 		arg.VideoID = target
@@ -250,17 +265,19 @@ func (s *Service) ReportFromRemote(ctx context.Context, r RemoteReport) (uuid.UU
 // "there is more"). status is the exact lifecycle state to show, or "" for all
 // of them — it used to be an openOnly bool, which made ?status=resolved
 // indistinguishable from no filter. The caller clamps limit/offset.
-func (s *Service) List(ctx context.Context, status string, limit, offset int32) ([]Item, int64, error) {
+func (s *Service) List(ctx context.Context, status, reason string, limit, offset int32) ([]Item, int64, error) {
 	filter := nilIfEmpty(status)
+	reasonFilter := nilIfEmpty(reason)
 	rows, err := s.repo.ListReports(ctx, sqlcgen.ListReportsParams{
-		Status:       filter,
-		ResultLimit:  limit,
-		ResultOffset: offset,
+		Status:           filter,
+		PredefinedReason: reasonFilter,
+		ResultLimit:      limit,
+		ResultOffset:     offset,
 	})
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := s.repo.CountReports(ctx, filter)
+	total, err := s.repo.CountReports(ctx, sqlcgen.CountReportsParams{Status: filter, PredefinedReason: reasonFilter})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -286,6 +303,9 @@ func (s *Service) List(ctx context.Context, status string, limit, offset int32) 
 			RemoteVideoDomain: pgconv.Deref(r.RemoteVideoDomain),
 			MessageID:         uuidString(r.MessageID),
 			MessageBody:       r.MessageBodySnapshot,
+			Reasons:           r.PredefinedReasons,
+			VideoStartSeconds: r.VideoStartSeconds,
+			VideoEndSeconds:   r.VideoEndSeconds,
 
 			RemoteReporterActorURL: pgconv.Deref(r.RemoteReporterActorUrl),
 			RemoteReporterDomain:   pgconv.Deref(r.RemoteReporterDomain),
