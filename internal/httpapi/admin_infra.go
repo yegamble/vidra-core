@@ -275,7 +275,9 @@ type infraDelivery struct {
 // ingest SECRET is on the file-header never-list and stays absent.
 type infraLive struct {
 	RTMPURL string `json:"rtmp_url"`
-	HLSRoot string `json:"hls_root"`
+	// RTMPSURL is LIVE_RTMPS_URL, absent when RTMPS is not offered.
+	RTMPSURL string `json:"rtmps_url,omitempty"`
+	HLSRoot  string `json:"hls_root"`
 }
 
 // infrastructureResponse is the admin infrastructure document. Delivery and
@@ -329,7 +331,7 @@ func (s *Server) handleInfrastructure(c echo.Context) error {
 	// is the dead-stream trap, and the empty strings are the finding.
 	var liveBlock *infraLive
 	if cfg.LiveEnabled {
-		liveBlock = &infraLive{RTMPURL: cfg.LiveRTMPURL, HLSRoot: cfg.LiveHLSRoot}
+		liveBlock = &infraLive{RTMPURL: cfg.LiveRTMPURL, RTMPSURL: cfg.LiveRTMPSURL, HLSRoot: cfg.LiveHLSRoot}
 	}
 
 	var disk *infraDisk

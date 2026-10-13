@@ -42,13 +42,19 @@ type nodeInfoDiscovery struct {
 	Links []nodeInfoLink `json:"links"`
 }
 
+// applicationActorRel is the NodeInfo discovery link PeerTube reads to find
+// the instance actor it follows when an admin follows a host
+// (getApplicationActorOfHost).
+const applicationActorRel = "https://www.w3.org/ns/activitystreams#Application"
+
 // handleNodeInfoDiscovery serves /.well-known/nodeinfo — the pointer to the
-// versioned document.
+// versioned document, plus the instance actor when this instance serves one.
 func (s *Server) handleNodeInfoDiscovery(c echo.Context) error {
-	return c.JSON(http.StatusOK, nodeInfoDiscovery{Links: []nodeInfoLink{{
-		Rel:  nodeInfo21Rel,
-		Href: s.cfg.PublicBaseURL + "/nodeinfo/2.1",
-	}}})
+	links := []nodeInfoLink{{Rel: nodeInfo21Rel, Href: s.cfg.PublicBaseURL + "/nodeinfo/2.1"}}
+	if id, ok := s.fedsvc.InstanceActorAvailable(c.Request().Context()); ok {
+		links = append(links, nodeInfoLink{Rel: applicationActorRel, Href: id})
+	}
+	return c.JSON(http.StatusOK, nodeInfoDiscovery{Links: links})
 }
 
 type nodeInfoSoftware struct {
@@ -145,6 +151,11 @@ func (s *Server) serveActor(c echo.Context, fetch func(context.Context, string) 
 			if err != nil {
 				return err
 			}
+			if actor.Type == "Application" {
+				// The instance actor has no profile; its human page is the
+				// instance's own about page.
+				return c.Redirect(http.StatusFound, "/about/instance")
+			}
 			return c.Redirect(http.StatusFound, profilePrefix+url.PathEscape(actor.PreferredUsername))
 		}
 		return echo.NewHTTPError(http.StatusNotAcceptable, "actor documents are served as application/activity+json")
@@ -229,6 +240,29 @@ func (s *Server) channelOutbox(c echo.Context) error {
 	return s.serveCollection(c, func(ctx context.Context) (*federation.OrderedCollection, error) {
 		return s.fedsvc.ChannelCollection(ctx, handle, "outbox")
 	})
+}
+
+// accountOutbox serves an account's outbox. The instance actor's is paged
+// (?page=N) like a channel's — PeerTube crawls it once its instance follow is
+// accepted; an account's is the empty summary.
+func (s *Server) accountOutbox(c echo.Context) error {
+	p := c.QueryParam("page")
+	if p == "" || !strings.EqualFold(c.Param("handle"), federation.InstanceActorName) {
+		return s.accountCollection("outbox")(c)
+	}
+	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
+		return echo.NewHTTPError(http.StatusNotAcceptable, "collections are served as application/activity+json")
+	}
+	page, _ := strconv.Atoi(p)
+	pg, err := s.fedsvc.InstanceOutboxPage(c.Request().Context(), page)
+	if errors.Is(err, federation.ErrNotFound) {
+		return s.accountCollection("outbox")(c) // an account kept the name (0166)
+	}
+	if err != nil {
+		return err
+	}
+	c.Response().Header().Set(echo.HeaderContentType, activityJSONContentType)
+	return c.JSON(http.StatusOK, pg)
 }
 
 func (s *Server) accountCollection(kind string) echo.HandlerFunc {

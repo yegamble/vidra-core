@@ -327,6 +327,25 @@ func (q *Queries) ListIncomingVideoOwnershipChanges(ctx context.Context, arg Lis
 	return items, nil
 }
 
+const lockOwnershipChangeVideo = `-- name: LockOwnershipChangeVideo :one
+SELECT v.id
+FROM videos v
+JOIN video_ownership_changes oc ON oc.video_id = v.id
+WHERE oc.id = $1
+FOR UPDATE OF v
+`
+
+// Takes the row lock on the video a request is about. The accept runs in the
+// same transaction right after it, so its snapshot is taken only once nothing
+// else holding that lock (a session being opened, a replacement being swapped
+// in) is still in flight.
+func (q *Queries) LockOwnershipChangeVideo(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockOwnershipChangeVideo, id)
+	var id_2 uuid.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const refuseVideoOwnershipChange = `-- name: RefuseVideoOwnershipChange :execrows
 UPDATE video_ownership_changes
 SET status = 'refused', updated_at = now()

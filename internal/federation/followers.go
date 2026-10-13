@@ -5,12 +5,12 @@ package federation
 // ActivityPub inbox only — vidra's ATProto integration is outbound
 // cross-posting and has no inbound path.
 //
-// Vidra deviation, recorded in the parity ledger §11: PeerTube's follower
-// approval applies to INSTANCE followers; vidra has no instance-level AP actor
-// (only Person/Group account/channel actors), so the approval queue applies to
-// CHANNEL followers — the only inbound follows vidra has. For the same reason
-// the auto-follow-back is signed by the FOLLOWED CHANNEL's actor: it is the
-// only local actor with a relationship to the follower.
+// PeerTube's follower approval applies to INSTANCE followers; vidra applies it
+// to CHANNEL followers here and, since the instance actor (0166), to instance
+// followers too (instance_followers.go, decided at
+// /admin/federation/instance-followers). The auto-follow-back is still signed
+// by the FOLLOWED CHANNEL's actor: it is the local actor with a relationship
+// to the follower.
 
 import (
 	"context"
@@ -95,6 +95,7 @@ func (s *Service) ApproveFollowerRequest(ctx context.Context, id uuid.UUID) erro
 	if err := s.enqueueAcceptFollow(ctx, ch.ID, ch.Handle, row.RemoteActorUrl, row.FollowActivityUrl); err != nil {
 		return err
 	}
+	s.backfillAfterAccept(ctx, ch.ID, ch.Handle, row.RemoteActorUrl)
 	return s.maybeAutoFollowBack(ctx, ch.ID, ch.Handle, row.RemoteActorUrl)
 }
 

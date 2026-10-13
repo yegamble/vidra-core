@@ -33,10 +33,11 @@ type AccountExport struct {
 }
 
 type ActorHandle struct {
-	HandleLower string      `json:"handle_lower"`
-	UserID      pgtype.UUID `json:"user_id"`
-	ChannelID   pgtype.UUID `json:"channel_id"`
-	CreatedAt   time.Time   `json:"created_at"`
+	HandleLower   string      `json:"handle_lower"`
+	UserID        pgtype.UUID `json:"user_id"`
+	ChannelID     pgtype.UUID `json:"channel_id"`
+	CreatedAt     time.Time   `json:"created_at"`
+	InstanceActor bool        `json:"instance_actor"`
 }
 
 type AtprotoAccount struct {
@@ -189,6 +190,12 @@ type ChannelFollowBack struct {
 	FollowActivityUrl string    `json:"follow_activity_url"`
 	State             string    `json:"state"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+type ChannelFollowerBackfill struct {
+	Host           string    `json:"host"`
+	ChannelID      uuid.UUID `json:"channel_id"`
+	LastBackfillAt time.Time `json:"last_backfill_at"`
 }
 
 type ChannelHandleAlias struct {
@@ -351,6 +358,7 @@ type FederationDelivery struct {
 	RequestID               string      `json:"request_id"`
 	CorrelationID           string      `json:"correlation_id"`
 	AuthoredRemoteCommentID pgtype.UUID `json:"authored_remote_comment_id"`
+	SigningInstanceActor    bool        `json:"signing_instance_actor"`
 }
 
 type FederationInboxActivity struct {
@@ -372,12 +380,41 @@ type ImportJob struct {
 	Stage         string    `json:"stage"`
 }
 
+type InstanceActorKey struct {
+	Singleton     bool      `json:"singleton"`
+	PublicKeyPem  string    `json:"public_key_pem"`
+	PrivateKeyPem string    `json:"private_key_pem"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type InstanceDocument struct {
 	Name      string      `json:"name"`
 	Body      string      `json:"body"`
 	Sha256    string      `json:"sha256"`
 	UpdatedBy pgtype.UUID `json:"updated_by"`
 	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+type InstanceFollower struct {
+	ID                uuid.UUID `json:"id"`
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	State             string    `json:"state"`
+	FollowActivityUrl string    `json:"follow_activity_url"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+type InstanceFollowerBackfill struct {
+	Host           string    `json:"host"`
+	LastBackfillAt time.Time `json:"last_backfill_at"`
+}
+
+type InstanceFollowing struct {
+	ID                uuid.UUID `json:"id"`
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	Host              string    `json:"host"`
+	State             string    `json:"state"`
+	FollowActivityUrl string    `json:"follow_activity_url"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type InstanceIdentity struct {
@@ -392,6 +429,11 @@ type InstanceImage struct {
 	SizeBytes   int64     `json:"size_bytes"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type InstanceOutboxVideo struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type InstanceSetting struct {
@@ -530,6 +572,7 @@ type LiveStream struct {
 	TerminatedBy          pgtype.UUID        `json:"terminated_by"`
 	TerminationReasonCode *string            `json:"termination_reason_code"`
 	TerminationReason     string             `json:"termination_reason"`
+	ScheduledStartAt      pgtype.Timestamptz `json:"scheduled_start_at"`
 }
 
 type MailConfig struct {
@@ -863,6 +906,14 @@ type RemoteActorBlockReach struct {
 	ActorUrl  string    `json:"actor_url"`
 }
 
+type RemoteActorMove struct {
+	OriginActorUrl string    `json:"origin_actor_url"`
+	TargetActorUrl string    `json:"target_actor_url"`
+	ClaimedAt      time.Time `json:"claimed_at"`
+	State          string    `json:"state"`
+	TouchedAt      time.Time `json:"touched_at"`
+}
+
 type RemoteChannelFollow struct {
 	ID                uuid.UUID `json:"id"`
 	UserID            uuid.UUID `json:"user_id"`
@@ -938,6 +989,9 @@ type Report struct {
 	RemoteReporterActorUrl *string            `json:"remote_reporter_actor_url"`
 	RemoteReporterDomain   *string            `json:"remote_reporter_domain"`
 	RemoteFlagActivityID   *string            `json:"remote_flag_activity_id"`
+	PredefinedReasons      []string           `json:"predefined_reasons"`
+	VideoStartSeconds      *int32             `json:"video_start_seconds"`
+	VideoEndSeconds        *int32             `json:"video_end_seconds"`
 }
 
 type ReportMessage struct {
