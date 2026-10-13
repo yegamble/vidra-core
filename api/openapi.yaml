@@ -10052,6 +10052,14 @@ paths:
             type: string
             enum: [open, resolved, all]
             default: all
+        - name: reason
+          in: query
+          required: false
+          description: >-
+            Only reports carrying this predefined reason; `total` counts the same
+            filter. An unrecognised value is a 400.
+          schema:
+            $ref: "#/components/schemas/ReportReason"
         - $ref: "#/components/parameters/PageLimit"
         - $ref: "#/components/parameters/PageOffset"
       responses:
@@ -22321,14 +22329,33 @@ components:
           items:
             type: string
             format: uuid
+    ReportReason:
+      type: string
+      enum: [violentOrRepulsive, hatefulOrAbusive, spamOrMisleading, privacy, rights, serverRules, thumbnails, captions]
     CreateReportRequest:
       type: object
       required: [reason]
+      description: >-
+        `reasons`, `start_seconds` and `end_seconds` apply to VIDEO reports only
+        (422 on a comment or account report). `end_seconds` needs `start_seconds`
+        and must exceed it; both must be within the video's duration when known.
       properties:
         reason:
           type: string
           minLength: 1
           maxLength: 2000
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportReason"
+        start_seconds:
+          type: integer
+          format: int32
+          minimum: 0
+        end_seconds:
+          type: integer
+          format: int32
+          minimum: 1
     BulkRemoveCommentsRequest:
       type: object
       required: [account]
@@ -22466,7 +22493,7 @@ components:
           type: string
     Report:
       type: object
-      required: [id, target_type, reason, status, moderator_note, created_at, reporter]
+      required: [id, target_type, reason, status, moderator_note, created_at, reporter, reasons]
       properties:
         id:
           type: string
@@ -22479,6 +22506,22 @@ components:
         status:
           type: string
           enum: [open, accepted, rejected]
+        reasons:
+          type: array
+          description: >-
+            PeerTube-style predefined reasons (never null; empty when none).
+          items:
+            $ref: "#/components/schemas/ReportReason"
+        start_seconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Start of the reported video range, in seconds (video reports only).
+        end_seconds:
+          type: integer
+          format: int32
+          minimum: 1
+          description: End of the reported video range; omitted for a single moment.
         moderator_note:
           type: string
         created_at:
@@ -22585,7 +22628,7 @@ components:
       description: >-
         One of the caller's own reports. There is deliberately no
         moderator_note: it is staff-internal.
-      required: [id, target_type, status, reason, created_at, last_activity_at, message_count]
+      required: [id, target_type, status, reason, created_at, last_activity_at, message_count, reasons]
       properties:
         id:
           type: string
@@ -22599,6 +22642,22 @@ components:
         reason:
           type: string
           description: The caller's own words when filing.
+        reasons:
+          type: array
+          description: >-
+            PeerTube-style predefined reasons (never null; empty when none).
+          items:
+            $ref: "#/components/schemas/ReportReason"
+        start_seconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Start of the reported video range, in seconds (video reports only).
+        end_seconds:
+          type: integer
+          format: int32
+          minimum: 1
+          description: End of the reported video range; omitted for a single moment.
         created_at:
           type: string
           format: date-time

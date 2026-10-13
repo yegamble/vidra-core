@@ -989,6 +989,9 @@ type Report struct {
 	RemoteReporterActorUrl *string            `json:"remote_reporter_actor_url"`
 	RemoteReporterDomain   *string            `json:"remote_reporter_domain"`
 	RemoteFlagActivityID   *string            `json:"remote_flag_activity_id"`
+	PredefinedReasons      []string           `json:"predefined_reasons"`
+	VideoStartSeconds      *int32             `json:"video_start_seconds"`
+	VideoEndSeconds        *int32             `json:"video_end_seconds"`
 }
 
 type ReportMessage struct {

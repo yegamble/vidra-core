@@ -131,7 +131,7 @@ func TestRemoteFlagReportsOnRealPG(t *testing.T) {
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM reports WHERE status = 'open'`).Scan(&direct); err != nil {
 		t.Fatalf("count reports: %v", err)
 	}
-	if n, err := q.WithTx(tx).CountReports(ctx, &open); err != nil || n != direct {
+	if n, err := q.WithTx(tx).CountReports(ctx, sqlcgen.CountReportsParams{Status: &open}); err != nil || n != direct {
 		t.Errorf("CountReports = %d, %v; want %d (every open report, remote ones included)", n, err, direct)
 	}
 	_ = tx.Rollback(ctx)
