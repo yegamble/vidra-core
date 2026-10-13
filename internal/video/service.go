@@ -339,6 +339,10 @@ type Service struct {
 	onMove               []func(ctx context.Context, videoID, fromChannelID uuid.UUID, wasFederated bool)
 	onDelete             []func(context.Context, uuid.UUID, uuid.UUID, bool)
 	onMediaReplaced      []func(context.Context, uuid.UUID, string)
+	onCaptionChange      []func(ctx context.Context, videoID uuid.UUID, storageKey string, deleted bool)
+	// own persists ownership change requests (T21, 0165); nil = the routes
+	// answer ErrOwnershipUnavailable.
+	own OwnershipRepository
 	// uploadUsageRecorder appends a rolling daily-upload-quota ledger event
 	// (config-parity W7) after AttachOriginal stores an original. Best-effort;
 	// nil = no daily accounting.
@@ -557,6 +561,24 @@ func WithDeleteHook(fn func(context.Context, uuid.UUID, uuid.UUID, bool)) Option
 // poster replacement spends nothing.
 func WithMediaReplacedHook(fn func(context.Context, uuid.UUID, string)) Option {
 	return func(s *Service) { s.onMediaReplaced = append(s.onMediaReplaced, fn) }
+}
+
+// WithCaptionChangeHook registers a callback invoked (best-effort, synchronously)
+// after a caption track is stored or replaced (deleted=false) and after one is
+// removed (deleted=true), with the track's storage key. The IPFS mirror is the
+// consumer: a caption is pinned under its stable key, so a deleted track stayed
+// pinned and retrievable and a replaced one stayed pinned under its old bytes
+// (Tier A F5). Unlike WithMediaReplacedHook it carries no edge fence — whether
+// the video is mirror-eligible is the consumer's decision.
+func WithCaptionChangeHook(fn func(ctx context.Context, videoID uuid.UUID, storageKey string, deleted bool)) Option {
+	return func(s *Service) { s.onCaptionChange = append(s.onCaptionChange, fn) }
+}
+
+// fireCaptionChange runs the caption hooks.
+func (s *Service) fireCaptionChange(ctx context.Context, videoID uuid.UUID, key string, deleted bool) {
+	for _, hook := range s.onCaptionChange {
+		hook(ctx, videoID, key, deleted)
+	}
 }
 
 // fireMediaReplaced runs the replacement hooks for a video that an edge could be
@@ -2583,7 +2605,14 @@ func remoteCard(it FeedItem, remote bool, domain, watchURL string, streamURL *st
 }
 
 // feedSorts are the accepted feed ordering modes.
-var feedSorts = map[string]bool{"recent": true, "popular": true, "trending": true}
+//
+// "hot" is deliberately absent: a windowed engagement score needs per-window
+// view/like counters (only all-time totals exist), and "trending" already is
+// the age-decayed engagement sort — a second name for it would be dishonest.
+var feedSorts = map[string]bool{
+	"recent": true, "popular": true, "trending": true,
+	"originally_published_at": true, "name": true,
+}
 
 // NormalizeFeedSort returns sort when it is a recognised mode, else "recent".
 func NormalizeFeedSort(sort string) string {
@@ -2622,7 +2651,7 @@ type FeedFilter struct {
 }
 
 // ListPublic returns the cross-channel public feed in the requested order
-// (recent|popular|trending; unknown → recent), optionally narrowed by filter,
+// (recent|popular|trending|originally_published_at|name; unknown → recent), optionally narrowed by filter,
 // each item carrying its view count and poster availability. scope=all
 // (remote-content §4) adds federated remote videos (excluded whenever a
 // tag/category/language filter is active — remote videos carry no local
