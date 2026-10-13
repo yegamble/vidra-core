@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1437,7 +1438,13 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 			"attempts", row.Attempts+1, "reason", "list_tree", "error", jobstatus.RedactError(err))
 		return false
 	}
-	masterKey := s.hlsMasterKey(ctx, row)
+	masterKey, err := s.hlsMasterKey(ctx, row)
+	if err != nil {
+		s.recordFailure(ctx, row, "resolve hls master failed")
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
+			"attempts", row.Attempts+1, "reason", "resolve_master", "error", jobstatus.RedactError(err))
+		return false
+	}
 	var entries []ipfs.DirEntry
 	var openers []*lazyBlob
 	served := keys[:0:0]
@@ -1463,6 +1470,15 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 			_ = o.Close()
 		}
 	}()
+	// A tree without its master is not a playable tree, and the filter above could
+	// have removed it (a renamed master, a lookup that disagrees with the store).
+	// Same verdict as admissionInventory's master_missing.
+	if masterKey != "" && !slices.Contains(served, masterKey) {
+		s.recordFailure(ctx, row, "hls master missing from the served tree")
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
+			"attempts", row.Attempts+1, "reason", "master_missing")
+		return false
+	}
 	if len(entries) == 0 {
 		s.recordFailure(ctx, row, "hls tree is empty")
 		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),

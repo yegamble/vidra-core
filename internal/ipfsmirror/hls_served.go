@@ -22,17 +22,22 @@ func hlsServed(prefix, masterKey, key string) bool {
 	return mediaroute.HLSServedRel(rel, masterKey, mediaroute.IsPeerTubeHLSMasterKey(prefix))
 }
 
-// hlsMasterKey is the row's promoted master key, or "" when it cannot be read (a
-// pre-provenance row, or a lookups implementation without the reader) — in which
-// case hlsServed falls back to the native master name.
-func (s *Service) hlsMasterKey(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) string {
+// hlsMasterKey is the row's promoted master key. "" with a nil error means there is
+// none to read (a pre-provenance row, a lookups implementation without the reader,
+// or no ready playlist) - hlsServed then falls back to the native master name. A
+// lookup ERROR is returned: guessing the master name after a failed read would pin
+// a tree under the wrong definition of "served".
+func (s *Service) hlsMasterKey(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) (string, error) {
 	reader, ok := s.lookups.(masterKeyReader)
 	if !ok || !row.VideoID.Valid {
-		return ""
+		return "", nil
 	}
 	master, found, err := reader.VideoHLSMasterKey(ctx, uuid.UUID(row.VideoID.Bytes))
-	if err != nil || !found {
-		return ""
+	if err != nil {
+		return "", err
 	}
-	return master
+	if !found {
+		return "", nil
+	}
+	return master, nil
 }

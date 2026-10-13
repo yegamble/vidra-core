@@ -88,6 +88,18 @@ func TestLegacyIPFSHLSRecordsOnlyCopiedCurrentGeneration(t *testing.T) {
 				return nil
 			}}
 			mirror := ipfsmirror.New(q, ipfsmirror.NewSQLLookups(q), blobs, node, ipfsmirror.Config{Enabled: true, GatewayURL: "https://gateway.test"})
+			if scenario == "master absent from copy" {
+				// F6: a tree whose current master is not among the served files is not
+				// playable and is refused (master_missing) rather than pinned with an
+				// empty generation.
+				if n, err := mirror.DrainDue(ctx, 1); err != nil || n != 0 {
+					t.Fatalf("master-less copy: %d %v, want it refused", n, err)
+				}
+				if row, err := q.GetIPFSPinByObjectKey(ctx, key); err != nil || row.State == "pinned" {
+					t.Fatalf("master-less tree was pinned: %+v %v", row, err)
+				}
+				return
+			}
 			if n, err := mirror.DrainDue(ctx, 1); err != nil || n != 1 {
 				t.Fatalf("copy: %d %v", n, err)
 			}
