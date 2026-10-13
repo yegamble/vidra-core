@@ -28,7 +28,10 @@ const (
 	KindPlaylist     = "playlist"
 	KindPlaylistItem = "playlist_item"
 	KindFollow       = "follow"
-	KindWatchHistory = "watch_history"
+	// KindRemoteFollower: remote actors' accepted follows of a local channel. An
+	// ACCOUNT target is Unsupported (followers are per channel here).
+	KindRemoteFollower = "remote_follower"
+	KindWatchHistory   = "watch_history"
 	// KindViewCount counts VIDEOS whose view total was carried, not views. One
 	// source video contributes at most one to it per run, and contributes nothing
 	// on a run where its total has not moved.
@@ -99,7 +102,7 @@ var orderedKinds = []string{
 	KindVideo, KindVideoCommentPolicy, KindVideoSensitive, KindVideoBlock, KindVideoFile,
 	KindHLSPlaylist, KindVideoNoMedia, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
 	KindVideoOriginalDate, KindChapter, KindRating, KindRendition, KindComment,
-	KindPlaylist, KindPlaylistItem, KindFollow, KindWatchHistory,
+	KindPlaylist, KindPlaylistItem, KindFollow, KindRemoteFollower, KindWatchHistory,
 }
 
 // Counts tallies one entity kind's outcome. Planned is what a dry-run found;

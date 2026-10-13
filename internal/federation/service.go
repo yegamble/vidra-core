@@ -201,6 +201,8 @@ type Service struct {
 	notifyNewReport func(context.Context, uuid.UUID) (int64, error)
 	// onFollowerRequest: see WithFollowerRequestHook (nil = none).
 	onFollowerRequest func(context.Context, uuid.UUID)
+	// onHeldComment: see WithHeldCommentHook (nil = none).
+	onHeldComment func(context.Context, uuid.UUID)
 
 	// allowPrivateFetch relaxes the SSRF guard for remote-actor fetches so backed
 	// e2e / dev can reach a loopback origin. Never true in production.

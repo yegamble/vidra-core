@@ -190,6 +190,25 @@ WHERE object_key IN (
 )
 RETURNING object_key, media_class, cid, car_root, state, attempts, network, video_id, owner_user_id;
 
+-- name: ClaimDueIPFSUnpins :many
+-- ClaimDueIPFSPins restricted to removals. The unmanaged-node ceiling (Tier A F3)
+-- stops ADDS while the repo is over budget, and a takedown must never queue behind
+-- a backlog of adds it is not going to process: claiming pending rows only to drop
+-- them delays unpins by (backlog / batch) ticks, each pending row leased for the
+-- full lease. Same lease semantics and fences as ClaimDueIPFSPins.
+UPDATE media_ipfs_pins
+SET next_attempt_at = now() + (sqlc.arg(lease_seconds)::int * interval '1 second'),
+    updated_at = now()
+WHERE object_key IN (
+    SELECT p.object_key FROM media_ipfs_pins p
+    WHERE p.network = sqlc.arg(network) AND p.state = 'unpinning' AND p.next_attempt_at <= now()
+      AND p.claim_token IS NULL
+    ORDER BY p.next_attempt_at
+    LIMIT sqlc.arg(batch_size)
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING object_key, media_class, cid, car_root, state, attempts, network, video_id, owner_user_id;
+
 -- name: MarkIPFSPinned :one
 -- Terminal success for a pin: record the CID (and wrap-directory root for HLS
 -- trees) and the pinned byte size. STATE-GUARDED against a lost-update race with a

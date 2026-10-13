@@ -40,6 +40,7 @@ import (
 	"github.com/vidra/vidra-core/internal/drm"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/feedtoken"
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/instancemod"
@@ -362,6 +363,7 @@ func run() error {
 		return err
 	}
 	opts = append(opts, httpapi.WithInstanceDocumentsService(instancedocssvc))
+	opts = append(opts, httpapi.WithFeedTokenService(feedtoken.NewService(db.Queries())))
 
 	// vidra-search integration (search-service W4). Wired only when
 	// SEARCH_SERVICE_URL is set; otherwise every search surface degrades to local
@@ -587,6 +589,9 @@ func run() error {
 	// being set up. Ten still bounds a stuck tab to ten messages an hour, which
 	// is the failure the limiter exists for.
 	opts = append(opts, httpapi.WithMailTestRateLimiter(ratelimit.NewLimiter(contactCounter, 10, time.Hour)))
+	// Report-thread posts: 20 per USER per hour on the same counter — every
+	// reporter message notifies all staff.
+	opts = append(opts, httpapi.WithReportMessageRateLimiter(ratelimit.NewLimiter(contactCounter, 20, time.Hour)))
 	// Remote-URI search resolution (config-parity W13) is an outbound-fetch
 	// surface, so it carries its own per-caller budget — 10 resolutions per
 	// minute — on the shared Redis counter when rate limiting is on (multi-node
@@ -951,6 +956,8 @@ func run() error {
 			// it the instance's own gateway keeps serving a withdrawn CID until some
 			// later GC, which A31's rehearsal measured directly.
 			GCAfterUnpin: cfg.IPFSGCAfterUnpin,
+			// Ceiling for an UNMANAGED node (IPFS_REPO_BUDGET_BYTES, Tier A F3); 0 = none.
+			RepoBudgetBytes: cfg.IPFSRepoBudgetBytes,
 			// Private tier (P19.P1) — a dedicated private-swarm node client the worker
 			// routes network='private' rows to (and ONLY those rows).
 			PrivateEnabled:     privateEnabled,
@@ -1045,6 +1052,9 @@ func run() error {
 		logger.Warn("storyboard generation disabled (ffmpeg/ffprobe not on PATH); videos publish without a storyboard")
 	}
 	vopts = append(vopts, video.WithViewDeduper(cache.NewDeduper(rdb.Client)))
+	// Video ownership changes (T21, migration 0165). The accept runs under the
+	// video row lock (see store.OwnershipRepo).
+	vopts = append(vopts, video.WithOwnershipRepository(db.OwnershipRepository()))
 	// The durable audit trail (also mounted on the admin API below) lets the video
 	// service record a content.upload.malware_rejected event when a scan keeps an
 	// upload out of published (infection / unscannable under a non-publishing mode).
@@ -1429,6 +1439,19 @@ func run() error {
 			video.WithDeleteHook(func(ctx context.Context, videoID, channelID uuid.UUID, wasPublic bool) {
 				if err := ipfsMirror.UnpinVideo(ctx, videoID); err != nil {
 					logger.Warn("ipfs mirror delete unpin failed", "video_id", videoID, "error", err)
+				}
+			}),
+			// Tier A F5: captions, posters and storyboards are pinned under stable keys,
+			// so a delete or an in-place replacement changes nothing the mirror watches
+			// on its own. These two hooks are the only things that tell it.
+			video.WithCaptionChangeHook(func(ctx context.Context, videoID uuid.UUID, key string, deleted bool) {
+				if err := ipfsMirror.OnCaptionChanged(ctx, videoID, key, deleted); err != nil {
+					logger.Warn("ipfs mirror caption change failed", "video_id", videoID, "deleted", deleted, "error", err)
+				}
+			}),
+			video.WithMediaReplacedHook(func(ctx context.Context, videoID uuid.UUID, kind string) {
+				if err := ipfsMirror.OnMediaReplaced(ctx, videoID, kind); err != nil {
+					logger.Warn("ipfs mirror media replacement failed", "video_id", videoID, "kind", kind, "error", err)
 				}
 			}),
 		)
@@ -2256,6 +2279,11 @@ func run() error {
 			func(ctx context.Context, id uuid.UUID) (int64, error) {
 				return notifsvc.NotifyFederationFollowerRequest(ctx, id)
 			})),
+		// A remote comment held for approval (0161) pings the video's managers.
+		federation.WithHeldCommentHook(staffQueueHook("comment_held",
+			func(ctx context.Context, id uuid.UUID) (int64, error) {
+				return notifsvc.NotifyCommentHeld(ctx, id)
+			})),
 		// Federation policy gates (config-parity W12): runtime provider funcs
 		// over the settings overlay, read per inbound activity so an admin
 		// change applies without a restart. All gate the ActivityPub inbox
@@ -3003,6 +3031,10 @@ func run() error {
 					// restart rather than at the end of the run.
 					ReloadSettings: settingssvc.Load,
 					Logger:         logger,
+					PublicBaseURL:  cfg.PublicBaseURL,
+					// Remote followers' inboxes and keys come from their own
+					// actor documents, fetched the way federation fetches them.
+					ResolveRemoteActor: fedsvc.ResolveRemoteActor,
 				})
 				return imp, func() { src.Close() }, nil
 			}))
@@ -3053,6 +3085,34 @@ func run() error {
 			}
 			return out, nil
 		})
+		// IPFS capacity (Tier A F4): repo usage, budget and the admission-pause reason,
+		// read through the same Runtime the admin page uses so the two cannot disagree.
+		if cfg.IPFSEnabled || ipfsHost != nil {
+			metrics.RegisterIPFSCapacitySource(func(ctx context.Context) (observability.IPFSCapacity, error) {
+				rt, err := ipfsControl.Runtime(ctx)
+				if err != nil {
+					return observability.IPFSCapacity{}, err
+				}
+				out := observability.IPFSCapacity{
+					BudgetBytes: rt.Capacity.BudgetBytes, ReservedBytes: rt.Capacity.ReservedBytes, MinFreeBytes: rt.Capacity.MinFreeBytes,
+					RepoUsedBytes: rt.Capacity.RepoUsedBytes, FilesystemFreeBytes: rt.Capacity.FilesystemFreeBytes,
+				}
+				if rt.Capacity.AdmissionPausedReason != nil {
+					out.PausedReason = *rt.Capacity.AdmissionPausedReason
+				}
+				// An UNMANAGED node (no adopted policy) is governed by IPFS_REPO_BUDGET_BYTES
+				// instead of the managed budget Runtime reports; read its size live.
+				if doc, derr := ipfsControl.Config(ctx); derr == nil && !doc.PolicyActive {
+					if used, budget, ok := ipfsMirror.UnmanagedCapacity(ctx); ok {
+						out = observability.IPFSCapacity{BudgetBytes: budget, RepoUsedBytes: &used}
+						if used >= budget {
+							out.PausedReason = "budget_exhausted"
+						}
+					}
+				}
+				return out, nil
+			})
+		}
 		// The pool gauges (phase-5 multi-node floor). Sampled at scrape time from
 		// the live pool, through the same sampler the admin status page reads.
 		metrics.RegisterDBPoolSource(dbPoolStats)

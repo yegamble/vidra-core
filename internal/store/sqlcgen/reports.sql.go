@@ -13,6 +13,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countMyReports = `-- name: CountMyReports :one
+SELECT count(*)::bigint FROM reports WHERE reporter_id = $1::uuid
+`
+
+// ListMyReports' total (no report_id narrowing).
+func (q *Queries) CountMyReports(ctx context.Context, reporterID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countMyReports, reporterID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countReports = `-- name: CountReports :one
 SELECT count(*)::bigint
 FROM reports r
@@ -210,6 +222,93 @@ func (q *Queries) DeleteReport(ctx context.Context, id uuid.UUID) (int64, error)
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const listMyReports = `-- name: ListMyReports :many
+SELECT r.id, r.target_type, r.status, r.reason, r.created_at, r.resolved_at,
+       r.video_id,
+       COALESCE(CASE WHEN v.privacy = 'public' AND v.state = 'published'
+                      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+                     THEN v.title END, '')::text AS video_title,
+       ru.username AS reported_username, rv.title AS remote_video_title,
+       COALESCE(t.message_count, 0)::bigint AS message_count,
+       GREATEST(r.created_at, r.resolved_at, t.last_message_at)::timestamptz AS last_activity_at
+FROM reports r
+LEFT JOIN videos v ON v.id = r.video_id
+LEFT JOIN users ru ON ru.id = r.reported_user_id
+LEFT JOIN remote_videos rv ON rv.id = r.remote_video_id
+LEFT JOIN LATERAL (
+    SELECT count(*) AS message_count, max(m.created_at) AS last_message_at
+    FROM report_messages m WHERE m.report_id = r.id
+) t ON TRUE
+WHERE r.reporter_id = $1::uuid
+  AND ($2::uuid IS NULL OR r.id = $2::uuid)
+ORDER BY last_activity_at DESC, r.id DESC
+LIMIT $4 OFFSET $3
+`
+
+type ListMyReportsParams struct {
+	ReporterID   uuid.UUID   `json:"reporter_id"`
+	ReportID     pgtype.UUID `json:"report_id"`
+	ResultOffset int32       `json:"result_offset"`
+	ResultLimit  int32       `json:"result_limit"`
+}
+
+type ListMyReportsRow struct {
+	ID               uuid.UUID          `json:"id"`
+	TargetType       string             `json:"target_type"`
+	Status           string             `json:"status"`
+	Reason           string             `json:"reason"`
+	CreatedAt        time.Time          `json:"created_at"`
+	ResolvedAt       pgtype.Timestamptz `json:"resolved_at"`
+	VideoID          pgtype.UUID        `json:"video_id"`
+	VideoTitle       string             `json:"video_title"`
+	ReportedUsername *string            `json:"reported_username"`
+	RemoteVideoTitle *string            `json:"remote_video_title"`
+	MessageCount     int64              `json:"message_count"`
+	LastActivityAt   time.Time          `json:"last_activity_at"`
+}
+
+// A reporter's own reports, most recently active first (filing, resolution or
+// the newest thread message). Never the moderator's note; a video title only
+// while the video passes the public check (videos.sql: public, published, not
+// blocked). report_id narrows to one (NULL = all).
+func (q *Queries) ListMyReports(ctx context.Context, arg ListMyReportsParams) ([]ListMyReportsRow, error) {
+	rows, err := q.db.Query(ctx, listMyReports,
+		arg.ReporterID,
+		arg.ReportID,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMyReportsRow
+	for rows.Next() {
+		var i ListMyReportsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TargetType,
+			&i.Status,
+			&i.Reason,
+			&i.CreatedAt,
+			&i.ResolvedAt,
+			&i.VideoID,
+			&i.VideoTitle,
+			&i.ReportedUsername,
+			&i.RemoteVideoTitle,
+			&i.MessageCount,
+			&i.LastActivityAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listReports = `-- name: ListReports :many

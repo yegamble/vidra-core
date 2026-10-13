@@ -89,6 +89,16 @@ type Client interface {
 	RepoGC(ctx context.Context) (int64, error)
 }
 
+// RepoSizer is the optional capability of reporting the node's repo size
+// (/api/v0/repo/stat?size-only=true). It is a separate interface rather than a
+// Client method so the many Client wrappers and test doubles are unaffected; a
+// caller asserts for it and treats its absence as "no budget available".
+type RepoSizer interface {
+	// RepoSize is the node's RepoSize in bytes — blocks only; it excludes flatfs
+	// slack and inodes, which is why a budget over it needs filesystem headroom.
+	RepoSize(ctx context.Context) (int64, error)
+}
+
 // KuboClient is a hand-rolled HTTP client for the Kubo RPC API (/api/v0/*). No
 // heavy SDK. The API address is OPERATOR config (e.g. http://ipfs:5001), a
 // trusted internal endpoint — it is NOT user-supplied, so it does not go through
@@ -100,6 +110,7 @@ type KuboClient struct {
 
 // compile-time assertion that KuboClient satisfies Client.
 var _ Client = (*KuboClient)(nil)
+var _ RepoSizer = (*KuboClient)(nil)
 
 // NewKuboClient builds a client for the given Kubo RPC base URL (no trailing
 // slash needed). hc may be nil, in which case http.DefaultClient is used; callers
@@ -153,8 +164,9 @@ func (c *KuboClient) AddDirectory(ctx context.Context, entries []DirEntry) (AddR
 }
 
 // add performs a multipart /api/v0/add and returns the root result. For a wrap
-// add, Kubo emits one NDJSON line per object and the wrapping directory LAST (its
-// Name is the top wrap); we take the final object with a non-empty Hash as root.
+// add, Kubo emits one NDJSON line per object and the wrapping directory LAST, with
+// an EMPTY Name (measured, spike T3); that entry is the root and is required. For
+// a single-file add the last hashed object is the root.
 func (c *KuboClient) add(ctx context.Context, q url.Values, entries []DirEntry) (AddResult, error) {
 	pr, pw := io.Pipe()
 	mw := multipart.NewWriter(pw)
@@ -177,13 +189,21 @@ func (c *KuboClient) add(ctx context.Context, q url.Values, entries []DirEntry) 
 		_ = pw.Close()
 	}()
 
-	body, err := c.post(ctx, "/api/v0/add?"+q.Encode(), pr, mw.FormDataContentType())
+	resp, err := c.do(ctx, "/api/v0/add?"+q.Encode(), pr, mw.FormDataContentType())
 	if err != nil {
 		return AddResult{}, err
 	}
+	return readAddResponse(resp, q.Get("wrap-with-directory") == "true")
+}
+
+// readAddResponse consumes (and closes) an /api/v0/add response. Split from add
+// so the real-Kubo test can feed it a response to a deliberately truncated
+// multipart body, which this client's own framing can never produce.
+func readAddResponse(resp *http.Response, wrap bool) (AddResult, error) {
+	body := resp.Body
 	defer body.Close()
 
-	var last addResponse
+	var last, wrapRoot addResponse
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
@@ -197,13 +217,34 @@ func (c *KuboClient) add(ctx context.Context, q url.Values, entries []DirEntry) 
 		}
 		if ar.Hash != "" {
 			last = ar
+			if ar.Name == "" {
+				wrapRoot = ar
+			}
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return AddResult{}, fmt.Errorf("ipfs: read add response: %w", err)
 	}
+	// Kubo reports a failure that happens AFTER it has started streaming (a full
+	// disk, a part that cannot be read) as HTTP 200 plus an X-Stream-Error
+	// trailer, never as a status. Go fills resp.Trailer only once the body has
+	// been read to EOF, which the scan above has done (a scanner abort returned
+	// above, so an unread trailer is a failure, not a pass). Without this check the
+	// last hash seen — a segment's CID for a wrap add — is recorded as the tree.
+	if msg := resp.Trailer.Get(streamErrorHeader); msg != "" {
+		return AddResult{}, fmt.Errorf("ipfs: add failed mid-stream: %s", sanitizeStreamError(msg))
+	}
 	if last.Hash == "" {
 		return AddResult{}, fmt.Errorf("ipfs: add returned no CID")
+	}
+	if wrap {
+		// The wrapping directory is the entry with an empty Name (measured on Kubo
+		// 0.40.1, spike T3). An add that ended without one never completed the tree;
+		// the last hash would be a child.
+		if wrapRoot.Hash == "" {
+			return AddResult{}, fmt.Errorf("ipfs: wrap add returned no wrapping directory entry")
+		}
+		last = wrapRoot
 	}
 	if err := ValidateCID(last.Hash); err != nil {
 		return AddResult{}, fmt.Errorf("ipfs: node returned an invalid CID: %w", err)
@@ -298,6 +339,27 @@ func (c *KuboClient) ListPins(ctx context.Context, max int) (map[string]struct{}
 	return out, nil
 }
 
+// repoStatResponse is /api/v0/repo/stat?size-only=true.
+type repoStatResponse struct {
+	RepoSize *int64 `json:"RepoSize"`
+}
+
+func (c *KuboClient) RepoSize(ctx context.Context) (int64, error) {
+	body, err := c.post(ctx, "/api/v0/repo/stat?size-only=true", nil, "")
+	if err != nil {
+		return 0, err
+	}
+	defer body.Close()
+	var r repoStatResponse
+	if err := json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(&r); err != nil {
+		return 0, fmt.Errorf("ipfs: decode repo stat: %w", err)
+	}
+	if r.RepoSize == nil || *r.RepoSize < 0 {
+		return 0, fmt.Errorf("ipfs: repo stat carried no usable RepoSize")
+	}
+	return *r.RepoSize, nil
+}
+
 // gcResponse is one NDJSON object from /api/v0/repo/gc: the key it removed, or
 // an error for one key. The Key object is {"/":"<cid>"}.
 type gcResponse struct {
@@ -339,10 +401,34 @@ func (c *KuboClient) RepoGC(ctx context.Context) (int64, error) {
 	return removed, nil
 }
 
+// streamErrorHeader is the trailer Kubo uses to report a failure after a 200
+// response has already started.
+const streamErrorHeader = "X-Stream-Error"
+
+// sanitizeStreamError bounds the node's message before it enters an error (and
+// from there a log line or a row's last_error).
+func sanitizeStreamError(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 200 {
+		s = s[:200]
+	}
+	return s
+}
+
 // post issues a POST to the Kubo RPC API (the API is POST-only). The caller owns
 // the returned body and must Close it. A non-2xx is turned into an error without
 // echoing the (potentially large/sensitive) raw node response verbatim.
 func (c *KuboClient) post(ctx context.Context, path string, body io.Reader, contentType string) (io.ReadCloser, error) {
+	resp, err := c.do(ctx, path, body, contentType)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+// do is post returning the whole response, for the one caller (add) that must
+// read a trailer after the body.
+func (c *KuboClient) do(ctx context.Context, path string, body io.Reader, contentType string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL+path, body)
 	if err != nil {
 		return nil, fmt.Errorf("ipfs: build request: %w", err)
@@ -360,5 +446,5 @@ func (c *KuboClient) post(ctx context.Context, path string, body io.Reader, cont
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("ipfs: node returned status %d", resp.StatusCode)
 	}
-	return resp.Body, nil
+	return resp, nil
 }
