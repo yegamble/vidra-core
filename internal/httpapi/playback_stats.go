@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"net"
 	"net/http"
 	"time"
 
@@ -25,12 +28,16 @@ func WithPlaybackStats(svc playbackStatsService) Option {
 	return func(s *Server) { s.playbackStats = svc }
 }
 
-// Beacon budget per client: a player samples every ~10 s, so 60/min allows
-// several tabs while capping what one client can inflate. Keyed on a hash of
-// the client IP, held only as a short-lived counter key, never persisted.
+// Beacon budget per client AND video: a player samples every ~10 s, so 12/min
+// allows a couple of tabs while capping what one client can add. The key is a
+// hash of the client network (IPv6 collapsed to its /64) and the video id, held
+// only as a short-lived counter key, never persisted. A play may be marked
+// "started" once per client and video per window.
 const (
-	defaultPlaybackRateLimit  = 60
-	defaultPlaybackRateWindow = time.Minute
+	defaultPlaybackRateLimit   = 12
+	defaultPlaybackRateWindow  = time.Minute
+	defaultPlaybackStartLimit  = 1
+	defaultPlaybackStartWindow = 10 * time.Minute
 	// maxPlaybackPosition bounds position_seconds (48 h) before duration checks.
 	maxPlaybackPosition = 48 * 3600
 )
@@ -41,11 +48,23 @@ func (s *Server) playbackRateLimit() echo.MiddlewareFunc {
 			if s.playbackLimit == nil {
 				return nil, "", false
 			}
-			return s.playbackLimit, "playback:" + viewerKey(c, uuid.Nil, false), true
+			return s.playbackLimit, "playback:" + playbackClientKey(c), true
 		},
 		unavailable: "playback beacon rate limiter unavailable, failing open",
 		denied:      "too many playback samples",
 	})
+}
+
+// playbackClientKey hashes (client network, video id). IPv6 clients are
+// collapsed to their /64 so rotating addresses inside one allocation does not
+// mint fresh budgets.
+func playbackClientKey(c echo.Context) string {
+	ip := c.RealIP()
+	if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+		ip = parsed.Mask(net.CIDRMask(64, 128)).String()
+	}
+	sum := sha256.Sum256([]byte(ip + "|" + c.Param("id")))
+	return hex.EncodeToString(sum[:])
 }
 
 type playbackBeaconRequest struct {
@@ -73,7 +92,7 @@ func (s *Server) handlePlaybackBeacon(c echo.Context) error {
 		fes = append(fes, FieldError{Field: "position_seconds", Message: "must be between 0 and 172800"})
 	}
 	if in.WatchedSeconds < 0 || in.WatchedSeconds > playbackstats.MaxWatchedPerSample {
-		fes = append(fes, FieldError{Field: "watched_seconds", Message: "must be between 0 and 30"})
+		fes = append(fes, FieldError{Field: "watched_seconds", Message: "must be between 0 and 12"})
 	}
 	if len(fes) > 0 {
 		return &ValidationError{Fields: fes}
@@ -83,8 +102,18 @@ func (s *Server) handlePlaybackBeacon(c echo.Context) error {
 		return err
 	}
 	userID, _, authed := principalFromContext(c)
-	if v.State != "published" || (authed && userID == v.OwnerID) {
+	if v.State != "published" {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if authed && userID == v.OwnerID {
 		return c.NoContent(http.StatusNoContent)
+	}
+	// "started" counts a play: honour it once per client+video per window and
+	// treat repeats as ordinary samples. Fails open if the limiter errors.
+	if in.Started && s.playbackStartLimit != nil {
+		if res, err := s.playbackStartLimit.Allow(c.Request().Context(), "playback-start:"+playbackClientKey(c)); err == nil && !res.Allowed {
+			in.Started = false
+		}
 	}
 	duration := s.videoDurationSeconds(c.Request().Context(), id)
 	if duration > 0 && in.PositionSeconds > duration+5 {

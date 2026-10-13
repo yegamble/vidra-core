@@ -99,9 +99,11 @@ type Server struct {
 	bulkVideosLimit *ratelimit.Limiter
 	// playbackStats + playbackLimit back the watch-time beacon and its owner
 	// report (playback_stats.go). Nil playbackStats leaves both routes unmounted.
-	playbackStats   playbackStatsService
-	playbackLimit   *ratelimit.Limiter
-	attachmentLimit *ratelimit.Limiter
+	playbackStats playbackStatsService
+	playbackLimit *ratelimit.Limiter
+	// playbackStartLimit bounds how often one client can count a new play.
+	playbackStartLimit *ratelimit.Limiter
+	attachmentLimit    *ratelimit.Limiter
 	// contactLimit throttles the public contact form (POST /instance/contact) —
 	// its own fixed-window budget, 1 request/IP/hour in production (wired in
 	// cmd/api via WithContactRateLimiter). Nil (e.g. unit tests) mounts the
@@ -1213,6 +1215,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// times, so they always carry a per-user budget, wired in-process like unlock.
 	s.bulkVideosLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultBulkVideosRateLimit, defaultBulkVideosRateWindow)
 	s.playbackLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackRateLimit, defaultPlaybackRateWindow)
+	s.playbackStartLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackStartLimit, defaultPlaybackStartWindow)
 	// Remote-URI search resolution (config-parity W13) triggers outbound
 	// fetches, so it always carries a per-caller budget: the wired limiter
 	// (Redis-backed in cmd/api) when present, else an in-memory default.

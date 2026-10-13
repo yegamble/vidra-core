@@ -113,48 +113,49 @@ func (q *Queries) SumVideoPlaybackDims(ctx context.Context, arg SumVideoPlayback
 	return items, nil
 }
 
-const upsertVideoPlaybackDay = `-- name: UpsertVideoPlaybackDay :exec
+const upsertVideoPlaybackSample = `-- name: UpsertVideoPlaybackSample :exec
 
-INSERT INTO video_playback_days (video_id, day, plays, watch_seconds)
-VALUES ($1, (now() AT TIME ZONE 'utc')::date, $2, $3)
-ON CONFLICT (video_id, day) DO UPDATE
-SET plays = video_playback_days.plays + EXCLUDED.plays,
-    watch_seconds = video_playback_days.watch_seconds + EXCLUDED.watch_seconds
-`
-
-type UpsertVideoPlaybackDayParams struct {
-	VideoID      uuid.UUID `json:"video_id"`
-	Plays        int64     `json:"plays"`
-	WatchSeconds int64     `json:"watch_seconds"`
-}
-
-// Per-video playback aggregates (migration 0174). No raw samples are stored:
-// the beacon handler folds each sample into these daily counters.
-func (q *Queries) UpsertVideoPlaybackDay(ctx context.Context, arg UpsertVideoPlaybackDayParams) error {
-	_, err := q.db.Exec(ctx, upsertVideoPlaybackDay, arg.VideoID, arg.Plays, arg.WatchSeconds)
-	return err
-}
-
-const upsertVideoPlaybackDim = `-- name: UpsertVideoPlaybackDim :exec
+WITH d AS (
+    INSERT INTO video_playback_days (video_id, day, plays, watch_seconds)
+    VALUES ($1::uuid, (now() AT TIME ZONE 'utc')::date, $6::bigint, $2::bigint)
+    ON CONFLICT (video_id, day) DO UPDATE
+    SET plays = video_playback_days.plays + EXCLUDED.plays,
+        watch_seconds = video_playback_days.watch_seconds + EXCLUDED.watch_seconds
+)
 INSERT INTO video_playback_dims (video_id, day, kind, key, value)
-VALUES ($1, (now() AT TIME ZONE 'utc')::date, $2, $3, $4)
+SELECT $1::uuid, (now() AT TIME ZONE 'utc')::date, t.kind, t.key, $2::bigint
+FROM (VALUES
+    ('retention', $3::text),
+    ('device', $4::text),
+    ('os', $5::text)
+) AS t(kind, key)
+WHERE $2::bigint > 0
 ON CONFLICT (video_id, day, kind, key) DO UPDATE
 SET value = video_playback_dims.value + EXCLUDED.value
 `
 
-type UpsertVideoPlaybackDimParams struct {
-	VideoID uuid.UUID `json:"video_id"`
-	Kind    string    `json:"kind"`
-	Key     string    `json:"key"`
-	Value   int64     `json:"value"`
+type UpsertVideoPlaybackSampleParams struct {
+	VideoID      uuid.UUID `json:"video_id"`
+	WatchSeconds int64     `json:"watch_seconds"`
+	RetentionKey string    `json:"retention_key"`
+	Device       string    `json:"device"`
+	Os           string    `json:"os"`
+	Plays        int64     `json:"plays"`
 }
 
-func (q *Queries) UpsertVideoPlaybackDim(ctx context.Context, arg UpsertVideoPlaybackDimParams) error {
-	_, err := q.db.Exec(ctx, upsertVideoPlaybackDim,
+// Per-video playback aggregates (migration 0174). No raw samples are stored:
+// the beacon handler folds each sample into these daily counters.
+// Folds ONE beacon into today's aggregates in a single statement, so a partial
+// failure cannot leave plays/watch seconds disagreeing with the retention and
+// device counters. Dimension rows are written only when watch_seconds > 0.
+func (q *Queries) UpsertVideoPlaybackSample(ctx context.Context, arg UpsertVideoPlaybackSampleParams) error {
+	_, err := q.db.Exec(ctx, upsertVideoPlaybackSample,
 		arg.VideoID,
-		arg.Kind,
-		arg.Key,
-		arg.Value,
+		arg.WatchSeconds,
+		arg.RetentionKey,
+		arg.Device,
+		arg.Os,
+		arg.Plays,
 	)
 	return err
 }

@@ -72,7 +72,7 @@ func TestPlaybackBeaconValidation(t *testing.T) {
 	srv, rec, _, id := playbackFixture(t)
 	for name, body := range map[string]string{
 		"negative watched": `{"position_seconds":1,"watched_seconds":-1}`,
-		"huge watched":     `{"position_seconds":1,"watched_seconds":31}`,
+		"huge watched":     `{"position_seconds":1,"watched_seconds":13}`,
 		"negative pos":     `{"position_seconds":-1,"watched_seconds":1}`,
 		"past the end":     `{"position_seconds":206,"watched_seconds":1}`,
 		"not json":         `nope`,
@@ -141,5 +141,69 @@ func TestPlaybackStatsAuthz(t *testing.T) {
 		if resp.Plays != 2 || resp.AvgViewDurationSeconds != 15 || resp.DurationSeconds != 200 {
 			t.Errorf("%s body = %+v", who, resp)
 		}
+	}
+}
+
+func TestPlaybackStartedCountsOncePerClientAndVideo(t *testing.T) {
+	srv, rec, _, id := playbackFixture(t)
+	for i := 0; i < 3; i++ {
+		if r := beacon(srv, id, `{"position_seconds":1,"watched_seconds":5,"started":true}`, ""); r.Code != http.StatusNoContent {
+			t.Fatalf("beacon %d = %d", i, r.Code)
+		}
+	}
+	starts := 0
+	for _, s := range rec.samples {
+		if s.Started {
+			starts++
+		}
+	}
+	if len(rec.samples) != 3 || starts != 1 {
+		t.Fatalf("samples=%d starts=%d, want 3 and 1", len(rec.samples), starts)
+	}
+}
+
+func TestPlaybackLimiterKeyedPerVideoAndIPv6Prefix(t *testing.T) {
+	key := func(ip, id string) string {
+		e := echo.New()
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.RemoteAddr = ip
+		c := e.NewContext(req, httptest.NewRecorder())
+		c.SetParamNames("id")
+		c.SetParamValues(id)
+		return playbackClientKey(c)
+	}
+	if key("[2001:db8:1:2::1]:80", "a") != key("[2001:db8:1:2:ffff::9]:80", "a") {
+		t.Error("addresses inside one /64 must share a key")
+	}
+	if key("[2001:db8:1:2::1]:80", "a") == key("[2001:db8:1:3::1]:80", "a") {
+		t.Error("different /64s must not share a key")
+	}
+	if key("203.0.113.5:80", "a") == key("203.0.113.5:80", "b") {
+		t.Error("different videos must not share a key")
+	}
+}
+
+func TestPlaybackBeaconVisibility(t *testing.T) {
+	rec := &recordingPlayback{}
+	srv, _, _, _, _ := videoServerFullWith(t, testConfig(), []Option{WithPlaybackStats(rec)})
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	draft := createVideo(t, srv, admin, "ada", `{"title":"d","privacy":"public"}`)
+	private := createPublishedVideo(t, srv, admin, "ada", `{"title":"p","privacy":"private"}`)
+	unlisted := createPublishedVideo(t, srv, admin, "ada", `{"title":"u","privacy":"unlisted"}`)
+	blocked := createPublishedVideo(t, srv, admin, "ada", `{"title":"b","privacy":"public"}`)
+	if r := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+blocked+"/block", `{"reason":"x"}`, admin); r.Code != http.StatusNoContent {
+		t.Fatalf("block = %d", r.Code)
+	}
+	body := `{"position_seconds":1,"watched_seconds":5}`
+	for name, id := range map[string]string{"draft": draft, "private": private, "blocked": blocked} {
+		if r := beacon(srv, id, body, ""); r.Code != http.StatusNotFound {
+			t.Errorf("%s = %d, want 404", name, r.Code)
+		}
+	}
+	if len(rec.samples) != 0 {
+		t.Fatalf("hidden videos recorded %d samples", len(rec.samples))
+	}
+	if r := beacon(srv, unlisted, body, ""); r.Code != http.StatusNoContent || len(rec.samples) != 1 {
+		t.Fatalf("unlisted = %d samples=%d, want 204 and 1", r.Code, len(rec.samples))
 	}
 }

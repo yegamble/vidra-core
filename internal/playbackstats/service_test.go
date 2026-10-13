@@ -17,16 +17,17 @@ type fakeRepo struct {
 	dims        map[string]int64
 }
 
-func (f *fakeRepo) UpsertVideoPlaybackDay(_ context.Context, a sqlcgen.UpsertVideoPlaybackDayParams) error {
+func (f *fakeRepo) UpsertVideoPlaybackSample(_ context.Context, a sqlcgen.UpsertVideoPlaybackSampleParams) error {
 	f.plays += a.Plays
 	f.secs += a.WatchSeconds
-	return nil
-}
-func (f *fakeRepo) UpsertVideoPlaybackDim(_ context.Context, a sqlcgen.UpsertVideoPlaybackDimParams) error {
-	if f.dims == nil {
-		f.dims = map[string]int64{}
+	if a.WatchSeconds > 0 {
+		if f.dims == nil {
+			f.dims = map[string]int64{}
+		}
+		f.dims["retention/"+a.RetentionKey] += a.WatchSeconds
+		f.dims["device/"+a.Device] += a.WatchSeconds
+		f.dims["os/"+a.Os] += a.WatchSeconds
 	}
-	f.dims[a.Kind+"/"+a.Key] += a.Value
 	return nil
 }
 func (f *fakeRepo) ListVideoPlaybackDays(context.Context, sqlcgen.ListVideoPlaybackDaysParams) ([]sqlcgen.ListVideoPlaybackDaysRow, error) {
@@ -108,6 +109,24 @@ func TestRecordClampsAndSanitises(t *testing.T) {
 	_ = NewService(repo2).Record(context.Background(), Sample{VideoID: uuid.New()})
 	if repo2.plays != 0 || len(repo2.dims) != 0 {
 		t.Fatal("empty sample wrote")
+	}
+}
+
+func TestDailyCeilingDropsImplausibleWatchTime(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	vid := uuid.New()
+	ctx := context.Background()
+	// One counted play of a 60 s video: ceiling = 1 x 60 x 3 = 180 s.
+	_ = svc.Record(ctx, Sample{VideoID: vid, WatchedSeconds: 12, DurationSeconds: 60, Started: true})
+	for i := 0; i < 100; i++ {
+		_ = svc.Record(ctx, Sample{VideoID: vid, WatchedSeconds: 12, DurationSeconds: 60})
+	}
+	if repo.secs > 180 {
+		t.Fatalf("watch seconds %d exceeded the ceiling 180", repo.secs)
+	}
+	if repo.secs < 168 {
+		t.Fatalf("ceiling cut too early: %d", repo.secs)
 	}
 }
 

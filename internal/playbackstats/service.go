@@ -26,10 +26,17 @@ import (
 const (
 	// Buckets is the resolution of the retention curve.
 	Buckets = 20
-	// MaxWatchedPerSample bounds the seconds one beacon may claim, so a forged
-	// or buggy client cannot inflate watch time by more than the heartbeat
-	// interval times the rate limit.
-	MaxWatchedPerSample = 30
+	// MaxWatchedPerSample bounds the seconds one beacon may claim: the player's
+	// 10 s heartbeat plus slack for timer jitter. Combined with the per-client
+	// rate limit this bounds how much one client can add per minute.
+	MaxWatchedPerSample = 12
+	// CeilingFactor is the daily plausibility ceiling: a video's watch seconds
+	// for a UTC day may not exceed max(plays,1) x max(duration,MinCeilingDuration)
+	// x CeilingFactor, i.e. on average each counted play may be watched this many
+	// times over. Samples past it are dropped (plays still count). It bounds the
+	// damage of forged samples to a multiple of what real plays could produce.
+	CeilingFactor      = 3
+	MinCeilingDuration = 60
 	// WindowDays is the reporting window.
 	WindowDays = 30
 	// Retention is how long daily aggregates are kept.
@@ -38,8 +45,7 @@ const (
 
 // Repository is satisfied by *sqlcgen.Queries; tests substitute a fake.
 type Repository interface {
-	UpsertVideoPlaybackDay(ctx context.Context, arg sqlcgen.UpsertVideoPlaybackDayParams) error
-	UpsertVideoPlaybackDim(ctx context.Context, arg sqlcgen.UpsertVideoPlaybackDimParams) error
+	UpsertVideoPlaybackSample(ctx context.Context, arg sqlcgen.UpsertVideoPlaybackSampleParams) error
 	ListVideoPlaybackDays(ctx context.Context, arg sqlcgen.ListVideoPlaybackDaysParams) ([]sqlcgen.ListVideoPlaybackDaysRow, error)
 	SumVideoPlaybackDims(ctx context.Context, arg sqlcgen.SumVideoPlaybackDimsParams) ([]sqlcgen.SumVideoPlaybackDimsRow, error)
 	PruneVideoPlaybackDays(ctx context.Context, before pgtype.Date) (int64, error)
@@ -98,12 +104,26 @@ func (s *Service) Record(ctx context.Context, in Sample) error {
 	if plays == 0 && w == 0 {
 		return nil
 	}
-	if err := s.repo.UpsertVideoPlaybackDay(ctx, sqlcgen.UpsertVideoPlaybackDayParams{
-		VideoID: in.VideoID, Plays: plays, WatchSeconds: int64(w),
-	}); err != nil {
-		return err
+	if w > 0 {
+		today := pgtype.Date{Time: time.Now().UTC().Truncate(24 * time.Hour), Valid: true}
+		rows, err := s.repo.ListVideoPlaybackDays(ctx, sqlcgen.ListVideoPlaybackDaysParams{VideoID: in.VideoID, Since: today})
+		if err != nil {
+			return err
+		}
+		var dayPlays, dayWatch int64
+		for _, r := range rows {
+			dayPlays += r.Plays
+			dayWatch += r.WatchSeconds
+		}
+		dur := int64(in.DurationSeconds)
+		if dur < MinCeilingDuration {
+			dur = MinCeilingDuration
+		}
+		if dayWatch+int64(w) > max(dayPlays+plays, 1)*dur*CeilingFactor {
+			w = 0
+		}
 	}
-	if w == 0 {
+	if plays == 0 && w == 0 {
 		return nil
 	}
 	dev, osf := in.Device, in.OS
@@ -113,18 +133,10 @@ func (s *Service) Record(ctx context.Context, in Sample) error {
 	if !osKeys[osf] {
 		osf = "other"
 	}
-	for _, d := range []struct{ kind, key string }{
-		{"retention", bucketKey(Bucket(in.PositionSeconds, in.DurationSeconds))},
-		{"device", dev},
-		{"os", osf},
-	} {
-		if err := s.repo.UpsertVideoPlaybackDim(ctx, sqlcgen.UpsertVideoPlaybackDimParams{
-			VideoID: in.VideoID, Kind: d.kind, Key: d.key, Value: int64(w),
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.repo.UpsertVideoPlaybackSample(ctx, sqlcgen.UpsertVideoPlaybackSampleParams{
+		VideoID: in.VideoID, Plays: plays, WatchSeconds: int64(w),
+		RetentionKey: bucketKey(Bucket(in.PositionSeconds, in.DurationSeconds)), Device: dev, Os: osf,
+	})
 }
 
 func bucketKey(b int) string { return string([]byte{byte('0' + b/10), byte('0' + b%10)}) }

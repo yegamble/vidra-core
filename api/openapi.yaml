@@ -5007,7 +5007,7 @@ paths:
         into the video's daily aggregates; no IP address, User-Agent, session or
         viewer id is stored. Device class and OS family are bucketed from the
         User-Agent server-side and the raw value is discarded. Rate limited per
-        client; the owner's own plays are ignored. Always 204 on success.
+        client and video; the owner's own plays are ignored; a play may be marked started once per client per 10 minutes. 204 on success, 404 for a video that is not published or visible.
       tags: [videos]
       security:
         - {}
@@ -20351,8 +20351,8 @@ components:
         watched_seconds:
           type: integer
           minimum: 0
-          maximum: 30
-          description: Seconds actually played since the previous sample.
+          maximum: 12
+          description: Seconds actually played since the previous sample (heartbeat is 10 s).
         started:
           type: boolean
           description: True on the first sample of a play.
