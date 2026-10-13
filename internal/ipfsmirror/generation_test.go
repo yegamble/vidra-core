@@ -59,14 +59,22 @@ func TestPinsPromotedGenerationTree(t *testing.T) {
 	// The promoted one, plus the VP9/WebM alternate that shares its directory and
 	// is pinned separately as its own media class.
 	promotedFiles := map[string]string{
-		"master.m3u8":        "#EXTM3U\n720p/playlist.m3u8\n",
-		"720p/playlist.m3u8": "#EXTM3U\nseg_00000.ts\n",
-		"720p/seg_00000.ts":  "r2-ts-bytes",
+		"master.m3u8":            "#EXTM3U\n720p/playlist.m3u8\n",
+		"720p/playlist.m3u8":     "#EXTM3U\nseg_00000.ts\n",
+		"720p/seg_00000.ts":      "r2-ts-bytes",
+		"cmaf/stream.mpd":        "<MPD/>",
+		"cmaf/init-0.mp4":        "r2-init",
+		"cmaf/chunk-0-00001.m4s": "r2-chunk",
 	}
 	for rel, data := range promotedFiles {
 		putBlob(t, blobs, promoted+rel, data)
 	}
 	putBlob(t, blobs, promoted+media.VP9WebMFilename, "webm-alt-bytes")
+	// F6: the progressive downloads and the audio asset share the directory but
+	// no playlist references them and the HLS routes never serve them.
+	putBlob(t, blobs, promoted+"720p/"+media.HLSMuxedDownloadFilename, "DOWNLOAD-MUXED-MP4")
+	putBlob(t, blobs, promoted+"720p/"+media.HLSVideoOnlyDownloadFilename, "DOWNLOAD-VIDEO-ONLY-MP4")
+	putBlob(t, blobs, promoted+media.HLSAudioDownloadFilename, "DOWNLOAD-AUDIO-M4A")
 
 	seedPendingVideo(repo, stable, string(ClassHLS), vid)
 	lk := &fakeLookups{hlsTree: strings.TrimSuffix(promoted, "/")}
@@ -100,6 +108,11 @@ func TestPinsPromotedGenerationTree(t *testing.T) {
 	}
 	if strings.Contains(string(content), "SUPERSEDED") {
 		t.Error("the superseded generation's bytes were wrapped into the promoted tree's car_root")
+	}
+	for _, leaked := range []string{"DOWNLOAD-MUXED-MP4", "DOWNLOAD-VIDEO-ONLY-MP4", "DOWNLOAD-AUDIO-M4A"} {
+		if strings.Contains(string(content), leaked) {
+			t.Errorf("%s was pinned into the HLS car_root, want only what the HLS routes serve", leaked)
+		}
 	}
 	if strings.Contains(string(content), "webm-alt-bytes") {
 		t.Error("vp9.webm was wrapped into the HLS car_root, want excluded (separate media class)")

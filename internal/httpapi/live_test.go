@@ -1213,6 +1213,31 @@ func TestLiveCapabilityIsSettingAndIngest(t *testing.T) {
 		t.Errorf("create = %+v, want a key AND the ingest URL", created)
 	}
 
+	if created.RTMPSURL != "" {
+		t.Errorf("rtmps_url = %q with LIVE_RTMPS_URL unset, want it omitted", created.RTMPSURL)
+	}
+
+	// (2b) LIVE_RTMPS_URL set: create AND key rotation advertise it next to the
+	// plain URL (kept as the fallback), and a rotation never drops either.
+	tls := testConfig()
+	tls.LiveEnabled = true
+	tls.LiveRTMPURL = "rtmp://ingest.example.test/live"
+	tls.LiveRTMPSURL = "rtmps://ingest.example.test:1936/live"
+	srvTLS := videoServerCfg(t, tls)
+	tokTLS := createChannelFor(t, srvTLS, "ada", "ada@example.test", "ada")
+	recTLS := createLiveStream(srvTLS, "ada", `{"title":"Secure Show"}`, tokTLS)
+	var createdTLS createLiveStreamResponse
+	_ = json.Unmarshal(recTLS.Body.Bytes(), &createdTLS)
+	if createdTLS.RTMPSURL != tls.LiveRTMPSURL || createdTLS.RTMPURL != tls.LiveRTMPURL {
+		t.Errorf("create = %+v, want rtmps_url AND the rtmp_url fallback", createdTLS)
+	}
+	keyTLS := sendJSONAuth(srvTLS, http.MethodPost, "/api/v1/live/"+createdTLS.LiveStream.ID+"/key", "", tokTLS)
+	var rotatedTLS liveStreamKeyView
+	_ = json.Unmarshal(keyTLS.Body.Bytes(), &rotatedTLS)
+	if rotatedTLS.RTMPSURL != tls.LiveRTMPSURL || rotatedTLS.RTMPURL != tls.LiveRTMPURL {
+		t.Errorf("rotate = %+v, want rtmps_url AND the rtmp_url fallback", rotatedTLS)
+	}
+
 	// (3) Setting OFF beats a wired ingest, and keeps its own answer: the
 	// operator's switch is 403 feature_disabled, never the deployment 503.
 	off := testConfig()

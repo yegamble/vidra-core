@@ -94,6 +94,43 @@ func TestInboundNoteOnApprovalVideoIsHeld(t *testing.T) {
 	}
 }
 
+// TestInboundHeldNoteFiresTheHeldHook: a Note stored held tells the video's
+// managers (the hook cmd/api wires to NotifyCommentHeld); a published one
+// does not.
+func TestInboundHeldNoteFiresTheHeldHook(t *testing.T) {
+	approval, open := uuid.New(), uuid.New()
+	repo := newNotesRepo(approval)
+	v := repo.videosByID[approval]
+	v.CommentsPolicy = "requires_approval"
+	repo.videosByID[approval] = v
+	repo.videosByID[open] = v
+	o := repo.videosByID[open]
+	o.ID, o.CommentsPolicy = open, "enabled"
+	repo.videosByID[open] = o
+	var fired []uuid.UUID
+	svc := NewService(repo, WithBaseURL(noteBase),
+		WithHeldCommentHook(func(_ context.Context, id uuid.UUID) { fired = append(fired, id) }))
+	ctx := context.Background()
+
+	for i, vid := range []uuid.UUID{approval, open} {
+		n := string(rune('a' + i))
+		note := createNote("https://remote.example/act/k"+n, remoteBob,
+			"https://remote.example/comments/k"+n, remoteBob, noteBase+"/videos/"+vid.String(), "hello "+n)
+		if err := svc.HandleInbox(ctx, remoteBob, []byte(note)); err != nil {
+			t.Fatalf("HandleInbox %s: %v", n, err)
+		}
+	}
+	var heldID uuid.UUID
+	for id, c := range repo.commentsByID {
+		if c.HeldForReview {
+			heldID = id
+		}
+	}
+	if len(fired) != 1 || fired[0] != heldID {
+		t.Errorf("held hook fired %v, want exactly the held comment %s", fired, heldID)
+	}
+}
+
 // updateNote renders an Update{Note} activity JSON.
 func updateNote(actID, actor, noteID, content string) string {
 	return `{"id":"` + actID + `","type":"Update","actor":"` + actor + `","object":{` +
@@ -168,6 +205,35 @@ func TestInboundNoteOnDisabledVideoIsDropped(t *testing.T) {
 	}
 }
 
+// TestRemoteReholdFiresTheHeldHook: an approved remote comment re-held by a
+// changed Update{Note} pings the video's reviewers again.
+func TestRemoteReholdFiresTheHeldHook(t *testing.T) {
+	videoID := uuid.New()
+	repo := newNotesRepo(videoID)
+	v := repo.videosByID[videoID]
+	v.CommentsPolicy = "requires_approval"
+	repo.videosByID[videoID] = v
+	var fired []uuid.UUID
+	svc := NewService(repo, WithBaseURL(noteBase),
+		WithHeldCommentHook(func(_ context.Context, id uuid.UUID) { fired = append(fired, id) }))
+	ctx := context.Background()
+	const noteID = "https://remote.example/comments/rh1"
+	if err := svc.HandleInbox(ctx, remoteBob, []byte(createNote("https://remote.example/act/rh1", remoteBob, noteID, remoteBob,
+		noteBase+"/videos/"+videoID.String(), "v1"))); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	c := onlyComment(t, repo)
+	c.HeldForReview = false
+	repo.commentsByID[c.ID] = c
+	fired = nil
+	if err := svc.HandleInbox(ctx, remoteBob, []byte(updateNote("https://remote.example/act/rh2", remoteBob, noteID, "v2"))); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if len(fired) != 1 || fired[0] != c.ID {
+		t.Errorf("held hook after a re-holding Update = %v, want [%s]", fired, c.ID)
+	}
+}
+
 // TestNoteResentToAnotherVideoChangesNothing: the hold decision comes from the
 // stored comment's own video — a re-send of a known Note id naming a different
 // video is accepted and ignored, leaving the stored comment as it was.
@@ -196,5 +262,34 @@ func TestNoteResentToAnotherVideoChangesNothing(t *testing.T) {
 	}
 	if got := onlyComment(t, repo); got.Body != "approved text" || got.VideoID != approval || got.HeldForReview {
 		t.Errorf("after a re-send to another video: %+v, want the stored comment unchanged", got)
+	}
+}
+
+// TestHeldInboundNoteNotifiesNoMentions: a Note stored (or edited) HELD on a
+// requires_approval video tells none of the local accounts it Mentions.
+func TestHeldInboundNoteNotifiesNoMentions(t *testing.T) {
+	videoID := uuid.New()
+	repo := newNotesRepo(videoID)
+	v := repo.videosByID[videoID]
+	v.CommentsPolicy = "requires_approval"
+	repo.videosByID[videoID] = v
+	var calls int
+	svc := NewService(repo, WithBaseURL(noteBase),
+		WithCommentMentionNotifier(func(context.Context, uuid.UUID, []string) (int64, error) { calls++; return 1, nil }))
+	tag := `[{"type":"Mention","href":"` + noteBase + `/accounts/ada"}]`
+	if err := svc.HandleInbox(context.Background(), remoteBob, []byte(inboundNoteWithTag(videoID, tag))); err != nil {
+		t.Fatalf("HandleInbox: %v", err)
+	}
+	c := onlyComment(t, repo)
+	if !c.HeldForReview || calls != 0 {
+		t.Fatalf("held=%v mention fan-outs=%d, want held and none", c.HeldForReview, calls)
+	}
+	update := `{"id":"https://remote.example/act/mu","type":"Update","actor":"` + remoteBob + `","object":{` +
+		`"id":"` + *c.RemoteObjectUrl + `","type":"Note","attributedTo":"` + remoteBob + `","content":"edited @ada","tag":` + tag + `}}`
+	if err := svc.HandleInbox(context.Background(), remoteBob, []byte(update)); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("an Update of a held comment fanned out mentions (%d)", calls)
 	}
 }

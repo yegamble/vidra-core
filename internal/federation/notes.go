@@ -128,7 +128,12 @@ func (s *Service) handleCreateNote(ctx context.Context, act inboxActivity, signe
 		return err
 	}
 	s.flagRemoteComment(ctx, row.ID, row.Body)
-	s.notifyMentionedLocals(ctx, row.ID, note.Tag)
+	if !row.HeldForReview { // a held comment's mentions wait for approval (0161)
+		s.notifyMentionedLocals(ctx, row.ID, note.Tag)
+	}
+	if row.HeldForReview && s.onHeldComment != nil {
+		s.onHeldComment(ctx, row.ID)
+	}
 	return nil
 }
 
@@ -172,8 +177,13 @@ func (s *Service) handleUpdateNote(ctx context.Context, act inboxActivity, signe
 	if err != nil {
 		return err
 	}
+	if updated.HeldForReview && s.onHeldComment != nil {
+		s.onHeldComment(ctx, updated.ID)
+	}
 	s.flagRemoteComment(ctx, updated.ID, updated.Body)
-	s.notifyMentionedLocals(ctx, updated.ID, note.Tag)
+	if !updated.HeldForReview {
+		s.notifyMentionedLocals(ctx, updated.ID, note.Tag)
+	}
 	return nil
 }
 

@@ -74,6 +74,10 @@ const (
 	ActionOwnerRecovery = "auth.owner_recovery"
 	ActionRateLimited   = "auth.rate_limited"
 	ActionReportResolve = "moderation.report.resolve"
+	// ActionReportMessage records a STAFF message on a report's thread (0163).
+	// The resource is the report and the reason names the message id; the body
+	// is never recorded — audit_log's metadata allowlist rejects prose.
+	ActionReportMessage = "moderation.report.message"
 	// ActionWatchedWordMatchResolve records a moderator triaging one
 	// watched-word match (resolved / dismissed). The metadata carries the
 	// outcome and whether a note was supplied; the note itself lives on the
@@ -163,6 +167,9 @@ const (
 	ActionVideoCaptionGenerate = "content.video.caption_generate"
 	ActionChannelDelete        = "content.channel.delete"
 	ActionMediaGC              = "admin.media.gc"
+	// Approve/reject someone else's HELD comment (0161); resource = comment id.
+	ActionCommentApprove = "content.comment.approve"
+	ActionCommentReject  = "content.comment.reject"
 	// ActionAuditRetentionPrune is the audit trail recording its own retention
 	// sweep. It is written once per run that actually deleted something, with
 	// the row count in the `count` metadata field — audit_log carries no prose,
