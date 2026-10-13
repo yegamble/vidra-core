@@ -115,3 +115,40 @@ func TestJobQueueHealthGaugeSwallowsSourceError(t *testing.T) {
 		t.Errorf("no job-health samples expected on source error\n%s", out)
 	}
 }
+
+func TestIPFSCapacityGauges(t *testing.T) {
+	used, free := int64(900), int64(50)
+	m := NewMetrics()
+	m.RegisterIPFSCapacitySource(func(context.Context) (IPFSCapacity, error) {
+		return IPFSCapacity{BudgetBytes: 1000, ReservedBytes: 100, MinFreeBytes: 40, RepoUsedBytes: &used, FilesystemFreeBytes: &free, PausedReason: "budget_exhausted"}, nil
+	})
+	out := scrape(t, m)
+	for _, want := range []string{
+		"vidra_ipfs_budget_bytes 1000", "vidra_ipfs_reserved_bytes 100", "vidra_ipfs_min_free_bytes 40",
+		"vidra_ipfs_repo_used_bytes 900", "vidra_ipfs_filesystem_free_bytes 50",
+		`vidra_ipfs_admission_paused{reason="budget_exhausted"} 1`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestIPFSCapacityGaugesOmitUnknownAndResume(t *testing.T) {
+	m := NewMetrics()
+	m.RegisterIPFSCapacitySource(func(context.Context) (IPFSCapacity, error) {
+		return IPFSCapacity{BudgetBytes: 1000}, nil // admitting, host has not reported
+	})
+	out := scrape(t, m)
+	if strings.Contains(out, "vidra_ipfs_repo_used_bytes ") || strings.Contains(out, "vidra_ipfs_filesystem_free_bytes ") || strings.Contains(out, "vidra_ipfs_admission_paused{") {
+		t.Errorf("unknown values and an admitting mirror must export no sample\n%s", out)
+	}
+}
+
+func TestIPFSCapacityGaugesSwallowSourceError(t *testing.T) {
+	m := NewMetrics()
+	m.RegisterIPFSCapacitySource(func(context.Context) (IPFSCapacity, error) { return IPFSCapacity{}, errors.New("db down") })
+	if out := scrape(t, m); strings.Contains(out, "vidra_ipfs_budget_bytes ") {
+		t.Errorf("no samples expected on source error\n%s", out)
+	}
+}

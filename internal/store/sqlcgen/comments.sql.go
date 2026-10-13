@@ -16,16 +16,23 @@ import (
 const approveComment = `-- name: ApproveComment :one
 UPDATE comments
 SET held_for_review = false
-WHERE id = $1 AND held_for_review
+WHERE id = $1 AND held_for_review AND updated_at = $2
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
           remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 `
 
+type ApproveCommentParams struct {
+	ID                uuid.UUID `json:"id"`
+	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
+}
+
 // Release a held comment (0161). Conditional on the row STILL being held, so
 // repeated or concurrent approvals have exactly one winner (no row = nothing to
 // do) and the withheld side effects fire once. Never bumps updated_at.
-func (q *Queries) ApproveComment(ctx context.Context, id uuid.UUID) (Comment, error) {
-	row := q.db.QueryRow(ctx, approveComment, id)
+// expected_updated_at is the version the reviewer saw: an edit since then
+// (updated_at moved) is not approved.
+func (q *Queries) ApproveComment(ctx context.Context, arg ApproveCommentParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, approveComment, arg.ID, arg.ExpectedUpdatedAt)
 	var i Comment
 	err := row.Scan(
 		&i.ID,
@@ -131,6 +138,30 @@ type CountCommentsByVideoParams struct {
 // there are more comments than they can ever page to.
 func (q *Queries) CountCommentsByVideo(ctx context.Context, arg CountCommentsByVideoParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countCommentsByVideo, arg.VideoID, arg.ViewerID, arg.IncludeHeld)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countManagedVideoComments = `-- name: CountManagedVideoComments :one
+SELECT count(*)::bigint
+FROM comments c
+JOIN videos v ON v.id = c.video_id
+JOIN channels ch ON ch.id = v.channel_id
+WHERE (ch.owner_id = $1
+       OR EXISTS (SELECT 1 FROM channel_members m WHERE m.channel_id = ch.id AND m.user_id = $1))
+  AND ($2::boolean IS NULL OR c.held_for_review = $2::boolean)
+`
+
+type CountManagedVideoCommentsParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	Held   *bool     `json:"held"`
+}
+
+// How many rows ListManagedVideoComments would return for the same caller and
+// held filter, ignoring pagination. Same predicate, verbatim.
+func (q *Queries) CountManagedVideoComments(ctx context.Context, arg CountManagedVideoCommentsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countManagedVideoComments, arg.UserID, arg.Held)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -626,6 +657,102 @@ func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVid
 			&i.RemoteActorUrl,
 			&i.RemoteAuthorName,
 			&i.AuthorDomain,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManagedVideoComments = `-- name: ListManagedVideoComments :many
+SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at, c.deleted_at, c.hearted,
+       c.held_for_review,
+       (c.id IS NOT DISTINCT FROM v.pinned_comment_id)::boolean AS pinned,
+       COALESCE(u.username, '')::text AS author_username,
+       COALESCE(u.display_name, '')::text AS author_display_name,
+       c.remote_actor_url,
+       COALESCE(c.remote_author_name, '')::text AS remote_author_name,
+       COALESCE(ra.domain, '')::text AS author_domain,
+       v.title AS video_title
+FROM comments c
+JOIN videos v ON v.id = c.video_id
+JOIN channels ch ON ch.id = v.channel_id
+LEFT JOIN users u ON u.id = c.user_id
+LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
+WHERE (ch.owner_id = $1
+       OR EXISTS (SELECT 1 FROM channel_members m WHERE m.channel_id = ch.id AND m.user_id = $1))
+  AND ($2::boolean IS NULL OR c.held_for_review = $2::boolean)
+ORDER BY c.created_at DESC, c.id DESC
+LIMIT $4 OFFSET $3
+`
+
+type ListManagedVideoCommentsParams struct {
+	UserID       uuid.UUID `json:"user_id"`
+	Held         *bool     `json:"held"`
+	ResultOffset int32     `json:"result_offset"`
+	ResultLimit  int32     `json:"result_limit"`
+}
+
+type ListManagedVideoCommentsRow struct {
+	ID                uuid.UUID          `json:"id"`
+	VideoID           uuid.UUID          `json:"video_id"`
+	UserID            pgtype.UUID        `json:"user_id"`
+	Body              string             `json:"body"`
+	ParentID          pgtype.UUID        `json:"parent_id"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	Hearted           bool               `json:"hearted"`
+	HeldForReview     bool               `json:"held_for_review"`
+	Pinned            bool               `json:"pinned"`
+	AuthorUsername    string             `json:"author_username"`
+	AuthorDisplayName string             `json:"author_display_name"`
+	RemoteActorUrl    *string            `json:"remote_actor_url"`
+	RemoteAuthorName  string             `json:"remote_author_name"`
+	AuthorDomain      string             `json:"author_domain"`
+	VideoTitle        string             `json:"video_title"`
+}
+
+// The review queue (0161): comments on every video the caller manages (owned or
+// edited channels), newest first, with author + video title; held filters
+// (NULL = both). Deliberately NO viewer mute/block filtering: a held comment
+// hidden from its only reviewers would wait forever.
+func (q *Queries) ListManagedVideoComments(ctx context.Context, arg ListManagedVideoCommentsParams) ([]ListManagedVideoCommentsRow, error) {
+	rows, err := q.db.Query(ctx, listManagedVideoComments,
+		arg.UserID,
+		arg.Held,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListManagedVideoCommentsRow
+	for rows.Next() {
+		var i ListManagedVideoCommentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.VideoID,
+			&i.UserID,
+			&i.Body,
+			&i.ParentID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.Hearted,
+			&i.HeldForReview,
+			&i.Pinned,
+			&i.AuthorUsername,
+			&i.AuthorDisplayName,
+			&i.RemoteActorUrl,
+			&i.RemoteAuthorName,
+			&i.AuthorDomain,
+			&i.VideoTitle,
 		); err != nil {
 			return nil, err
 		}

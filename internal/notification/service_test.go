@@ -3,6 +3,7 @@ package notification
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -35,6 +36,8 @@ type fakeRepo struct {
 	// (same pass-through contract as fanOut above; rules proved in
 	// store.TestNewReportStaffFanOutOnRealPG).
 	reportFanOut []uuid.UUID
+	// reportMessageFanOut records the messages handed to NotifyReportMessage.
+	reportMessageFanOut []uuid.UUID
 	// staffQueue records the three approval-queue fan-outs as "type:subject".
 	staffQueue []string
 	// replyRecipients answers CommentReplyRecipient: comment id -> the row the
@@ -1155,5 +1158,103 @@ func TestStaffQueueTypesRegisteredAndFanOut(t *testing.T) {
 	}
 	if len(repo.staffQueue) != 3 {
 		t.Errorf("fan-outs reached = %v, want 3", repo.staffQueue)
+	}
+}
+
+// TestNotifyVideoOwnershipRequest: the "someone offered you a video" notice is a
+// registered, default-on, opt-out-able type that names the giver (actor), is
+// never sent to the giver themselves, and carries no video (its live title would
+// outlive the request).
+func TestNotifyVideoOwnershipRequest(t *testing.T) {
+	ctx := context.Background()
+	if !knownType(TypeVideoOwnershipRequest) || !slices.Contains(KnownTypes(), TypeVideoOwnershipRequest) {
+		t.Fatalf("%s is not a known notification type", TypeVideoOwnershipRequest)
+	}
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	giver := uuid.New()
+	if err := svc.NotifyVideoOwnershipRequest(ctx, giver, giver); err != nil || len(repo.notifs) != 0 {
+		t.Fatalf("self: err=%v notifs=%+v", err, repo.notifs)
+	}
+	off := uuid.New()
+	if err := svc.SetPrefs(ctx, off, map[string]bool{TypeVideoOwnershipRequest: false}); err != nil {
+		t.Fatalf("SetPrefs: %v", err)
+	}
+	if err := svc.NotifyVideoOwnershipRequest(ctx, off, giver); err != nil || len(repo.notifs) != 0 {
+		t.Fatalf("opted out: err=%v notifs=%+v", err, repo.notifs)
+	}
+	if err := svc.NotifyVideoOwnershipRequest(ctx, uuid.New(), giver); err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+	if len(repo.notifs) != 1 || repo.notifs[0].Type != TypeVideoOwnershipRequest ||
+		repo.notifs[0].ActorID.Bytes != giver || repo.notifs[0].VideoID.Valid {
+		t.Fatalf("notifications = %+v, want one naming the giver and no video", repo.notifs)
+	}
+}
+
+func (f *fakeRepo) NotifyManagersOfHeldComment(_ context.Context, id uuid.UUID) (int64, error) {
+	f.staffQueue = append(f.staffQueue, "comment_held:"+id.String())
+	return f.fanOutN, f.fanOutErr
+}
+
+// TestCommentHeldRegisteredAndFansOut: comment_held (0161) is a preference
+// type like any other, and NotifyCommentHeld is the set-based fan-out — one
+// repo call, its count returned, its error surfaced for the best-effort caller.
+func TestCommentHeldRegisteredAndFansOut(t *testing.T) {
+	if !knownType(TypeCommentHeld) {
+		t.Error("knownType(comment_held) = false")
+	}
+	found := false
+	for _, k := range KnownTypes() {
+		found = found || k == TypeCommentHeld
+	}
+	if !found {
+		t.Error("KnownTypes() missing comment_held")
+	}
+	if emailType(TypeCommentHeld) {
+		t.Error("comment_held offers email; it is in-app only")
+	}
+	repo := &fakeRepo{fanOutN: 2}
+	id := uuid.New()
+	if n, err := NewService(repo).NotifyCommentHeld(context.Background(), id); err != nil || n != 2 {
+		t.Errorf("NotifyCommentHeld = %d, %v; want 2, nil", n, err)
+	}
+	if len(repo.staffQueue) != 1 || repo.staffQueue[0] != "comment_held:"+id.String() {
+		t.Errorf("fan-out calls = %v", repo.staffQueue)
+	}
+}
+
+func (f *fakeRepo) NotifyReportMessage(_ context.Context, messageID uuid.UUID) (int64, error) {
+	f.reportMessageFanOut = append(f.reportMessageFanOut, messageID)
+	if f.fanOutErr != nil {
+		return 0, f.fanOutErr
+	}
+	return f.fanOutN, nil
+}
+
+// report_message is registered with the preference model (default on, may be
+// turned off) but offers no email — the email-prefs work can opt it in later —
+// and NotifyReportMessage is a straight delegation to the set-based fan-out,
+// whose who-is-told rules are proved in store.TestReportMessageFanOutOnRealPG.
+func TestReportMessageIsAKnownPreferenceType(t *testing.T) {
+	if !knownType(TypeReportMessage) || emailType(TypeReportMessage) {
+		t.Fatalf("report_message known=%v email=%v, want known and not emailable",
+			knownType(TypeReportMessage), emailType(TypeReportMessage))
+	}
+	repo := &fakeRepo{fanOutN: 2}
+	svc := NewService(repo)
+	prefs, err := svc.Prefs(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("Prefs: %v", err)
+	}
+	if enabled, ok := prefs[TypeReportMessage]; !ok || !enabled {
+		t.Fatalf("prefs[%s] = (%v, %v), want (true, true) by default", TypeReportMessage, enabled, ok)
+	}
+	msg := uuid.New()
+	if n, err := svc.NotifyReportMessage(context.Background(), msg); err != nil || n != 2 {
+		t.Errorf("NotifyReportMessage = %d, %v; want the fan-out's count", n, err)
+	}
+	if len(repo.reportMessageFanOut) != 1 || repo.reportMessageFanOut[0] != msg {
+		t.Errorf("fan-out calls = %v, want [%s]", repo.reportMessageFanOut, msg)
 	}
 }

@@ -130,6 +130,7 @@ func (s *Service) Delete(ctx context.Context, userID uuid.UUID) error {
 		{"notification prefs", s.repo.DeleteNotificationPrefsByUser},
 		{"password reset tokens", s.repo.DeletePasswordResetTokensByUser},
 		{"email verification tokens", s.repo.DeleteEmailVerificationTokensByUser},
+		{"private feed token", s.repo.DeleteUserFeedTokenByUser},
 		{"e2ee devices", s.repo.DeleteE2EEDevicesByUser},
 		{"actor key", s.repo.DeleteAccountActorKey},
 	}

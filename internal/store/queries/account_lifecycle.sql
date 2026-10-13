@@ -49,6 +49,9 @@ DELETE FROM password_reset_tokens WHERE user_id = $1;
 -- name: DeleteEmailVerificationTokensByUser :exec
 DELETE FROM email_verification_tokens WHERE user_id = $1;
 
+-- name: DeleteUserFeedTokenByUser :exec
+DELETE FROM user_feed_tokens WHERE user_id = $1;
+
 -- name: DeleteAccountActorKey :exec
 -- The account's ActivityPub actor keypair (channel actor keys cascade with
 -- their channel rows, which the delete flow removes explicitly).
