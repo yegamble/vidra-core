@@ -7,9 +7,30 @@ package sqlcgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+const acceptPendingInstanceFollowerByID = `-- name: AcceptPendingInstanceFollowerByID :one
+UPDATE instance_followers SET state = 'accepted'
+WHERE id = $1 AND state = 'pending'
+RETURNING remote_actor_url, follow_activity_url
+`
+
+type AcceptPendingInstanceFollowerByIDRow struct {
+	RemoteActorUrl    string `json:"remote_actor_url"`
+	FollowActivityUrl string `json:"follow_activity_url"`
+}
+
+// Admin approval of a pending instance follower. Resolved/unknown ids match no
+// row (pgx.ErrNoRows).
+func (q *Queries) AcceptPendingInstanceFollowerByID(ctx context.Context, id uuid.UUID) (AcceptPendingInstanceFollowerByIDRow, error) {
+	row := q.db.QueryRow(ctx, acceptPendingInstanceFollowerByID, id)
+	var i AcceptPendingInstanceFollowerByIDRow
+	err := row.Scan(&i.RemoteActorUrl, &i.FollowActivityUrl)
+	return i, err
+}
 
 const claimInstanceFollowerBackfill = `-- name: ClaimInstanceFollowerBackfill :execrows
 INSERT INTO instance_follower_backfills (host, last_backfill_at)
@@ -63,6 +84,18 @@ func (q *Queries) CountAcceptedInstanceFollowing(ctx context.Context) (int64, er
 	return column_1, err
 }
 
+const countInstanceFollowers = `-- name: CountInstanceFollowers :one
+SELECT count(*)::bigint FROM instance_followers f
+WHERE ($1::text IS NULL OR f.state = $1)
+`
+
+func (q *Queries) CountInstanceFollowers(ctx context.Context, state *string) (int64, error) {
+	row := q.db.QueryRow(ctx, countInstanceFollowers, state)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countInstanceOutboxVideos = `-- name: CountInstanceOutboxVideos :one
 SELECT count(*)::bigint FROM instance_outbox_videos
 `
@@ -86,6 +119,25 @@ func (q *Queries) DeleteInstanceFollowerByActor(ctx context.Context, remoteActor
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteInstanceFollowerByID = `-- name: DeleteInstanceFollowerByID :one
+DELETE FROM instance_followers WHERE id = $1
+RETURNING remote_actor_url, follow_activity_url, state
+`
+
+type DeleteInstanceFollowerByIDRow struct {
+	RemoteActorUrl    string `json:"remote_actor_url"`
+	FollowActivityUrl string `json:"follow_activity_url"`
+	State             string `json:"state"`
+}
+
+// Admin removal, in any state: a removed instance may follow again.
+func (q *Queries) DeleteInstanceFollowerByID(ctx context.Context, id uuid.UUID) (DeleteInstanceFollowerByIDRow, error) {
+	row := q.db.QueryRow(ctx, deleteInstanceFollowerByID, id)
+	var i DeleteInstanceFollowerByIDRow
+	err := row.Scan(&i.RemoteActorUrl, &i.FollowActivityUrl, &i.State)
+	return i, err
 }
 
 const getInstanceActorKey = `-- name: GetInstanceActorKey :one
@@ -258,6 +310,60 @@ func (q *Queries) ListAcceptedInstanceFollowerInboxes(ctx context.Context) ([]st
 	return items, nil
 }
 
+const listInstanceFollowers = `-- name: ListInstanceFollowers :many
+SELECT f.id, f.remote_actor_url, f.state, f.created_at,
+       ra.preferred_username, ra.domain
+FROM instance_followers f
+JOIN remote_actors ra ON ra.actor_url = f.remote_actor_url
+WHERE ($1::text IS NULL OR f.state = $1)
+ORDER BY f.created_at DESC, f.id DESC
+LIMIT $3 OFFSET $2
+`
+
+type ListInstanceFollowersParams struct {
+	State        *string `json:"state"`
+	ResultOffset int32   `json:"result_offset"`
+	ResultLimit  int32   `json:"result_limit"`
+}
+
+type ListInstanceFollowersRow struct {
+	ID                uuid.UUID `json:"id"`
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	State             string    `json:"state"`
+	CreatedAt         time.Time `json:"created_at"`
+	PreferredUsername string    `json:"preferred_username"`
+	Domain            string    `json:"domain"`
+}
+
+// The admin's view of the instances following ours, newest first, optionally
+// one state only, with the follower's cached identity.
+func (q *Queries) ListInstanceFollowers(ctx context.Context, arg ListInstanceFollowersParams) ([]ListInstanceFollowersRow, error) {
+	rows, err := q.db.Query(ctx, listInstanceFollowers, arg.State, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListInstanceFollowersRow
+	for rows.Next() {
+		var i ListInstanceFollowersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RemoteActorUrl,
+			&i.State,
+			&i.CreatedAt,
+			&i.PreferredUsername,
+			&i.Domain,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInstanceOutboxVideoIDs = `-- name: ListInstanceOutboxVideoIDs :many
 SELECT id FROM instance_outbox_videos
 ORDER BY created_at DESC, id DESC
@@ -289,4 +395,24 @@ func (q *Queries) ListInstanceOutboxVideoIDs(ctx context.Context, arg ListInstan
 		return nil, err
 	}
 	return items, nil
+}
+
+const rejectInstanceFollowerByID = `-- name: RejectInstanceFollowerByID :one
+UPDATE instance_followers SET state = 'rejected'
+WHERE id = $1 AND state IN ('pending', 'accepted')
+RETURNING remote_actor_url, follow_activity_url
+`
+
+type RejectInstanceFollowerByIDRow struct {
+	RemoteActorUrl    string `json:"remote_actor_url"`
+	FollowActivityUrl string `json:"follow_activity_url"`
+}
+
+// Admin rejection of a pending or accepted instance follower. The row stays,
+// 'rejected', so the instance's next Follow is refused too (as on PeerTube).
+func (q *Queries) RejectInstanceFollowerByID(ctx context.Context, id uuid.UUID) (RejectInstanceFollowerByIDRow, error) {
+	row := q.db.QueryRow(ctx, rejectInstanceFollowerByID, id)
+	var i RejectInstanceFollowerByIDRow
+	err := row.Scan(&i.RemoteActorUrl, &i.FollowActivityUrl)
+	return i, err
 }

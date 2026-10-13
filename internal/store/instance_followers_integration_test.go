@@ -346,6 +346,59 @@ func TestInstanceFollowerBackfillCooldownOnRealPG(t *testing.T) {
 	}
 }
 
+// The admin's decisions apply only to the states they name, and a listing
+// filters by state.
+func TestInstanceFollowerDecisionsOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	actor := seedRemoteInstanceActor(t, st)
+	if _, err := q.InsertInstanceFollowerIfAbsent(ctx, sqlcgen.InsertInstanceFollowerIfAbsentParams{
+		RemoteActorUrl: actor, State: "pending", FollowActivityUrl: "f1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	row, err := q.GetInstanceFollowerByActor(ctx, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := "pending"
+	rows, err := q.ListInstanceFollowers(ctx, sqlcgen.ListInstanceFollowersParams{State: &pending, ResultLimit: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rows {
+		found = found || (r.ID == row.ID && r.PreferredUsername == "peertube")
+	}
+	if !found {
+		t.Error("the pending follower is missing from the pending listing")
+	}
+	if n, err := q.CountInstanceFollowers(ctx, &pending); err != nil || n < 1 {
+		t.Errorf("count = %d, %v", n, err)
+	}
+	if a, err := q.AcceptPendingInstanceFollowerByID(ctx, row.ID); err != nil || a.FollowActivityUrl != "f1" {
+		t.Fatalf("accept = %+v, %v", a, err)
+	}
+	if _, err := q.AcceptPendingInstanceFollowerByID(ctx, row.ID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("accepting an accepted follower: %v, want no rows", err)
+	}
+	if _, err := q.RejectInstanceFollowerByID(ctx, row.ID); err != nil {
+		t.Fatalf("reject accepted: %v", err)
+	}
+	if _, err := q.RejectInstanceFollowerByID(ctx, row.ID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("rejecting a rejected follower: %v, want no rows", err)
+	}
+	if d, err := q.DeleteInstanceFollowerByID(ctx, row.ID); err != nil || d.State != "rejected" {
+		t.Errorf("remove = %+v, %v", d, err)
+	}
+}
+
 // The instance-wide daily cap: once daily_cap hosts were backfilled in the last
 // day, a NEW host is refused too. (The baseline counts sibling tests' rows.)
 func TestInstanceBackfillDailyCapOnRealPG(t *testing.T) {

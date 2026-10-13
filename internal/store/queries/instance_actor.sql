@@ -102,3 +102,37 @@ WHERE (SELECT count(*) FROM instance_follower_backfills
 ON CONFLICT (host) DO UPDATE SET last_backfill_at = now()
 WHERE instance_follower_backfills.last_backfill_at
       <= now() - make_interval(secs => sqlc.arg('cooldown_seconds')::int);
+
+-- name: ListInstanceFollowers :many
+-- The admin's view of the instances following ours, newest first, optionally
+-- one state only, with the follower's cached identity.
+SELECT f.id, f.remote_actor_url, f.state, f.created_at,
+       ra.preferred_username, ra.domain
+FROM instance_followers f
+JOIN remote_actors ra ON ra.actor_url = f.remote_actor_url
+WHERE (sqlc.narg('state')::text IS NULL OR f.state = sqlc.narg('state'))
+ORDER BY f.created_at DESC, f.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountInstanceFollowers :one
+SELECT count(*)::bigint FROM instance_followers f
+WHERE (sqlc.narg('state')::text IS NULL OR f.state = sqlc.narg('state'));
+
+-- name: AcceptPendingInstanceFollowerByID :one
+-- Admin approval of a pending instance follower. Resolved/unknown ids match no
+-- row (pgx.ErrNoRows).
+UPDATE instance_followers SET state = 'accepted'
+WHERE id = $1 AND state = 'pending'
+RETURNING remote_actor_url, follow_activity_url;
+
+-- name: RejectInstanceFollowerByID :one
+-- Admin rejection of a pending or accepted instance follower. The row stays,
+-- 'rejected', so the instance's next Follow is refused too (as on PeerTube).
+UPDATE instance_followers SET state = 'rejected'
+WHERE id = $1 AND state IN ('pending', 'accepted')
+RETURNING remote_actor_url, follow_activity_url;
+
+-- name: DeleteInstanceFollowerByID :one
+-- Admin removal, in any state: a removed instance may follow again.
+DELETE FROM instance_followers WHERE id = $1
+RETURNING remote_actor_url, follow_activity_url, state;

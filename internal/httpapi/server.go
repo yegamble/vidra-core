@@ -2204,6 +2204,12 @@ func (s *Server) routes() {
 		api.GET("/admin/federation/follower-requests", s.handleListFederationFollowerRequests, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/federation/follower-requests/:id/approve", s.handleApproveFederationFollowerRequest, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/federation/follower-requests/:id/reject", s.handleRejectFederationFollowerRequest, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// Instance follows (migration 0166): the instances following ours —
+		// PeerTube's /server/followers. Admin only, like the queue above.
+		api.GET("/admin/federation/instance-followers", s.handleListInstanceFollowers, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/instance-followers/:id/accept", s.instanceFollowDecision(s.fedsvc.AcceptInstanceFollower, observability.ActionFederationInstanceFollowerAccept), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/instance-followers/:id/reject", s.instanceFollowDecision(s.fedsvc.RejectInstanceFollower, observability.ActionFederationInstanceFollowerReject), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/federation/instance-followers/:id", s.instanceFollowDecision(s.fedsvc.RemoveInstanceFollower, observability.ActionFederationInstanceFollowerRemove), s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// ATProto / Bluesky link (P10.2 extension): the caller links/inspects/unlinks

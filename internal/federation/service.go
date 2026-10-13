@@ -288,8 +288,8 @@ func WithAllowChannelFollowersFunc(f func() bool) Option {
 // WithFollowerApprovalFunc wires the federation_follower_approval gate
 // (config-parity W12): when it reports true, a new inbound channel Follow is
 // recorded PENDING (no Accept sent) and waits in the admin follower-requests
-// queue. Applies to CHANNEL followers — a documented vidra deviation from
-// PeerTube's instance-follower approval, since vidra has no instance actor.
+// queue. Applies to channel followers and, since the instance actor (0166),
+// to instance followers too — which is PeerTube's instance-follower approval.
 func WithFollowerApprovalFunc(f func() bool) Option {
 	return func(s *Service) { s.followerApproval = f }
 }

@@ -284,6 +284,12 @@ const (
 	// never the activity payload.
 	ActionFederationFollowerApprove = "admin.federation.follower_approve"
 	ActionFederationFollowerReject  = "admin.federation.follower_reject"
+	// Instance follows (migration 0166): an admin accepting, rejecting or
+	// removing a remote instance that follows ours, and following/unfollowing
+	// one. ResourceID carries the safe follow row id only.
+	ActionFederationInstanceFollowerAccept = "admin.federation.instance_follower_accept"
+	ActionFederationInstanceFollowerReject = "admin.federation.instance_follower_reject"
+	ActionFederationInstanceFollowerRemove = "admin.federation.instance_follower_remove"
 	// Suggestion bans (search-service moderation): a moderator/admin suppressing
 	// a query string from instance-wide autosuggest, or lifting that ban. The
 	// domain is `moderation`, not `admin`, because that is what the action IS —

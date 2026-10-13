@@ -20,6 +20,8 @@ type instanceFedRepo struct {
 	fakeFedRepo
 	key    *sqlcgen.GetInstanceActorKeyRow
 	outbox []uuid.UUID
+	// followers are instance_followers rows by id (admin_instance_follows_test.go).
+	followers map[uuid.UUID]*sqlcgen.ListInstanceFollowersRow
 }
 
 func (r *instanceFedRepo) InstanceActorNameReserved(_ context.Context, name string) (bool, error) {

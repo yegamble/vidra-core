@@ -13,6 +13,7 @@ package federation
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -163,4 +164,102 @@ func (s *Service) enqueueInstanceDelivery(ctx context.Context, inboxURL string, 
 		RequestID:            ids.RequestID,
 		CorrelationID:        ids.CorrelationID,
 	})
+}
+
+// ErrInstanceFollowNotFound means no instance follow row (follower or
+// following) matches the id in a state the action applies to (404).
+var ErrInstanceFollowNotFound = errors.New("federation: instance follow not found")
+
+// InstanceFollow is the admin read model of one instance follow, in either
+// direction.
+type InstanceFollow struct {
+	ID       uuid.UUID
+	ActorURL string
+	// Host is the remote instance; Handle its actor's preferred_username@host.
+	Host      string
+	Handle    string
+	State     string // pending | accepted | rejected
+	CreatedAt time.Time
+}
+
+// ListInstanceFollowers returns the instances following ours, newest first,
+// optionally in one state only (""), with how many match.
+func (s *Service) ListInstanceFollowers(ctx context.Context, state string, limit, offset int32) ([]InstanceFollow, int64, error) {
+	if s.inst == nil {
+		return nil, 0, nil
+	}
+	var filter *string
+	if state != "" {
+		filter = &state
+	}
+	rows, err := s.inst.ListInstanceFollowers(ctx, sqlcgen.ListInstanceFollowersParams{State: filter, ResultLimit: limit, ResultOffset: offset})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.inst.CountInstanceFollowers(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]InstanceFollow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, InstanceFollow{ID: r.ID, ActorURL: r.RemoteActorUrl, Host: r.Domain,
+			Handle: r.PreferredUsername + "@" + r.Domain, State: r.State, CreatedAt: r.CreatedAt})
+	}
+	return out, total, nil
+}
+
+// AcceptInstanceFollower approves a pending instance follower: it gets the
+// Accept it has been waiting for and the same backfill an auto-accepted one
+// gets.
+func (s *Service) AcceptInstanceFollower(ctx context.Context, id uuid.UUID) error {
+	if s.inst == nil {
+		return ErrInstanceFollowNotFound
+	}
+	row, err := s.inst.AcceptPendingInstanceFollowerByID(ctx, id)
+	if err != nil {
+		return notFoundAs(err, ErrInstanceFollowNotFound)
+	}
+	if err := s.answerInstanceFollow(ctx, "Accept", row.RemoteActorUrl, row.FollowActivityUrl); err != nil {
+		return err
+	}
+	s.backfillBestEffort(ctx, row.RemoteActorUrl)
+	return nil
+}
+
+// RejectInstanceFollower refuses a pending or accepted instance follower. It
+// stays rejected — its next Follow is refused too — until an admin removes it.
+func (s *Service) RejectInstanceFollower(ctx context.Context, id uuid.UUID) error {
+	if s.inst == nil {
+		return ErrInstanceFollowNotFound
+	}
+	row, err := s.inst.RejectInstanceFollowerByID(ctx, id)
+	if err != nil {
+		return notFoundAs(err, ErrInstanceFollowNotFound)
+	}
+	return s.answerInstanceFollow(ctx, "Reject", row.RemoteActorUrl, row.FollowActivityUrl)
+}
+
+// RemoveInstanceFollower deletes an instance follow in any state, telling a
+// pending or accepted follower with a Reject (PeerTube's removeFollower). A
+// removed instance may follow again.
+func (s *Service) RemoveInstanceFollower(ctx context.Context, id uuid.UUID) error {
+	if s.inst == nil {
+		return ErrInstanceFollowNotFound
+	}
+	row, err := s.inst.DeleteInstanceFollowerByID(ctx, id)
+	if err != nil {
+		return notFoundAs(err, ErrInstanceFollowNotFound)
+	}
+	if row.State == instanceFollowRejected {
+		return nil // already told
+	}
+	return s.answerInstanceFollow(ctx, "Reject", row.RemoteActorUrl, row.FollowActivityUrl)
+}
+
+// notFoundAs maps pgx.ErrNoRows to the caller's not-found sentinel.
+func notFoundAs(err, notFound error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return notFound
+	}
+	return err
 }
