@@ -395,6 +395,13 @@ WHERE c.owner_id = sqlc.arg('owner_id')::uuid AND (v.privacy = 'public' OR (v.pr
 --   recent   -> newest first (the NULL CASE terms fall through to created_at)
 --   popular  -> most all-time views first
 --   trending -> views decayed by age (Hacker-News-style gravity)
+--   likes    -> most 'like' ratings first (remote rows carry none: 0)
+--   originally_published_at -> newest first by the creator-declared original
+--               date, falling back to created_at when unset (and for remote rows)
+--   name     -> title A-Z, case-insensitive
+-- Every mode ends in the same created_at DESC, id DESC tiebreak, so a page
+-- boundary is deterministic. The like count is a correlated subquery evaluated
+-- ONLY under sort=likes (the CASE guard), so the other modes pay nothing.
 -- Optional filters (NULL = off): tag (exact, tags are stored lowercased),
 -- category, and language (taxonomy ids; validated by the HTTP layer).
 -- include_remote (feed ?scope=all, remote-content §4) UNIONs in federated
@@ -418,6 +425,11 @@ FROM (
            v.title, v.description, v.privacy, v.state,
            v.created_at, v.updated_at,
            COALESCE(vc.views, 0)::bigint AS views,
+           COALESCE(v.originally_published_at, v.created_at) AS sort_at,
+           CASE WHEN sqlc.arg('sort')::text = 'likes'
+                THEN (SELECT count(*) FROM video_ratings vr
+                       WHERE vr.video_id = v.id AND vr.rating = 'like')
+                ELSE 0 END::bigint AS like_count,
            EXISTS (
                SELECT 1 FROM video_files f
                WHERE f.video_id = v.id AND f.kind = 'thumbnail'
@@ -465,6 +477,8 @@ FROM (
            rv.title, rv.description, ''::text AS privacy, ''::text AS state,
            COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
            0::bigint AS views,
+           COALESCE(rv.published_at, rv.fetched_at) AS sort_at,
+           0::bigint AS like_count,
            (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
            (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
            ra.preferred_username AS channel_display_name,
@@ -516,6 +530,9 @@ ORDER BY
          THEN feed.views::float8
               / power(EXTRACT(EPOCH FROM (now() - feed.created_at)) / 3600.0 + 2.0, 1.5)
     END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'likes' THEN feed.like_count END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'originally_published_at' THEN feed.sort_at END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'name' THEN lower(feed.title) END ASC,
     feed.created_at DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
