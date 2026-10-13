@@ -3,6 +3,7 @@ package notification
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -1152,6 +1153,37 @@ func TestStaffQueueTypesRegisteredAndFanOut(t *testing.T) {
 	}
 	if len(repo.staffQueue) != 3 {
 		t.Errorf("fan-outs reached = %v, want 3", repo.staffQueue)
+	}
+}
+
+// TestNotifyVideoOwnershipRequest: the "someone offered you a video" notice is a
+// registered, default-on, opt-out-able type that names the giver (actor), is
+// never sent to the giver themselves, and carries no video (its live title would
+// outlive the request).
+func TestNotifyVideoOwnershipRequest(t *testing.T) {
+	ctx := context.Background()
+	if !knownType(TypeVideoOwnershipRequest) || !slices.Contains(KnownTypes(), TypeVideoOwnershipRequest) {
+		t.Fatalf("%s is not a known notification type", TypeVideoOwnershipRequest)
+	}
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	giver := uuid.New()
+	if err := svc.NotifyVideoOwnershipRequest(ctx, giver, giver); err != nil || len(repo.notifs) != 0 {
+		t.Fatalf("self: err=%v notifs=%+v", err, repo.notifs)
+	}
+	off := uuid.New()
+	if err := svc.SetPrefs(ctx, off, map[string]bool{TypeVideoOwnershipRequest: false}); err != nil {
+		t.Fatalf("SetPrefs: %v", err)
+	}
+	if err := svc.NotifyVideoOwnershipRequest(ctx, off, giver); err != nil || len(repo.notifs) != 0 {
+		t.Fatalf("opted out: err=%v notifs=%+v", err, repo.notifs)
+	}
+	if err := svc.NotifyVideoOwnershipRequest(ctx, uuid.New(), giver); err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+	if len(repo.notifs) != 1 || repo.notifs[0].Type != TypeVideoOwnershipRequest ||
+		repo.notifs[0].ActorID.Bytes != giver || repo.notifs[0].VideoID.Valid {
+		t.Fatalf("notifications = %+v, want one naming the giver and no video", repo.notifs)
 	}
 }
 
