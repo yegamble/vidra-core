@@ -1834,6 +1834,8 @@ func (s *Server) routes() {
 		api.POST("/videos/:id/give-ownership", s.handleGiveVideoOwnership, s.requireAuth)
 		api.DELETE("/videos/:id/give-ownership", s.handleCancelVideoOwnership, s.requireAuth)
 		api.GET("/me/video-ownership-changes", s.handleListVideoOwnershipChanges, s.requireAuth)
+		api.POST("/me/video-ownership-changes/:id/accept", s.handleAcceptVideoOwnership, s.requireAuth)
+		api.POST("/me/video-ownership-changes/:id/refuse", s.handleRefuseVideoOwnership, s.requireAuth)
 		api.PUT("/videos/:id/watch-progress", s.handleRecordWatchProgress, s.requireAuth)
 		api.GET("/videos/config", s.handleVideoConfig)
 		api.GET("/videos/search", s.handleSearchVideos, s.optionalAuth)

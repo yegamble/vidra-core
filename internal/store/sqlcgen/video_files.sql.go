@@ -255,3 +255,63 @@ func (q *Queries) SumVideoStorageUsage(ctx context.Context, videoID uuid.UUID) (
 	err := row.Scan(&used_bytes)
 	return used_bytes, err
 }
+
+const swapVideoOriginalIfOwner = `-- name: SwapVideoOriginalIfOwner :one
+WITH owned AS (
+    UPDATE videos v SET updated_at = now()
+    FROM channels c
+    WHERE v.id = $6
+      AND c.id = v.channel_id
+      AND c.owner_id = $7
+    RETURNING v.id
+), dropped AS (
+    DELETE FROM video_files vf
+    USING owned
+    WHERE vf.video_id = owned.id AND vf.kind = 'original'
+)
+INSERT INTO video_files (video_id, kind, storage_key, content_type, original_name, size_bytes, sha256)
+SELECT owned.id, 'original', $1, $2,
+       $3, $4, $5
+FROM owned
+RETURNING id, video_id, kind, storage_key, content_type, original_name, size_bytes, created_at, sha256
+`
+
+type SwapVideoOriginalIfOwnerParams struct {
+	StorageKey   string    `json:"storage_key"`
+	ContentType  string    `json:"content_type"`
+	OriginalName string    `json:"original_name"`
+	SizeBytes    int64     `json:"size_bytes"`
+	Sha256       string    `json:"sha256"`
+	VideoID      uuid.UUID `json:"video_id"`
+	OwnerID      uuid.UUID `json:"owner_id"`
+}
+
+// Makes a stored replacement the video's original — in ONE statement, and only
+// while the video still belongs to owner_id (its owner when the replacement
+// began). The UPDATE takes the video row lock that accepting an ownership
+// change also takes, so a transfer either commits first (the owner check then
+// fails and nothing is swapped: pgx.ErrNoRows) or waits until the swap is done.
+func (q *Queries) SwapVideoOriginalIfOwner(ctx context.Context, arg SwapVideoOriginalIfOwnerParams) (VideoFile, error) {
+	row := q.db.QueryRow(ctx, swapVideoOriginalIfOwner,
+		arg.StorageKey,
+		arg.ContentType,
+		arg.OriginalName,
+		arg.SizeBytes,
+		arg.Sha256,
+		arg.VideoID,
+		arg.OwnerID,
+	)
+	var i VideoFile
+	err := row.Scan(
+		&i.ID,
+		&i.VideoID,
+		&i.Kind,
+		&i.StorageKey,
+		&i.ContentType,
+		&i.OriginalName,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.Sha256,
+	)
+	return i, err
+}

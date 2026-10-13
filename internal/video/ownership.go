@@ -36,6 +36,15 @@ var (
 	ErrOwnershipPending = errors.New("video: an ownership change is already pending")
 	// ErrNotSettled means the video's upload or processing has not finished.
 	ErrNotSettled = errors.New("video: still uploading or processing")
+	// ErrOwnershipAnswered means the request was already accepted or refused.
+	ErrOwnershipAnswered = errors.New("video: ownership change already answered")
+	// ErrOwnershipStale means the giver no longer owns the video.
+	ErrOwnershipStale = errors.New("video: the giver no longer owns the video")
+	// ErrOwnershipExpired means the request outlived OwnershipOfferWindow.
+	ErrOwnershipExpired = errors.New("video: ownership change expired")
+	// ErrMediaWorkInFlight means media work on the video is unfinished: an
+	// upload or replacement session, or a finalize, import or transcode job.
+	ErrMediaWorkInFlight = errors.New("video: media work in flight")
 )
 
 // OwnershipRepository is the data access for ownership change requests.
@@ -49,6 +58,11 @@ type OwnershipRepository interface {
 	CancelVideoOwnershipChange(ctx context.Context, arg sqlcgen.CancelVideoOwnershipChangeParams) (int64, error)
 	ListIncomingVideoOwnershipChanges(ctx context.Context, arg sqlcgen.ListIncomingVideoOwnershipChangesParams) ([]sqlcgen.ListIncomingVideoOwnershipChangesRow, error)
 	CountIncomingVideoOwnershipChanges(ctx context.Context, nextOwnerID uuid.UUID) (int64, error)
+	GetVideoOwnershipChange(ctx context.Context, id uuid.UUID) (sqlcgen.VideoOwnershipChange, error)
+	AcceptVideoOwnershipChange(ctx context.Context, arg sqlcgen.AcceptVideoOwnershipChangeParams) (sqlcgen.AcceptVideoOwnershipChangeRow, error)
+	RefuseVideoOwnershipChange(ctx context.Context, arg sqlcgen.RefuseVideoOwnershipChangeParams) (int64, error)
+	SumVideoStorageUsage(ctx context.Context, videoID uuid.UUID) (int64, error)
+	VideoMediaWorkInFlight(ctx context.Context, videoID uuid.UUID) (bool, error)
 }
 
 const (
@@ -76,6 +90,25 @@ func settledForTransfer(state string) bool {
 	return state != "draft" && state != "processing"
 }
 
+// readyForTransfer is settledForTransfer plus "no media work in flight": a
+// transfer waits until every upload, replacement, finalize, import or
+// transcode on the video has finished, so its result lands with the owner who
+// started it and its bytes are known before the recipient's quota is checked.
+// The accept statement re-checks the same thing in SQL.
+func (s *Service) readyForTransfer(ctx context.Context, v sqlcgen.GetVideoByIDRow) error {
+	if !settledForTransfer(v.State) {
+		return ErrNotSettled
+	}
+	busy, err := s.own.VideoMediaWorkInFlight(ctx, v.ID)
+	if err != nil {
+		return err
+	}
+	if busy {
+		return ErrMediaWorkInFlight
+	}
+	return nil
+}
+
 // GiveOwnership offers videoID to the local account named username. Only the
 // video's owner may: an editor collaborator or staff member manages the video
 // but cannot give it away (no actor class is exempt, as with moves; PeerTube
@@ -97,8 +130,8 @@ func (s *Service) GiveOwnership(ctx context.Context, actorID, videoID uuid.UUID,
 	if v.OwnerID != actorID {
 		return sqlcgen.VideoOwnershipChange{}, false, ErrForbidden
 	}
-	if !settledForTransfer(v.State) {
-		return sqlcgen.VideoOwnershipChange{}, false, ErrNotSettled
+	if err := s.readyForTransfer(ctx, v); err != nil {
+		return sqlcgen.VideoOwnershipChange{}, false, err
 	}
 	// A pending request the giver can no longer honour (they lost the video,
 	// or it outlived the offer window) must not block the current owner.
@@ -160,6 +193,97 @@ func (s *Service) ListIncomingOwnershipChanges(ctx context.Context, userID uuid.
 	}
 	total, err := s.own.CountIncomingVideoOwnershipChanges(ctx, userID)
 	return rows, total, err
+}
+
+// pendingChangeFor loads a pending request addressed to actorID. A request
+// for someone else is ErrOwnershipNotFound, exactly like a missing one.
+func (s *Service) pendingChangeFor(ctx context.Context, actorID, changeID uuid.UUID) (sqlcgen.VideoOwnershipChange, error) {
+	if s.own == nil {
+		return sqlcgen.VideoOwnershipChange{}, ErrOwnershipUnavailable
+	}
+	oc, err := s.own.GetVideoOwnershipChange(ctx, changeID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && oc.NextOwnerID != actorID) {
+		return sqlcgen.VideoOwnershipChange{}, ErrOwnershipNotFound
+	}
+	if err != nil {
+		return sqlcgen.VideoOwnershipChange{}, err
+	}
+	if oc.Status != "pending" {
+		return sqlcgen.VideoOwnershipChange{}, ErrOwnershipAnswered
+	}
+	if !oc.CreatedAt.After(time.Now().Add(-OwnershipOfferWindow)) {
+		return sqlcgen.VideoOwnershipChange{}, ErrOwnershipExpired
+	}
+	return oc, nil
+}
+
+// AcceptOwnershipChange answers a request addressed to actorID by moving the
+// video into channelID, which must be one of actorID's channels. fits is the
+// caller's storage-quota gate for the video's stored bytes (the one uploads
+// use); nil checks nothing. The checks before the write give each refusal its
+// own error; the write itself (AcceptVideoOwnershipChange) re-checks all of
+// them in the statement that flips the request and moves the video, so a
+// change in between — the giver losing the video, a concurrent answer — moves
+// nothing (ErrOwnershipStale). After the move the same side effects fire as
+// for a same-owner move (fireUpdateHooks). Returns the moved video's id and the
+// channel it left.
+func (s *Service) AcceptOwnershipChange(ctx context.Context, actorID, changeID, channelID uuid.UUID, fits func(context.Context, int64) error) (sqlcgen.AcceptVideoOwnershipChangeRow, error) {
+	var none sqlcgen.AcceptVideoOwnershipChangeRow
+	oc, err := s.pendingChangeFor(ctx, actorID, changeID)
+	if err != nil {
+		return none, err
+	}
+	v, err := s.GetByID(ctx, oc.VideoID)
+	if err != nil || v.OwnerID != oc.InitiatorID {
+		return none, ErrOwnershipStale
+	}
+	if err := s.readyForTransfer(ctx, v); err != nil {
+		return none, err
+	}
+	if target, terr := s.repo.GetChannelByID(ctx, channelID); terr != nil || target.OwnerID != actorID {
+		return none, ErrMoveRefused
+	}
+	if fits != nil {
+		bytes, err := s.own.SumVideoStorageUsage(ctx, v.ID)
+		if err != nil {
+			return none, err
+		}
+		if err := fits(ctx, bytes); err != nil {
+			return none, err
+		}
+	}
+	moved, err := s.own.AcceptVideoOwnershipChange(ctx, sqlcgen.AcceptVideoOwnershipChangeParams{
+		ID: changeID, NextOwnerID: actorID, ChannelID: channelID,
+		ExpiredBefore: time.Now().Add(-OwnershipOfferWindow),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return none, ErrOwnershipStale
+	}
+	if err != nil {
+		return none, err
+	}
+	// The statement's own from_channel_id: the owner may have moved the video
+	// between their channels since v was read, and the retract must address the
+	// channel it actually left.
+	v.ChannelID = moved.FromChannelID
+	s.fireUpdateHooks(ctx, v, true)
+	return moved, nil
+}
+
+// RefuseOwnershipChange answers a request addressed to actorID with a no. The
+// video is untouched and its owner may offer it again.
+func (s *Service) RefuseOwnershipChange(ctx context.Context, actorID, changeID uuid.UUID) error {
+	if _, err := s.pendingChangeFor(ctx, actorID, changeID); err != nil {
+		return err
+	}
+	n, err := s.own.RefuseVideoOwnershipChange(ctx, sqlcgen.RefuseVideoOwnershipChangeParams{ID: changeID, NextOwnerID: actorID})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrOwnershipAnswered // a concurrent answer won
+	}
+	return nil
 }
 
 // CancelOwnershipChange withdraws the caller's pending offer of videoID.
