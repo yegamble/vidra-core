@@ -12021,11 +12021,23 @@ paths:
         Fetches the list and applies it: adds blocks for new entries, removes
         only blocks this subscription created that the list no longer names.
         A fetch/parse failure is a 200 with status "error" (the last good state
-        is kept); a list with no usable entries removes nothing. Rate limited
-        per admin (6 per minute). Audited with added/removed counts.
+        is kept); a list with no usable entries removes nothing. A sync that
+        would remove more than 25 blocks and more than half of the ones the
+        subscription owns is held: status "needs_confirmation", nothing changed;
+        repeat with {"confirm": true} to apply it. Entries naming this instance
+        or a parent domain of it are skipped. Rate limited per admin (6 per
+        minute). Audited with added/removed counts.
       tags: [admin]
       security:
         - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm: {type: boolean}
       parameters:
         - name: id
           in: path
@@ -21211,7 +21223,7 @@ components:
         enabled: {type: boolean}
         last_status:
           type: string
-          enum: [never, ok, not_modified, error]
+          enum: [never, ok, not_modified, error, needs_confirmation]
           description: Outcome of the last attempt. A failed attempt keeps the last good counts.
         last_error:
           type: string
@@ -21248,10 +21260,12 @@ components:
         enabled: {type: boolean}
     BlocklistSyncResult:
       type: object
-      required: [status, added, removed, entries, ignored_severity, invalid]
+      required: [status, added, removed, entries, ignored_severity, invalid, protected]
       properties:
-        status: {type: string, enum: [ok, not_modified, error]}
+        status: {type: string, enum: [ok, not_modified, error, needs_confirmation]}
         error: {type: string}
+        protected: {type: integer, description: Entries skipped because they name this instance or a parent domain.}
+        pending_removals: {type: integer, description: With needs_confirmation, how many blocks a confirmed sync would remove.}
         added: {type: integer}
         removed: {type: integer}
         entries: {type: integer}

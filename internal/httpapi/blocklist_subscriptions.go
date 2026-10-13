@@ -109,6 +109,14 @@ type blocklistSyncResultView struct {
 	Entries         int    `json:"entries"`
 	IgnoredSeverity int    `json:"ignored_severity"`
 	Invalid         int    `json:"invalid"`
+	Protected       int    `json:"protected"`
+	Pending         int    `json:"pending_removals,omitempty"`
+}
+
+// syncBlocklistRequest is the optional body of sync-now. Confirm applies a sync
+// the safety cap held (status needs_confirmation).
+type syncBlocklistRequest struct {
+	Confirm bool `json:"confirm"`
 }
 
 type blocklistAllowView struct {
@@ -216,7 +224,32 @@ func (s *Server) handleUpdateBlocklistSubscription(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, subView(sub, 0))
+	blocks, err := s.blocklistsvc.BlockCount(c.Request().Context(), id)
+	if err != nil {
+		return err
+	}
+	// Who flipped a list on or off is part of the trail; the URL is not.
+	userID, _, perr := mustPrincipal(c)
+	if perr != nil {
+		return perr
+	}
+	s.auditEvent(c, audit.Event{
+		Action: observability.ActionBlocklistSubscriptionUpdate, Result: observability.ResultSuccess,
+		ActorID: userID.String(), ResourceType: "blocklist_subscription", ResourceID: id.String(),
+		Metadata: []audit.MetadataField{{Key: "changed_keys", Value: updatedKeys(in)}},
+	})
+	return c.JSON(http.StatusOK, subView(sub, blocks))
+}
+
+func updatedKeys(in updateBlocklistSubscriptionRequest) string {
+	var k []string
+	if in.Label != nil {
+		k = append(k, "label")
+	}
+	if in.Enabled != nil {
+		k = append(k, "enabled")
+	}
+	return strings.Join(k, ",")
 }
 
 func (s *Server) handleDeleteBlocklistSubscription(c echo.Context) error {
@@ -264,7 +297,13 @@ func (s *Server) handleSyncBlocklistSubscription(c echo.Context) error {
 		c.Response().Header().Set("Retry-After", strconv.Itoa(retry))
 		return echo.NewHTTPError(http.StatusTooManyRequests, "too many sync requests")
 	}
-	out, err := s.blocklistsvc.SyncNow(c.Request().Context(), id, userID)
+	var in syncBlocklistRequest
+	if c.Request().ContentLength != 0 {
+		if err := bindAndValidate(c, &in); err != nil {
+			return err
+		}
+	}
+	out, err := s.blocklistsvc.SyncNow(c.Request().Context(), id, userID, in.Confirm)
 	if errors.Is(err, blocklistsub.ErrNotFound) {
 		return echo.NewHTTPError(http.StatusNotFound, "subscription not found")
 	}
@@ -274,6 +313,7 @@ func (s *Server) handleSyncBlocklistSubscription(c echo.Context) error {
 	return c.JSON(http.StatusOK, blocklistSyncResultView{
 		Status: out.Status, Error: out.Error, Added: out.Added, Removed: out.Removed,
 		Entries: out.Entries, IgnoredSeverity: out.IgnoredSeverity, Invalid: out.Invalid,
+		Protected: out.Protected, Pending: out.Pending,
 	})
 }
 

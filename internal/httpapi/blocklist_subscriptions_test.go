@@ -67,6 +67,7 @@ func (f *blFakeRepo) AddBlocklistAllow(_ context.Context, a sqlcgen.AddBlocklist
 	f.allow[a.Domain] = true
 	return 1, nil
 }
+func (f *blFakeRepo) CountSubscriptionBlocks(context.Context, string) (int64, error) { return 7, nil }
 func (f *blFakeRepo) DeleteSubscriptionBlocksForDomain(context.Context, string) ([]sqlcgen.DeleteSubscriptionBlocksForDomainRow, error) {
 	return nil, nil
 }
@@ -148,8 +149,11 @@ func TestBlocklistSubscriptionLifecycle(t *testing.T) {
 	if len(list.Subscriptions) != 1 || list.Total != 1 {
 		t.Errorf("list = %+v", list)
 	}
-	if rec := sendJSONAuth(srv, http.MethodPatch, blBase+"/"+created.ID, `{"enabled":false}`, admin); rec.Code != http.StatusOK {
-		t.Errorf("patch = %d", rec.Code)
+	rec = sendJSONAuth(srv, http.MethodPatch, blBase+"/"+created.ID, `{"enabled":false}`, admin)
+	var patched blocklistSubscriptionView
+	_ = json.Unmarshal(rec.Body.Bytes(), &patched)
+	if rec.Code != http.StatusOK || patched.BlockCount != 7 || patched.Enabled {
+		t.Errorf("patch = %d %+v (want the real block_count)", rec.Code, patched)
 	}
 	if rec := sendJSONAuth(srv, http.MethodPatch, blBase+"/not-a-uuid", `{}`, admin); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad id = %d, want 400", rec.Code)
