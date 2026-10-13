@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -185,6 +186,7 @@ func (s *Service) FlagComment(ctx context.Context, commentID uuid.UUID, body str
 			MatchLength:   length,
 			ListID:        pgconv.UUID(m.ListID),
 			ListName:      m.ListName,
+			ListOwnerID:   m.ListOwner,
 		}); err != nil {
 			return 0, err
 		}
@@ -217,6 +219,7 @@ type matched struct {
 	Word       string
 	ListID     uuid.UUID
 	ListName   string
+	ListOwner  pgtype.UUID // NULL = instance list
 	ListAction string
 }
 
@@ -228,7 +231,7 @@ func (s *Service) matchForVideo(ctx context.Context, videoID uuid.UUID, text str
 	}
 	out := make([]matched, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, matched{r.ID, r.Word, r.ListID, r.ListName, r.ListAction})
+		out = append(out, matched{r.ID, r.Word, r.ListID, r.ListName, r.ListOwnerID, r.ListAction})
 	}
 	return out, nil
 }
@@ -255,6 +258,7 @@ func (s *Service) FlagVideo(ctx context.Context, videoID uuid.UUID, text string)
 			MatchLength:   length,
 			ListID:        pgconv.UUID(m.ListID),
 			ListName:      m.ListName,
+			ListOwnerID:   m.ListOwnerID,
 		}); err != nil {
 			return 0, err
 		}
@@ -285,6 +289,7 @@ func (s *Service) FlagAuthoredRemoteComment(ctx context.Context, commentID uuid.
 			MatchLength:             length,
 			ListID:                  pgconv.UUID(m.ListID),
 			ListName:                m.ListName,
+			ListOwnerID:             m.ListOwnerID,
 		}); err != nil {
 			return 0, err
 		}

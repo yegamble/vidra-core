@@ -42,7 +42,6 @@ type WordListRepository interface {
 	GetWatchedWordList(ctx context.Context, arg sqlcgen.GetWatchedWordListParams) (sqlcgen.GetWatchedWordListRow, error)
 	ListWatchedWordLists(ctx context.Context, arg sqlcgen.ListWatchedWordListsParams) ([]sqlcgen.ListWatchedWordListsRow, error)
 	CountWatchedWordLists(ctx context.Context, ownerID pgtype.UUID) (int64, error)
-	CountOwnedWatchedWordLists(ctx context.Context, ownerID pgtype.UUID) (int64, error)
 	UpdateWatchedWordList(ctx context.Context, arg sqlcgen.UpdateWatchedWordListParams) (sqlcgen.WatchedWordList, error)
 	DeleteWatchedWordList(ctx context.Context, arg sqlcgen.DeleteWatchedWordListParams) (int64, error)
 	ListWatchedWordListWords(ctx context.Context, listID pgtype.UUID) ([]string, error)
@@ -134,16 +133,10 @@ func (s *Service) CreateList(ctx context.Context, owner, actor uuid.UUID, name, 
 	if err != nil {
 		return List{}, err
 	}
-	if owner != uuid.Nil {
-		n, err := s.repo.CountOwnedWatchedWordLists(ctx, pgconv.UUID(owner))
-		if err != nil {
-			return List{}, err
-		}
-		if n >= MaxListsPerAccount {
-			return List{}, ErrTooManyLists
-		}
+	row, err := s.repo.CreateWatchedWordList(ctx, sqlcgen.CreateWatchedWordListParams{OwnerID: scope(owner), Name: strings.TrimSpace(name), Action: action, MaxOwned: MaxListsPerAccount})
+	if errors.Is(err, pgx.ErrNoRows) { // the in-statement cap refused the insert
+		return List{}, ErrTooManyLists
 	}
-	row, err := s.repo.CreateWatchedWordList(ctx, sqlcgen.CreateWatchedWordListParams{OwnerID: scope(owner), Name: strings.TrimSpace(name), Action: action})
 	if pgconv.IsUniqueViolation(err) {
 		return List{}, ErrListNameTaken
 	}

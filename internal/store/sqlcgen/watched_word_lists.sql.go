@@ -13,18 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countOwnedWatchedWordLists = `-- name: CountOwnedWatchedWordLists :one
-SELECT count(*)::bigint FROM watched_word_lists WHERE owner_id = $1
-`
-
-// How many lists a creator owns (the per-account cap).
-func (q *Queries) CountOwnedWatchedWordLists(ctx context.Context, ownerID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countOwnedWatchedWordLists, ownerID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const countWatchedWordLists = `-- name: CountWatchedWordLists :one
 SELECT count(*)::bigint FROM watched_word_lists
 WHERE owner_id IS NOT DISTINCT FROM $1::uuid
@@ -39,20 +27,30 @@ func (q *Queries) CountWatchedWordLists(ctx context.Context, ownerID pgtype.UUID
 
 const createWatchedWordList = `-- name: CreateWatchedWordList :one
 INSERT INTO watched_word_lists (owner_id, name, action)
-VALUES ($1, $2, $3)
+SELECT $1::uuid, $2, $3
+WHERE $1::uuid IS NULL
+   OR (SELECT count(*) FROM watched_word_lists o WHERE o.owner_id = $1::uuid) < $4::bigint
 RETURNING id, owner_id, name, action, is_default, created_at, updated_at
 `
 
 type CreateWatchedWordListParams struct {
-	OwnerID pgtype.UUID `json:"owner_id"`
-	Name    string      `json:"name"`
-	Action  string      `json:"action"`
+	OwnerID  pgtype.UUID `json:"owner_id"`
+	Name     string      `json:"name"`
+	Action   string      `json:"action"`
+	MaxOwned int64       `json:"max_owned"`
 }
 
 // owner_id NULL = an instance list; otherwise a creator's own list. A duplicate
-// name within the same scope is a unique violation (23505).
+// name within the same scope is a unique violation (23505). The per-account cap
+// is enforced IN the statement (no read-then-insert gap): over the cap no row is
+// inserted and pgx.ErrNoRows comes back. max_owned is ignored for instance lists.
 func (q *Queries) CreateWatchedWordList(ctx context.Context, arg CreateWatchedWordListParams) (WatchedWordList, error) {
-	row := q.db.QueryRow(ctx, createWatchedWordList, arg.OwnerID, arg.Name, arg.Action)
+	row := q.db.QueryRow(ctx, createWatchedWordList,
+		arg.OwnerID,
+		arg.Name,
+		arg.Action,
+		arg.MaxOwned,
+	)
 	var i WatchedWordList
 	err := row.Scan(
 		&i.ID,

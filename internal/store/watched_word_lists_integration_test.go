@@ -260,6 +260,32 @@ func TestWatchedWordListsScopingAndHoldOnRealPG(t *testing.T) {
 		t.Errorf("recorded lists = %v", lists)
 	}
 
+	// The staff queue shows INSTANCE-list matches only: a creator's private terms
+	// (and the list name) never reach moderators, and cannot be resolved by id.
+	staff, _, err := svc.ListMatches(ctx, "", 100, 0)
+	if err != nil {
+		t.Fatalf("ListMatches: %v", err)
+	}
+	var sawInstance bool
+	for _, m := range staff {
+		if m.Word == hold || m.ListName == "Alice's list" {
+			t.Errorf("staff queue leaked a private-list match: %+v", m)
+		}
+		if m.Word == flagTerm {
+			sawInstance = true
+		}
+	}
+	if !sawInstance {
+		t.Errorf("staff queue lost the instance-list match")
+	}
+	var privateMatch uuid.UUID
+	if err := st.Pool.QueryRow(ctx, `SELECT id FROM watched_word_matches WHERE comment_id = $1 AND list_name = 'Alice''s list'`, onAlice).Scan(&privateMatch); err != nil {
+		t.Fatalf("find private match: %v", err)
+	}
+	if err := svc.Resolve(ctx, mod, privateMatch, watchword.StatusDismissed, ""); !errors.Is(err, watchword.ErrMatchNotFound) {
+		t.Errorf("staff resolved a private match: %v, want not found", err)
+	}
+
 	// Default list: undeletable, words not replaceable; names unique per scope.
 	def, _, _ := svc.ListLists(ctx, uuid.Nil, 1, 0)
 	if len(def) == 0 || !def[0].IsDefault {
@@ -276,6 +302,17 @@ func TestWatchedWordListsScopingAndHoldOnRealPG(t *testing.T) {
 	}
 	if _, err := svc.CreateList(ctx, bob, bob, "Alice's list", "flag", nil); err != nil {
 		t.Errorf("the same name in another account's scope must be allowed: %v", err)
+	}
+
+	// The per-account cap holds in the INSERT itself.
+	carol := mkUser("wl-carol")
+	for i := 0; i < watchword.MaxListsPerAccount; i++ {
+		if _, err := svc.CreateList(ctx, carol, carol, "L"+uuid.NewString()[:6], "flag", nil); err != nil {
+			t.Fatalf("list %d: %v", i, err)
+		}
+	}
+	if _, err := svc.CreateList(ctx, carol, carol, "one too many", "flag", nil); !errors.Is(err, watchword.ErrTooManyLists) {
+		t.Errorf("over the cap = %v, want ErrTooManyLists", err)
 	}
 
 	// Replace semantics: kept terms stay, absent ones go, new ones arrive.

@@ -1,8 +1,12 @@
 -- name: CreateWatchedWordList :one
 -- owner_id NULL = an instance list; otherwise a creator's own list. A duplicate
--- name within the same scope is a unique violation (23505).
+-- name within the same scope is a unique violation (23505). The per-account cap
+-- is enforced IN the statement (no read-then-insert gap): over the cap no row is
+-- inserted and pgx.ErrNoRows comes back. max_owned is ignored for instance lists.
 INSERT INTO watched_word_lists (owner_id, name, action)
-VALUES (sqlc.narg('owner_id'), sqlc.arg('name'), sqlc.arg('action'))
+SELECT sqlc.narg('owner_id')::uuid, sqlc.arg('name'), sqlc.arg('action')
+WHERE sqlc.narg('owner_id')::uuid IS NULL
+   OR (SELECT count(*) FROM watched_word_lists o WHERE o.owner_id = sqlc.narg('owner_id')::uuid) < sqlc.arg('max_owned')::bigint
 RETURNING id, owner_id, name, action, is_default, created_at, updated_at;
 
 -- name: GetWatchedWordList :one
@@ -26,10 +30,6 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 -- name: CountWatchedWordLists :one
 SELECT count(*)::bigint FROM watched_word_lists
 WHERE owner_id IS NOT DISTINCT FROM sqlc.narg('owner_id')::uuid;
-
--- name: CountOwnedWatchedWordLists :one
--- How many lists a creator owns (the per-account cap).
-SELECT count(*)::bigint FROM watched_word_lists WHERE owner_id = sqlc.arg('owner_id');
 
 -- name: UpdateWatchedWordList :one
 -- Rename / change the action of a list in a scope; no row = not in this scope.

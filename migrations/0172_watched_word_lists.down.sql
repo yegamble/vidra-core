@@ -3,7 +3,7 @@
 -- present in several keeps its oldest row, since the flat table is unique per
 -- term). Matches survive: watched_word_id is ON DELETE SET NULL (0132) and the
 -- snapshot carries the term.
-ALTER TABLE watched_word_matches DROP COLUMN list_id, DROP COLUMN list_name;
+ALTER TABLE watched_word_matches DROP COLUMN list_id, DROP COLUMN list_name, DROP COLUMN list_owner_id;
 
 DROP TRIGGER watched_words_default_list ON watched_words;
 DROP FUNCTION watched_words_default_list();

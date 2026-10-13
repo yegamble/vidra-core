@@ -51,7 +51,11 @@ CREATE TRIGGER watched_words_default_list BEFORE INSERT ON watched_words
 -- match outlives a deleted list and still says where it came from.
 ALTER TABLE watched_word_matches
     ADD COLUMN list_id UUID REFERENCES watched_word_lists (id) ON DELETE SET NULL,
-    ADD COLUMN list_name TEXT NOT NULL DEFAULT '';
+    ADD COLUMN list_name TEXT NOT NULL DEFAULT '',
+    -- Owner of the list at match time (NULL = instance list). The staff review
+    -- queue shows list_owner_id IS NULL only: a creator's private terms must not
+    -- reach moderators. Cascades with the account.
+    ADD COLUMN list_owner_id UUID REFERENCES users (id) ON DELETE CASCADE;
 UPDATE watched_word_matches m
 SET list_id = l.id, list_name = l.name
 FROM watched_words w

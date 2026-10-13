@@ -30,7 +30,7 @@ WHERE watched_words.id = $1
 -- INSTANCE-list terms that occur (case-insensitive substring) in the given
 -- text, with the list that holds them. Videos and comments on remote videos
 -- have no local owner, so per-account lists never apply to them.
-SELECT w.id, w.word, l.id AS list_id, l.name AS list_name, l.action AS list_action
+SELECT w.id, w.word, l.id AS list_id, l.name AS list_name, l.action AS list_action, l.owner_id AS list_owner_id
 FROM watched_words w
 JOIN watched_word_lists l ON l.id = w.list_id
 WHERE l.owner_id IS NULL
@@ -40,7 +40,7 @@ WHERE l.owner_id IS NULL
 -- Instance-list terms PLUS the terms of the lists owned by the owner of the
 -- channel the given video belongs to — a comment on a creator's video is
 -- checked against that creator's own lists and nobody else's.
-SELECT w.id, w.word, l.id AS list_id, l.name AS list_name, l.action AS list_action
+SELECT w.id, w.word, l.id AS list_id, l.name AS list_name, l.action AS list_action, l.owner_id AS list_owner_id
 FROM watched_words w
 JOIN watched_word_lists l ON l.id = w.list_id
 WHERE (l.owner_id IS NULL
@@ -57,9 +57,9 @@ WHERE (l.owner_id IS NULL
 -- NOTHING is what makes an edit that still contains the term keep the ORIGINAL
 -- snapshot: only a term not yet recorded for this comment creates a row.
 INSERT INTO watched_word_matches (
-    watched_word_id, comment_id, matched_text, matched_term, match_offset, match_length, list_id, list_name
+    watched_word_id, comment_id, matched_text, matched_term, match_offset, match_length, list_id, list_name, list_owner_id
 ) VALUES ($1, $2, sqlc.arg('matched_text'), sqlc.arg('matched_term'),
-          sqlc.arg('match_offset'), sqlc.arg('match_length'), sqlc.arg('list_id'), sqlc.arg('list_name'))
+          sqlc.arg('match_offset'), sqlc.arg('match_length'), sqlc.arg('list_id'), sqlc.arg('list_name'), sqlc.arg('list_owner_id'))
 ON CONFLICT (watched_word_id, comment_id) DO NOTHING;
 
 -- name: RecordWatchedWordVideoMatch :exec
@@ -67,9 +67,9 @@ ON CONFLICT (watched_word_id, comment_id) DO NOTHING;
 -- per word+video; §12), with the same flag-time snapshot as the comment arm —
 -- a title or description edited afterwards does not rewrite what was flagged.
 INSERT INTO watched_word_matches (
-    watched_word_id, video_id, matched_text, matched_term, match_offset, match_length, list_id, list_name
+    watched_word_id, video_id, matched_text, matched_term, match_offset, match_length, list_id, list_name, list_owner_id
 ) VALUES ($1, $2, sqlc.arg('matched_text'), sqlc.arg('matched_term'),
-          sqlc.arg('match_offset'), sqlc.arg('match_length'), sqlc.arg('list_id'), sqlc.arg('list_name'))
+          sqlc.arg('match_offset'), sqlc.arg('match_length'), sqlc.arg('list_id'), sqlc.arg('list_name'), sqlc.arg('list_owner_id'))
 ON CONFLICT (watched_word_id, video_id) WHERE video_id IS NOT NULL DO NOTHING;
 
 -- name: RecordWatchedWordAuthoredRemoteCommentMatch :exec
@@ -78,9 +78,9 @@ ON CONFLICT (watched_word_id, video_id) WHERE video_id IS NOT NULL DO NOTHING;
 -- other two arms: moderation is the home instance's job for these rows, so they
 -- flow through the same review queue as local comments.
 INSERT INTO watched_word_matches (
-    watched_word_id, authored_remote_comment_id, matched_text, matched_term, match_offset, match_length, list_id, list_name
+    watched_word_id, authored_remote_comment_id, matched_text, matched_term, match_offset, match_length, list_id, list_name, list_owner_id
 ) VALUES ($1, $2, sqlc.arg('matched_text'), sqlc.arg('matched_term'),
-          sqlc.arg('match_offset'), sqlc.arg('match_length'), sqlc.arg('list_id'), sqlc.arg('list_name'))
+          sqlc.arg('match_offset'), sqlc.arg('match_length'), sqlc.arg('list_id'), sqlc.arg('list_name'), sqlc.arg('list_owner_id'))
 ON CONFLICT (watched_word_id, authored_remote_comment_id) WHERE authored_remote_comment_id IS NOT NULL DO NOTHING;
 
 -- name: ResolveWatchedWordMatch :execrows
@@ -95,7 +95,7 @@ SET status         = sqlc.arg('status'),
     moderator_note = sqlc.arg('moderator_note'),
     resolved_by    = sqlc.arg('resolved_by'),
     resolved_at    = now()
-WHERE id = sqlc.arg('id');
+WHERE id = sqlc.arg('id') AND list_owner_id IS NULL;
 
 -- name: ListWatchedWordMatches :many
 -- The moderation review queue for flagged content (comments AND videos), newest
@@ -161,7 +161,8 @@ LEFT JOIN videos v ON v.id = COALESCE(m.video_id, c.video_id)
 LEFT JOIN channels ch ON ch.id = v.channel_id
 LEFT JOIN users vu ON vu.id = ch.owner_id
 LEFT JOIN users ru ON ru.id = m.resolved_by
-WHERE (sqlc.narg('status')::text IS NULL OR m.status = sqlc.narg('status')::text)
+WHERE m.list_owner_id IS NULL -- a creator's PRIVATE list never reaches the staff queue (0172)
+  AND (sqlc.narg('status')::text IS NULL OR m.status = sqlc.narg('status')::text)
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
@@ -172,4 +173,4 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 -- filter, or the queue would page a total it cannot serve.
 SELECT count(*)::bigint
 FROM watched_word_matches m
-WHERE (sqlc.narg('status')::text IS NULL OR m.status = sqlc.narg('status')::text);
+WHERE m.list_owner_id IS NULL AND (sqlc.narg('status')::text IS NULL OR m.status = sqlc.narg('status')::text);

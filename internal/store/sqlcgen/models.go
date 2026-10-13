@@ -1373,4 +1373,5 @@ type WatchedWordMatch struct {
 	AuthoredRemoteCommentID pgtype.UUID        `json:"authored_remote_comment_id"`
 	ListID                  pgtype.UUID        `json:"list_id"`
 	ListName                string             `json:"list_name"`
+	ListOwnerID             pgtype.UUID        `json:"list_owner_id"`
 }
