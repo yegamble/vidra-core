@@ -25,6 +25,11 @@ var (
 	ErrNotFound = errors.New("playlist: not found")
 	// ErrForbidden means the caller does not own the playlist.
 	ErrForbidden = errors.New("playlist: not owner")
+	// ErrChannelRefused means a create/update named a channel that does not exist
+	// or that the playlist's owner does not own. The two are deliberately one
+	// error: the HTTP layer answers 404 for both, so a caller cannot probe which
+	// channel ids exist.
+	ErrChannelRefused = errors.New("playlist: channel refused")
 	// ErrInvalidOrder means a reorder request's video ids are not exactly the
 	// playlist's current item set (a missing, extra, or duplicated id).
 	ErrInvalidOrder = errors.New("playlist: reorder ids do not match the playlist items")
@@ -44,6 +49,9 @@ var (
 type Repository interface {
 	CreatePlaylist(ctx context.Context, arg sqlcgen.CreatePlaylistParams) (sqlcgen.Playlist, error)
 	GetPlaylistByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetPlaylistByIDRow, error)
+	GetChannelByID(ctx context.Context, id uuid.UUID) (sqlcgen.Channel, error)
+	ListPlaylistsByChannel(ctx context.Context, arg sqlcgen.ListPlaylistsByChannelParams) ([]sqlcgen.ListPlaylistsByChannelRow, error)
+	CountPlaylistsByChannel(ctx context.Context, arg sqlcgen.CountPlaylistsByChannelParams) (int64, error)
 	ListPlaylistsByOwner(ctx context.Context, arg sqlcgen.ListPlaylistsByOwnerParams) ([]sqlcgen.ListPlaylistsByOwnerRow, error)
 	CountPlaylistsByOwner(ctx context.Context, ownerID uuid.UUID) (int64, error)
 	UpdatePlaylist(ctx context.Context, arg sqlcgen.UpdatePlaylistParams) (sqlcgen.Playlist, error)
@@ -123,16 +131,56 @@ type CreateInput struct {
 	Title       string
 	Description string
 	Visibility  string
+	// ChannelID optionally attributes the playlist to one of the owner's channels.
+	ChannelID *uuid.UUID
+}
+
+// checkChannel enforces that a playlist is only ever attributed to a channel its
+// OWNER owns — the same rule as moving a video between channels (video.Update):
+// compare the target channel's owner with the resource's owner. A missing
+// channel and someone else's channel are the same ErrChannelRefused.
+func (s *Service) checkChannel(ctx context.Context, ownerID, channelID uuid.UUID) error {
+	ch, err := s.repo.GetChannelByID(ctx, channelID)
+	if err != nil || ch.OwnerID != ownerID {
+		return ErrChannelRefused
+	}
+	return nil
 }
 
 // Create makes a new playlist owned by ownerID.
 func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, in CreateInput) (sqlcgen.Playlist, error) {
+	if in.ChannelID != nil {
+		if err := s.checkChannel(ctx, ownerID, *in.ChannelID); err != nil {
+			return sqlcgen.Playlist{}, err
+		}
+	}
 	return s.repo.CreatePlaylist(ctx, sqlcgen.CreatePlaylistParams{
 		OwnerID:     ownerID,
 		Title:       strings.TrimSpace(in.Title),
 		Description: strings.TrimSpace(in.Description),
 		Visibility:  in.Visibility,
+		ChannelID:   pgconv.UUIDPtr(in.ChannelID),
 	})
+}
+
+// ListByChannel returns a channel's playlists, newest first, as seen by viewerID
+// (nil = anonymous): everyone gets the public ones, the playlist owner also
+// their unlisted and private ones. The rule lives in the SQL so the page and the
+// total cannot disagree.
+func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, viewerID *uuid.UUID, limit, offset int32) ([]sqlcgen.ListPlaylistsByChannelRow, int64, error) {
+	rows, err := s.repo.ListPlaylistsByChannel(ctx, sqlcgen.ListPlaylistsByChannelParams{
+		ChannelID: channelID, ViewerID: pgconv.UUIDPtr(viewerID), ResultLimit: limit, ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountPlaylistsByChannel(ctx, sqlcgen.CountPlaylistsByChannelParams{
+		ChannelID: channelID, ViewerID: pgconv.UUIDPtr(viewerID),
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
 }
 
 // GetByID returns a playlist (with owner id + video count). Miss → ErrNotFound.
@@ -167,6 +215,10 @@ type UpdateInput struct {
 	Title       *string
 	Description *string
 	Visibility  *string
+	// SetChannel says ChannelID is meant: true with a nil ChannelID unlinks the
+	// playlist from its channel; false leaves the link untouched.
+	SetChannel bool
+	ChannelID  *uuid.UUID
 }
 
 // Update changes a playlist's mutable fields. Only the owner may update; a
@@ -179,11 +231,18 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 	if p.OwnerID != ownerID {
 		return sqlcgen.Playlist{}, ErrForbidden
 	}
+	if in.SetChannel && in.ChannelID != nil {
+		if err := s.checkChannel(ctx, ownerID, *in.ChannelID); err != nil {
+			return sqlcgen.Playlist{}, err
+		}
+	}
 	updated, err := s.repo.UpdatePlaylist(ctx, sqlcgen.UpdatePlaylistParams{
 		ID:          id,
 		Title:       pgconv.TrimPtr(in.Title),
 		Description: pgconv.TrimPtr(in.Description),
 		Visibility:  in.Visibility,
+		SetChannel:  in.SetChannel,
+		ChannelID:   pgconv.UUIDPtr(in.ChannelID),
 	})
 	if err != nil {
 		return updated, err

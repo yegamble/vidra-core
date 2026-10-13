@@ -62,6 +62,34 @@ func (q *Queries) CountPlaylistItems(ctx context.Context, playlistID uuid.UUID) 
 	return column_1, err
 }
 
+const countPlaylistsByChannel = `-- name: CountPlaylistsByChannel :one
+SELECT count(*)::bigint FROM playlists p
+WHERE p.channel_id = $1::uuid
+  AND (p.visibility = 'public' OR p.owner_id = $2)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = p.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = p.owner_id
+  )
+`
+
+type CountPlaylistsByChannelParams struct {
+	ChannelID uuid.UUID   `json:"channel_id"`
+	ViewerID  pgtype.UUID `json:"viewer_id"`
+}
+
+// How many rows ListPlaylistsByChannel would return, ignoring pagination. The
+// visibility predicate must stay identical to it.
+func (q *Queries) CountPlaylistsByChannel(ctx context.Context, arg CountPlaylistsByChannelParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countPlaylistsByChannel, arg.ChannelID, arg.ViewerID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countPlaylistsByOwner = `-- name: CountPlaylistsByOwner :one
 SELECT count(*)::bigint FROM playlists p WHERE p.owner_id = $1
 `
@@ -75,16 +103,17 @@ func (q *Queries) CountPlaylistsByOwner(ctx context.Context, ownerID uuid.UUID) 
 }
 
 const createPlaylist = `-- name: CreatePlaylist :one
-INSERT INTO playlists (owner_id, title, description, visibility)
-VALUES ($1, $2, $3, $4)
-RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext
+INSERT INTO playlists (owner_id, title, description, visibility, channel_id)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext, channel_id
 `
 
 type CreatePlaylistParams struct {
-	OwnerID     uuid.UUID `json:"owner_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Visibility  string    `json:"visibility"`
+	OwnerID     uuid.UUID   `json:"owner_id"`
+	Title       string      `json:"title"`
+	Description string      `json:"description"`
+	Visibility  string      `json:"visibility"`
+	ChannelID   pgtype.UUID `json:"channel_id"`
 }
 
 func (q *Queries) CreatePlaylist(ctx context.Context, arg CreatePlaylistParams) (Playlist, error) {
@@ -93,6 +122,7 @@ func (q *Queries) CreatePlaylist(ctx context.Context, arg CreatePlaylistParams) 
 		arg.Title,
 		arg.Description,
 		arg.Visibility,
+		arg.ChannelID,
 	)
 	var i Playlist
 	err := row.Scan(
@@ -104,6 +134,7 @@ func (q *Queries) CreatePlaylist(ctx context.Context, arg CreatePlaylistParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ThumbnailExt,
+		&i.ChannelID,
 	)
 	return i, err
 }
@@ -118,7 +149,7 @@ func (q *Queries) DeletePlaylist(ctx context.Context, id uuid.UUID) error {
 }
 
 const getPlaylistByID = `-- name: GetPlaylistByID :one
-SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.created_at, p.updated_at,
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.channel_id, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
         WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
@@ -127,15 +158,16 @@ WHERE p.id = $1
 `
 
 type GetPlaylistByIDRow struct {
-	ID           uuid.UUID `json:"id"`
-	OwnerID      uuid.UUID `json:"owner_id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Visibility   string    `json:"visibility"`
-	ThumbnailExt *string   `json:"thumbnail_ext"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	VideoCount   int64     `json:"video_count"`
+	ID           uuid.UUID   `json:"id"`
+	OwnerID      uuid.UUID   `json:"owner_id"`
+	Title        string      `json:"title"`
+	Description  string      `json:"description"`
+	Visibility   string      `json:"visibility"`
+	ThumbnailExt *string     `json:"thumbnail_ext"`
+	ChannelID    pgtype.UUID `json:"channel_id"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+	VideoCount   int64       `json:"video_count"`
 }
 
 // A single playlist with its public+published video count (matches what
@@ -150,6 +182,7 @@ func (q *Queries) GetPlaylistByID(ctx context.Context, id uuid.UUID) (GetPlaylis
 		&i.Description,
 		&i.Visibility,
 		&i.ThumbnailExt,
+		&i.ChannelID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.VideoCount,
@@ -268,8 +301,90 @@ func (q *Queries) ListPlaylistItems(ctx context.Context, arg ListPlaylistItemsPa
 	return items, nil
 }
 
+const listPlaylistsByChannel = `-- name: ListPlaylistsByChannel :many
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.channel_id, p.created_at, p.updated_at,
+       (SELECT count(*) FROM playlist_items pi
+        JOIN videos v ON v.id = pi.video_id
+        WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
+FROM playlists p
+WHERE p.channel_id = $1::uuid
+  AND (p.visibility = 'public' OR p.owner_id = $2)
+  -- The per-viewer mute/block clause the channel-videos list carries (A16
+  -- ruling): a viewer who muted or blocked the owner sees none of their playlists.
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = p.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = p.owner_id
+  )
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT $4 OFFSET $3
+`
+
+type ListPlaylistsByChannelParams struct {
+	ChannelID    uuid.UUID   `json:"channel_id"`
+	ViewerID     pgtype.UUID `json:"viewer_id"`
+	ResultOffset int32       `json:"result_offset"`
+	ResultLimit  int32       `json:"result_limit"`
+}
+
+type ListPlaylistsByChannelRow struct {
+	ID           uuid.UUID   `json:"id"`
+	OwnerID      uuid.UUID   `json:"owner_id"`
+	Title        string      `json:"title"`
+	Description  string      `json:"description"`
+	Visibility   string      `json:"visibility"`
+	ThumbnailExt *string     `json:"thumbnail_ext"`
+	ChannelID    pgtype.UUID `json:"channel_id"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+	VideoCount   int64       `json:"video_count"`
+}
+
+// A channel's playlists, newest first. Visibility is the playlist privacy rule:
+// everyone sees 'public'; unlisted and private are the owner's alone (unlisted
+// means "reachable by link", never "listed on a tab"). viewer_id is NULL for an
+// anonymous caller, which matches no owner. Twin of CountPlaylistsByChannel.
+func (q *Queries) ListPlaylistsByChannel(ctx context.Context, arg ListPlaylistsByChannelParams) ([]ListPlaylistsByChannelRow, error) {
+	rows, err := q.db.Query(ctx, listPlaylistsByChannel,
+		arg.ChannelID,
+		arg.ViewerID,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPlaylistsByChannelRow
+	for rows.Next() {
+		var i ListPlaylistsByChannelRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Title,
+			&i.Description,
+			&i.Visibility,
+			&i.ThumbnailExt,
+			&i.ChannelID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.VideoCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPlaylistsByOwner = `-- name: ListPlaylistsByOwner :many
-SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.created_at, p.updated_at,
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.channel_id, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
         WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
@@ -286,15 +401,16 @@ type ListPlaylistsByOwnerParams struct {
 }
 
 type ListPlaylistsByOwnerRow struct {
-	ID           uuid.UUID `json:"id"`
-	OwnerID      uuid.UUID `json:"owner_id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Visibility   string    `json:"visibility"`
-	ThumbnailExt *string   `json:"thumbnail_ext"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	VideoCount   int64     `json:"video_count"`
+	ID           uuid.UUID   `json:"id"`
+	OwnerID      uuid.UUID   `json:"owner_id"`
+	Title        string      `json:"title"`
+	Description  string      `json:"description"`
+	Visibility   string      `json:"visibility"`
+	ThumbnailExt *string     `json:"thumbnail_ext"`
+	ChannelID    pgtype.UUID `json:"channel_id"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+	VideoCount   int64       `json:"video_count"`
 }
 
 // The user's playlists, newest first, each with its public+published video count.
@@ -314,6 +430,7 @@ func (q *Queries) ListPlaylistsByOwner(ctx context.Context, arg ListPlaylistsByO
 			&i.Description,
 			&i.Visibility,
 			&i.ThumbnailExt,
+			&i.ChannelID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.VideoCount,
@@ -329,7 +446,7 @@ func (q *Queries) ListPlaylistsByOwner(ctx context.Context, arg ListPlaylistsByO
 }
 
 const listPlaylistsByOwnerForExport = `-- name: ListPlaylistsByOwnerForExport :many
-SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.created_at, p.updated_at,
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.channel_id, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
         WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
@@ -339,15 +456,16 @@ ORDER BY p.created_at DESC, p.id DESC
 `
 
 type ListPlaylistsByOwnerForExportRow struct {
-	ID           uuid.UUID `json:"id"`
-	OwnerID      uuid.UUID `json:"owner_id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Visibility   string    `json:"visibility"`
-	ThumbnailExt *string   `json:"thumbnail_ext"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	VideoCount   int64     `json:"video_count"`
+	ID           uuid.UUID   `json:"id"`
+	OwnerID      uuid.UUID   `json:"owner_id"`
+	Title        string      `json:"title"`
+	Description  string      `json:"description"`
+	Visibility   string      `json:"visibility"`
+	ThumbnailExt *string     `json:"thumbnail_ext"`
+	ChannelID    pgtype.UUID `json:"channel_id"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+	VideoCount   int64       `json:"video_count"`
 }
 
 // Every playlist a user owns, UNPAGINATED. The account data export is the one
@@ -370,6 +488,7 @@ func (q *Queries) ListPlaylistsByOwnerForExport(ctx context.Context, ownerID uui
 			&i.Description,
 			&i.Visibility,
 			&i.ThumbnailExt,
+			&i.ChannelID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.VideoCount,
@@ -522,16 +641,22 @@ UPDATE playlists
 SET title       = COALESCE($1, title),
     description = COALESCE($2, description),
     visibility  = COALESCE($3, visibility),
+    -- COALESCE cannot express "clear to NULL", so the channel link has its own
+    -- switch: set_channel=false leaves it alone; true writes channel_id as given
+    -- (NULL unlinks). Ownership of the target is checked by the service.
+    channel_id  = CASE WHEN $4::bool THEN $5 ELSE channel_id END,
     updated_at  = now()
-WHERE id = $4
-RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext
+WHERE id = $6
+RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext, channel_id
 `
 
 type UpdatePlaylistParams struct {
-	Title       *string   `json:"title"`
-	Description *string   `json:"description"`
-	Visibility  *string   `json:"visibility"`
-	ID          uuid.UUID `json:"id"`
+	Title       *string     `json:"title"`
+	Description *string     `json:"description"`
+	Visibility  *string     `json:"visibility"`
+	SetChannel  bool        `json:"set_channel"`
+	ChannelID   pgtype.UUID `json:"channel_id"`
+	ID          uuid.UUID   `json:"id"`
 }
 
 // Partial update: NULL args leave the column unchanged (COALESCE).
@@ -540,6 +665,8 @@ func (q *Queries) UpdatePlaylist(ctx context.Context, arg UpdatePlaylistParams) 
 		arg.Title,
 		arg.Description,
 		arg.Visibility,
+		arg.SetChannel,
+		arg.ChannelID,
 		arg.ID,
 	)
 	var i Playlist
@@ -552,6 +679,7 @@ func (q *Queries) UpdatePlaylist(ctx context.Context, arg UpdatePlaylistParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ThumbnailExt,
+		&i.ChannelID,
 	)
 	return i, err
 }

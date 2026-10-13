@@ -741,14 +741,15 @@ type PipelineRun struct {
 }
 
 type Playlist struct {
-	ID           uuid.UUID `json:"id"`
-	OwnerID      uuid.UUID `json:"owner_id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Visibility   string    `json:"visibility"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	ThumbnailExt *string   `json:"thumbnail_ext"`
+	ID           uuid.UUID   `json:"id"`
+	OwnerID      uuid.UUID   `json:"owner_id"`
+	Title        string      `json:"title"`
+	Description  string      `json:"description"`
+	Visibility   string      `json:"visibility"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+	ThumbnailExt *string     `json:"thumbnail_ext"`
+	ChannelID    pgtype.UUID `json:"channel_id"`
 }
 
 type PlaylistItem struct {
@@ -1255,6 +1256,17 @@ type VideoMetadatum struct {
 	Width           *int32    `json:"width"`
 	Height          *int32    `json:"height"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type VideoOwnershipChange struct {
+	ID          uuid.UUID `json:"id"`
+	VideoID     uuid.UUID `json:"video_id"`
+	InitiatorID uuid.UUID `json:"initiator_id"`
+	NextOwnerID uuid.UUID `json:"next_owner_id"`
+	VideoTitle  string    `json:"video_title"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type VideoPassword struct {
