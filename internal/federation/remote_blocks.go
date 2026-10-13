@@ -211,18 +211,47 @@ const rfc3339 = "2006-01-02T15:04:05Z07:00"
 // check that is false for essentially every activity), and only then does the
 // per-owner question run. Blocks are rare; inbound activities are not.
 func (s *Service) remoteActorBlockedBy(ctx context.Context, ownerID uuid.UUID, actorURL string) (bool, error) {
+	return remoteActorBlockedBy(ctx, s.repo, ownerID, actorURL)
+}
+
+// BlockReader is the read side of every block that can refuse a remote actor:
+// the instance blocklist, the admin's instance-wide actor block, and one local
+// user's own block. *sqlcgen.Queries satisfies it.
+type BlockReader interface {
+	IsInstanceBlocked(ctx context.Context, domain string) (bool, error)
+	IsRemoteActorBlockedInstanceWide(ctx context.Context, actorURL string) (bool, error)
+	IsRemoteActorBlockedByAnyone(ctx context.Context, remoteActorURL string) (bool, error)
+	IsRemoteActorBlockedBy(ctx context.Context, arg sqlcgen.IsRemoteActorBlockedByParams) (bool, error)
+}
+
+// RemoteFollowerRefused reports whether this instance would refuse actorURL as
+// a follower of a channel ownerID owns: its instance is blocked, the admin
+// blocks the actor, or the owner does. It is the same decision the inbox makes
+// for a live Follow (HandleInbox's domain gate, then handleFollow's actor gate),
+// exported so a follower arriving any other way — the PeerTube importer — is
+// held to it instead of a copy of it.
+func RemoteFollowerRefused(ctx context.Context, r BlockReader, ownerID uuid.UUID, actorURL string) (bool, error) {
+	if host := hostOf(actorURL); host != "" {
+		if blocked, err := r.IsInstanceBlocked(ctx, host); err != nil || blocked {
+			return blocked, err
+		}
+	}
+	return remoteActorBlockedBy(ctx, r, ownerID, actorURL)
+}
+
+func remoteActorBlockedBy(ctx context.Context, r BlockReader, ownerID uuid.UUID, actorURL string) (bool, error) {
 	// The ADMIN block first: it is instance-wide, so it needs no per-owner
 	// question and it answers for every local user at once. An account blocked
 	// by the instance cannot reach anybody's content here.
-	admin, err := s.repo.IsRemoteActorBlockedInstanceWide(ctx, actorURL)
+	admin, err := r.IsRemoteActorBlockedInstanceWide(ctx, actorURL)
 	if err != nil || admin {
 		return admin, err
 	}
-	anyone, err := s.repo.IsRemoteActorBlockedByAnyone(ctx, actorURL)
+	anyone, err := r.IsRemoteActorBlockedByAnyone(ctx, actorURL)
 	if err != nil || !anyone {
 		return false, err
 	}
-	return s.repo.IsRemoteActorBlockedBy(ctx, sqlcgen.IsRemoteActorBlockedByParams{
+	return r.IsRemoteActorBlockedBy(ctx, sqlcgen.IsRemoteActorBlockedByParams{
 		BlockerID: ownerID, ActorUrl: actorURL,
 	})
 }

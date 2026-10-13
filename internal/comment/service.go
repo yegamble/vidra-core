@@ -73,6 +73,9 @@ type Repository interface {
 	// ApproveComment releases a held comment (0161); pgx.ErrNoRows when the row
 	// is missing or no longer held.
 	ApproveComment(ctx context.Context, arg sqlcgen.ApproveCommentParams) (sqlcgen.Comment, error)
+	// The managers' review queue (0161): comments on every video a user manages.
+	ListManagedVideoComments(ctx context.Context, arg sqlcgen.ListManagedVideoCommentsParams) ([]sqlcgen.ListManagedVideoCommentsRow, error)
+	CountManagedVideoComments(ctx context.Context, arg sqlcgen.CountManagedVideoCommentsParams) (int64, error)
 }
 
 // Service holds the comment application logic.
@@ -498,6 +501,42 @@ func (s *Service) applyHearted(ctx context.Context, row sqlcgen.GetCommentWithMe
 	}
 	row.Hearted = hearted
 	return withAuthorFromMeta(row), nil
+}
+
+// ManagedComment is a review-queue entry (0161): the comment as the thread
+// renders it, plus the title of the video it is on.
+type ManagedComment struct {
+	WithAuthor
+	VideoTitle string
+}
+
+// ListForManager returns the comments on every video userID manages (owned or
+// edited channels), newest first; held filters (nil = all). No mute filtering:
+// a held comment hidden from its only reviewers would wait forever.
+func (s *Service) ListForManager(ctx context.Context, userID uuid.UUID, held *bool, limit, offset int32) ([]ManagedComment, int64, error) {
+	rows, err := s.repo.ListManagedVideoComments(ctx, sqlcgen.ListManagedVideoCommentsParams{
+		UserID: userID, Held: held, ResultLimit: limit, ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountManagedVideoComments(ctx, sqlcgen.CountManagedVideoCommentsParams{UserID: userID, Held: held})
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]ManagedComment, 0, len(rows))
+	for _, r := range rows {
+		// The queue row is the single-comment projection plus video_title.
+		wa := withAuthorFromMeta(sqlcgen.GetCommentWithMetaRow{
+			ID: r.ID, VideoID: r.VideoID, UserID: r.UserID, Body: r.Body, ParentID: r.ParentID,
+			CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, DeletedAt: r.DeletedAt, Hearted: r.Hearted,
+			HeldForReview: r.HeldForReview, Pinned: r.Pinned, AuthorUsername: r.AuthorUsername,
+			AuthorDisplayName: r.AuthorDisplayName, RemoteActorUrl: r.RemoteActorUrl,
+			RemoteAuthorName: r.RemoteAuthorName, AuthorDomain: r.AuthorDomain,
+		})
+		out = append(out, ManagedComment{WithAuthor: wa, VideoTitle: r.VideoTitle})
+	}
+	return out, total, nil
 }
 
 // AdminComment is a comment as seen in the admin/moderator comments overview:
