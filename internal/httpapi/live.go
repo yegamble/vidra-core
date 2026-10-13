@@ -15,6 +15,27 @@ import (
 
 const maxLiveTitleLen = 200
 
+// maxLiveScheduleHorizon bounds how far ahead a live may be announced. A year is
+// "sane" for a creator planning a premiere and short enough that a typo'd year
+// (2062) is caught instead of publishing a countdown nobody will ever see.
+const maxLiveScheduleHorizon = 366 * 24 * time.Hour
+
+// validateLiveSchedule checks a planned start: nil (unscheduled) is always fine;
+// otherwise it must be strictly in the future and within the horizon. The time
+// is only ANNOUNCED — nothing ever starts a stream because of it.
+func validateLiveSchedule(at *time.Time, now time.Time) []FieldError {
+	if at == nil {
+		return nil
+	}
+	if !at.After(now) {
+		return []FieldError{{Field: "scheduled_start_at", Message: "must be in the future"}}
+	}
+	if at.After(now.Add(maxLiveScheduleHorizon)) {
+		return []FieldError{{Field: "scheduled_start_at", Message: "must be within one year from now"}}
+	}
+	return nil
+}
+
 // createLiveStreamRequest is the POST /channels/{handle}/live body.
 // ReplayEnabled is a pointer so an omitted field is distinguishable from an
 // explicit false: when omitted, the handler seeds the instance default
@@ -25,6 +46,9 @@ type createLiveStreamRequest struct {
 	Privacy       string `json:"privacy"`
 	Permanent     bool   `json:"permanent"`
 	ReplayEnabled *bool  `json:"replay_enabled"`
+	// ScheduledStartAt is the optional planned start (RFC 3339). Announcement
+	// only; validated in the handler against the clock.
+	ScheduledStartAt *time.Time `json:"scheduled_start_at"`
 }
 
 func (r createLiveStreamRequest) Validate() []FieldError {
@@ -56,6 +80,9 @@ type updateLiveStreamRequest struct {
 	Privacy       string `json:"privacy"`
 	Permanent     bool   `json:"permanent"`
 	ReplayEnabled bool   `json:"replay_enabled"`
+	// ScheduledStartAt REPLACES the planned start, like every other field of
+	// this full-replace body: omitted or null clears it.
+	ScheduledStartAt *time.Time `json:"scheduled_start_at"`
 }
 
 func (r updateLiveStreamRequest) Validate() []FieldError {
@@ -65,15 +92,19 @@ func (r updateLiveStreamRequest) Validate() []FieldError {
 // liveStreamView is the public projection of a live stream. The stream key is
 // NEVER included here — it is returned only by create/regenerate.
 type liveStreamView struct {
-	ID                 string     `json:"id"`
-	ChannelID          string     `json:"channel_id"`
-	Title              string     `json:"title"`
-	Description        string     `json:"description"`
-	Privacy            string     `json:"privacy"`
-	State              string     `json:"state"`
-	Permanent          bool       `json:"permanent"`
-	ReplayEnabled      bool       `json:"replay_enabled"`
-	StartedAt          *time.Time `json:"started_at,omitempty"`
+	ID            string     `json:"id"`
+	ChannelID     string     `json:"channel_id"`
+	Title         string     `json:"title"`
+	Description   string     `json:"description"`
+	Privacy       string     `json:"privacy"`
+	State         string     `json:"state"`
+	Permanent     bool       `json:"permanent"`
+	ReplayEnabled bool       `json:"replay_enabled"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	// ScheduledStartAt is the planned start, present only while the stream is
+	// not live (going live consumes it). Announcement metadata, public to
+	// whoever may already read this stream.
+	ScheduledStartAt   *time.Time `json:"scheduled_start_at,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 	ChannelHandle      string     `json:"channel_handle,omitempty"`
@@ -116,7 +147,7 @@ func (s *Server) newLiveStreamView(c echo.Context, st live.Stream) liveStreamVie
 	v := liveStreamView{
 		ID: st.ID.String(), ChannelID: st.ChannelID.String(), Title: st.Title,
 		Description: st.Description, Privacy: st.Privacy, State: st.State, Permanent: st.Permanent,
-		ReplayEnabled: st.ReplayEnabled, StartedAt: st.StartedAt,
+		ReplayEnabled: st.ReplayEnabled, StartedAt: st.StartedAt, ScheduledStartAt: st.ScheduledStartAt,
 		CreatedAt: st.CreatedAt, UpdatedAt: st.UpdatedAt,
 		ChannelHandle: st.ChannelHandle, ChannelDisplayName: st.ChannelDisplayName,
 	}
@@ -249,17 +280,64 @@ func (s *Server) handleListLivePublicStreams(c echo.Context) error {
 	return c.JSON(http.StatusOK, liveStreamPublicListResponse{LiveStreams: views, pageMeta: page.meta(total)})
 }
 
+// liveUpcomingCardView is one entry of the public "Upcoming" listing.
+type liveUpcomingCardView struct {
+	ID                 string    `json:"id"`
+	Title              string    `json:"title"`
+	Description        string    `json:"description,omitempty"`
+	ChannelHandle      string    `json:"channel_handle"`
+	ChannelDisplayName string    `json:"channel_display_name"`
+	ScheduledStartAt   time.Time `json:"scheduled_start_at"`
+}
+
+type liveUpcomingListResponse struct {
+	LiveStreams []liveUpcomingCardView `json:"live_streams"`
+	pageMeta
+}
+
+// handleListUpcomingLiveStreams lists PUBLIC, not-yet-live streams that carry a
+// planned start, soonest first; ?channel=<handle> narrows it to one channel for
+// the channel page. Public read (optionalAuth) with the "Live now" rail's
+// visibility: unlisted/private never appear and a muted or blocked owner drops
+// out for the muter. Like its sibling it is not gated on the live toggle.
+func (s *Server) handleListUpcomingLiveStreams(c echo.Context) error {
+	page := parsePage(c, defaultLivePublicLimit, maxLivePublicLimit)
+	// With live switched off an announcement is a promise nobody can keep, so the
+	// list is empty rather than 403 (it is a public read, like "Live now").
+	if !s.liveEnabled() {
+		return c.JSON(http.StatusOK, liveUpcomingListResponse{LiveStreams: []liveUpcomingCardView{}, pageMeta: page.meta(0)})
+	}
+	viewerID, _, viewerAuthed := principalFromContext(c)
+	cards, total, err := s.livesvc.ListUpcoming(c.Request().Context(), viewerID, viewerAuthed,
+		strings.TrimSpace(c.QueryParam("channel")), page.Limit, page.Offset)
+	if err != nil {
+		return err
+	}
+	views := make([]liveUpcomingCardView, 0, len(cards))
+	for _, cd := range cards {
+		views = append(views, liveUpcomingCardView{
+			ID: cd.ID.String(), Title: cd.Title, Description: cd.Description,
+			ChannelHandle: cd.ChannelHandle, ChannelDisplayName: cd.ChannelDisplayName,
+			ScheduledStartAt: cd.ScheduledStartAt,
+		})
+	}
+	return c.JSON(http.StatusOK, liveUpcomingListResponse{LiveStreams: views, pageMeta: page.meta(total)})
+}
+
 // liveStreamKeyView carries the raw stream key + ingest URL, returned only on
 // create and key regeneration (the key is shown exactly once).
 type liveStreamKeyView struct {
 	StreamKey string `json:"stream_key"`
 	RTMPURL   string `json:"rtmp_url,omitempty"`
+	// RTMPSURL is the TLS ingest URL, present only when LIVE_RTMPS_URL is set.
+	RTMPSURL string `json:"rtmps_url,omitempty"`
 }
 
 type createLiveStreamResponse struct {
 	LiveStream liveStreamView `json:"live_stream"`
 	StreamKey  string         `json:"stream_key"`
 	RTMPURL    string         `json:"rtmp_url,omitempty"`
+	RTMPSURL   string         `json:"rtmps_url,omitempty"`
 }
 
 type liveStreamListResponse struct {
@@ -290,6 +368,9 @@ func (s *Server) handleCreateLiveStream(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
+	if fields := validateLiveSchedule(in.ScheduledStartAt, time.Now()); len(fields) > 0 {
+		return &ValidationError{Fields: fields}
+	}
 	ctx := c.Request().Context()
 	ch, err := s.channelsvc.GetByHandle(ctx, c.Param("handle"))
 	if err != nil {
@@ -309,11 +390,12 @@ func (s *Server) handleCreateLiveStream(c echo.Context) error {
 		replayEnabled = *in.ReplayEnabled
 	}
 	stream, key, err := s.livesvc.Create(ctx, ch.ID, live.CreateInput{
-		Title:         strings.TrimSpace(in.Title),
-		Description:   strings.TrimSpace(in.Description),
-		Privacy:       in.Privacy,
-		Permanent:     in.Permanent,
-		ReplayEnabled: replayEnabled,
+		Title:            strings.TrimSpace(in.Title),
+		Description:      strings.TrimSpace(in.Description),
+		Privacy:          in.Privacy,
+		Permanent:        in.Permanent,
+		ReplayEnabled:    replayEnabled,
+		ScheduledStartAt: in.ScheduledStartAt,
 	})
 	if err != nil {
 		return err
@@ -322,6 +404,7 @@ func (s *Server) handleCreateLiveStream(c echo.Context) error {
 		LiveStream: s.newLiveStreamView(c, stream),
 		StreamKey:  key,
 		RTMPURL:    s.cfg.LiveRTMPURL,
+		RTMPSURL:   s.cfg.LiveRTMPSURL,
 	})
 }
 
@@ -347,12 +430,27 @@ func (s *Server) handleUpdateLiveStream(c echo.Context) error {
 	if err != nil || (stream.OwnerID != userID && !s.canManageChannelContent(ctx, userID, stream.ChannelID)) {
 		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 	}
+	// A schedule the client merely echoes back unchanged is not re-validated:
+	// the full-replace body means an edit of the TITLE resends the old planned
+	// start, and that must not start failing 422 the moment the time passes.
+	// Anything new or changed is held to the future/horizon rule, and a stream
+	// that is already on air cannot be announced.
+	if in.ScheduledStartAt != nil && !(stream.ScheduledStartAt != nil && stream.ScheduledStartAt.Equal(*in.ScheduledStartAt)) {
+		fields := validateLiveSchedule(in.ScheduledStartAt, time.Now())
+		if len(fields) == 0 && stream.State == live.StateLive {
+			fields = []FieldError{{Field: "scheduled_start_at", Message: "cannot be set while the stream is live"}}
+		}
+		if len(fields) > 0 {
+			return &ValidationError{Fields: fields}
+		}
+	}
 	updated, err := s.livesvc.Update(ctx, id, live.UpdateInput{
-		Title:         strings.TrimSpace(in.Title),
-		Description:   strings.TrimSpace(in.Description),
-		Privacy:       in.Privacy,
-		Permanent:     in.Permanent,
-		ReplayEnabled: in.ReplayEnabled,
+		Title:            strings.TrimSpace(in.Title),
+		Description:      strings.TrimSpace(in.Description),
+		Privacy:          in.Privacy,
+		Permanent:        in.Permanent,
+		ReplayEnabled:    in.ReplayEnabled,
+		ScheduledStartAt: in.ScheduledStartAt,
 	})
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
@@ -429,7 +527,7 @@ func (s *Server) handleRegenerateLiveStreamKey(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, liveStreamKeyView{StreamKey: key, RTMPURL: s.cfg.LiveRTMPURL})
+	return c.JSON(http.StatusOK, liveStreamKeyView{StreamKey: key, RTMPURL: s.cfg.LiveRTMPURL, RTMPSURL: s.cfg.LiveRTMPSURL})
 }
 
 // liveIngestRequest is the JSON body of the internal RTMP ingest hooks — the

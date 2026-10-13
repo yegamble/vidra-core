@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -18,11 +17,6 @@ const (
 	maxFlagReasonLen = 2000 // the local report form's limit; longer is truncated
 	maxFlagIDLen     = 2048 // bytes; a longer Flag id is refused before any insert
 )
-
-// peertubeAbuseReasons are PeerTube's predefined reasons (Flag tag names); vidra
-// has no column for them, so known ones are prefixed into the reason.
-var peertubeAbuseReasons = []string{"violentOrRepulsive", "hatefulOrAbusive", "spamOrMisleading",
-	"privacy", "rights", "serverRules", "thumbnails", "captions"}
 
 // WithFlagReporting files inbound Flags as moderation reports and fans out
 // new_report to staff, as for a local report. Unset = Flags are ignored.
@@ -64,7 +58,7 @@ func (s *Service) handleFlag(ctx context.Context, act inboxActivity, signerActor
 	if s.fileFlagReport == nil {
 		return nil
 	}
-	reason := flagReason(act.Content, act.Tag)
+	reason, predefined := flagReason(act.Content, act.Tag)
 	for _, uri := range flagObjectIDs(act.Object) {
 		targetType, targetID, ok, err := s.resolveFlagTarget(ctx, uri)
 		if err != nil {
@@ -74,7 +68,7 @@ func (s *Service) handleFlag(ctx context.Context, act inboxActivity, signerActor
 		}
 		reportID, err := s.fileFlagReport(ctx, moderation.RemoteReport{
 			FlagActivityID: act.ID, ActorURL: signerActorURL, Domain: hostOf(signerActorURL),
-			TargetType: targetType, TargetID: targetID, Reason: reason,
+			TargetType: targetType, TargetID: targetID, Reason: reason, PredefinedReasons: predefined,
 		})
 		if errors.Is(err, moderation.ErrInvalidTarget) {
 			continue
@@ -134,23 +128,24 @@ func flagObjectIDs(raw json.RawMessage) []string {
 }
 
 // flagReason is the content as plain text, prefixed with the known PeerTube
-// predefined reasons, truncated to maxFlagReasonLen.
-func flagReason(contentRaw, tagRaw json.RawMessage) string {
+// predefined reasons (unknown tags ignored), truncated to maxFlagReasonLen; the
+// reasons are returned too, for the structured column (0170). The prefix stays
+// so a client that predates the column still sees them.
+func flagReason(contentRaw, tagRaw json.RawMessage) (string, []string) {
 	var content string
 	_ = json.Unmarshal(contentRaw, &content)
 	var tags []struct {
 		Name string `json:"name"`
 	}
 	_ = json.Unmarshal(tagRaw, &tags)
-	var reasons []string
+	names := make([]string, 0, len(tags))
 	for _, t := range tags {
-		if slices.Contains(peertubeAbuseReasons, t.Name) && !slices.Contains(reasons, t.Name) {
-			reasons = append(reasons, t.Name)
-		}
+		names = append(names, t.Name)
 	}
+	reasons := moderation.NormalizeReasons(names)
 	reason := stripHTMLTags(content)
 	if len(reasons) > 0 {
 		reason = strings.TrimSpace("[" + strings.Join(reasons, ", ") + "] " + reason)
 	}
-	return truncate(reason, maxFlagReasonLen)
+	return truncate(reason, maxFlagReasonLen), reasons
 }

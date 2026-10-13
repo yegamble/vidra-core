@@ -539,6 +539,14 @@ type Config struct {
 	// ingest is provisioned; the create response then omits it.
 	LiveRTMPURL string
 
+	// LiveRTMPSURL is the OPTIONAL TLS twin of LiveRTMPURL (rtmps://host:1936/live),
+	// served by a TLS-terminating front the operator runs ahead of the RTMP
+	// ingest (the meta repo's `rtmps` service). Plain RTMP carries the stream
+	// key in cleartext; when this is set the Go-live panel prefers it and keeps
+	// LiveRTMPURL as the fallback. Empty (default) = no RTMPS offered. It does not
+	// gate live: LIVE_RTMP_URL still decides whether live is available.
+	LiveRTMPSURL string
+
 	// LiveIngestSecret is the shared secret the media server (RTMP ingest) presents
 	// on the internal live-ingest start/stop hooks, so only it can flip a stream's
 	// live state. Empty disables the ingest hooks entirely (they 404) — they are
@@ -1266,6 +1274,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		SearchReconcileInterval:                p.Duration("SEARCH_RECONCILE_INTERVAL", 24*time.Hour),
 		SearchHealthInterval:                   p.Duration("SEARCH_HEALTH_INTERVAL", 15*time.Second),
 		LiveRTMPURL:                            liveRTMPURL,
+		LiveRTMPSURL:                           strings.TrimSpace(getEnv("LIVE_RTMPS_URL", "")),
 		LiveIngestSecret:                       getEnv("LIVE_INGEST_SECRET", ""),
 		LiveHLSRoot:                            strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
 		LiveIngestControlURL:                   strings.TrimRight(getEnv("LIVE_INGEST_CONTROL_URL", ""), "/"),

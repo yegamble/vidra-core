@@ -1760,7 +1760,17 @@ func run() error {
 	watchwordsvc := watchword.NewService(db.Queries())
 	opts = append(opts, httpapi.WithWatchWordService(watchwordsvc))
 
-	adminsvc := admin.NewService(db.Queries())
+	adminsvc := admin.NewService(db.Queries(), admin.WithTx(func(ctx context.Context, fn func(admin.Repository) error) error {
+		tx, err := db.Pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := fn(db.Queries().WithTx(tx)); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}))
 	opts = append(opts, httpapi.WithAdminService(adminsvc))
 
 	opts = append(opts, httpapi.WithAuditLog(auditsvc))
@@ -2280,6 +2290,11 @@ func run() error {
 		federation.WithFollowerRequestHook(staffQueueHook("federation_follower_request",
 			func(ctx context.Context, id uuid.UUID) (int64, error) {
 				return notifsvc.NotifyFederationFollowerRequest(ctx, id)
+			})),
+		// ...and so does a remote INSTANCE's follow of this one (0166).
+		federation.WithInstanceFollowerRequestHook(staffQueueHook("federation_instance_follower_request",
+			func(ctx context.Context, _ uuid.UUID) (int64, error) {
+				return notifsvc.NotifyInstanceFollowerRequest(ctx)
 			})),
 		// A remote comment held for approval (0161) pings the video's managers.
 		federation.WithHeldCommentHook(staffQueueHook("comment_held",
@@ -3220,6 +3235,13 @@ func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsv
 			Run: func(ctx context.Context, _ time.Time) (int, error) {
 				return fedsvc.DrainDeliveries(ctx, batch)
 			},
+		}, {
+			// Inbound Moves: re-point local follows of a remote actor that moved,
+			// a bounded batch per pass, until every one is done (0167).
+			FailMsg: "federation move drain failed",
+			DoneMsg: "federation move follows re-pointed",
+			Drain:   true,
+			Run:     func(ctx context.Context, _ time.Time) (int, error) { return fedsvc.DrainMoves(ctx) },
 		}},
 	}.Run(ctx, logger)
 }
