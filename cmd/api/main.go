@@ -3015,6 +3015,7 @@ func run() error {
 					// restart rather than at the end of the run.
 					ReloadSettings: settingssvc.Load,
 					Logger:         logger,
+					PublicBaseURL:  cfg.PublicBaseURL,
 					// Remote followers' inboxes and keys come from their own
 					// actor documents, fetched the way federation fetches them.
 					ResolveRemoteActor: fedsvc.ResolveRemoteActor,

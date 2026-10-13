@@ -681,6 +681,27 @@ func (q *Queries) ImportInsertPlaylistItem(ctx context.Context, arg ImportInsert
 	return err
 }
 
+const importInsertRemoteFollow = `-- name: ImportInsertRemoteFollow :exec
+INSERT INTO remote_follows (channel_id, remote_actor_url, state, follow_activity_url)
+VALUES ($1, $2, 'accepted', $3)
+ON CONFLICT (channel_id, remote_actor_url) DO NOTHING
+`
+
+type ImportInsertRemoteFollowParams struct {
+	ChannelID         uuid.UUID `json:"channel_id"`
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	FollowActivityUrl string    `json:"follow_activity_url"`
+}
+
+// A remote actor's follow the SOURCE had already accepted, carried as accepted.
+// Unlike the inbox's InsertRemoteFollow an existing row wins outright: a follow
+// this instance recorded itself (pending in the approval queue, or accepted
+// with its own Follow id) is newer than the source's and is never rewritten.
+func (q *Queries) ImportInsertRemoteFollow(ctx context.Context, arg ImportInsertRemoteFollowParams) error {
+	_, err := q.db.Exec(ctx, importInsertRemoteFollow, arg.ChannelID, arg.RemoteActorUrl, arg.FollowActivityUrl)
+	return err
+}
+
 const importInsertUser = `-- name: ImportInsertUser :one
 
 INSERT INTO users (username, email, password_hash, role, email_verified, is_active, display_name, created_at, storage_quota_bytes, history_enabled, sensitive_content_policy)

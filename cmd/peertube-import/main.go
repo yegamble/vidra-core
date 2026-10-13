@@ -173,6 +173,7 @@ func main() {
 		CopyConcurrency:     cfg.PeerTubeImportCopyConcurrency,
 		SealKey:             sealKey,
 		SourceAuthoritative: *sourceAuth,
+		PublicBaseURL:       cfg.PublicBaseURL,
 		// Remote followers' inboxes and keys come from their own actor
 		// documents, fetched through federation's SSRF-guarded resolver.
 		ResolveRemoteActor: federation.NewService(db.Queries(),
