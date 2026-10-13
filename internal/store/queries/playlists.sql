@@ -1,12 +1,12 @@
 -- name: CreatePlaylist :one
-INSERT INTO playlists (owner_id, title, description, visibility)
-VALUES ($1, $2, $3, $4)
-RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext;
+INSERT INTO playlists (owner_id, title, description, visibility, channel_id)
+VALUES ($1, $2, $3, $4, sqlc.narg('channel_id'))
+RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext, channel_id;
 
 -- name: GetPlaylistByID :one
 -- A single playlist with its public+published video count (matches what
 -- ListPlaylistItems returns, so the count and the listed items agree).
-SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.created_at, p.updated_at,
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.channel_id, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
         WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
@@ -15,7 +15,7 @@ WHERE p.id = $1;
 
 -- name: ListPlaylistsByOwner :many
 -- The user's playlists, newest first, each with its public+published video count.
-SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.created_at, p.updated_at,
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.channel_id, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
         WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
@@ -28,12 +28,52 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 -- How many rows ListPlaylistsByOwner would return, ignoring pagination.
 SELECT count(*)::bigint FROM playlists p WHERE p.owner_id = sqlc.arg('owner_id');
 
+-- name: ListPlaylistsByChannel :many
+-- A channel's playlists, newest first. Visibility is the playlist privacy rule:
+-- everyone sees 'public'; unlisted and private are the owner's alone (unlisted
+-- means "reachable by link", never "listed on a tab"). viewer_id is NULL for an
+-- anonymous caller, which matches no owner. Twin of CountPlaylistsByChannel.
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.channel_id, p.created_at, p.updated_at,
+       (SELECT count(*) FROM playlist_items pi
+        JOIN videos v ON v.id = pi.video_id
+        WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
+FROM playlists p
+WHERE p.channel_id = sqlc.arg('channel_id')::uuid
+  AND (p.visibility = 'public' OR p.owner_id = sqlc.narg('viewer_id'))
+  -- The per-viewer mute/block clause the channel-videos list carries (A16
+  -- ruling): a viewer who muted or blocked the owner sees none of their playlists.
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = p.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = p.owner_id
+  )
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountPlaylistsByChannel :one
+-- How many rows ListPlaylistsByChannel would return, ignoring pagination. The
+-- visibility predicate must stay identical to it.
+SELECT count(*)::bigint FROM playlists p
+WHERE p.channel_id = sqlc.arg('channel_id')::uuid
+  AND (p.visibility = 'public' OR p.owner_id = sqlc.narg('viewer_id'))
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = p.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = p.owner_id
+  );
+
 -- name: ListPlaylistsByOwnerForExport :many
 -- Every playlist a user owns, UNPAGINATED. The account data export is the one
 -- caller that must see all of them — an archive that silently stopped at the UI
 -- page size would be a broken export, not a large one. Kept separate from
 -- ListPlaylistsByOwner so the UI list can never accidentally lose its LIMIT again.
-SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.created_at, p.updated_at,
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.channel_id, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
         WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
@@ -47,9 +87,13 @@ UPDATE playlists
 SET title       = COALESCE(sqlc.narg('title'), title),
     description = COALESCE(sqlc.narg('description'), description),
     visibility  = COALESCE(sqlc.narg('visibility'), visibility),
+    -- COALESCE cannot express "clear to NULL", so the channel link has its own
+    -- switch: set_channel=false leaves it alone; true writes channel_id as given
+    -- (NULL unlinks). Ownership of the target is checked by the service.
+    channel_id  = CASE WHEN sqlc.arg('set_channel')::bool THEN sqlc.narg('channel_id') ELSE channel_id END,
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext;
+RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext, channel_id;
 
 -- name: SetPlaylistThumbnail :exec
 -- Record the extension of an owner-uploaded playlist cover (blob stored at

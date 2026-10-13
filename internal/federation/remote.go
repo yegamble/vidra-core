@@ -105,6 +105,25 @@ func (s *Service) resolveRemoteActor(ctx context.Context, actorURL string) (sqlc
 	return s.refetchRemoteActor(ctx, actorURL)
 }
 
+// ResolveRemoteActor is resolveRemoteActor for callers outside federation: the
+// cached actor, or one fetched now through the SSRF guard and cached. It is how
+// the PeerTube importer learns a follower's inbox and key — from the actor's own
+// document, never from the source database's copy of it.
+func (s *Service) ResolveRemoteActor(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
+	return s.resolveRemoteActor(ctx, actorURL)
+}
+
+// InboxesOnActorHost reports whether an actor's inbox, and its shared inbox
+// when it names one, live on the actor's own host. It is the rule #361 adds as
+// inboxesOnOwnHost for instance followers; the two are the same check and
+// should be deduplicated once both are on main.
+func InboxesOnActorHost(ra sqlcgen.RemoteActor) bool {
+	if !sameHost(ra.InboxUrl, ra.ActorUrl) {
+		return false
+	}
+	return ra.SharedInboxUrl == nil || *ra.SharedInboxUrl == "" || sameHost(*ra.SharedInboxUrl, ra.ActorUrl)
+}
+
 // refreshRemoteActorKey re-fetches a cached actor and replaces its stored
 // publicKeyPem — the recovery path for key rotation at a peer (A29-F12).
 //

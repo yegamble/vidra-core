@@ -60,6 +60,9 @@ type moderationFakeRepo struct {
 	remoteVideos     remoteVideoFakeRepo
 	remoteBlocks     map[uuid.UUID]modBlockMark
 	remoteBlockOrder []uuid.UUID
+	// messages mirrors report_messages (0163), insertion order; see
+	// report_messages_test.go for the methods over it.
+	messages []modMessageRow
 }
 
 // modBlockMark records a video_blocks row in the fake repo.
