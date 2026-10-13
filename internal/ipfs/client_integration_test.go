@@ -260,3 +260,26 @@ func TestIntegrationPublicVideoRoundTrip(t *testing.T) {
 
 	getViaPublicGatewayEventually(t, publicGateway, res.CID, data)
 }
+
+// TestIntegrationAddDirectoryLateFailureIsAnError proves F2 against a real node:
+// a multipart body cut off after one complete part makes Kubo answer 200, stream
+// both NDJSON lines for what it did read, and only THEN report the failure in the
+// X-Stream-Error trailer. The pre-F2 client returned the last hash as the tree.
+func TestIntegrationAddDirectoryLateFailureIsAnError(t *testing.T) {
+	c, _ := testClient(t)
+	const b = "f2boundary"
+	body := "--" + b + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"hls/a.txt\"\r\nContent-Type: application/octet-stream\r\n\r\nhello\r\n" +
+		"--" + b + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"hls/b.txt\"\r\nContent-Type: application/octet-stream\r\n\r\nworld-truncated"
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	q := url.Values{"pin": {"true"}, "cid-version": {"1"}, "raw-leaves": {"true"}, "wrap-with-directory": {"true"}, "recursive": {"true"}}
+	resp, err := c.do(ctx, "/api/v0/add?"+q.Encode(), strings.NewReader(body), "multipart/form-data; boundary="+b)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	if res, err := readAddResponse(resp, true); err == nil {
+		t.Fatalf("a late stream failure was accepted as success: %+v", res)
+	} else if !strings.Contains(err.Error(), "mid-stream") {
+		t.Fatalf("err = %v, want the mid-stream error", err)
+	}
+}
