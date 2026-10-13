@@ -17,6 +17,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 // Bounded remote-video fields (.ralph/specs/federation-remote-content.md §1):
@@ -44,6 +45,37 @@ type apVideoObject struct {
 	// Sensitive is RAW: PeerTube accepts "true"/"false" strings too
 	// (misc.ts:77-79), and a typed bool would fail the whole object's decode.
 	Sensitive json.RawMessage `json:"sensitive"`
+	// Tag is RAW for the same reason: a malformed `tag` must not fail the
+	// object. Only its SensitiveTag entries are read (PeerTube 7.2 nsfwFlags).
+	Tag json.RawMessage `json:"tag"`
+}
+
+// apSensitiveFlags reads PeerTube's SensitiveTag entries from `tag` and maps
+// them to vidra's flags (explicitSex -> sex). Unknown names are dropped, and a
+// video that is not sensitive carries no flags (PeerTube does the same).
+func apSensitiveFlags(raw json.RawMessage, sensitive bool) []string {
+	if !sensitive {
+		return nil
+	}
+	var tags []struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(raw, &tags) != nil {
+		return nil
+	}
+	var flags []string
+	for _, t := range tags {
+		if t.Type != "SensitiveTag" {
+			continue
+		}
+		name := t.Name
+		if name == "explicitSex" {
+			name = "sex"
+		}
+		flags = append(flags, name)
+	}
+	return video.NormalizeSensitiveFlags(flags)
 }
 
 // apSensitive reads AS `sensitive` the way PeerTube's isBooleanValid does:
@@ -143,11 +175,27 @@ func (s *Service) handleAnnounce(ctx context.Context, act inboxActivity, signerA
 // hasAcceptedFollowEdge consults the ingestion gate (remote-content §2): by
 // default the repository's accepted remote_channel_follows edges; a wired
 // FollowEdgeChecker (tests) overrides it.
+//
+// Following an INSTANCE (0166) asks for everything it announces, whichever of
+// its actors signs the activity — PeerTube's Announce comes from its
+// Application actor, its Update from the video's account — so an accepted
+// instance follow of the actor's host opens the gate too, except for an actor
+// an admin blocked instance-wide.
 func (s *Service) hasAcceptedFollowEdge(ctx context.Context, remoteActorURL string) (bool, error) {
+	var ok bool
+	var err error
 	if s.edges != nil {
-		return s.edges.HasAcceptedFollow(ctx, remoteActorURL)
+		ok, err = s.edges.HasAcceptedFollow(ctx, remoteActorURL)
+	} else {
+		ok, err = s.repo.HasAcceptedRemoteChannelFollow(ctx, remoteActorURL)
 	}
-	return s.repo.HasAcceptedRemoteChannelFollow(ctx, remoteActorURL)
+	if err != nil || ok || s.inst == nil {
+		return ok, err
+	}
+	if blocked, err := s.repo.IsRemoteActorBlockedInstanceWide(ctx, remoteActorURL); err != nil || blocked {
+		return false, err
+	}
+	return s.inst.HasAcceptedInstanceFollowingForHost(ctx, hostOf(remoteActorURL))
 }
 
 // storeRemoteVideo bounds the object's fields, upserts it by object_url
@@ -173,6 +221,7 @@ func (s *Service) storeRemoteVideo(ctx context.Context, ownerActorURL string, ob
 		WatchUrl:        watchURL,
 		StreamUrl:       streamURL,
 		IsSensitive:     apSensitive(obj.Sensitive),
+		SensitiveFlags:  apSensitiveFlags(obj.Tag, apSensitive(obj.Sensitive)),
 	})
 	if err != nil {
 		return sqlcgen.UpsertRemoteVideoRow{}, err

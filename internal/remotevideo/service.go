@@ -67,6 +67,8 @@ type RemoteVideo struct {
 
 	// IsSensitive is the origin's `sensitive` flag (migration 0152).
 	IsSensitive bool
+	// SensitiveFlags are the origin's flags mapped to vidra's (migration 0173).
+	SensitiveFlags []string
 }
 
 // Get returns one remote video by id. Unknown — or hidden because its origin
@@ -92,6 +94,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (RemoteVideo, error) {
 		StreamURL:       row.StreamUrl,
 		HasThumbnail:    row.ThumbnailKey != nil && *row.ThumbnailKey != "",
 		IsSensitive:     row.IsSensitive,
+		SensitiveFlags:  row.SensitiveFlags,
 		FetchedAt:       row.FetchedAt,
 		UpdatedAt:       row.UpdatedAt,
 	}
