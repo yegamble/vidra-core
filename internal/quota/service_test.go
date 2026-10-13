@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -51,6 +52,8 @@ type fakeRepo struct {
 	users  map[uuid.UUID]sqlcgen.User
 	used   map[uuid.UUID]int64
 	events []usageEvent
+	// dailyOverride is the per-user daily quota override table.
+	dailyOverride map[uuid.UUID]int64
 	// eventClock stamps recorded events (RecordUploadUsageEvent has no
 	// timestamp parameter — the DB defaults created_at — so the fake needs its
 	// own stamp source).
@@ -63,6 +66,14 @@ func (f *fakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.User, e
 		return sqlcgen.User{}, errors.New("not found")
 	}
 	return u, nil
+}
+
+func (f *fakeRepo) GetUserDailyQuota(_ context.Context, id uuid.UUID) (int64, error) {
+	v, ok := f.dailyOverride[id]
+	if !ok {
+		return 0, pgx.ErrNoRows
+	}
+	return v, nil
 }
 
 func (f *fakeRepo) SumUserStorageUsage(_ context.Context, ownerID uuid.UUID) (int64, error) {
@@ -307,5 +318,56 @@ func TestCheckFits(t *testing.T) {
 	svc = NewService(repo, 0)
 	if err := svc.CheckFits(ctx, id, 1<<40); err != nil {
 		t.Errorf("unlimited CheckFits = %v, want nil", err)
+	}
+}
+
+// TestPerUserDailyOverride proves the per-user daily quota (PeerTube
+// videoQuotaDaily): an override beats the instance default in both directions
+// (tighter, and 0 = unlimited), no override falls back to the default, the
+// boundary is exact, and IngestRemaining returns the tighter of total/daily.
+func TestPerUserDailyOverride(t *testing.T) {
+	ctx := context.Background()
+	repo, id := seed(nil, 0)
+	svc := NewService(repo, 0, WithDailyBytesFunc(func() int64 { return 100 }))
+
+	if st, _ := svc.Daily(ctx, id); st.QuotaBytes == nil || *st.QuotaBytes != 100 {
+		t.Fatalf("no override: Daily = %+v, want the instance default 100", st)
+	}
+
+	repo.dailyOverride = map[uuid.UUID]int64{id: 40}
+	if err := svc.RecordUpload(ctx, id, 30); err != nil {
+		t.Fatal(err)
+	}
+	st, err := svc.Daily(ctx, id)
+	if err != nil || st.QuotaBytes == nil || *st.QuotaBytes != 40 || st.UsedBytes != 30 {
+		t.Fatalf("override 40: Daily = (%+v, %v), want used=30 quota=40", st, err)
+	}
+	if err := svc.CheckDailyFits(ctx, id, 10); err != nil {
+		t.Errorf("exactly-at-override CheckDailyFits = %v, want nil", err)
+	}
+	if err := svc.CheckDailyFits(ctx, id, 11); !errors.Is(err, ErrDailyExceeded) {
+		t.Errorf("one byte over the override = %v, want ErrDailyExceeded", err)
+	}
+	if rem, limited, _ := svc.IngestRemaining(ctx, id); !limited || rem != 10 {
+		t.Errorf("IngestRemaining = (%d, %v), want (10, true)", rem, limited)
+	}
+
+	repo.dailyOverride[id] = 0 // explicit unlimited beats the instance cap
+	if st, _ := svc.Daily(ctx, id); st.QuotaBytes != nil {
+		t.Errorf("override 0: Daily.QuotaBytes = %v, want nil (unlimited)", st.QuotaBytes)
+	}
+	if err := svc.CheckDailyFits(ctx, id, 1<<40); err != nil {
+		t.Errorf("override 0 CheckDailyFits = %v, want nil", err)
+	}
+	if _, limited, _ := svc.IngestRemaining(ctx, id); limited {
+		t.Error("override 0 with no total quota: IngestRemaining must be unlimited")
+	}
+
+	// Total quota tighter than the daily headroom wins.
+	repo.dailyOverride[id] = 1000
+	total := int64(25)
+	repo.users[id] = sqlcgen.User{ID: id, StorageQuotaBytes: &total}
+	if rem, limited, _ := svc.IngestRemaining(ctx, id); !limited || rem != 25 {
+		t.Errorf("IngestRemaining = (%d, %v), want total headroom (25, true)", rem, limited)
 	}
 }

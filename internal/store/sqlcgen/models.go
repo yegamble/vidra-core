@@ -1205,6 +1205,12 @@ type UserBlock struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type UserDailyQuota struct {
+	UserID          uuid.UUID `json:"user_id"`
+	DailyQuotaBytes int64     `json:"daily_quota_bytes"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type UserFeedToken struct {
 	UserID    uuid.UUID `json:"user_id"`
 	TokenHash string    `json:"token_hash"`

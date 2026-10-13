@@ -17945,7 +17945,8 @@ paths:
         token — so a demoted staff member loses the staff routes at once while
         keeping their ordinary session. storage_quota_bytes is tri-state —
         omitted: unchanged; null: reset to the instance default; a non-negative
-        integer: per-user override (0 = unlimited). Moderators share ONLY ban
+        integer: per-user override (0 = unlimited); daily_quota_bytes is the same
+        tri-state for the per-user rolling-24h upload quota. Moderators share ONLY ban
         and unban (`is_active`, with a required `ban_reason` when banning) and
         only for accounts whose role is `user`: any other field, a staff or
         owner target, or themselves is 403. Banning stores the reason, time
@@ -23187,7 +23188,7 @@ components:
     AdminUser:
       type: object
       description: Admin projection of an account (never includes the password hash).
-      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, created_at, deleted_at, is_owner, mfa_enabled, ban_reason, banned_at, banned_by]
+      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, daily_quota_bytes, daily_used_bytes, created_at, deleted_at, is_owner, mfa_enabled, ban_reason, banned_at, banned_by]
       properties:
         id:
           type: string
@@ -23224,6 +23225,19 @@ components:
             The account's current storage usage: total stored bytes of its
             video files (originals, renditions, thumbnails) across the videos
             owned via its channels.
+        daily_quota_bytes:
+          type: [integer, "null"]
+          format: int64
+          description: >-
+            Per-user rolling-24h upload quota override in bytes. null = the
+            instance default (default_user_daily_quota_bytes) applies; 0 =
+            unlimited for this account.
+        daily_used_bytes:
+          type: integer
+          format: int64
+          description: >-
+            Bytes the account stored in the trailing 24 hours (the upload-usage
+            ledger the daily quota gate sums; deleting a video does not refund it).
         created_at:
           type: string
           format: date-time
@@ -27021,6 +27035,16 @@ components:
             Per-user storage quota in bytes. Omit to leave unchanged; null
             resets the account to the instance default; 0 makes the account
             unlimited. Negative or non-integer values are 422.
+        daily_quota_bytes:
+          type: [integer, "null"]
+          format: int64
+          minimum: 0
+          description: >-
+            Per-user rolling-24h upload quota in bytes (PeerTube
+            videoQuotaDaily), tri-state like storage_quota_bytes: omit to leave
+            unchanged; null resets to the instance default
+            (default_user_daily_quota_bytes); 0 makes the account unlimited.
+            Negative or non-integer values are 422.
     VideoFile:
       type: object
       description: >-
