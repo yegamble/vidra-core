@@ -2029,6 +2029,9 @@ func (s *Server) routes() {
 	if s.playlistsvc != nil {
 		api.POST("/playlists", s.handleCreatePlaylist, s.requireAuth)
 		api.GET("/me/playlists", s.handleListMyPlaylists, s.requireAuth)
+		if s.channelsvc != nil {
+			api.GET("/channels/:handle/playlists", s.handleListChannelPlaylists, s.optionalAuth)
+		}
 		api.GET("/playlists/:id", s.handleGetPlaylist, s.optionalAuth)
 		api.PATCH("/playlists/:id", s.handleUpdatePlaylist, s.requireAuth)
 		api.DELETE("/playlists/:id", s.handleDeletePlaylist, s.requireAuth)
