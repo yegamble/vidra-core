@@ -339,6 +339,9 @@ type Service struct {
 	onMove               []func(ctx context.Context, videoID, fromChannelID uuid.UUID, wasFederated bool)
 	onDelete             []func(context.Context, uuid.UUID, uuid.UUID, bool)
 	onMediaReplaced      []func(context.Context, uuid.UUID, string)
+	// own persists ownership change requests (T21, 0165); nil = the routes
+	// answer ErrOwnershipUnavailable.
+	own OwnershipRepository
 	// uploadUsageRecorder appends a rolling daily-upload-quota ledger event
 	// (config-parity W7) after AttachOriginal stores an original. Best-effort;
 	// nil = no daily accounting.
