@@ -4258,8 +4258,10 @@ paths:
           in: query
           required: false
           description: >-
-            Only videos with this content-language code (see GET /videos/config).
-            Unknown value -> 422.
+            Only videos in this content language (see GET /videos/config), or
+            in ANY of a comma-separated list of up to 10 (`en,fr`; a viewer's
+            preferred_languages from GET /me/content-preferences). Unknown
+            value -> 422.
           schema:
             type: string
         - $ref: "#/components/parameters/PageLimit"
@@ -9327,7 +9329,8 @@ paths:
       description: >-
         The signed-in viewer's per-flag sensitive-content policy overrides,
         layered on their own sensitive_content_policy (else the instance
-        policy). A flag with no entry inherits that base policy. Always 200.
+        policy) and their preferred feed languages. A flag with no entry
+        inherits that base policy. Always 200.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -9346,10 +9349,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
     put:
       operationId: updateContentPreferences
-      summary: Replace the caller's per-flag sensitive policies
+      summary: Update the caller's content preferences
       description: >-
-        Replaces sensitive_flag_policies wholesale. A flag set to an empty
-        string (or omitted) inherits the base policy. Unknown flag or policy
+        Merge-update: sensitive_flag_policies replaces the overrides wholesale
+        (a flag set to an empty string, or omitted, inherits the base policy)
+        and preferred_languages replaces the language list; an omitted field
+        is kept. Unknown flag, policy or language, or more than 10 languages
         -> 400.
       tags: [videos]
       security:
@@ -9359,7 +9364,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ContentPreferences"
+              $ref: "#/components/schemas/UpdateContentPreferencesRequest"
       responses:
         "200":
           description: The saved content preferences.
@@ -21868,16 +21873,45 @@ components:
         Mastodon reads.
     ContentPreferences:
       type: object
-      required: [sensitive_flag_policies]
+      required: [sensitive_flag_policies, preferred_languages]
       properties:
         sensitive_flag_policies:
           type: object
           description: >-
             Per-flag viewer policy overrides. Keys are SensitiveFlag values;
-            each value is hide, warn, blur or display (empty string = inherit).
+            each value is hide, warn, blur or display. A flag with no entry
+            inherits the viewer's base policy.
+          additionalProperties:
+            type: string
+            enum: [hide, warn, blur, display]
+        preferred_languages:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+          description: >-
+            Language ids (GET /videos/config) the viewer wants in browse feeds;
+            [] = no filter. The client passes them as the feed's comma-separated
+            ?language.
+    UpdateContentPreferencesRequest:
+      type: object
+      description: >-
+        A merge: an omitted field keeps its stored value.
+      properties:
+        sensitive_flag_policies:
+          type: object
+          description: >-
+            REPLACES the per-flag overrides. An empty string value (or an
+            omitted flag) inherits the base policy.
           additionalProperties:
             type: string
             enum: [hide, warn, blur, display, ""]
+        preferred_languages:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+          description: REPLACES the language list ([] clears). Unknown id -> 400.
     PlayerSettings:
       type: object
       description: >-
