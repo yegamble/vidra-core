@@ -85,7 +85,7 @@ var (
 	// are intentionally absent.
 	allowedChangeFields = stringSet(
 		"account_enabled", "bypass_quarantine", "comments_enabled",
-		"download_enabled", "email_verified", "imports_enabled", "is_owner",
+		"daily_quota_bytes", "download_enabled", "email_verified", "imports_enabled", "is_owner",
 		"live_enabled", "mfa_enabled", "privacy", "role", "state",
 		"storage_quota_bytes",
 		"uploads_enabled",

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -25,6 +26,33 @@ type fakeRepo struct {
 	peers        int64
 	// mfa mirrors user_mfa: the accounts with a CONFIRMED second factor.
 	mfa map[uuid.UUID]bool
+	// daily mirrors user_daily_quotas; dailyUsed stubs the 24h ledger sum.
+	daily     map[uuid.UUID]int64
+	dailyUsed map[uuid.UUID]int64
+}
+
+func (f *fakeRepo) GetUserDailyQuota(_ context.Context, id uuid.UUID) (int64, error) {
+	if v, ok := f.daily[id]; ok {
+		return v, nil
+	}
+	return 0, pgx.ErrNoRows
+}
+
+func (f *fakeRepo) UpsertUserDailyQuota(_ context.Context, a sqlcgen.UpsertUserDailyQuotaParams) error {
+	if f.daily == nil {
+		f.daily = map[uuid.UUID]int64{}
+	}
+	f.daily[a.UserID] = a.DailyQuotaBytes
+	return nil
+}
+
+func (f *fakeRepo) DeleteUserDailyQuota(_ context.Context, id uuid.UUID) error {
+	delete(f.daily, id)
+	return nil
+}
+
+func (f *fakeRepo) SumUploadUsageSince(_ context.Context, a sqlcgen.SumUploadUsageSinceParams) (int64, error) {
+	return f.dailyUsed[a.UserID], nil
 }
 
 func newFakeRepo() *fakeRepo {
@@ -599,5 +627,45 @@ func TestBanKeepsTheOriginalAndModeratorsOnlyLiftRealBans(t *testing.T) {
 	}
 	if _, err := svc.UpdateUser(ctx, mod2, user, UpdateUserInput{IsActive: &on, ActorRole: RoleModerator}); err != nil {
 		t.Errorf("moderator lifting a real ban: %v", err)
+	}
+}
+
+// TestUpdateUserDailyQuotaTriState: absent leaves the override alone, a value
+// sets it (0 = unlimited), nil resets to the instance default, and the result
+// carries both sides for the audit ledger. A moderator may not touch it.
+func TestUpdateUserDailyQuotaTriState(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	adminID, userID := uuid.New(), uuid.New()
+	repo.users[adminID] = sqlcgen.User{ID: adminID, Role: RoleAdmin, IsActive: true}
+	repo.users[userID] = sqlcgen.User{ID: userID, Role: RoleUser, IsActive: true}
+	svc := NewService(repo)
+
+	n := int64(500)
+	res, err := svc.UpdateUserDetailed(ctx, adminID, userID, UpdateUserInput{SetDailyQuota: true, DailyQuotaBytes: &n})
+	if err != nil || res.DailyBefore != nil || res.DailyAfter == nil || *res.DailyAfter != 500 {
+		t.Fatalf("set: (%+v, %v)", res, err)
+	}
+	if got, _ := svc.DailyOverride(ctx, userID); got == nil || *got != 500 {
+		t.Fatalf("override = %v, want 500", got)
+	}
+	// Absent: unchanged.
+	f := false
+	if _, err := svc.UpdateUserDetailed(ctx, adminID, userID, UpdateUserInput{BypassQuarantine: &f}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := svc.DailyOverride(ctx, userID); got == nil || *got != 500 {
+		t.Fatalf("absent changed the override: %v", got)
+	}
+	res, err = svc.UpdateUserDetailed(ctx, adminID, userID, UpdateUserInput{SetDailyQuota: true})
+	if err != nil || res.DailyBefore == nil || *res.DailyBefore != 500 || res.DailyAfter != nil {
+		t.Fatalf("reset: (%+v, %v)", res, err)
+	}
+	if got, _ := svc.DailyOverride(ctx, userID); got != nil {
+		t.Fatalf("override after reset = %v, want nil", got)
+	}
+	if _, err := svc.UpdateUserDetailed(ctx, adminID, userID, UpdateUserInput{
+		SetDailyQuota: true, DailyQuotaBytes: &n, ActorRole: RoleModerator}); !errors.Is(err, ErrModeratorForbidden) {
+		t.Fatalf("moderator err = %v, want ErrModeratorForbidden", err)
 	}
 }

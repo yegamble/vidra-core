@@ -31,19 +31,24 @@ import (
 // is the only thing that tells a console which admin installed the instance and
 // which guarded actions it must not offer against that row.
 type adminUserView struct {
-	ID                string     `json:"id"`
-	Username          string     `json:"username"`
-	Email             string     `json:"email"`
-	Role              string     `json:"role"`
-	IsActive          bool       `json:"is_active"`
-	EmailVerified     bool       `json:"email_verified"`
-	BypassQuarantine  bool       `json:"bypass_quarantine"`
-	DisplayName       string     `json:"display_name"`
-	StorageQuotaBytes *int64     `json:"storage_quota_bytes"`
-	StorageUsedBytes  int64      `json:"storage_used_bytes"`
-	CreatedAt         time.Time  `json:"created_at"`
-	DeletedAt         *time.Time `json:"deleted_at"`
-	IsOwner           bool       `json:"is_owner"`
+	ID                string `json:"id"`
+	Username          string `json:"username"`
+	Email             string `json:"email"`
+	Role              string `json:"role"`
+	IsActive          bool   `json:"is_active"`
+	EmailVerified     bool   `json:"email_verified"`
+	BypassQuarantine  bool   `json:"bypass_quarantine"`
+	DisplayName       string `json:"display_name"`
+	StorageQuotaBytes *int64 `json:"storage_quota_bytes"`
+	StorageUsedBytes  int64  `json:"storage_used_bytes"`
+	// DailyQuotaBytes is the per-user rolling-24h upload quota override (null =
+	// the instance default applies; 0 = unlimited); DailyUsedBytes is what the
+	// account ledgered in the trailing 24h.
+	DailyQuotaBytes *int64     `json:"daily_quota_bytes"`
+	DailyUsedBytes  int64      `json:"daily_used_bytes"`
+	CreatedAt       time.Time  `json:"created_at"`
+	DeletedAt       *time.Time `json:"deleted_at"`
+	IsOwner         bool       `json:"is_owner"`
 	// MFAEnabled is whether the account has a CONFIRMED second factor. It is a
 	// boolean and nothing more: the console must be able to see who is
 	// protected (and whether "remove second factor" applies) without any
@@ -56,6 +61,12 @@ type adminUserView struct {
 	BanReason *string    `json:"ban_reason"`
 	BannedAt  *time.Time `json:"banned_at"`
 	BannedBy  *string    `json:"banned_by"`
+}
+
+// withDaily attaches the per-user daily quota override and the 24h usage.
+func (v adminUserView) withDaily(quota *int64, used int64) adminUserView {
+	v.DailyQuotaBytes, v.DailyUsedBytes = quota, used
+	return v
 }
 
 // withBan attaches the ban explanation to a view.
@@ -96,7 +107,7 @@ func newAdminUserViewFromRow(r sqlcgen.ListUsersRow) adminUserView {
 		BypassQuarantine: r.BypassQuarantine,
 		DisplayName:      r.DisplayName, StorageQuotaBytes: r.StorageQuotaBytes,
 		CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt, IsOwner: r.IsOwner,
-	}, r.StorageUsedBytes, r.MfaEnabled).withBan(r.BanReason, pgconv.TimeOrNil(r.BannedAt), r.BannedBy)
+	}, r.StorageUsedBytes, r.MfaEnabled).withDaily(r.DailyQuotaBytes, r.DailyUsedBytes).withBan(r.BanReason, pgconv.TimeOrNil(r.BannedAt), r.BannedBy)
 }
 
 // Page bounds for the admin user list. These are the user list's OWN limits:
@@ -154,6 +165,10 @@ type updateUserRequest struct {
 	EmailVerified     *bool           `json:"email_verified"`
 	BypassQuarantine  *bool           `json:"bypass_quarantine"`
 	StorageQuotaBytes json.RawMessage `json:"storage_quota_bytes"`
+	// DailyQuotaBytes is the per-user rolling-24h upload quota, tri-state like
+	// storage_quota_bytes: absent = unchanged, null = instance default, integer
+	// = override (0 = unlimited).
+	DailyQuotaBytes json.RawMessage `json:"daily_quota_bytes"`
 	// BanReason accompanies is_active=false: stored, shown to staff, and mailed
 	// to the user. Required from a moderator, optional from an admin.
 	BanReason *string `json:"ban_reason"`
@@ -164,7 +179,16 @@ type updateUserRequest struct {
 // (set=true, value=&n) for a non-negative integer. A malformed or negative
 // value yields a field error.
 func (r updateUserRequest) quotaField() (set bool, value *int64, fe *FieldError) {
-	raw := bytes.TrimSpace(r.StorageQuotaBytes)
+	return triStateBytes(r.StorageQuotaBytes, "storage_quota_bytes")
+}
+
+// dailyQuotaField decodes the tri-state daily_quota_bytes field, same contract.
+func (r updateUserRequest) dailyQuotaField() (set bool, value *int64, fe *FieldError) {
+	return triStateBytes(r.DailyQuotaBytes, "daily_quota_bytes")
+}
+
+func triStateBytes(rawIn json.RawMessage, field string) (set bool, value *int64, fe *FieldError) {
+	raw := bytes.TrimSpace(rawIn)
 	if len(raw) == 0 {
 		return false, nil, nil
 	}
@@ -173,7 +197,7 @@ func (r updateUserRequest) quotaField() (set bool, value *int64, fe *FieldError)
 	}
 	var n int64
 	if err := json.Unmarshal(raw, &n); err != nil || n < 0 {
-		return true, nil, &FieldError{Field: "storage_quota_bytes", Message: "must be a non-negative integer (bytes; 0 = unlimited) or null"}
+		return true, nil, &FieldError{Field: field, Message: "must be a non-negative integer (bytes; 0 = unlimited) or null"}
 	}
 	return true, &n, nil
 }
@@ -183,8 +207,12 @@ func (r updateUserRequest) Validate() []FieldError {
 	if quotaErr != nil {
 		return []FieldError{*quotaErr}
 	}
-	if r.Role == nil && r.IsActive == nil && r.EmailVerified == nil && r.BypassQuarantine == nil && !quotaSet {
-		return []FieldError{{Field: "role", Message: "at least one of role, is_active, email_verified, bypass_quarantine, storage_quota_bytes is required"}}
+	dailySet, _, dailyErr := r.dailyQuotaField()
+	if dailyErr != nil {
+		return []FieldError{*dailyErr}
+	}
+	if r.Role == nil && r.IsActive == nil && r.EmailVerified == nil && r.BypassQuarantine == nil && !quotaSet && !dailySet {
+		return []FieldError{{Field: "role", Message: "at least one of role, is_active, email_verified, bypass_quarantine, storage_quota_bytes, daily_quota_bytes is required"}}
 	}
 	if r.Role != nil && !admin.ValidRole(*r.Role) {
 		return []FieldError{{Field: "role", Message: "must be one of user, moderator, admin"}}
@@ -220,6 +248,7 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 		return &ValidationError{Fields: []FieldError{{Field: "ban_reason", Message: "is required when banning"}}}
 	}
 	quotaSet, quotaValue, _ := in.quotaField() // already validated
+	dailySet, dailyValue, _ := in.dailyQuotaField()
 
 	res, err := s.adminsvc.UpdateUserDetailed(c.Request().Context(), callerID, targetID, admin.UpdateUserInput{
 		Role:              in.Role,
@@ -228,6 +257,8 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 		BypassQuarantine:  in.BypassQuarantine,
 		SetStorageQuota:   quotaSet,
 		StorageQuotaBytes: quotaValue,
+		SetDailyQuota:     dailySet,
+		DailyQuotaBytes:   dailyValue,
 		ActorRole:         callerRole,
 		BanReason:         in.BanReason,
 	})
@@ -261,6 +292,14 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	dailyOverride, err := s.adminsvc.DailyOverride(c.Request().Context(), targetID)
+	if err != nil {
+		return err
+	}
+	dailyUsed, err := s.adminsvc.DailyUsed(c.Request().Context(), targetID)
+	if err != nil {
+		return err
+	}
 	s.notifyBanChange(c, res, in)
 	// The ledger carries BOTH: the structured field list a consumer can read
 	// without parsing, and the human line the admin audit view already renders.
@@ -270,7 +309,7 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 		ResourceType: auditResourceUser, ResourceID: targetID.String(),
 		Changes: adminUserChanges(res, in),
 	})
-	view := newAdminUserView(res.After, used, mfaEnabled)
+	view := newAdminUserView(res.After, used, mfaEnabled).withDaily(dailyOverride, dailyUsed)
 	if ban, ok := s.adminsvc.Ban(c.Request().Context(), targetID); ok && !res.After.IsActive {
 		at := ban.BannedAt
 		view = view.withBan(&ban.Reason, &at, ban.BannedBy)
@@ -343,6 +382,10 @@ func adminUserChanges(res admin.UpdateResult, in updateUserRequest) []audit.Chan
 		out = append(out, audit.Change{Field: "storage_quota_bytes",
 			Before: quotaAuditValue(res.Before.StorageQuotaBytes), After: quotaAuditValue(res.After.StorageQuotaBytes)})
 	}
+	if set, _, _ := in.dailyQuotaField(); set {
+		out = append(out, audit.Change{Field: "daily_quota_bytes",
+			Before: quotaAuditValue(res.DailyBefore), After: quotaAuditValue(res.DailyAfter)})
+	}
 	return out
 }
 
@@ -381,6 +424,13 @@ func adminChangeReason(targetID uuid.UUID, in updateUserRequest) string {
 			parts = append(parts, "storage_quota_bytes=default")
 		} else {
 			parts = append(parts, "storage_quota_bytes="+strconv.FormatInt(*value, 10))
+		}
+	}
+	if set, value, _ := in.dailyQuotaField(); set {
+		if value == nil {
+			parts = append(parts, "daily_quota_bytes=default")
+		} else {
+			parts = append(parts, "daily_quota_bytes="+strconv.FormatInt(*value, 10))
 		}
 	}
 	return strings.Join(parts, " ")

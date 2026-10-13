@@ -9,9 +9,11 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -95,6 +97,12 @@ type Repository interface {
 	UpsertUserBan(ctx context.Context, arg sqlcgen.UpsertUserBanParams) error
 	DeleteUserBan(ctx context.Context, userID uuid.UUID) error
 	GetUserBan(ctx context.Context, userID uuid.UUID) (sqlcgen.UserBan, error)
+	// Per-user rolling-24h upload quota override (user_daily_quotas) and the
+	// ledger it is measured against.
+	GetUserDailyQuota(ctx context.Context, userID uuid.UUID) (int64, error)
+	UpsertUserDailyQuota(ctx context.Context, arg sqlcgen.UpsertUserDailyQuotaParams) error
+	DeleteUserDailyQuota(ctx context.Context, userID uuid.UUID) error
+	SumUploadUsageSince(ctx context.Context, arg sqlcgen.SumUploadUsageSinceParams) (int64, error)
 }
 
 // Service holds the admin application logic.
@@ -149,6 +157,11 @@ type UpdateUserInput struct {
 	BypassQuarantine  *bool
 	SetStorageQuota   bool
 	StorageQuotaBytes *int64
+	// SetDailyQuota/DailyQuotaBytes are the same tri-state for the per-user
+	// rolling-24h upload quota: nil resets to the instance default, a value
+	// overrides it (0 = unlimited).
+	SetDailyQuota   bool
+	DailyQuotaBytes *int64
 	// ActorRole is the caller's role. Empty means admin (internal callers); a
 	// moderator is restricted to ban/unban of ordinary accounts.
 	ActorRole string
@@ -170,6 +183,10 @@ func (s *Service) Ban(ctx context.Context, userID uuid.UUID) (sqlcgen.UserBan, b
 type UpdateResult struct {
 	Before sqlcgen.User
 	After  sqlcgen.User
+	// DailyBefore/DailyAfter are the per-user daily quota override either side
+	// of the edit (nil = instance default); only meaningful with SetDailyQuota.
+	DailyBefore *int64
+	DailyAfter  *int64
 }
 
 // UpdateUser edits a user's role, active flag, and/or storage quota. An admin
@@ -191,7 +208,7 @@ func (s *Service) UpdateUserDetailed(ctx context.Context, callerID, targetID uui
 		return UpdateResult{}, ErrNotFound
 	}
 	if in.ActorRole == RoleModerator {
-		onlyBan := in.Role == nil && in.EmailVerified == nil && in.BypassQuarantine == nil && !in.SetStorageQuota
+		onlyBan := in.Role == nil && in.EmailVerified == nil && in.BypassQuarantine == nil && !in.SetStorageQuota && !in.SetDailyQuota
 		if !onlyBan || target.Role != RoleUser || target.IsOwner || callerID == targetID {
 			return UpdateResult{}, ErrModeratorForbidden
 		}
@@ -235,6 +252,22 @@ func (s *Service) UpdateUserDetailed(ctx context.Context, callerID, targetID uui
 			return UpdateResult{}, err
 		}
 	}
+	var dailyBefore, dailyAfter *int64
+	if in.SetDailyQuota {
+		if dailyBefore, err = s.DailyOverride(ctx, targetID); err != nil {
+			return UpdateResult{}, err
+		}
+		if in.DailyQuotaBytes == nil {
+			err = s.repo.DeleteUserDailyQuota(ctx, targetID)
+		} else {
+			err = s.repo.UpsertUserDailyQuota(ctx, sqlcgen.UpsertUserDailyQuotaParams{
+				UserID: targetID, DailyQuotaBytes: *in.DailyQuotaBytes})
+		}
+		if err != nil {
+			return UpdateResult{}, err
+		}
+		dailyAfter = in.DailyQuotaBytes
+	}
 	updated, err := s.repo.AdminUpdateUser(ctx, sqlcgen.AdminUpdateUserParams{
 		ID:                targetID,
 		Role:              in.Role,
@@ -269,7 +302,7 @@ func (s *Service) UpdateUserDetailed(ctx context.Context, callerID, targetID uui
 			return UpdateResult{}, err
 		}
 	}
-	return UpdateResult{Before: target, After: updated}, nil
+	return UpdateResult{Before: target, After: updated, DailyBefore: dailyBefore, DailyAfter: dailyAfter}, nil
 }
 
 // ensureAdminRemains refuses a change that would strip the last active admin of
@@ -342,6 +375,26 @@ func (s *Service) CheckDelete(ctx context.Context, callerID, targetID uuid.UUID)
 		return ErrOwnerProtected
 	}
 	return s.ensureAdminRemains(ctx, target)
+}
+
+// DailyOverride returns an account's per-user daily quota override (nil = the
+// instance default applies; 0 = unlimited).
+func (s *Service) DailyOverride(ctx context.Context, userID uuid.UUID) (*int64, error) {
+	v, err := s.repo.GetUserDailyQuota(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+// DailyUsed returns the bytes ledgered against the account in the trailing 24h
+// (the same ledger the upload gates sum).
+func (s *Service) DailyUsed(ctx context.Context, userID uuid.UUID) (int64, error) {
+	return s.repo.SumUploadUsageSince(ctx, sqlcgen.SumUploadUsageSinceParams{
+		UserID: userID, CreatedAt: time.Now().Add(-24 * time.Hour)})
 }
 
 // StorageUsed returns an account's current storage usage in bytes (the same
