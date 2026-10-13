@@ -24,7 +24,7 @@ CREATE TABLE blocklist_subscriptions (
     etag            TEXT        NOT NULL DEFAULT '',
     last_attempt_at TIMESTAMPTZ,
     last_synced_at  TIMESTAMPTZ,
-    last_status     TEXT        NOT NULL DEFAULT 'never' CHECK (last_status IN ('never', 'ok', 'not_modified', 'error')),
+    last_status     TEXT        NOT NULL DEFAULT 'never' CHECK (last_status IN ('never', 'ok', 'not_modified', 'error', 'needs_confirmation')),
     last_error      TEXT        NOT NULL DEFAULT '',
     last_added      INTEGER     NOT NULL DEFAULT 0,
     last_removed    INTEGER     NOT NULL DEFAULT 0,

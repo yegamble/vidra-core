@@ -2426,7 +2426,7 @@ func run() error {
 	// blocklist. The service is built in every role (the admin routes use it); the
 	// periodic sync is leader-gated below. Removing a list entry resumes the
 	// deliveries the block cancelled, exactly as a manual unblock does.
-	blocklistOpts := []blocklistsub.Option{blocklistsub.WithAuditor(auditsvc), blocklistsub.WithLogger(logger)}
+	blocklistOpts := []blocklistsub.Option{blocklistsub.WithAuditor(auditsvc), blocklistsub.WithLogger(logger), blocklistsub.WithProtectedHost(cfg.PublicBaseURL)}
 	if cfg.FederationEnabled {
 		blocklistOpts = append(blocklistOpts, blocklistsub.WithOnUnblocked(func(ctx context.Context, domain string, blockedAt time.Time) {
 			if _, err := fedsvc.RedeliverAfterUnblock(ctx, domain, blockedAt); err != nil {
