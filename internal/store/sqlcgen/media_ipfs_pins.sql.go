@@ -128,6 +128,74 @@ func (q *Queries) ClaimDueIPFSPins(ctx context.Context, arg ClaimDueIPFSPinsPara
 	return items, nil
 }
 
+const claimDueIPFSUnpins = `-- name: ClaimDueIPFSUnpins :many
+UPDATE media_ipfs_pins
+SET next_attempt_at = now() + ($1::int * interval '1 second'),
+    updated_at = now()
+WHERE object_key IN (
+    SELECT p.object_key FROM media_ipfs_pins p
+    WHERE p.network = $2 AND p.state = 'unpinning' AND p.next_attempt_at <= now()
+      AND p.claim_token IS NULL
+    ORDER BY p.next_attempt_at
+    LIMIT $3
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING object_key, media_class, cid, car_root, state, attempts, network, video_id, owner_user_id
+`
+
+type ClaimDueIPFSUnpinsParams struct {
+	LeaseSeconds int32  `json:"lease_seconds"`
+	Network      string `json:"network"`
+	BatchSize    int32  `json:"batch_size"`
+}
+
+type ClaimDueIPFSUnpinsRow struct {
+	ObjectKey   string      `json:"object_key"`
+	MediaClass  string      `json:"media_class"`
+	Cid         string      `json:"cid"`
+	CarRoot     string      `json:"car_root"`
+	State       string      `json:"state"`
+	Attempts    int32       `json:"attempts"`
+	Network     string      `json:"network"`
+	VideoID     pgtype.UUID `json:"video_id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+}
+
+// ClaimDueIPFSPins restricted to removals. The unmanaged-node ceiling (Tier A F3)
+// stops ADDS while the repo is over budget, and a takedown must never queue behind
+// a backlog of adds it is not going to process: claiming pending rows only to drop
+// them delays unpins by (backlog / batch) ticks, each pending row leased for the
+// full lease. Same lease semantics and fences as ClaimDueIPFSPins.
+func (q *Queries) ClaimDueIPFSUnpins(ctx context.Context, arg ClaimDueIPFSUnpinsParams) ([]ClaimDueIPFSUnpinsRow, error) {
+	rows, err := q.db.Query(ctx, claimDueIPFSUnpins, arg.LeaseSeconds, arg.Network, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimDueIPFSUnpinsRow
+	for rows.Next() {
+		var i ClaimDueIPFSUnpinsRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.MediaClass,
+			&i.Cid,
+			&i.CarRoot,
+			&i.State,
+			&i.Attempts,
+			&i.Network,
+			&i.VideoID,
+			&i.OwnerUserID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countIPFSPinsByNetworkStateClass = `-- name: CountIPFSPinsByNetworkStateClass :many
 SELECT network, state, media_class, count(*)::bigint AS count
 FROM media_ipfs_pins
