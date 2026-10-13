@@ -242,6 +242,29 @@ func (s *Server) channelOutbox(c echo.Context) error {
 	})
 }
 
+// accountOutbox serves an account's outbox. The instance actor's is paged
+// (?page=N) like a channel's — PeerTube crawls it once its instance follow is
+// accepted; an account's is the empty summary.
+func (s *Server) accountOutbox(c echo.Context) error {
+	p := c.QueryParam("page")
+	if p == "" || !strings.EqualFold(c.Param("handle"), federation.InstanceActorName) {
+		return s.accountCollection("outbox")(c)
+	}
+	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
+		return echo.NewHTTPError(http.StatusNotAcceptable, "collections are served as application/activity+json")
+	}
+	page, _ := strconv.Atoi(p)
+	pg, err := s.fedsvc.InstanceOutboxPage(c.Request().Context(), page)
+	if errors.Is(err, federation.ErrNotFound) {
+		return s.accountCollection("outbox")(c) // an account kept the name (0166)
+	}
+	if err != nil {
+		return err
+	}
+	c.Response().Header().Set(echo.HeaderContentType, activityJSONContentType)
+	return c.JSON(http.StatusOK, pg)
+}
+
 func (s *Server) accountCollection(kind string) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		return s.serveCollection(c, func(ctx context.Context) (*federation.OrderedCollection, error) {

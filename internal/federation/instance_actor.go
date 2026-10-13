@@ -19,6 +19,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/httpsig"
@@ -46,6 +47,13 @@ type InstanceRepository interface {
 	InsertInstanceFollowerIfAbsent(ctx context.Context, arg sqlcgen.InsertInstanceFollowerIfAbsentParams) (int64, error)
 	GetInstanceFollowerByActor(ctx context.Context, remoteActorURL string) (sqlcgen.GetInstanceFollowerByActorRow, error)
 	DeleteInstanceFollowerByActor(ctx context.Context, remoteActorURL string) (int64, error)
+	// The instance actor's Announces and outbox (instance_announces.go).
+	ListAcceptedInstanceFollowerInboxes(ctx context.Context) ([]string, error)
+	ListInstanceOutboxVideoIDs(ctx context.Context, arg sqlcgen.ListInstanceOutboxVideoIDsParams) ([]uuid.UUID, error)
+	CountInstanceOutboxVideos(ctx context.Context) (int64, error)
+	ClaimInstanceFollowerBackfill(ctx context.Context, arg sqlcgen.ClaimInstanceFollowerBackfillParams) (int64, error)
+	IsVideoInInstanceOutbox(ctx context.Context, id uuid.UUID) (bool, error)
+	IsChannelOwnerUnlisted(ctx context.Context, id uuid.UUID) (bool, error)
 }
 
 // The production repository provides it; a drift here is a compile error, not
@@ -112,13 +120,18 @@ func (s *Service) instanceCollection(ctx context.Context, kind string) (*Ordered
 	case "following":
 		total, err = s.inst.CountAcceptedInstanceFollowing(ctx)
 	case "outbox":
+		total, err = s.inst.CountInstanceOutboxVideos(ctx)
 	default:
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	return orderedCollection(s.InstanceActorURL()+"/"+kind, total), nil
+	col := orderedCollection(s.InstanceActorURL()+"/"+kind, total)
+	if kind == "outbox" && total > 0 {
+		col.First = col.ID + "?page=1"
+	}
+	return col, nil
 }
 
 // ensureInstanceKey is ensureAccountKey for the instance actor's singleton key.

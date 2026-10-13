@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/federation"
@@ -17,7 +18,8 @@ import (
 // `peertube` is the instance actor's (federation.InstanceRepository).
 type instanceFedRepo struct {
 	fakeFedRepo
-	key *sqlcgen.GetInstanceActorKeyRow
+	key    *sqlcgen.GetInstanceActorKeyRow
+	outbox []uuid.UUID
 }
 
 func (r *instanceFedRepo) InstanceActorNameReserved(_ context.Context, name string) (bool, error) {
@@ -56,9 +58,31 @@ func (r *instanceFedRepo) DeleteInstanceFollowerByActor(context.Context, string)
 	return 0, nil
 }
 
-func instanceFedServer() *Server {
+func (r *instanceFedRepo) ListAcceptedInstanceFollowerInboxes(context.Context) ([]string, error) {
+	return nil, nil
+}
+func (r *instanceFedRepo) ListInstanceOutboxVideoIDs(_ context.Context, a sqlcgen.ListInstanceOutboxVideoIDsParams) ([]uuid.UUID, error) {
+	if a.ResultOffset > 0 {
+		return nil, nil
+	}
+	return r.outbox, nil
+}
+func (r *instanceFedRepo) ClaimInstanceFollowerBackfill(context.Context, sqlcgen.ClaimInstanceFollowerBackfillParams) (int64, error) {
+	return 1, nil
+}
+func (r *instanceFedRepo) IsVideoInInstanceOutbox(context.Context, uuid.UUID) (bool, error) {
+	return true, nil
+}
+func (r *instanceFedRepo) IsChannelOwnerUnlisted(context.Context, uuid.UUID) (bool, error) {
+	return false, nil
+}
+func (r *instanceFedRepo) CountInstanceOutboxVideos(context.Context) (int64, error) {
+	return int64(len(r.outbox)), nil
+}
+
+func instanceFedServer(outbox ...uuid.UUID) *Server {
 	cfg := fedTestConfig()
-	repo := &instanceFedRepo{fakeFedRepo: newFedRepoFor(cfg)}
+	repo := &instanceFedRepo{fakeFedRepo: newFedRepoFor(cfg), outbox: outbox}
 	return New(cfg, nil, nil, WithFederationService(federation.NewService(repo, federation.WithBaseURL(cfg.PublicBaseURL))))
 }
 
@@ -100,5 +124,28 @@ func TestInstanceActorIsServed(t *testing.T) {
 	}
 	if rec := getAccept(t, srv, "/accounts/peertube/followers", "application/activity+json"); rec.Code != http.StatusOK {
 		t.Errorf("followers collection = %d, want 200", rec.Code)
+	}
+}
+
+// PeerTube crawls the followed instance actor's outbox once its follow is
+// accepted: the summary links the first page, and the page carries Announces.
+func TestInstanceActorOutboxIsPaged(t *testing.T) {
+	v := uuid.New()
+	srv := instanceFedServer(v)
+	var col federation.OrderedCollection
+	rec := getAccept(t, srv, "/accounts/peertube/outbox", "application/activity+json")
+	if err := json.Unmarshal(rec.Body.Bytes(), &col); err != nil || col.TotalItems != 1 ||
+		col.First != "https://videos.example/accounts/peertube/outbox?page=1" {
+		t.Fatalf("summary = %d %+v (%v)", rec.Code, col, err)
+	}
+	var page federation.OrderedCollectionPage
+	rec = getAccept(t, srv, "/accounts/peertube/outbox?page=1", "application/activity+json")
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || len(page.OrderedItems) != 1 {
+		t.Fatalf("page = %d %s (%v)", rec.Code, rec.Body.String(), err)
+	}
+	item := page.OrderedItems[0]
+	if item["type"] != "Announce" || item["actor"] != "https://videos.example/accounts/peertube" ||
+		item["object"] != "https://videos.example/videos/"+v.String() {
+		t.Errorf("item = %v", item)
 	}
 }

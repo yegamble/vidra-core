@@ -40,3 +40,65 @@ SELECT id, state, follow_activity_url FROM instance_followers WHERE remote_actor
 -- Undo{Follow} from the follower. A follower the admin REJECTED stays
 -- rejected: an Undo-then-Follow must not walk past the admin's refusal.
 DELETE FROM instance_followers WHERE remote_actor_url = $1 AND state <> 'rejected';
+
+-- name: ListAcceptedInstanceFollowerInboxes :many
+-- Distinct inboxes (shared inbox preferred) of the instances following ours —
+-- the fan-out targets of the instance actor's Announces and of every later
+-- Update/Delete of a video they were announced.
+SELECT DISTINCT COALESCE(ra.shared_inbox_url, ra.inbox_url) AS inbox
+FROM instance_followers f
+JOIN remote_actors ra ON ra.actor_url = f.remote_actor_url
+WHERE f.state = 'accepted'
+  AND COALESCE(ra.shared_inbox_url, ra.inbox_url) <> ''
+  -- Nothing to an instance on the blocklist, or to an actor an admin blocked
+  -- (the drain would cancel those deliveries; they are never queued).
+  AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = lower(ra.domain))
+  AND NOT EXISTS (
+      SELECT 1 FROM remote_actor_block_reach r
+      WHERE r.blocker_id IS NULL AND r.actor_url = ra.actor_url
+  )
+  -- Only to the follower's own server, re-checked HERE: the cached actor row
+  -- is refreshed after the Follow (key rotation re-fetches it), so a check
+  -- made when the Follow arrived says nothing about where it points now.
+  AND instance_url_host(ra.inbox_url) = instance_url_host(ra.actor_url)
+  AND (COALESCE(ra.shared_inbox_url, '') = ''
+       OR instance_url_host(ra.shared_inbox_url) = instance_url_host(ra.actor_url))
+ORDER BY inbox;
+
+-- name: ListInstanceOutboxVideoIDs :many
+-- The instance actor's outbox, newest first: the instance_outbox_videos view
+-- (migration 0166) is the one definition of what it federates.
+SELECT id FROM instance_outbox_videos
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountInstanceOutboxVideos :one
+SELECT count(*)::bigint FROM instance_outbox_videos;
+
+-- name: IsVideoInInstanceOutbox :one
+-- The live Announce's gate: the same view, for one video.
+SELECT EXISTS (SELECT 1 FROM instance_outbox_videos WHERE id = $1) AS listed;
+
+-- name: IsChannelOwnerUnlisted :one
+-- Whether a channel's owner has opted out of discovery (0047). Their videos are
+-- never announced to instance followers, so neither are their edits,
+-- retractions or comments.
+SELECT EXISTS (
+    SELECT 1 FROM channels c JOIN users u ON u.id = c.owner_id
+    WHERE c.id = $1 AND u.unlisted
+) AS unlisted;
+
+-- name: ClaimInstanceFollowerBackfill :execrows
+-- Atomically claims the new-follower backfill for one remote HOST:
+-- 1 = claimed, 0 = refused — the host was backfilled inside the cooldown, or
+-- this instance has already backfilled daily_cap hosts in the last day (one
+-- server can mint any number of host names). Concurrent Follows of one host
+-- race on the primary key, so at most one of them wins; the instance-wide cap
+-- is a ceiling, not an exact count, under concurrency.
+INSERT INTO instance_follower_backfills (host, last_backfill_at)
+SELECT lower(sqlc.arg('host')), now()
+WHERE (SELECT count(*) FROM instance_follower_backfills
+       WHERE last_backfill_at > now() - interval '1 day') < sqlc.arg('daily_cap')::int
+ON CONFLICT (host) DO UPDATE SET last_backfill_at = now()
+WHERE instance_follower_backfills.last_backfill_at
+      <= now() - make_interval(secs => sqlc.arg('cooldown_seconds')::int);

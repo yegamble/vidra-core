@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -24,6 +26,81 @@ type fakeInstance struct {
 	acceptedFollowing int64
 	// followers are instance_followers rows, keyed by remote actor url.
 	followers map[string]*sqlcgen.GetInstanceFollowerByActorRow
+	// outbox is ListInstanceOutboxVideoIDs' answer, newest first.
+	outbox []uuid.UUID
+	// backfilledAt is instance_follower_backfills, keyed by host.
+	backfilledAt map[string]time.Time
+	// unlistedChannels are channels whose owner opted out of discovery.
+	unlistedChannels map[uuid.UUID]bool
+}
+
+// IsVideoInInstanceOutbox: the fake's outbox slice stands in for the view.
+func (f fakeRepo) IsVideoInInstanceOutbox(_ context.Context, id uuid.UUID) (bool, error) {
+	for _, v := range f.inst.outbox {
+		if v == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f fakeRepo) IsChannelOwnerUnlisted(_ context.Context, id uuid.UUID) (bool, error) {
+	return f.inst.unlistedChannels[id], nil
+}
+
+// ClaimInstanceFollowerBackfill mirrors the SQL claim: absent or older than the
+// cooldown → claimed (and stamped now); inside the window → 0.
+func (f fakeRepo) ClaimInstanceFollowerBackfill(_ context.Context, a sqlcgen.ClaimInstanceFollowerBackfillParams) (int64, error) {
+	if f.inst.backfilledAt == nil {
+		f.inst.backfilledAt = map[string]time.Time{}
+	}
+	if at, ok := f.inst.backfilledAt[a.Host]; ok && time.Since(at) < time.Duration(a.CooldownSeconds)*time.Second {
+		return 0, nil
+	}
+	recent := 0
+	for _, at := range f.inst.backfilledAt {
+		if time.Since(at) < 24*time.Hour {
+			recent++
+		}
+	}
+	if recent >= int(a.DailyCap) {
+		return 0, nil // the instance-wide daily cap
+	}
+	f.inst.backfilledAt[a.Host] = time.Now()
+	return 1, nil
+}
+
+// ListAcceptedInstanceFollowerInboxes mirrors the SQL: accepted followers'
+// cached inboxes, shared inbox preferred, distinct, ordered.
+func (f fakeRepo) ListAcceptedInstanceFollowerInboxes(context.Context) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for actor, r := range f.inst.followers {
+		ra, ok := f.remoteActors[actor]
+		if !ok || r.State != "accepted" {
+			continue
+		}
+		in := ra.InboxUrl
+		if ra.SharedInboxUrl != nil {
+			in = *ra.SharedInboxUrl
+		}
+		if in != "" && !seen[in] {
+			seen[in] = true
+			out = append(out, in)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (f fakeRepo) ListInstanceOutboxVideoIDs(_ context.Context, a sqlcgen.ListInstanceOutboxVideoIDsParams) ([]uuid.UUID, error) {
+	lo := min(int(a.ResultOffset), len(f.inst.outbox))
+	hi := min(lo+int(a.ResultLimit), len(f.inst.outbox))
+	return f.inst.outbox[lo:hi], nil
+}
+
+func (f fakeRepo) CountInstanceOutboxVideos(context.Context) (int64, error) {
+	return int64(len(f.inst.outbox)), nil
 }
 
 func (f fakeRepo) InstanceActorNameReserved(_ context.Context, name string) (bool, error) {

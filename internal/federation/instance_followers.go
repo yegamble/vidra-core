@@ -105,7 +105,22 @@ func (s *Service) handleInstanceFollow(ctx context.Context, act inboxActivity, f
 	}
 	// Accepted — new, or a re-Follow PeerTube sends when it never saw our
 	// Accept. Either way it gets one, naming THIS Follow.
-	return s.answerInstanceFollow(ctx, "Accept", follower, act.ID)
+	if err := s.answerInstanceFollow(ctx, "Accept", follower, act.ID); err != nil {
+		return err
+	}
+	if inserted == 1 {
+		s.backfillBestEffort(ctx, follower)
+	}
+	return nil
+}
+
+// backfillBestEffort runs backfillInstanceFollower without letting it fail the
+// follow it follows: the follow is recorded and accepted either way, and the
+// follower's own outbox crawl (PeerTube) covers what the push missed.
+func (s *Service) backfillBestEffort(ctx context.Context, follower string) {
+	if err := s.backfillInstanceFollower(ctx, follower); err != nil && s.logger != nil {
+		s.logger.Warn("federation: instance follower backfill failed", "actor", follower, "error", err)
+	}
 }
 
 // undoInstanceFollow handles Undo{Follow} of our instance actor: the signer

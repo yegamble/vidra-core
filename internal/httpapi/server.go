@@ -1510,7 +1510,7 @@ func (s *Server) routes() {
 			s.echo.GET("/accounts/:handle/"+kind, s.accountCollection(kind))
 		}
 		s.echo.GET("/video-channels/:handle/outbox", s.channelOutbox)
-		s.echo.GET("/accounts/:handle/outbox", s.accountCollection("outbox"))
+		s.echo.GET("/accounts/:handle/outbox", s.accountOutbox)
 		// The OBJECT ids vidra mints (A29-F2). They live on frontend paths, so
 		// they are reachable here only when the operator's proxy
 		// content-negotiates an ActivityPub Accept to the api — which the

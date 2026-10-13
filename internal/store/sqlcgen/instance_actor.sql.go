@@ -11,6 +11,36 @@ import (
 	"github.com/google/uuid"
 )
 
+const claimInstanceFollowerBackfill = `-- name: ClaimInstanceFollowerBackfill :execrows
+INSERT INTO instance_follower_backfills (host, last_backfill_at)
+SELECT lower($1), now()
+WHERE (SELECT count(*) FROM instance_follower_backfills
+       WHERE last_backfill_at > now() - interval '1 day') < $2::int
+ON CONFLICT (host) DO UPDATE SET last_backfill_at = now()
+WHERE instance_follower_backfills.last_backfill_at
+      <= now() - make_interval(secs => $3::int)
+`
+
+type ClaimInstanceFollowerBackfillParams struct {
+	Host            string `json:"host"`
+	DailyCap        int32  `json:"daily_cap"`
+	CooldownSeconds int32  `json:"cooldown_seconds"`
+}
+
+// Atomically claims the new-follower backfill for one remote HOST:
+// 1 = claimed, 0 = refused — the host was backfilled inside the cooldown, or
+// this instance has already backfilled daily_cap hosts in the last day (one
+// server can mint any number of host names). Concurrent Follows of one host
+// race on the primary key, so at most one of them wins; the instance-wide cap
+// is a ceiling, not an exact count, under concurrency.
+func (q *Queries) ClaimInstanceFollowerBackfill(ctx context.Context, arg ClaimInstanceFollowerBackfillParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimInstanceFollowerBackfill, arg.Host, arg.DailyCap, arg.CooldownSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countAcceptedInstanceFollowers = `-- name: CountAcceptedInstanceFollowers :one
 SELECT count(*)::bigint FROM instance_followers WHERE state = 'accepted'
 `
@@ -28,6 +58,17 @@ SELECT count(*)::bigint FROM instance_following WHERE state = 'accepted'
 
 func (q *Queries) CountAcceptedInstanceFollowing(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countAcceptedInstanceFollowing)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countInstanceOutboxVideos = `-- name: CountInstanceOutboxVideos :one
+SELECT count(*)::bigint FROM instance_outbox_videos
+`
+
+func (q *Queries) CountInstanceOutboxVideos(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countInstanceOutboxVideos)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -141,4 +182,111 @@ func (q *Queries) InstanceActorNameReserved(ctx context.Context, lower string) (
 	var reserved bool
 	err := row.Scan(&reserved)
 	return reserved, err
+}
+
+const isChannelOwnerUnlisted = `-- name: IsChannelOwnerUnlisted :one
+SELECT EXISTS (
+    SELECT 1 FROM channels c JOIN users u ON u.id = c.owner_id
+    WHERE c.id = $1 AND u.unlisted
+) AS unlisted
+`
+
+// Whether a channel's owner has opted out of discovery (0047). Their videos are
+// never announced to instance followers, so neither are their edits,
+// retractions or comments.
+func (q *Queries) IsChannelOwnerUnlisted(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, isChannelOwnerUnlisted, id)
+	var unlisted bool
+	err := row.Scan(&unlisted)
+	return unlisted, err
+}
+
+const isVideoInInstanceOutbox = `-- name: IsVideoInInstanceOutbox :one
+SELECT EXISTS (SELECT 1 FROM instance_outbox_videos WHERE id = $1) AS listed
+`
+
+// The live Announce's gate: the same view, for one video.
+func (q *Queries) IsVideoInInstanceOutbox(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, isVideoInInstanceOutbox, id)
+	var listed bool
+	err := row.Scan(&listed)
+	return listed, err
+}
+
+const listAcceptedInstanceFollowerInboxes = `-- name: ListAcceptedInstanceFollowerInboxes :many
+SELECT DISTINCT COALESCE(ra.shared_inbox_url, ra.inbox_url) AS inbox
+FROM instance_followers f
+JOIN remote_actors ra ON ra.actor_url = f.remote_actor_url
+WHERE f.state = 'accepted'
+  AND COALESCE(ra.shared_inbox_url, ra.inbox_url) <> ''
+  -- Nothing to an instance on the blocklist, or to an actor an admin blocked
+  -- (the drain would cancel those deliveries; they are never queued).
+  AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = lower(ra.domain))
+  AND NOT EXISTS (
+      SELECT 1 FROM remote_actor_block_reach r
+      WHERE r.blocker_id IS NULL AND r.actor_url = ra.actor_url
+  )
+  -- Only to the follower's own server, re-checked HERE: the cached actor row
+  -- is refreshed after the Follow (key rotation re-fetches it), so a check
+  -- made when the Follow arrived says nothing about where it points now.
+  AND instance_url_host(ra.inbox_url) = instance_url_host(ra.actor_url)
+  AND (COALESCE(ra.shared_inbox_url, '') = ''
+       OR instance_url_host(ra.shared_inbox_url) = instance_url_host(ra.actor_url))
+ORDER BY inbox
+`
+
+// Distinct inboxes (shared inbox preferred) of the instances following ours —
+// the fan-out targets of the instance actor's Announces and of every later
+// Update/Delete of a video they were announced.
+func (q *Queries) ListAcceptedInstanceFollowerInboxes(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listAcceptedInstanceFollowerInboxes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var inbox string
+		if err := rows.Scan(&inbox); err != nil {
+			return nil, err
+		}
+		items = append(items, inbox)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInstanceOutboxVideoIDs = `-- name: ListInstanceOutboxVideoIDs :many
+SELECT id FROM instance_outbox_videos
+ORDER BY created_at DESC, id DESC
+LIMIT $2 OFFSET $1
+`
+
+type ListInstanceOutboxVideoIDsParams struct {
+	ResultOffset int32 `json:"result_offset"`
+	ResultLimit  int32 `json:"result_limit"`
+}
+
+// The instance actor's outbox, newest first: the instance_outbox_videos view
+// (migration 0166) is the one definition of what it federates.
+func (q *Queries) ListInstanceOutboxVideoIDs(ctx context.Context, arg ListInstanceOutboxVideoIDsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listInstanceOutboxVideoIDs, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
