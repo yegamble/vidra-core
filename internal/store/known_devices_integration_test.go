@@ -53,6 +53,20 @@ func TestKnownDeviceQueries(t *testing.T) {
 		t.Fatalf("delete = %d, %v", d, err)
 	}
 
+	if ok, _ := q.HasKnownDevice(ctx, sqlcgen.HasKnownDeviceParams{UserID: user.ID, DeviceHash: "h1"}); !ok {
+		t.Fatal("HasKnownDevice must find h1")
+	}
+	for i := 0; i < 5; i++ {
+		touch(fmt.Sprintf("extra-%d", i))
+	}
+	pruned, err := q.PruneKnownDevices(ctx, sqlcgen.PruneKnownDevicesParams{UserID: user.ID, Cutoff: time.Now().Add(-time.Hour), Keep: 3})
+	if err != nil || pruned < 1 {
+		t.Fatalf("prune = %d, %v", pruned, err)
+	}
+	if left, _ := q.CountUserKnownDevices(ctx, user.ID); left != 3 {
+		t.Fatalf("after prune keep=3, devices = %d", left)
+	}
+
 	claim := func(at time.Time) bool {
 		ok, err := q.ClaimNewDeviceEmailSlot(ctx, sqlcgen.ClaimNewDeviceEmailSlotParams{UserID: user.ID, Now: at, CooldownSeconds: 3600})
 		if err != nil {

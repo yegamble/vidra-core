@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -44,6 +47,17 @@ func (m *memDeviceStore) TouchKnownDevice(_ context.Context, a sqlcgen.TouchKnow
 	m.rows = append(m.rows, sqlcgen.ListKnownDevicesRow{ID: id, DeviceHash: a.DeviceHash, Label: a.Label})
 	m.owner[id] = a.UserID
 	return true, nil
+}
+func (m *memDeviceStore) HasKnownDevice(_ context.Context, a sqlcgen.HasKnownDeviceParams) (bool, error) {
+	for _, r := range m.rows {
+		if m.owner[r.ID] == a.UserID && r.DeviceHash == a.DeviceHash {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (m *memDeviceStore) PruneKnownDevices(context.Context, sqlcgen.PruneKnownDevicesParams) (int64, error) {
+	return 0, nil
 }
 func (m *memDeviceStore) ListKnownDevices(_ context.Context, u uuid.UUID) ([]sqlcgen.ListKnownDevicesRow, error) {
 	var out []sqlcgen.ListKnownDevicesRow
@@ -112,8 +126,9 @@ func TestNewDeviceEmailListForgetAndOptOut(t *testing.T) {
 	store := &memDeviceStore{owner: map[uuid.UUID]uuid.UUID{}, optOut: map[uuid.UUID]bool{}, mailed: map[uuid.UUID]bool{}}
 	mailer := auth.NewCaptureMailer()
 	issuer := auth.NewTokenIssuer(mfaTestSecret, "vidra", "vidra", 15*time.Minute)
-	svc := auth.NewService(repo, issuer, 720*time.Hour, auth.WithDeviceStore(store), auth.WithMailer(mailer))
-	srv := New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute))
+	svc := auth.NewService(repo, issuer, 720*time.Hour, auth.WithDeviceStore(store), auth.WithMailer(mailer), auth.WithAsyncRunner(func(f func()) { f() }))
+	logs := &bytes.Buffer{}
+	srv := New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute), WithLogger(slog.New(slog.NewJSONHandler(logs, nil))))
 	registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 
 	// First device: records silently and hands the browser a device cookie.
@@ -165,6 +180,11 @@ func TestNewDeviceEmailListForgetAndOptOut(t *testing.T) {
 		t.Fatalf("current=%q other=%q in %+v", current, other, list.Devices)
 	}
 
+	// Another account cannot forget ada's device.
+	bobTok := registerTokens(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`).Token
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/auth/devices/"+other, "", bobTok); rec.Code != http.StatusNotFound {
+		t.Fatalf("another user's forget = %d, want 404", rec.Code)
+	}
 	// Forget: 204, then 404 (also for a stranger's / random id).
 	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/auth/devices/"+other, "", tok); rec.Code != http.StatusNoContent {
 		t.Fatalf("forget = %d", rec.Code)
@@ -182,6 +202,9 @@ func TestNewDeviceEmailListForgetAndOptOut(t *testing.T) {
 	}
 	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/security-prefs", `{"new_device_email":false}`, tok); rec.Code != http.StatusOK {
 		t.Fatalf("opt-out = %d", rec.Code)
+	}
+	if findAudit(auditEvents(t, logs), observability.ActionSecurityPrefsUpdate, observability.ResultSuccess) == nil {
+		t.Fatal("turning the alerts off must be audited")
 	}
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/auth/devices", nil)

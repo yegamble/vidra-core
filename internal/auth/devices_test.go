@@ -44,6 +44,27 @@ func (f *fakeDeviceStore) TouchKnownDevice(_ context.Context, a sqlcgen.TouchKno
 	f.owner[id] = a.UserID
 	return true, nil
 }
+func (f *fakeDeviceStore) HasKnownDevice(_ context.Context, a sqlcgen.HasKnownDeviceParams) (bool, error) {
+	_, ok := f.devs[a.UserID.String()+"|"+a.DeviceHash]
+	return ok, nil
+}
+func (f *fakeDeviceStore) PruneKnownDevices(_ context.Context, a sqlcgen.PruneKnownDevicesParams) (int64, error) {
+	var mine []string
+	for k, d := range f.devs {
+		if f.owner[d.ID] == a.UserID {
+			mine = append(mine, k)
+		}
+	}
+	var n int64
+	for len(mine) > int(a.Keep) { // oldest-by-insertion is not tracked; evict arbitrary extras
+		k := mine[0]
+		mine = mine[1:]
+		delete(f.owner, f.devs[k].ID)
+		delete(f.devs, k)
+		n++
+	}
+	return n, nil
+}
 func (f *fakeDeviceStore) ListKnownDevices(_ context.Context, u uuid.UUID) ([]sqlcgen.ListKnownDevicesRow, error) {
 	var out []sqlcgen.ListKnownDevicesRow
 	for _, d := range f.devs {
@@ -107,7 +128,7 @@ type devEnv struct {
 func newDevEnv(t *testing.T) *devEnv {
 	t.Helper()
 	e := &devEnv{store: newFakeDeviceStore(), mailer: &deviceMailer{}, now: time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)}
-	e.svc = NewService(newFakeRepo(), newTestIssuer(), time.Hour, WithDeviceStore(e.store), WithMailer(e.mailer))
+	e.svc = NewService(newFakeRepo(), newTestIssuer(), time.Hour, WithDeviceStore(e.store), WithMailer(e.mailer), WithAsyncRunner(func(f func()) { f() }))
 	e.svc.now = func() time.Time { return e.now }
 	e.user, _ = register(t, e.svc, "alice", "alice@example.com")
 	return e
@@ -235,5 +256,15 @@ func TestUALabel(t *testing.T) {
 		if b, o := uaLabel(ua); b != want[0] || o != want[1] {
 			t.Errorf("uaLabel(%q) = %s/%s, want %v", ua, b, o, want)
 		}
+	}
+}
+
+func TestDeviceListIsCapped(t *testing.T) {
+	e := newDevEnv(t)
+	for i := 0; i < maxKnownDevices+20; i++ {
+		e.login("tok-"+uuid.NewString(), uaChromeMac)
+	}
+	if n, _ := e.store.CountUserKnownDevices(context.Background(), e.user.ID); n > maxKnownDevices {
+		t.Fatalf("devices = %d, want <= %d", n, maxKnownDevices)
 	}
 }

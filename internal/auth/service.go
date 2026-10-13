@@ -269,6 +269,8 @@ type Service struct {
 	// deviceStore backs new-device recognition and notices (devices.go);
 	// nil = off.
 	deviceStore DeviceStore
+	// async runs background sends; nil = a goroutine (tests set it inline).
+	async func(func())
 
 	// onRegistrationRequest is the WithRegistrationRequestHook callback (nil = none).
 	onRegistrationRequest func(context.Context, uuid.UUID)

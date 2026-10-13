@@ -44,3 +44,17 @@ WITH claimed AS (
     RETURNING 1
 )
 SELECT EXISTS (SELECT 1 FROM claimed)::bool;
+
+-- name: HasKnownDevice :one
+SELECT EXISTS (SELECT 1 FROM user_known_devices WHERE user_id = $1 AND device_hash = $2)::bool;
+
+-- name: PruneKnownDevices :execrows
+-- Keep an account's device list bounded: drop rows unseen since the cutoff and
+-- everything past the newest @keep (a cookieless client adds a row per sign-in).
+DELETE FROM user_known_devices AS k
+WHERE k.user_id = sqlc.arg('user_id')
+  AND (k.last_seen_at < sqlc.arg('cutoff')::timestamptz
+       OR k.id IN (SELECT d.id FROM user_known_devices d
+                 WHERE d.user_id = sqlc.arg('user_id')
+                 ORDER BY d.last_seen_at DESC, d.first_seen_at DESC
+                 OFFSET sqlc.arg('keep')::int));

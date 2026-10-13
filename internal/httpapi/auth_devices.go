@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/observability"
 )
@@ -125,5 +126,14 @@ func (s *Server) handleUpdateSecurityPrefs(c echo.Context) error {
 	if err := s.authsvc.SetNewDeviceEmailEnabled(c.Request().Context(), userID, *in.NewDeviceEmail); err != nil {
 		return err
 	}
+	state := "off"
+	if *in.NewDeviceEmail {
+		state = "on"
+	}
+	s.auditEvent(c, audit.Event{
+		Action: observability.ActionSecurityPrefsUpdate, Result: observability.ResultSuccess,
+		ActorID: userID.String(), ResourceType: auditResourceUser, ResourceID: userID.String(),
+		Metadata: []audit.MetadataField{{Key: "outcome", Value: "new_device_email_" + state}},
+	})
 	return c.JSON(http.StatusOK, map[string]bool{"new_device_email": *in.NewDeviceEmail})
 }

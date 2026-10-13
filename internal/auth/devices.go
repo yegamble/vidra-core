@@ -41,6 +41,8 @@ import (
 // the session control.
 const (
 	newDeviceMailCooldown = time.Hour
+	maxKnownDevices       = 50
+	knownDeviceMaxAge     = 180 * 24 * time.Hour
 )
 
 // DeviceStore is the persistence the device feature needs. *sqlcgen.Queries
@@ -48,6 +50,8 @@ const (
 type DeviceStore interface {
 	CountUserKnownDevices(ctx context.Context, userID uuid.UUID) (int64, error)
 	TouchKnownDevice(ctx context.Context, arg sqlcgen.TouchKnownDeviceParams) (bool, error)
+	HasKnownDevice(ctx context.Context, arg sqlcgen.HasKnownDeviceParams) (bool, error)
+	PruneKnownDevices(ctx context.Context, arg sqlcgen.PruneKnownDevicesParams) (int64, error)
 	ListKnownDevices(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListKnownDevicesRow, error)
 	DeleteKnownDevice(ctx context.Context, arg sqlcgen.DeleteKnownDeviceParams) (int64, error)
 	GetSecurityPrefs(ctx context.Context, userID uuid.UUID) (bool, error)
@@ -64,6 +68,12 @@ type NewDeviceMailer interface {
 // WithDeviceStore enables new-device recognition and notices.
 func WithDeviceStore(st DeviceStore) Option {
 	return func(s *Service) { s.deviceStore = st }
+}
+
+// WithAsyncRunner replaces how background sends run (default: a goroutine).
+// Tests pass an inline runner to stay deterministic.
+func WithAsyncRunner(run func(func())) Option {
+	return func(s *Service) { s.async = run }
 }
 
 // ErrDeviceNotFound: no such device for this account.
@@ -146,7 +156,16 @@ func (s *Service) noteSignIn(ctx context.Context, user sqlcgen.User, userAgent s
 	isNew, err := s.deviceStore.TouchKnownDevice(ctx, sqlcgen.TouchKnownDeviceParams{
 		UserID: user.ID, DeviceHash: deviceHash(deviceToken, browser, os), Label: browser + " on " + os,
 	})
-	if err != nil || !isNew || known == 0 {
+	if err != nil {
+		return
+	}
+	if isNew {
+		// Bounded list: a cookieless client adds a row per sign-in.
+		_, _ = s.deviceStore.PruneKnownDevices(ctx, sqlcgen.PruneKnownDevicesParams{
+			UserID: user.ID, Cutoff: s.now().Add(-knownDeviceMaxAge), Keep: maxKnownDevices,
+		})
+	}
+	if !isNew || known == 0 {
 		return
 	}
 	if on, err := s.deviceStore.GetSecurityPrefs(ctx, user.ID); err == nil && !on {
@@ -161,7 +180,16 @@ func (s *Service) noteSignIn(ctx context.Context, user sqlcgen.User, userAgent s
 	}); err != nil || !won {
 		return
 	}
-	_ = nm.SendNewDeviceSignIn(ctx, user.Email, mail.NewDeviceSignIn{When: s.now().UTC(), Browser: browser, OS: os})
+	n := mail.NewDeviceSignIn{When: s.now().UTC(), Browser: browser, OS: os}
+	email := user.Email
+	// Off the request path: an SMTP relay's latency must not delay a sign-in.
+	// Best-effort and not durable (a crash drops the notice); the slot is already
+	// claimed, so it is never sent twice.
+	s.runAsync(func() {
+		sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+		defer cancel()
+		_ = nm.SendNewDeviceSignIn(sendCtx, email, n)
+	})
 	return
 }
 
@@ -232,4 +260,25 @@ func (s *Service) SetNewDeviceEmailEnabled(ctx context.Context, userID uuid.UUID
 		return nil
 	}
 	return s.deviceStore.SetNewDeviceEmailPref(ctx, sqlcgen.SetNewDeviceEmailPrefParams{UserID: userID, NewDeviceEmail: on})
+}
+
+// runAsync runs fn off the request path; tests set s.async to run inline.
+func (s *Service) runAsync(fn func()) {
+	if s.async != nil {
+		s.async(fn)
+		return
+	}
+	go fn()
+}
+
+// knownDeviceFromContext reports whether the request carries a device token
+// that is a recognised device of the account (same UA binding as sign-in).
+func (s *Service) knownDeviceFromContext(ctx context.Context, userID uuid.UUID, userAgent string) bool {
+	tok, _ := ctx.Value(deviceTokenKey{}).(string)
+	if s.deviceStore == nil || tok == "" {
+		return false
+	}
+	b, o := uaLabel(userAgent)
+	ok, err := s.deviceStore.HasKnownDevice(ctx, sqlcgen.HasKnownDeviceParams{UserID: userID, DeviceHash: deviceHash(tok, b, o)})
+	return err == nil && ok
 }

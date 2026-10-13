@@ -83,6 +83,22 @@ func (q *Queries) GetSecurityPrefs(ctx context.Context, userID uuid.UUID) (bool,
 	return new_device_email, err
 }
 
+const hasKnownDevice = `-- name: HasKnownDevice :one
+SELECT EXISTS (SELECT 1 FROM user_known_devices WHERE user_id = $1 AND device_hash = $2)::bool
+`
+
+type HasKnownDeviceParams struct {
+	UserID     uuid.UUID `json:"user_id"`
+	DeviceHash string    `json:"device_hash"`
+}
+
+func (q *Queries) HasKnownDevice(ctx context.Context, arg HasKnownDeviceParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasKnownDevice, arg.UserID, arg.DeviceHash)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listKnownDevices = `-- name: ListKnownDevices :many
 SELECT id, device_hash, label, first_seen_at, last_seen_at
 FROM user_known_devices
@@ -123,6 +139,32 @@ func (q *Queries) ListKnownDevices(ctx context.Context, userID uuid.UUID) ([]Lis
 		return nil, err
 	}
 	return items, nil
+}
+
+const pruneKnownDevices = `-- name: PruneKnownDevices :execrows
+DELETE FROM user_known_devices AS k
+WHERE k.user_id = $1
+  AND (k.last_seen_at < $2::timestamptz
+       OR k.id IN (SELECT d.id FROM user_known_devices d
+                 WHERE d.user_id = $1
+                 ORDER BY d.last_seen_at DESC, d.first_seen_at DESC
+                 OFFSET $3::int))
+`
+
+type PruneKnownDevicesParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	Cutoff time.Time `json:"cutoff"`
+	Keep   int32     `json:"keep"`
+}
+
+// Keep an account's device list bounded: drop rows unseen since the cutoff and
+// everything past the newest @keep (a cookieless client adds a row per sign-in).
+func (q *Queries) PruneKnownDevices(ctx context.Context, arg PruneKnownDevicesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneKnownDevices, arg.UserID, arg.Cutoff, arg.Keep)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setNewDeviceEmailPref = `-- name: SetNewDeviceEmailPref :exec
