@@ -363,7 +363,9 @@ func TestGlobalCapExemptsAKnownDevice(t *testing.T) {
 	}
 	if _, err := e.svc.Login(ctx, LoginInput{Identifier: "alice", Password: "supersecret", ClientIP: "198.51.100.6"}, ua); err != nil {
 		t.Fatalf("a recognised device must not be locked out by the account-wide cap: %v", err)
-||||||| c84f322
+	}
+}
+
 func TestPasswordResetClearsLoginLockout(t *testing.T) {
 	e := newLockEnv(t)
 	mailer := &captureMailer{}
