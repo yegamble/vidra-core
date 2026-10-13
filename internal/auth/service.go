@@ -266,6 +266,10 @@ type Service struct {
 	// nil = no per-account throttling.
 	lockStore LoginLockStore
 
+	// deviceStore backs new-device recognition and notices (devices.go);
+	// nil = off.
+	deviceStore DeviceStore
+
 	// onRegistrationRequest is the WithRegistrationRequestHook callback (nil = none).
 	onRegistrationRequest func(context.Context, uuid.UUID)
 }
@@ -644,6 +648,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput, userAgent string) (L
 	if err != nil {
 		return LoginResult{}, err
 	}
+	s.noteSignIn(ctx, user, userAgent)
 	return LoginResult{User: user, Tokens: tokens}, nil
 }
 
