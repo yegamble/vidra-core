@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1445,7 +1446,8 @@ func (s *Service) hlsTreePrefix(ctx context.Context, nc netClient, row sqlcgen.C
 // is then listed via the storage ObjectLister. Every playlist + segment is wrapped
 // with-directory into a single car_root CID, so the relative playlist URIs resolve
 // unchanged under {gateway}/ipfs/{car_root}/…. The VP9/WebM alternate that shares
-// the generation directory is EXCLUDED (it is a separate class pinned on its own).
+// the generation directory is EXCLUDED (it is a separate class pinned on its own),
+// as is every other file the HLS routes do not serve (see hlsServed).
 // On a re-transcode the promoted generation moves and the same ledger row is
 // re-claimed, yielding a new car_root; the superseded root is swap-unpinned
 // (reference-checked).
@@ -1468,17 +1470,27 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 			"attempts", row.Attempts+1, "reason", "list_tree", "error", jobstatus.RedactError(err))
 		return false
 	}
+	masterKey, err := s.hlsMasterKey(ctx, row)
+	if err != nil {
+		s.recordFailure(ctx, row, "resolve hls master failed")
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
+			"attempts", row.Attempts+1, "reason", "resolve_master", "error", jobstatus.RedactError(err))
+		return false
+	}
 	var entries []ipfs.DirEntry
 	var openers []*lazyBlob
+	served := keys[:0:0]
 	for _, key := range keys {
-		if path.Base(key) == media.VP9WebMFilename {
-			// The VP9/WebM alternate shares the generation directory with the
-			// ladder but is a SEPARATE media class pinned on its own, so it is
-			// excluded here to keep the car_root a clean playlists+segments
-			// tree. The name comes from media rather than a local literal so
-			// the two cannot drift.
+		if !hlsServed(prefix, masterKey, key) {
+			// Pin only what the HLS routes serve (F6). The generation directory also
+			// holds each rendition's progressive video.mp4 / video-only.mp4, the
+			// audio.m4a and the vp9.webm alternate (its own media class): none is
+			// referenced by a playlist or reachable through the mirror, and together
+			// they roughly 2.7x the tree. hlsServed is derived from the same
+			// patterns the HLS handlers admit, so the two cannot drift.
 			continue
 		}
+		served = append(served, key)
 		lb := &lazyBlob{ctx: ctx, blobs: s.blobs, key: key}
 		openers = append(openers, lb)
 		entries = append(entries, ipfs.DirEntry{Path: strings.TrimPrefix(key, prefix), Data: lb})
@@ -1490,13 +1502,22 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 			_ = o.Close()
 		}
 	}()
+	// A tree without its master is not a playable tree, and the filter above could
+	// have removed it (a renamed master, a lookup that disagrees with the store).
+	// Same verdict as admissionInventory's master_missing.
+	if masterKey != "" && !slices.Contains(served, masterKey) {
+		s.recordFailure(ctx, row, "hls master missing from the served tree")
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
+			"attempts", row.Attempts+1, "reason", "master_missing")
+		return false
+	}
 	if len(entries) == 0 {
 		s.recordFailure(ctx, row, "hls tree is empty")
 		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
 			"attempts", row.Attempts+1, "reason", "empty_tree")
 		return false
 	}
-	generation := s.legacyCopyGeneration(ctx, nc, row, prefix, keys)
+	generation := s.legacyCopyGeneration(ctx, nc, row, prefix, served)
 	res, err := nc.client.AddDirectory(ctx, entries)
 	if err != nil {
 		s.recordFailure(ctx, row, "directory add+pin rpc failed")
