@@ -67,6 +67,51 @@ type LoginLockStore interface {
 	ClearLoginThrottles(ctx context.Context, userID uuid.UUID) (int64, error)
 }
 
+// WithDelayOnlyPrefixBackoff makes the per-prefix backoff delay-only: it never
+// hard-locks. It is the fail-safe when no trusted proxy is configured: behind a
+// CDN/proxy the server does not trust, every visitor shares the edge's address,
+// so a prefix lock would lock an account for everyone on that edge. Instead,
+// attempts past the threshold are slowed (exponentially, capped at
+// maxDelayOnly, honouring the request context) but a correct password still
+// signs in. The account-wide cap and its exemptions are unchanged. Operators get
+// per-network lockout by setting TRUSTED_PROXY_CIDRS to their proxy's ranges.
+func WithDelayOnlyPrefixBackoff() Option {
+	return func(s *Service) { s.delayOnlyPrefix = true }
+}
+
+const maxDelayOnly = 2 * time.Second
+
+// delayFor is the delay-only backoff for the n-th attempt in the window.
+func delayFor(n int32) time.Duration {
+	if n <= prefixThreshold {
+		return 0
+	}
+	d := 100 * time.Millisecond
+	for i := int32(prefixThreshold + 1); i < n && d < maxDelayOnly; i++ {
+		d *= 2
+	}
+	if d > maxDelayOnly {
+		d = maxDelayOnly
+	}
+	return d
+}
+
+func (s *Service) wait(ctx context.Context, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	if s.sleep != nil {
+		s.sleep(d)
+		return
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
+	}
+}
+
 // WithLoginLockStore enables per-account failed-login backoff.
 func WithLoginLockStore(st LoginLockStore) Option {
 	return func(s *Service) { s.lockStore = st }
@@ -131,7 +176,9 @@ func (s *Service) gateLogin(ctx context.Context, user sqlcgen.User, clientIP, us
 		UserID: user.ID, Scope: g.scope, Now: now, WindowSeconds: lockWindow.Seconds(),
 	}); err == nil {
 		g.ipN = r.FailCount
-		if r.FailCount > prefixThreshold && !r.Probe {
+		if s.delayOnlyPrefix {
+			s.wait(ctx, delayFor(r.FailCount))
+		} else if r.FailCount > prefixThreshold && !r.Probe {
 			s.lockPrefix(ctx, user.ID, g.scope, r.FailCount)
 			g.refuse = true
 		}
@@ -184,7 +231,7 @@ func (s *Service) loginFailed(ctx context.Context, user sqlcgen.User, g loginGat
 	if s.lockStore == nil {
 		return
 	}
-	if g.ipN >= prefixThreshold {
+	if g.ipN >= prefixThreshold && !s.delayOnlyPrefix {
 		s.lockPrefix(ctx, user.ID, g.scope, g.ipN)
 	}
 	if g.allN >= globalThreshold && !g.exempt {

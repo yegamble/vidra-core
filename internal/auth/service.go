@@ -265,6 +265,10 @@ type Service struct {
 	// lockStore backs the per-account failed-login backoff (loginlock.go);
 	// nil = no per-account throttling.
 	lockStore LoginLockStore
+	// delayOnlyPrefix: per-prefix backoff slows but never locks (see
+	// WithDelayOnlyPrefixBackoff); sleep is the test seam for the delay.
+	delayOnlyPrefix bool
+	sleep           func(time.Duration)
 
 	// onRegistrationRequest is the WithRegistrationRequestHook callback (nil = none).
 	onRegistrationRequest func(context.Context, uuid.UUID)
