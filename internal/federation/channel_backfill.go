@@ -3,8 +3,8 @@ package federation
 // The new-follower channel backfill. A remote actor that follows a local channel
 // used to receive only FUTURE uploads, so the channel looked empty on the
 // follower's side until its next video. After the Accept is queued, the
-// follower is pushed the channel's newest public videos as Create{Video},
-// bounded and gated like the instance-follow backfill (core#362,
+// follower is sent a Create{Video} for each of the channel's newest 20 public
+// videos, selected newest-first and sent oldest-first, bounded and gated like the instance-follow backfill (core#362,
 // backfillInstanceFollower — TWIN: dedupe the host/inbox checks and the claim
 // once that PR lands).
 
@@ -22,12 +22,17 @@ import (
 const channelBackfillLimit = 20
 
 // channelBackfillCooldown is how long one remote HOST waits for its next
-// backfill (persisted, migration 0169, so a restart does not reset it). A
-// re-Follow inside the window is accepted and answered, and backfilled with
-// nothing.
+// backfill OF THE SAME CHANNEL (persisted, migration 0169, so a restart does not
+// reset it). A re-Follow inside the window is accepted and answered, and
+// backfilled with nothing. A different channel of ours has its own window.
 const channelBackfillCooldown = 24 * time.Hour
 
-// channelBackfillDailyCap bounds how many hosts this instance backfills in any
+// channelBackfillHostChannelCap bounds how many of our channels one remote host
+// may have backfilled in a day, so a host cannot multiply the per-channel bound
+// by following everything we have.
+const channelBackfillHostChannelCap = 10
+
+// channelBackfillDailyCap bounds how many distinct hosts this instance backfills in any
 // one day, whoever asks: the per-host cooldown does not stop one server that
 // mints many host names. A follower over the cap is still accepted and gets
 // every live activity.
@@ -83,6 +88,8 @@ func (s *Service) backfillChannelFollower(ctx context.Context, channelID uuid.UU
 	}
 	claimed, err := s.repo.ClaimChannelFollowerBackfill(ctx, sqlcgen.ClaimChannelFollowerBackfillParams{
 		Host:            host, // per host: one host can mint any number of actors
+		ChannelID:       channelID,
+		HostChannelCap:  channelBackfillHostChannelCap,
 		CooldownSeconds: int32(channelBackfillCooldown / time.Second),
 		DailyCap:        channelBackfillDailyCap,
 	})

@@ -135,3 +135,48 @@ func TestChannelBackfillSkipsABlockedInstance(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// A host following a SECOND channel gets that channel's backfill (its own
+// cooldown), but the 11th channel from one host inside the day gets none.
+func TestChannelBackfillIsPerChannelWithAPerHostDailyCap(t *testing.T) {
+	repo := backfillRepo(t, 2, "https://remote.example/accounts/bob/inbox", nil)
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+	films := repo.channels["films"].ID
+	if err := svc.backfillChannelFollower(ctx, films, "films", remoteBob); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(deliveriesOfType(repo, "Create")); got != 2 {
+		t.Fatalf("films Creates = %d, want 2", got)
+	}
+	for i := 1; i < channelBackfillHostChannelCap; i++ { // channels 2..10
+		cid := uuid.New()
+		repo.channelsByID[cid] = sqlcgen.Channel{ID: cid, Handle: "c" + cid.String()[:6]}
+		id := uuid.New()
+		repo.videosByID[id] = sqlcgen.GetVideoByIDRow{ID: id, ChannelID: cid, Title: "v", Privacy: "public", State: "published"}
+		repo.backfillIDs[cid] = []uuid.UUID{id}
+		before := len(deliveriesOfType(repo, "Create"))
+		if err := svc.backfillChannelFollower(ctx, cid, repo.channelsByID[cid].Handle, remoteBob); err != nil {
+			t.Fatal(err)
+		}
+		if got := len(deliveriesOfType(repo, "Create")); got != before+1 {
+			t.Fatalf("channel %d: Creates %d -> %d, want +1 (its own backfill)", i+1, before, got)
+		}
+	}
+	// Same channel again: its own cooldown holds.
+	before := len(deliveriesOfType(repo, "Create"))
+	_ = svc.backfillChannelFollower(ctx, films, "films", remoteBob)
+	if got := len(deliveriesOfType(repo, "Create")); got != before {
+		t.Errorf("same channel re-backfilled inside the cooldown")
+	}
+	// The 11th channel: over the per-host daily cap.
+	cid := uuid.New()
+	repo.channelsByID[cid] = sqlcgen.Channel{ID: cid, Handle: "eleventh"}
+	id := uuid.New()
+	repo.videosByID[id] = sqlcgen.GetVideoByIDRow{ID: id, ChannelID: cid, Title: "v", Privacy: "public", State: "published"}
+	repo.backfillIDs[cid] = []uuid.UUID{id}
+	_ = svc.backfillChannelFollower(ctx, cid, "eleventh", remoteBob)
+	if got := len(deliveriesOfType(repo, "Create")); got != before {
+		t.Errorf("11th channel from one host got a backfill (%d -> %d)", before, got)
+	}
+}

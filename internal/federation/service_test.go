@@ -75,7 +75,7 @@ type fakeRepo struct {
 	// (the canonical-predicate SQL is proven by the integration test; the fake
 	// serves what that query would), already ordered newest first.
 	backfillIDs map[uuid.UUID][]uuid.UUID
-	// backfillClaims records the hosts the cooldown ledger holds (nil = every
+	// backfillClaims records the host|channel pairs the cooldown ledger holds (nil = every
 	// claim succeeds).
 	backfillClaims map[string]bool
 }
@@ -92,10 +92,20 @@ func (f fakeRepo) ClaimChannelFollowerBackfill(_ context.Context, arg sqlcgen.Cl
 	if f.backfillClaims == nil {
 		return 1, nil
 	}
-	if f.backfillClaims[arg.Host] {
+	key := arg.Host + "|" + arg.ChannelID.String()
+	if f.backfillClaims[key] {
 		return 0, nil
 	}
-	f.backfillClaims[arg.Host] = true
+	n := int32(0)
+	for k := range f.backfillClaims {
+		if strings.HasPrefix(k, arg.Host+"|") {
+			n++
+		}
+	}
+	if n >= arg.HostChannelCap {
+		return 0, nil
+	}
+	f.backfillClaims[key] = true
 	return 1, nil
 }
 

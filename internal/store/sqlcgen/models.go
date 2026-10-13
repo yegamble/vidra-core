@@ -193,6 +193,7 @@ type ChannelFollowBack struct {
 
 type ChannelFollowerBackfill struct {
 	Host           string    `json:"host"`
+	ChannelID      uuid.UUID `json:"channel_id"`
 	LastBackfillAt time.Time `json:"last_backfill_at"`
 }
 
