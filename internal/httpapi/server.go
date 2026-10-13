@@ -2392,6 +2392,8 @@ func (s *Server) routes() {
 	api.POST("/admin/ipfs/apply", s.handleApplyIPFS, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	api.POST("/admin/ipfs/restart", s.handleRestartIPFS, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	api.POST("/admin/ipfs/reconcile", s.handleIPFSReconcile, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	api.POST("/admin/ipfs/repin-playback-only", s.handleStartIPFSRepin, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	api.GET("/admin/ipfs/repin-playback-only", s.handleGetIPFSRepin, s.requireAuth, s.requireRole(admin.RoleAdmin))
 
 	// Direct messaging (1:1 conversations + messages). All behind requireAuth;
 	// non-participants get 404 so a conversation's existence is not leaked.

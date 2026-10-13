@@ -3774,10 +3774,21 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 	}
 	reconcile := time.NewTicker(reconcileInterval)
 	defer reconcile.Stop()
+	// Bulk re-pin to the playback-only set (admin-started, Tier A F6 follow-up): one
+	// bounded step per tick, leader-only, a no-op unless a run is active.
+	repin := time.NewTicker(30 * time.Second)
+	defer repin.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-repin.C:
+			if !leader.IsLeader() {
+				continue
+			}
+			if err := svc.RepinTick(ctx); err != nil {
+				logger.Warn("ipfs mirror playback-only re-pin step failed", "error", err)
+			}
 		case <-drain.C:
 			total := 0
 			n, err := svc.DrainDue(ctx, batch)

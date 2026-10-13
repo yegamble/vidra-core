@@ -240,6 +240,21 @@ func (q *Queries) CountIPFSPinsByNetworkStateClass(ctx context.Context) ([]Count
 	return items, nil
 }
 
+const countIPFSPinsForRepinAfter = `-- name: CountIPFSPinsForRepinAfter :one
+SELECT count(*)::bigint FROM media_ipfs_pins
+WHERE media_class = 'hls' AND state = 'pinned' AND car_root <> ''
+  AND object_key LIKE '%/' AND object_key > $1::text
+`
+
+// How many rows the re-pin has not examined yet (an upper bound on its remaining work:
+// most will turn out to be playback-only already).
+func (q *Queries) CountIPFSPinsForRepinAfter(ctx context.Context, afterKey string) (int64, error) {
+	row := q.db.QueryRow(ctx, countIPFSPinsForRepinAfter, afterKey)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countIPFSPinsSharingCID = `-- name: CountIPFSPinsSharingCID :one
 SELECT count(*)::bigint
 FROM media_ipfs_pins
@@ -422,6 +437,71 @@ SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_
 // off media_ipfs_pins_video_idx.
 func (q *Queries) ListIPFSPinsByVideo(ctx context.Context, videoID pgtype.UUID) ([]MediaIpfsPin, error) {
 	rows, err := q.db.Query(ctx, listIPFSPinsByVideo, videoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaIpfsPin
+	for rows.Next() {
+		var i MediaIpfsPin
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.MediaClass,
+			&i.Cid,
+			&i.CarRoot,
+			&i.ByteSize,
+			&i.State,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LastError,
+			&i.VideoID,
+			&i.OwnerUserID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Network,
+			&i.TargetNetwork,
+			&i.ClaimToken,
+			&i.LeaseUntil,
+			&i.ReservationBytes,
+			&i.CopiedBytes,
+			&i.SourceGeneration,
+			&i.CommittedGeneration,
+			&i.AdmittedHostSequence,
+			&i.AdmittedConfigRevision,
+			&i.PolicyReason,
+			&i.DemandAt,
+			&i.CapacityReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIPFSPinsForRepin = `-- name: ListIPFSPinsForRepin :many
+SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network, claim_token, lease_until, reservation_bytes, copied_bytes, source_generation, committed_generation, admitted_host_sequence, admitted_config_revision, policy_reason, demand_at, capacity_reason FROM media_ipfs_pins
+WHERE media_class = 'hls' AND state = 'pinned' AND car_root <> ''
+  AND object_key LIKE '%/' AND claim_token IS NULL
+  AND object_key > $1::text
+ORDER BY object_key
+LIMIT $2
+`
+
+type ListIPFSPinsForRepinParams struct {
+	AfterKey  string `json:"after_key"`
+	BatchSize int32  `json:"batch_size"`
+}
+
+// One keyset page of the pinned HLS directory rows the playback-only re-pin
+// (Tier A F6 follow-up) examines, in object_key order so a cursor resumes it. The
+// trailing-slash filter is the directory intent; car_root <> ” skips a row that
+// never recorded a root. A row mid-admission (claim_token set) is left to finish.
+func (q *Queries) ListIPFSPinsForRepin(ctx context.Context, arg ListIPFSPinsForRepinParams) ([]MediaIpfsPin, error) {
+	rows, err := q.db.Query(ctx, listIPFSPinsForRepin, arg.AfterKey, arg.BatchSize)
 	if err != nil {
 		return nil, err
 	}
@@ -758,6 +838,34 @@ WHERE object_key IN (
 // regression). next_attempt_at = now() makes them immediately claimable.
 func (q *Queries) RearmFailedIPFSPins(ctx context.Context, batchSize int32) (int64, error) {
 	result, err := q.db.Exec(ctx, rearmFailedIPFSPins, batchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const rearmIPFSPinForRepin = `-- name: RearmIPFSPinForRepin :execrows
+UPDATE media_ipfs_pins
+SET state = 'pending', capacity_reason = '', attempts = 0, next_attempt_at = now(),
+    last_error = '', updated_at = now()
+WHERE object_key = $1
+  AND state = 'pinned' AND cid = $2
+  AND claim_token IS NULL AND target_network IS NULL
+`
+
+type RearmIPFSPinForRepinParams struct {
+	ObjectKey string `json:"object_key"`
+	Cid       string `json:"cid"`
+}
+
+// Move ONE pinned HLS row back to 'pending' so the ordinary pin path (admission,
+// reservation, F2 trailer check, F3 budget) re-adds the playback-only tree and
+// swapUnpin releases the superseded root. cid/car_root are PRESERVED (that is what
+// swapUnpin compares) and so is policy_reason, unlike RepinIPFSObject which resets it
+// to 'new'. Guarded on the CID the caller inspected: a privacy flip, a delete or a
+// re-transcode that moved the row in between wins by making this match nothing.
+func (q *Queries) RearmIPFSPinForRepin(ctx context.Context, arg RearmIPFSPinForRepinParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rearmIPFSPinForRepin, arg.ObjectKey, arg.Cid)
 	if err != nil {
 		return 0, err
 	}

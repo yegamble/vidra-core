@@ -590,3 +590,36 @@ SELECT
     count(*) FILTER (WHERE state = 'failed')::bigint                   AS failed,
     GREATEST(COALESCE(EXTRACT(EPOCH FROM (now() - min(next_attempt_at) FILTER (WHERE state IN ('pending', 'unpinning'))))::bigint, 0), 0)::bigint AS oldest_pending_age_seconds
 FROM media_ipfs_pins;
+
+-- name: ListIPFSPinsForRepin :many
+-- One keyset page of the pinned HLS directory rows the playback-only re-pin
+-- (Tier A F6 follow-up) examines, in object_key order so a cursor resumes it. The
+-- trailing-slash filter is the directory intent; car_root <> '' skips a row that
+-- never recorded a root. A row mid-admission (claim_token set) is left to finish.
+SELECT * FROM media_ipfs_pins
+WHERE media_class = 'hls' AND state = 'pinned' AND car_root <> ''
+  AND object_key LIKE '%/' AND claim_token IS NULL
+  AND object_key > sqlc.arg(after_key)::text
+ORDER BY object_key
+LIMIT sqlc.arg(batch_size);
+
+-- name: CountIPFSPinsForRepinAfter :one
+-- How many rows the re-pin has not examined yet (an upper bound on its remaining work:
+-- most will turn out to be playback-only already).
+SELECT count(*)::bigint FROM media_ipfs_pins
+WHERE media_class = 'hls' AND state = 'pinned' AND car_root <> ''
+  AND object_key LIKE '%/' AND object_key > sqlc.arg(after_key)::text;
+
+-- name: RearmIPFSPinForRepin :execrows
+-- Move ONE pinned HLS row back to 'pending' so the ordinary pin path (admission,
+-- reservation, F2 trailer check, F3 budget) re-adds the playback-only tree and
+-- swapUnpin releases the superseded root. cid/car_root are PRESERVED (that is what
+-- swapUnpin compares) and so is policy_reason, unlike RepinIPFSObject which resets it
+-- to 'new'. Guarded on the CID the caller inspected: a privacy flip, a delete or a
+-- re-transcode that moved the row in between wins by making this match nothing.
+UPDATE media_ipfs_pins
+SET state = 'pending', capacity_reason = '', attempts = 0, next_attempt_at = now(),
+    last_error = '', updated_at = now()
+WHERE object_key = sqlc.arg(object_key)
+  AND state = 'pinned' AND cid = sqlc.arg(cid)
+  AND claim_token IS NULL AND target_network IS NULL;
