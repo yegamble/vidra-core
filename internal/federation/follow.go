@@ -430,11 +430,14 @@ func (s *Service) handleAccept(ctx context.Context, act inboxActivity, signerAct
 	// The Accept may also answer one of our channel follow-backs
 	// (federation_auto_follow_back, config-parity W12): same signer-is-the-
 	// followed-actor predicate, disjoint activity-id namespaces.
-	_, err := s.repo.AcceptChannelFollowBackByActivity(ctx, sqlcgen.AcceptChannelFollowBackByActivityParams{
+	if _, err := s.repo.AcceptChannelFollowBackByActivity(ctx, sqlcgen.AcceptChannelFollowBackByActivityParams{
 		FollowActivityUrl: followURL,
 		RemoteActorUrl:    signerActorURL,
-	})
-	return err
+	}); err != nil {
+		return err
+	}
+	// ...or our instance actor's follow of a remote instance (0166).
+	return s.answerInstanceFollowing(ctx, true, followURL, signerActorURL)
 }
 
 // handleReject processes an inbound Reject{Follow}: the mirror of handleAccept,
@@ -459,11 +462,13 @@ func (s *Service) handleReject(ctx context.Context, act inboxActivity, signerAct
 	// A Reject may also answer one of our channel follow-backs (W12): the
 	// refused follow-back row goes away. (A later re-follow by that actor may
 	// mint a fresh follow-back — the insert-if-absent guard has been cleared.)
-	_, err := s.repo.DeleteChannelFollowBackByActivity(ctx, sqlcgen.DeleteChannelFollowBackByActivityParams{
+	if _, err := s.repo.DeleteChannelFollowBackByActivity(ctx, sqlcgen.DeleteChannelFollowBackByActivityParams{
 		FollowActivityUrl: followURL,
 		RemoteActorUrl:    signerActorURL,
-	})
-	return err
+	}); err != nil {
+		return err
+	}
+	return s.answerInstanceFollowing(ctx, false, followURL, signerActorURL)
 }
 
 // acceptedFollowID extracts the embedded Follow's id from an Accept/Reject and

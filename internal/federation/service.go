@@ -297,9 +297,9 @@ func WithFollowerApprovalFunc(f func() bool) Option {
 // WithAutoFollowBackFunc wires the federation_auto_follow_back gate
 // (config-parity W12): when it reports true, an ACCEPTED inbound channel
 // Follow triggers an outbound follow-back of the follower, signed by the
-// FOLLOWED CHANNEL's actor (vidra has no instance-level AP actor — the
-// followed channel is the only local actor with a relationship to the
-// follower). Respects the domain blocklist and never duplicates an existing
+// FOLLOWED CHANNEL's actor — the local actor with a relationship to the
+// follower. (Following back an INSTANCE follower, as PeerTube does, is not
+// implemented.) Respects the domain blocklist and never duplicates an existing
 // follow/follow-back edge.
 func WithAutoFollowBackFunc(f func() bool) Option {
 	return func(s *Service) { s.autoFollowBack = f }

@@ -12,6 +12,27 @@ import (
 	"github.com/google/uuid"
 )
 
+const acceptInstanceFollowingByActivity = `-- name: AcceptInstanceFollowingByActivity :execrows
+UPDATE instance_following SET state = 'accepted'
+WHERE follow_activity_url = $1 AND remote_actor_url = $2 AND state = 'pending'
+`
+
+type AcceptInstanceFollowingByActivityParams struct {
+	FollowActivityUrl string `json:"follow_activity_url"`
+	RemoteActorUrl    string `json:"remote_actor_url"`
+}
+
+// Inbound Accept of our Follow. The remote_actor_url predicate is the
+// signer-is-the-followed-actor check: an Accept signed by anyone else matches
+// no row.
+func (q *Queries) AcceptInstanceFollowingByActivity(ctx context.Context, arg AcceptInstanceFollowingByActivityParams) (int64, error) {
+	result, err := q.db.Exec(ctx, acceptInstanceFollowingByActivity, arg.FollowActivityUrl, arg.RemoteActorUrl)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const acceptPendingInstanceFollowerByID = `-- name: AcceptPendingInstanceFollowerByID :one
 UPDATE instance_followers SET state = 'accepted'
 WHERE id = $1 AND state = 'pending'
@@ -96,6 +117,18 @@ func (q *Queries) CountInstanceFollowers(ctx context.Context, state *string) (in
 	return column_1, err
 }
 
+const countInstanceFollowing = `-- name: CountInstanceFollowing :one
+SELECT count(*)::bigint FROM instance_following f
+WHERE ($1::text IS NULL OR f.state = $1)
+`
+
+func (q *Queries) CountInstanceFollowing(ctx context.Context, state *string) (int64, error) {
+	row := q.db.QueryRow(ctx, countInstanceFollowing, state)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countInstanceOutboxVideos = `-- name: CountInstanceOutboxVideos :one
 SELECT count(*)::bigint FROM instance_outbox_videos
 `
@@ -140,6 +173,25 @@ func (q *Queries) DeleteInstanceFollowerByID(ctx context.Context, id uuid.UUID) 
 	return i, err
 }
 
+const deleteInstanceFollowingByID = `-- name: DeleteInstanceFollowingByID :one
+DELETE FROM instance_following WHERE id = $1
+RETURNING remote_actor_url, follow_activity_url, state
+`
+
+type DeleteInstanceFollowingByIDRow struct {
+	RemoteActorUrl    string `json:"remote_actor_url"`
+	FollowActivityUrl string `json:"follow_activity_url"`
+	State             string `json:"state"`
+}
+
+// Unfollow: local intent wins, the row goes at once; the caller sends the Undo.
+func (q *Queries) DeleteInstanceFollowingByID(ctx context.Context, id uuid.UUID) (DeleteInstanceFollowingByIDRow, error) {
+	row := q.db.QueryRow(ctx, deleteInstanceFollowingByID, id)
+	var i DeleteInstanceFollowingByIDRow
+	err := row.Scan(&i.RemoteActorUrl, &i.FollowActivityUrl, &i.State)
+	return i, err
+}
+
 const getInstanceActorKey = `-- name: GetInstanceActorKey :one
 SELECT public_key_pem, private_key_pem FROM instance_actor_keys WHERE singleton
 `
@@ -171,6 +223,22 @@ func (q *Queries) GetInstanceFollowerByActor(ctx context.Context, remoteActorUrl
 	var i GetInstanceFollowerByActorRow
 	err := row.Scan(&i.ID, &i.State, &i.FollowActivityUrl)
 	return i, err
+}
+
+const hasAcceptedInstanceFollowingForHost = `-- name: HasAcceptedInstanceFollowingForHost :one
+SELECT EXISTS (
+    SELECT 1 FROM instance_following
+    WHERE lower(host) = lower($1) AND state = 'accepted'
+) AS following
+`
+
+// The ingestion gate's instance arm: following an instance asks for every
+// public video it announces, whichever of its actors signs the activity.
+func (q *Queries) HasAcceptedInstanceFollowingForHost(ctx context.Context, lower string) (bool, error) {
+	row := q.db.QueryRow(ctx, hasAcceptedInstanceFollowingForHost, lower)
+	var following bool
+	err := row.Scan(&following)
+	return following, err
 }
 
 const insertInstanceActorKeyIfAbsent = `-- name: InsertInstanceActorKeyIfAbsent :execrows
@@ -364,6 +432,57 @@ func (q *Queries) ListInstanceFollowers(ctx context.Context, arg ListInstanceFol
 	return items, nil
 }
 
+const listInstanceFollowing = `-- name: ListInstanceFollowing :many
+SELECT f.id, f.remote_actor_url, f.host, f.state, f.created_at, ra.preferred_username
+FROM instance_following f
+JOIN remote_actors ra ON ra.actor_url = f.remote_actor_url
+WHERE ($1::text IS NULL OR f.state = $1)
+ORDER BY f.created_at DESC, f.id DESC
+LIMIT $3 OFFSET $2
+`
+
+type ListInstanceFollowingParams struct {
+	State        *string `json:"state"`
+	ResultOffset int32   `json:"result_offset"`
+	ResultLimit  int32   `json:"result_limit"`
+}
+
+type ListInstanceFollowingRow struct {
+	ID                uuid.UUID `json:"id"`
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	Host              string    `json:"host"`
+	State             string    `json:"state"`
+	CreatedAt         time.Time `json:"created_at"`
+	PreferredUsername string    `json:"preferred_username"`
+}
+
+func (q *Queries) ListInstanceFollowing(ctx context.Context, arg ListInstanceFollowingParams) ([]ListInstanceFollowingRow, error) {
+	rows, err := q.db.Query(ctx, listInstanceFollowing, arg.State, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListInstanceFollowingRow
+	for rows.Next() {
+		var i ListInstanceFollowingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RemoteActorUrl,
+			&i.Host,
+			&i.State,
+			&i.CreatedAt,
+			&i.PreferredUsername,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInstanceOutboxVideoIDs = `-- name: ListInstanceOutboxVideoIDs :many
 SELECT id FROM instance_outbox_videos
 ORDER BY created_at DESC, id DESC
@@ -414,5 +533,61 @@ func (q *Queries) RejectInstanceFollowerByID(ctx context.Context, id uuid.UUID) 
 	row := q.db.QueryRow(ctx, rejectInstanceFollowerByID, id)
 	var i RejectInstanceFollowerByIDRow
 	err := row.Scan(&i.RemoteActorUrl, &i.FollowActivityUrl)
+	return i, err
+}
+
+const rejectInstanceFollowingByActivity = `-- name: RejectInstanceFollowingByActivity :execrows
+UPDATE instance_following SET state = 'rejected'
+WHERE follow_activity_url = $1 AND remote_actor_url = $2
+`
+
+type RejectInstanceFollowingByActivityParams struct {
+	FollowActivityUrl string `json:"follow_activity_url"`
+	RemoteActorUrl    string `json:"remote_actor_url"`
+}
+
+// Inbound Reject of our Follow: kept, 'rejected', so the admin sees it.
+func (q *Queries) RejectInstanceFollowingByActivity(ctx context.Context, arg RejectInstanceFollowingByActivityParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rejectInstanceFollowingByActivity, arg.FollowActivityUrl, arg.RemoteActorUrl)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const upsertInstanceFollowing = `-- name: UpsertInstanceFollowing :one
+INSERT INTO instance_following (remote_actor_url, host, follow_activity_url)
+VALUES ($1, $2, $3)
+ON CONFLICT (remote_actor_url) DO UPDATE SET
+    state               = CASE WHEN instance_following.state = 'rejected'
+                               THEN 'pending' ELSE instance_following.state END,
+    follow_activity_url = CASE WHEN instance_following.state = 'rejected'
+                               THEN EXCLUDED.follow_activity_url
+                               ELSE instance_following.follow_activity_url END
+RETURNING id, remote_actor_url, host, state, follow_activity_url, created_at
+`
+
+type UpsertInstanceFollowingParams struct {
+	RemoteActorUrl    string `json:"remote_actor_url"`
+	Host              string `json:"host"`
+	FollowActivityUrl string `json:"follow_activity_url"`
+}
+
+// Our instance actor follows a remote one. Idempotent like
+// UpsertRemoteChannelFollow: an existing row is returned untouched (the caller
+// sees its own minted activity id only on a fresh insert, and only then sends
+// a Follow) — except a REJECTED row, which an admin's deliberate re-follow
+// re-arms to pending with the new activity id.
+func (q *Queries) UpsertInstanceFollowing(ctx context.Context, arg UpsertInstanceFollowingParams) (InstanceFollowing, error) {
+	row := q.db.QueryRow(ctx, upsertInstanceFollowing, arg.RemoteActorUrl, arg.Host, arg.FollowActivityUrl)
+	var i InstanceFollowing
+	err := row.Scan(
+		&i.ID,
+		&i.RemoteActorUrl,
+		&i.Host,
+		&i.State,
+		&i.FollowActivityUrl,
+		&i.CreatedAt,
+	)
 	return i, err
 }
