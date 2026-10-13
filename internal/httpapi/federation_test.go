@@ -142,6 +142,13 @@ func (f fakeFedRepo) ClaimRemoteActorMove(context.Context, sqlcgen.ClaimRemoteAc
 func (f fakeFedRepo) ListRemoteChannelFollowsOfActor(context.Context, sqlcgen.ListRemoteChannelFollowsOfActorParams) ([]sqlcgen.ListRemoteChannelFollowsOfActorRow, error) {
 	return nil, nil
 }
+func (f fakeFedRepo) ReleaseRemoteActorMove(context.Context, string) error { return nil }
+func (f fakeFedRepo) SetRemoteActorMoveState(context.Context, sqlcgen.SetRemoteActorMoveStateParams) error {
+	return nil
+}
+func (f fakeFedRepo) CarryRemoteActorBlocks(context.Context, sqlcgen.CarryRemoteActorBlocksParams) (int64, error) {
+	return 0, nil
+}
 
 func (f fakeFedRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	if v, ok := f.videosByID[id]; ok {
