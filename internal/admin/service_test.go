@@ -29,6 +29,8 @@ type fakeRepo struct {
 	// daily mirrors user_daily_quotas; dailyUsed stubs the 24h ledger sum.
 	daily     map[uuid.UUID]int64
 	dailyUsed map[uuid.UUID]int64
+	// failUpdate makes AdminUpdateUser fail (the second write of an edit).
+	failUpdate bool
 }
 
 func (f *fakeRepo) GetUserDailyQuota(_ context.Context, id uuid.UUID) (int64, error) {
@@ -143,6 +145,9 @@ func (f *fakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.User, e
 }
 
 func (f *fakeRepo) AdminUpdateUser(_ context.Context, a sqlcgen.AdminUpdateUserParams) (sqlcgen.User, error) {
+	if f.failUpdate {
+		return sqlcgen.User{}, errors.New("boom")
+	}
 	u := f.users[a.ID]
 	if a.Role != nil {
 		u.Role = *a.Role
@@ -667,5 +672,43 @@ func TestUpdateUserDailyQuotaTriState(t *testing.T) {
 	if _, err := svc.UpdateUserDetailed(ctx, adminID, userID, UpdateUserInput{
 		SetDailyQuota: true, DailyQuotaBytes: &n, ActorRole: RoleModerator}); !errors.Is(err, ErrModeratorForbidden) {
 		t.Fatalf("moderator err = %v, want ErrModeratorForbidden", err)
+	}
+}
+
+// TestUpdateUserDailyQuotaRollsBackWithFailedUserWrite: the daily override and
+// the users row are one edit. The runner here snapshots/restores the fake the
+// way a rolled-back transaction would, so a failing second write must leave the
+// override untouched.
+func TestUpdateUserDailyQuotaRollsBackWithFailedUserWrite(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	adminID, userID := uuid.New(), uuid.New()
+	repo.users[adminID] = sqlcgen.User{ID: adminID, Role: RoleAdmin, IsActive: true}
+	repo.users[userID] = sqlcgen.User{ID: userID, Role: RoleUser, IsActive: true}
+	repo.daily = map[uuid.UUID]int64{userID: 100}
+	ran := 0
+	svc := NewService(repo, WithTx(func(ctx context.Context, fn func(Repository) error) error {
+		ran++
+		snap := map[uuid.UUID]int64{}
+		for k, v := range repo.daily {
+			snap[k] = v
+		}
+		if err := fn(repo); err != nil {
+			repo.daily = snap // rollback
+			return err
+		}
+		return nil
+	}))
+
+	repo.failUpdate = true
+	n := int64(5)
+	if _, err := svc.UpdateUserDetailed(ctx, adminID, userID, UpdateUserInput{SetDailyQuota: true, DailyQuotaBytes: &n}); err == nil {
+		t.Fatal("expected the failing second write to surface")
+	}
+	if ran != 1 {
+		t.Fatalf("tx runner ran %d times, want 1", ran)
+	}
+	if got, _ := svc.DailyOverride(ctx, userID); got == nil || *got != 100 {
+		t.Fatalf("override after failed edit = %v, want the untouched 100", got)
 	}
 }

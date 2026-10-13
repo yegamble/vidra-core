@@ -1740,7 +1740,17 @@ func run() error {
 	watchwordsvc := watchword.NewService(db.Queries())
 	opts = append(opts, httpapi.WithWatchWordService(watchwordsvc))
 
-	adminsvc := admin.NewService(db.Queries())
+	adminsvc := admin.NewService(db.Queries(), admin.WithTx(func(ctx context.Context, fn func(admin.Repository) error) error {
+		tx, err := db.Pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := fn(db.Queries().WithTx(tx)); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}))
 	opts = append(opts, httpapi.WithAdminService(adminsvc))
 
 	opts = append(opts, httpapi.WithAuditLog(auditsvc))

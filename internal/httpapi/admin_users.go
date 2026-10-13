@@ -284,6 +284,17 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 		}
 		return err
 	}
+	s.notifyBanChange(c, res, in)
+	// The ledger carries BOTH: the structured field list a consumer can read
+	// without parsing, and the human line the admin audit view already renders.
+	s.auditEvent(c, audit.Event{
+		Action: observability.ActionAdminUserUpdate, Result: observability.ResultSuccess,
+		ActorID: callerID.String(), Reason: adminChangeReason(targetID, in),
+		ResourceType: auditResourceUser, ResourceID: targetID.String(),
+		Changes: adminUserChanges(res, in),
+	})
+	// The write is committed and audited above; the reads below only render the
+	// response, so a failure here must not swallow the audit event.
 	used, err := s.adminsvc.StorageUsed(c.Request().Context(), targetID)
 	if err != nil {
 		return err
@@ -300,15 +311,6 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	s.notifyBanChange(c, res, in)
-	// The ledger carries BOTH: the structured field list a consumer can read
-	// without parsing, and the human line the admin audit view already renders.
-	s.auditEvent(c, audit.Event{
-		Action: observability.ActionAdminUserUpdate, Result: observability.ResultSuccess,
-		ActorID: callerID.String(), Reason: adminChangeReason(targetID, in),
-		ResourceType: auditResourceUser, ResourceID: targetID.String(),
-		Changes: adminUserChanges(res, in),
-	})
 	view := newAdminUserView(res.After, used, mfaEnabled).withDaily(dailyOverride, dailyUsed)
 	if ban, ok := s.adminsvc.Ban(c.Request().Context(), targetID); ok && !res.After.IsActive {
 		at := ban.BannedAt
