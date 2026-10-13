@@ -287,6 +287,80 @@ func (c *dbPoolCollector) Collect(ch chan<- prometheus.Metric) {
 	counter(c.lifetimeDestroys, float64(s.MaxLifetimeDestroyCount))
 }
 
+// IPFSCapacity is one sample of the managed IPFS mirror's disk accounting.
+// The *int64 fields are nil while the host manager has not reported them, and
+// the gauge is then omitted rather than exported as a misleading zero.
+type IPFSCapacity struct {
+	BudgetBytes         int64
+	ReservedBytes       int64
+	MinFreeBytes        int64
+	RepoUsedBytes       *int64
+	FilesystemFreeBytes *int64
+	// PausedReason is the admission-pause reason from ipfscontrol.Runtime ("" when
+	// admitting). It is drawn from that function's fixed vocabulary
+	// (budget_exhausted, filesystem_headroom, ...), so it is a bounded label.
+	PausedReason string
+}
+
+// RegisterIPFSCapacitySource installs the vidra_ipfs_* capacity gauges, pulled at
+// scrape time like the rest (F4): before them nothing but Admin -> IPFS carried
+// repo_used_bytes or the budget, and /admin/system read "ok" on a full budget.
+// vidra_ipfs_admission_paused{reason} is 1 only while paused, so
+// `max(vidra_ipfs_admission_paused{reason=~"budget_exhausted|filesystem_headroom"})`
+// is the alert. Call at most once.
+func (m *Metrics) RegisterIPFSCapacitySource(source func(context.Context) (IPFSCapacity, error)) {
+	m.registry.MustRegister(&ipfsCapacityCollector{
+		budget: prometheus.NewDesc("vidra_ipfs_budget_bytes",
+			"Configured IPFS repo budget in bytes (the managed-node admission ceiling).", nil, nil),
+		reserved: prometheus.NewDesc("vidra_ipfs_reserved_bytes",
+			"Bytes reserved by in-flight IPFS copies, not yet visible in repo usage.", nil, nil),
+		minFree: prometheus.NewDesc("vidra_ipfs_min_free_bytes",
+			"Filesystem headroom the IPFS mirror will not admit below.", nil, nil),
+		used: prometheus.NewDesc("vidra_ipfs_repo_used_bytes",
+			"IPFS repo size in bytes as last reported by the host manager. Absent until reported.", nil, nil),
+		free: prometheus.NewDesc("vidra_ipfs_filesystem_free_bytes",
+			"Free bytes on the IPFS repo filesystem as last reported by the host manager. Absent until reported.", nil, nil),
+		paused: prometheus.NewDesc("vidra_ipfs_admission_paused",
+			"1 while the IPFS mirror is refusing new pins, labelled by the reason; absent when admitting.", []string{"reason"}, nil),
+		source: source,
+	})
+}
+
+type ipfsCapacityCollector struct {
+	budget, reserved, minFree, used, free, paused *prometheus.Desc
+	source                                        func(context.Context) (IPFSCapacity, error)
+}
+
+func (c *ipfsCapacityCollector) Describe(ch chan<- *prometheus.Desc) {
+	for _, d := range []*prometheus.Desc{c.budget, c.reserved, c.minFree, c.used, c.free, c.paused} {
+		ch <- d
+	}
+}
+
+func (c *ipfsCapacityCollector) Collect(ch chan<- prometheus.Metric) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	s, err := c.source(ctx)
+	if err != nil {
+		return // keep the scrape healthy on a transient source error
+	}
+	gauge := func(d *prometheus.Desc, v int64) {
+		ch <- prometheus.MustNewConstMetric(d, prometheus.GaugeValue, float64(v))
+	}
+	gauge(c.budget, s.BudgetBytes)
+	gauge(c.reserved, s.ReservedBytes)
+	gauge(c.minFree, s.MinFreeBytes)
+	if s.RepoUsedBytes != nil {
+		gauge(c.used, *s.RepoUsedBytes)
+	}
+	if s.FilesystemFreeBytes != nil {
+		gauge(c.free, *s.FilesystemFreeBytes)
+	}
+	if s.PausedReason != "" {
+		ch <- prometheus.MustNewConstMetric(c.paused, prometheus.GaugeValue, 1, s.PausedReason)
+	}
+}
+
 // Handler returns the Prometheus scrape handler for this registry.
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})

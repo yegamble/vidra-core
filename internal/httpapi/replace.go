@@ -119,8 +119,11 @@ func (s *Server) handleCreateReplaceSession(c echo.Context) error {
 	if qerr := s.checkUploadQuotas(ctx, v.OwnerID, in.Size); qerr != nil {
 		return qerr
 	}
-	sess, err := s.uploadsvc.CreateSession(ctx, id, userID, strings.TrimSpace(in.Filename), in.Size, strings.TrimSpace(in.FileFingerprint), upload.PurposeReplace)
+	sess, err := s.uploadsvc.CreateSession(ctx, id, v.ChannelID, userID, strings.TrimSpace(in.Filename), in.Size, strings.TrimSpace(in.FileFingerprint), upload.PurposeReplace)
 	if err != nil {
+		if errors.Is(err, upload.ErrVideoChanged) {
+			return &ReplaceConflictError{Reason: "the video changed while the replacement was being set up; reload and try again"}
+		}
 		if errors.Is(err, upload.ErrTooManyActiveSessions) {
 			return &TooManyActiveUploadsError{Max: s.uploadMaxActiveSessions()}
 		}

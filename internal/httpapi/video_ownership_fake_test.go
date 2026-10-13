@@ -19,15 +19,32 @@ import (
 type ownershipFakeRepo struct {
 	v    *videoFakeRepo
 	rows []sqlcgen.VideoOwnershipChange
+	// inFlight mirrors VideoMediaWorkInFlight over the harness's own upload
+	// and transcode services (replace sessions, live transcode jobs); the full
+	// predicate is proven against PostgreSQL in internal/store.
+	inFlight func(uuid.UUID) bool
 }
 
 // ownershipServer is videoServerFull with ownership changes wired.
 func ownershipServer(t *testing.T, opts ...video.Option) (*Server, *videoFakeRepo, *ownershipFakeRepo) {
 	t.Helper()
-	own := &ownershipFakeRepo{}
-	srv, _, _, _, repo := videoServerFull(t, testConfig(), append(opts, video.WithOwnershipRepository(own))...)
-	own.v = repo
+	srv, repo, own, _ := ownershipServerTC(t, opts...)
 	return srv, repo, own
+}
+
+// ownershipServerTC is ownershipServer plus the transcode fake, for seeding
+// live transcode jobs.
+func ownershipServerTC(t *testing.T, opts ...video.Option) (*Server, *videoFakeRepo, *ownershipFakeRepo, *transcodeFakeRepo) {
+	t.Helper()
+	own := &ownershipFakeRepo{}
+	srv, _, tc, _, repo := videoServerFull(t, testConfig(), append(opts, video.WithOwnershipRepository(own))...)
+	own.v = repo
+	own.inFlight = func(id uuid.UUID) bool {
+		ctx := context.Background()
+		return (srv.uploadsvc != nil && srv.uploadsvc.HasActiveReplaceSession(ctx, id)) ||
+			(srv.transcodesvc != nil && srv.transcodesvc.HasLiveJob(ctx, id))
+	}
+	return srv, repo, own, tc
 }
 
 func (f *ownershipFakeRepo) ResolveOwnershipRecipient(_ context.Context, a sqlcgen.ResolveOwnershipRecipientParams) (sqlcgen.ResolveOwnershipRecipientRow, error) {
@@ -106,6 +123,61 @@ func (f *ownershipFakeRepo) CountIncomingVideoOwnershipChanges(_ context.Context
 	return n, nil
 }
 
+func (f *ownershipFakeRepo) GetVideoOwnershipChange(_ context.Context, id uuid.UUID) (sqlcgen.VideoOwnershipChange, error) {
+	for _, r := range f.rows {
+		if r.ID == id {
+			return r, nil
+		}
+	}
+	return sqlcgen.VideoOwnershipChange{}, pgx.ErrNoRows
+}
+
+// AcceptVideoOwnershipChange mirrors the single-statement accept: flip AND move
+// only while pending + addressed to the caller, the initiator still owns the
+// video, and the target channel is the recipient's.
+func (f *ownershipFakeRepo) AcceptVideoOwnershipChange(_ context.Context, a sqlcgen.AcceptVideoOwnershipChangeParams) (sqlcgen.AcceptVideoOwnershipChangeRow, error) {
+	for i, r := range f.rows {
+		if r.ID != a.ID || r.NextOwnerID != a.NextOwnerID || r.Status != "pending" {
+			continue
+		}
+		v, ok := f.v.videos[r.VideoID]
+		target, tok := f.v.channelByID(a.ChannelID)
+		if !ok || !tok || v.OwnerID != r.InitiatorID || target.OwnerID != r.NextOwnerID ||
+			!r.CreatedAt.After(a.ExpiredBefore) || f.inFlight(r.VideoID) {
+			break
+		}
+		from := v.ChannelID
+		v.ChannelID, v.OwnerID = target.ID, target.OwnerID
+		f.v.videos[r.VideoID] = v
+		f.rows[i].Status = "accepted"
+		return sqlcgen.AcceptVideoOwnershipChangeRow{ID: r.VideoID, FromChannelID: from}, nil
+	}
+	return sqlcgen.AcceptVideoOwnershipChangeRow{}, pgx.ErrNoRows
+}
+
+func (f *ownershipFakeRepo) RefuseVideoOwnershipChange(_ context.Context, a sqlcgen.RefuseVideoOwnershipChangeParams) (int64, error) {
+	for i, r := range f.rows {
+		if r.ID == a.ID && r.NextOwnerID == a.NextOwnerID && r.Status == "pending" {
+			f.rows[i].Status = "refused"
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
+func (f *ownershipFakeRepo) SumVideoStorageUsage(_ context.Context, videoID uuid.UUID) (int64, error) {
+	var n int64
+	for _, vf := range f.v.files[videoID] {
+		n += vf.SizeBytes
+	}
+	return n, nil
+}
+
+func (f *videoFakeRepo) channelByID(id uuid.UUID) (sqlcgen.Channel, bool) {
+	ch, err := f.GetChannelByID(context.Background(), id)
+	return ch, err == nil
+}
+
 func (f *ownershipFakeRepo) ExpireStaleVideoOwnershipChanges(_ context.Context, a sqlcgen.ExpireStaleVideoOwnershipChangesParams) (int64, error) {
 	var n int64
 	for i, r := range f.rows {
@@ -146,4 +218,19 @@ func (f *ownershipFakeRepo) CancelVideoOwnershipChange(_ context.Context, a sqlc
 		}
 	}
 	return 0, nil
+}
+
+func (f *ownershipFakeRepo) VideoMediaWorkInFlight(_ context.Context, videoID uuid.UUID) (bool, error) {
+	return f.inFlight(videoID), nil
+}
+
+// SwapVideoOriginalIfOwner mirrors the guarded single-statement swap: only while
+// the video still belongs to OwnerID are its originals replaced by the new row.
+func (f *videoFakeRepo) SwapVideoOriginalIfOwner(ctx context.Context, a sqlcgen.SwapVideoOriginalIfOwnerParams) (sqlcgen.VideoFile, error) {
+	if v, ok := f.videos[a.VideoID]; !ok || v.OwnerID != a.OwnerID {
+		return sqlcgen.VideoFile{}, pgx.ErrNoRows
+	}
+	_ = f.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{VideoID: a.VideoID, Kind: "original"})
+	return f.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{VideoID: a.VideoID, Kind: "original", StorageKey: a.StorageKey,
+		ContentType: a.ContentType, OriginalName: a.OriginalName, SizeBytes: a.SizeBytes, Sha256: a.Sha256})
 }
