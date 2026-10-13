@@ -13,14 +13,20 @@ import (
 
 type fakeRepinMirror struct {
 	*fakeIPFSMirror
-	status    ipfsmirror.RepinStatus
-	startErr  error
-	startHits int
+	status     ipfsmirror.RepinStatus
+	startErr   error
+	startHits  int
+	cancelHits int
+	cancelErr  error
 }
 
 func (f *fakeRepinMirror) StartRepin(_ context.Context) (ipfsmirror.RepinStatus, error) {
 	f.startHits++
 	return f.status, f.startErr
+}
+func (f *fakeRepinMirror) CancelRepin(_ context.Context) (ipfsmirror.RepinStatus, error) {
+	f.cancelHits++
+	return f.status, f.cancelErr
 }
 func (f *fakeRepinMirror) RepinStatus(_ context.Context) (ipfsmirror.RepinStatus, error) {
 	return f.status, nil
@@ -51,8 +57,11 @@ func TestIPFSRepinRoutes(t *testing.T) {
 		if rec := getWithAuth(srv, path, tok); rec.Code != want {
 			t.Errorf("GET as %q = %d, want %d", tok, rec.Code, want)
 		}
+		if rec := deleteJSONWithAuth(srv, path, tok, ""); rec.Code != want {
+			t.Errorf("DELETE as %q = %d, want %d", tok, rec.Code, want)
+		}
 	}
-	if mirror.startHits != 0 {
+	if mirror.startHits != 0 || mirror.cancelHits != 0 {
 		t.Fatalf("StartRepin reached by a non-admin (%d calls)", mirror.startHits)
 	}
 
@@ -75,6 +84,20 @@ func TestIPFSRepinRoutes(t *testing.T) {
 		t.Errorf("no admin.ipfs.repin success with an actor in the audit log: %+v", auditRepo.rows)
 	}
 
+	if rec := deleteJSONWithAuth(srv, path, admin, ""); rec.Code != http.StatusOK || mirror.cancelHits != 1 {
+		t.Errorf("cancel = %d (hits %d), want 200", rec.Code, mirror.cancelHits)
+	}
+	cancelled := false
+	for _, r := range auditRepo.rows {
+		cancelled = cancelled || (r.Action == observability.ActionIPFSRepinCancel && r.Result == observability.ResultSuccess)
+	}
+	if !cancelled {
+		t.Error("no admin.ipfs.repin.cancel audit row")
+	}
+	mirror.cancelErr = ipfsmirror.ErrRepinNotRunning
+	if rec := deleteJSONWithAuth(srv, path, admin, ""); rec.Code != http.StatusConflict {
+		t.Errorf("cancel with nothing running = %d, want 409", rec.Code)
+	}
 	mirror.startErr = ipfsmirror.ErrRepinRunning
 	if rec := postJSONWithAuth(srv, path, admin, `{}`); rec.Code != http.StatusConflict {
 		t.Errorf("start while running = %d, want 409", rec.Code)

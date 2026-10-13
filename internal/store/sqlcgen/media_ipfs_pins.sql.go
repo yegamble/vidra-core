@@ -700,14 +700,15 @@ func (q *Queries) ListPinnedVideoIDs(ctx context.Context, videoIds []uuid.UUID) 
 
 const markIPFSPinFailed = `-- name: MarkIPFSPinFailed :exec
 UPDATE media_ipfs_pins
-SET state = 'failed', attempts = attempts + 1, last_error = $2, updated_at = now()
+SET state = CASE WHEN $3 = 'pending' AND cid <> '' AND car_root <> '' THEN 'pinned' ELSE 'failed' END,
+    attempts = attempts + 1, last_error = $2, updated_at = now()
 WHERE object_key = $1 AND state = $3
 `
 
 type MarkIPFSPinFailedParams struct {
-	ObjectKey     string `json:"object_key"`
-	LastError     string `json:"last_error"`
-	ExpectedState string `json:"expected_state"`
+	ObjectKey     string      `json:"object_key"`
+	LastError     string      `json:"last_error"`
+	ExpectedState interface{} `json:"expected_state"`
 }
 
 // Dead-letter a pin/unpin after max attempts: no further automatic retries (the
@@ -719,6 +720,11 @@ type MarkIPFSPinFailedParams struct {
 // newer intent is preserved rather than clobbered to 'failed' — which the reconcile
 // scan would otherwise re-arm in the WRONG direction (a failed-pin cid=” re-pins,
 // so a clobbered unpin would re-pin a now-non-public object: a privacy regression).
+//
+// A FAILED RE-ADD OF A ROW THAT ALREADY HOLDS A GOOD ROOT (a re-transcode or the bulk
+// re-pin re-arms a pinned directory row; cid and car_root are kept) returns to
+// 'pinned' on that old root, last_error kept. Dead-lettering it would let
+// RearmFailedIPFSPins read cid <> ” as a failed UNPIN and unpin the good root.
 func (q *Queries) MarkIPFSPinFailed(ctx context.Context, arg MarkIPFSPinFailedParams) error {
 	_, err := q.db.Exec(ctx, markIPFSPinFailed, arg.ObjectKey, arg.LastError, arg.ExpectedState)
 	return err
@@ -1093,6 +1099,51 @@ func (q *Queries) RouteIPFSPinIntent(ctx context.Context, arg RouteIPFSPinIntent
 		&i.CapacityReason,
 	)
 	return i, err
+}
+
+const saveIPFSRepinRun = `-- name: SaveIPFSRepinRun :execrows
+UPDATE instance_settings
+SET value = $1, updated_at = now()
+WHERE key = $2 AND value LIKE '%"phase":"' || $3::text || '"%'
+`
+
+type SaveIPFSRepinRunParams struct {
+	Value         string `json:"value"`
+	Key           string `json:"key"`
+	ExpectedPhase string `json:"expected_phase"`
+}
+
+// Compare-and-set save of the run state: only while the stored phase is still the one
+// the writer loaded, so a cancel or a restart between its load and save wins (0 rows).
+func (q *Queries) SaveIPFSRepinRun(ctx context.Context, arg SaveIPFSRepinRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, saveIPFSRepinRun, arg.Value, arg.Key, arg.ExpectedPhase)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const startIPFSRepinRun = `-- name: StartIPFSRepinRun :execrows
+INSERT INTO instance_settings (key, value, updated_at)
+VALUES ($1, $2, now())
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+WHERE instance_settings.value !~ '"phase":"(running|paused)"'
+`
+
+type StartIPFSRepinRunParams struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// Compare-and-set start of the bulk re-pin run: writes the fresh run state unless the
+// stored one is running or paused (0 rows = another start won). The state is JSON in
+// instance_settings.value; json.Marshal emits "phase":"x" without spaces.
+func (q *Queries) StartIPFSRepinRun(ctx context.Context, arg StartIPFSRepinRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, startIPFSRepinRun, arg.Key, arg.Value)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const sweepIneligibleIPFSPins = `-- name: SweepIneligibleIPFSPins :execrows

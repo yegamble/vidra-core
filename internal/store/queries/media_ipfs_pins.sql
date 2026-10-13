@@ -260,8 +260,14 @@ RETURNING state;
 -- newer intent is preserved rather than clobbered to 'failed' — which the reconcile
 -- scan would otherwise re-arm in the WRONG direction (a failed-pin cid='' re-pins,
 -- so a clobbered unpin would re-pin a now-non-public object: a privacy regression).
+--
+-- A FAILED RE-ADD OF A ROW THAT ALREADY HOLDS A GOOD ROOT (a re-transcode or the bulk
+-- re-pin re-arms a pinned directory row; cid and car_root are kept) returns to
+-- 'pinned' on that old root, last_error kept. Dead-lettering it would let
+-- RearmFailedIPFSPins read cid <> '' as a failed UNPIN and unpin the good root.
 UPDATE media_ipfs_pins
-SET state = 'failed', attempts = attempts + 1, last_error = $2, updated_at = now()
+SET state = CASE WHEN sqlc.arg(expected_state) = 'pending' AND cid <> '' AND car_root <> '' THEN 'pinned' ELSE 'failed' END,
+    attempts = attempts + 1, last_error = $2, updated_at = now()
 WHERE object_key = $1 AND state = sqlc.arg(expected_state);
 
 -- name: RescheduleIPFSPin :exec
@@ -623,3 +629,19 @@ SET state = 'pending', capacity_reason = '', attempts = 0, next_attempt_at = now
 WHERE object_key = sqlc.arg(object_key)
   AND state = 'pinned' AND cid = sqlc.arg(cid)
   AND claim_token IS NULL AND target_network IS NULL;
+
+-- name: StartIPFSRepinRun :execrows
+-- Compare-and-set start of the bulk re-pin run: writes the fresh run state unless the
+-- stored one is running or paused (0 rows = another start won). The state is JSON in
+-- instance_settings.value; json.Marshal emits "phase":"x" without spaces.
+INSERT INTO instance_settings (key, value, updated_at)
+VALUES (sqlc.arg(key), sqlc.arg(value), now())
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+WHERE instance_settings.value !~ '"phase":"(running|paused)"';
+
+-- name: SaveIPFSRepinRun :execrows
+-- Compare-and-set save of the run state: only while the stored phase is still the one
+-- the writer loaded, so a cancel or a restart between its load and save wins (0 rows).
+UPDATE instance_settings
+SET value = sqlc.arg(value), updated_at = now()
+WHERE key = sqlc.arg(key) AND value LIKE '%"phase":"' || sqlc.arg(expected_phase)::text || '"%';

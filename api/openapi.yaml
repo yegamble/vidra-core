@@ -16895,7 +16895,7 @@ paths:
       operationId: getIPFSRepin
       summary: Progress of the bulk re-pin to the playback-only set (admin)
       description: >-
-        The current or last run: phase (idle, running, paused, completed), counts of
+        The current or last run: phase (idle, running, paused, completed, cancelled), counts of
         rows done, skipped (already playback-only), blocked (the admission policy
         would not re-admit them), failed and in flight, the pinned HLS rows not yet
         examined (an upper bound on the work left) and an estimate of the pinned
@@ -16918,6 +16918,53 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: This build or storage backend cannot recompute the playback-only set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: cancelIPFSRepin
+      summary: Cancel the bulk re-pin to the playback-only set (admin)
+      description: >-
+        Stops the run from arming further rows. Rows already re-armed finish through
+        the ordinary pin path; nothing is rolled back. Works while running or paused.
+        Returns the run status. Restricted to admins; audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The run was cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSRepinStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: No re-pin is running.
           content:
             application/json:
               schema:
@@ -27452,7 +27499,7 @@ components:
       properties:
         phase:
           type: string
-          enum: [idle, running, paused, completed]
+          enum: [idle, running, paused, completed, cancelled]
         started_at:
           type: [string, "null"]
           format: date-time

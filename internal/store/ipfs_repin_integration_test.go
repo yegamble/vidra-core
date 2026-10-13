@@ -51,3 +51,88 @@ func TestRepinQueries(t *testing.T) {
 		t.Fatalf("row after re-arm = %+v err=%v", got, err)
 	}
 }
+
+// The data-loss path: a re-armed row whose re-add dead-letters must fall back to its
+// still-valid old root, and Reconcile's re-arm of failed rows must leave it pinned
+// (it used to read cid <> ” as a failed UNPIN and flip the row to 'unpinning').
+func TestRepinDeadLetterKeepsTheOldRoot(t *testing.T) {
+	ctx := context.Background()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	tx, err := st.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	q := st.Queries().WithTx(tx)
+	key := "repintest/" + uuid.NewString() + "/"
+	if _, err := tx.Exec(ctx, "INSERT INTO media_ipfs_pins(object_key,media_class,state,cid,car_root) VALUES($1,'hls','pinned','bafyold','bafyold')", key); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := q.RearmIPFSPinForRepin(ctx, sqlcgen.RearmIPFSPinForRepinParams{ObjectKey: key, Cid: "bafyold"}); err != nil || n != 1 {
+		t.Fatalf("re-arm = %d %v", n, err)
+	}
+	if err := q.MarkIPFSPinFailed(ctx, sqlcgen.MarkIPFSPinFailedParams{ObjectKey: key, LastError: "add failed", ExpectedState: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	// The reconcile re-arm of dead letters, over every failed row in the table.
+	if _, err := q.RearmFailedIPFSPins(ctx, 1000); err != nil {
+		t.Fatal(err)
+	}
+	got, err := q.GetIPFSPinByObjectKey(ctx, key)
+	if err != nil || got.State != "pinned" || got.Cid != "bafyold" || got.CarRoot != "bafyold" || got.LastError != "add failed" {
+		t.Fatalf("row = %+v err=%v, want pinned on the old root with last_error kept", got, err)
+	}
+	// A first pin that never had a root still dead-letters.
+	fresh := "repintest/" + uuid.NewString() + "/"
+	if _, err := tx.Exec(ctx, "INSERT INTO media_ipfs_pins(object_key,media_class,state) VALUES($1,'hls','pending')", fresh); err != nil {
+		t.Fatal(err)
+	}
+	_ = q.MarkIPFSPinFailed(ctx, sqlcgen.MarkIPFSPinFailedParams{ObjectKey: fresh, LastError: "x", ExpectedState: "pending"})
+	if g, _ := q.GetIPFSPinByObjectKey(ctx, fresh); g.State != "failed" {
+		t.Fatalf("a rootless first pin = %q, want failed", g.State)
+	}
+}
+
+// StartIPFSRepinRun is a real compare-and-set: refused while running or paused.
+func TestStartIPFSRepinRunIsRefusedWhileRunning(t *testing.T) {
+	ctx := context.Background()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	tx, err := st.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	q := st.Queries().WithTx(tx)
+	k := "repintest.state." + uuid.NewString()
+	start := func(phase string) int64 {
+		n, err := q.StartIPFSRepinRun(ctx, sqlcgen.StartIPFSRepinRunParams{Key: k, Value: `{"phase":"` + phase + `"}`})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if start("running") != 1 || start("running") != 0 {
+		t.Fatal("second start not refused while running")
+	}
+	if n, _ := q.SaveIPFSRepinRun(ctx, sqlcgen.SaveIPFSRepinRunParams{Key: k, Value: `{"phase":"paused"}`, ExpectedPhase: "running"}); n != 1 {
+		t.Fatal("save from the loaded phase failed")
+	}
+	if start("running") != 0 {
+		t.Fatal("start allowed while paused")
+	}
+	if n, _ := q.SaveIPFSRepinRun(ctx, sqlcgen.SaveIPFSRepinRunParams{Key: k, Value: `{"phase":"completed"}`, ExpectedPhase: "running"}); n != 0 {
+		t.Fatal("stale save succeeded")
+	}
+	q.SaveIPFSRepinRun(ctx, sqlcgen.SaveIPFSRepinRunParams{Key: k, Value: `{"phase":"cancelled"}`, ExpectedPhase: "paused"})
+	if start("running") != 1 {
+		t.Fatal("start refused after cancel")
+	}
+}

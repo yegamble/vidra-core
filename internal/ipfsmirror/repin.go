@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -48,11 +47,14 @@ const (
 	RepinRunning   = "running"
 	RepinPaused    = "paused"
 	RepinCompleted = "completed"
+	RepinCancelled = "cancelled"
 )
 
 var (
 	// ErrRepinRunning means a run is already in progress.
 	ErrRepinRunning = errors.New("ipfsmirror: a playback-only re-pin is already running")
+	// ErrRepinNotRunning means there is no active run to cancel.
+	ErrRepinNotRunning = errors.New("ipfsmirror: no playback-only re-pin is running")
 	// ErrRepinUnsupported means this build/backend cannot recompute the served set.
 	ErrRepinUnsupported = errors.New("ipfsmirror: bulk re-pin needs the ledger store, an object inventory and the master-key lookup")
 )
@@ -62,7 +64,8 @@ type repinRepo interface {
 	CountIPFSPinsForRepinAfter(context.Context, string) (int64, error)
 	RearmIPFSPinForRepin(context.Context, sqlcgen.RearmIPFSPinForRepinParams) (int64, error)
 	GetInstanceSetting(context.Context, string) (sqlcgen.InstanceSetting, error)
-	UpsertInstanceSetting(context.Context, sqlcgen.UpsertInstanceSettingParams) error
+	StartIPFSRepinRun(context.Context, sqlcgen.StartIPFSRepinRunParams) (int64, error)
+	SaveIPFSRepinRun(context.Context, sqlcgen.SaveIPFSRepinRunParams) (int64, error)
 }
 
 type repinInFlight struct {
@@ -132,12 +135,15 @@ func (s *Service) loadRepin(ctx context.Context, rr repinRepo) (repinState, erro
 	return st, nil
 }
 
-func (s *Service) saveRepin(ctx context.Context, rr repinRepo, st repinState) error {
+// saveRepin writes st only while the stored phase is still expected: a cancel or a
+// restart that landed since the load wins, and the caller's stale copy is dropped.
+func (s *Service) saveRepin(ctx context.Context, rr repinRepo, st repinState, expected string) error {
 	b, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
-	return rr.UpsertInstanceSetting(ctx, sqlcgen.UpsertInstanceSettingParams{Key: repinSettingKey, Value: string(b), UpdatedBy: pgtype.UUID{}})
+	_, err = rr.SaveIPFSRepinRun(ctx, sqlcgen.SaveIPFSRepinRunParams{Key: repinSettingKey, Value: string(b), ExpectedPhase: expected})
+	return err
 }
 
 // StartRepin begins a run from the first row. ErrRepinRunning when one is active.
@@ -156,10 +162,53 @@ func (s *Service) StartRepin(ctx context.Context) (RepinStatus, error) {
 		return RepinStatus{}, ErrRepinRunning
 	}
 	st = repinState{Phase: RepinRunning, StartedAt: time.Now().UTC()}
-	if err := s.saveRepin(ctx, rr, st); err != nil {
+	b, err := json.Marshal(st)
+	if err != nil {
 		return RepinStatus{}, err
 	}
+	// Compare-and-set in SQL: the in-process mutex does not cover another replica.
+	n, err := rr.StartIPFSRepinRun(ctx, sqlcgen.StartIPFSRepinRunParams{Key: repinSettingKey, Value: string(b)})
+	if err != nil {
+		return RepinStatus{}, err
+	}
+	if n == 0 {
+		return RepinStatus{}, ErrRepinRunning
+	}
 	return s.repinView(ctx, rr, st), nil
+}
+
+// CancelRepin stops a running or paused run from arming further rows. Rows already
+// armed finish through the normal pin path; nothing is rolled back.
+func (s *Service) CancelRepin(ctx context.Context) (RepinStatus, error) {
+	rr, err := s.repinDeps()
+	if err != nil {
+		return RepinStatus{}, err
+	}
+	repinMu.Lock()
+	defer repinMu.Unlock()
+	for range 3 { // a concurrent tick may move the state between load and save
+		st, err := s.loadRepin(ctx, rr)
+		if err != nil {
+			return RepinStatus{}, err
+		}
+		if st.Phase != RepinRunning && st.Phase != RepinPaused {
+			return RepinStatus{}, ErrRepinNotRunning
+		}
+		prev, now := st.Phase, time.Now().UTC()
+		st.Phase, st.PauseReason, st.FinishedAt = RepinCancelled, "", &now
+		b, err := json.Marshal(st)
+		if err != nil {
+			return RepinStatus{}, err
+		}
+		n, err := rr.SaveIPFSRepinRun(ctx, sqlcgen.SaveIPFSRepinRunParams{Key: repinSettingKey, Value: string(b), ExpectedPhase: prev})
+		if err != nil {
+			return RepinStatus{}, err
+		}
+		if n == 1 {
+			return s.repinView(ctx, rr, st), nil
+		}
+	}
+	return RepinStatus{}, ErrRepinRunning
 }
 
 // RepinStatus reports the current or last run (Phase "idle" when none ever started).
@@ -200,19 +249,24 @@ func (s *Service) RepinTick(ctx context.Context) error {
 	repinMu.Lock()
 	defer repinMu.Unlock()
 	st, err := s.loadRepin(ctx, rr)
-	if err != nil || (st.Phase != RepinRunning && st.Phase != RepinPaused) {
+	if err != nil {
 		return err
+	}
+	loaded := st.Phase
+	cancelled := loaded == RepinCancelled && len(st.InFlight) > 0 // still settling what was armed
+	if loaded != RepinRunning && loaded != RepinPaused && !cancelled {
+		return nil
 	}
 	if err := s.settleRepin(ctx, &st); err != nil {
 		return err
 	}
-	if len(st.InFlight) == 0 {
+	if len(st.InFlight) == 0 && !cancelled {
 		if err := s.advanceRepin(ctx, rr, &st); err != nil {
-			_ = s.saveRepin(ctx, rr, st) // keep the progress made before the error
+			_ = s.saveRepin(ctx, rr, st, loaded) // keep the progress made before the error
 			return err
 		}
 	}
-	return s.saveRepin(ctx, rr, st)
+	return s.saveRepin(ctx, rr, st, loaded)
 }
 
 // settleRepin classifies every armed row by what the ordinary pin path did to it.
@@ -230,8 +284,8 @@ func (s *Service) settleRepin(ctx context.Context, st *repinState) error {
 		case row.State == "pinned" && row.Cid != f.OldCID:
 			st.Done++
 			st.BytesSaved += max(0, f.OldBytes-row.ByteSize)
-		case row.State == "failed":
-			st.Failed++
+		case row.State == "failed", row.State == "pinned" && row.Cid == f.OldCID && row.LastError != "":
+			st.Failed++ // dead-lettered; the old root is still pinned (MarkIPFSPinFailed)
 		default: // identical root, or the row went to unpinning/unpinned under a privacy flip
 			st.Skipped++
 		}

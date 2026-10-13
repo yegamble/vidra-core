@@ -1476,6 +1476,12 @@ bytes:
      publication policy would not re-admit (for example `legacy` rows with
      backfill off) - enable backfill or leave them. A video is briefly `pending`
      while its tree is re-added; playback falls back to primary storage meanwhile.
+     Cancel (Admin -> IPFS, or `DELETE` on the same path) stops arming new rows,
+     including from `paused`; rows already armed finish. A re-add that exhausts its
+     attempts returns the row to its old root (counted `failed`, `last_error` kept),
+     never to a removal. A process crash between pinning the new root and unpinning
+     the old one leaks the old root on the node (extra disk, nothing lost); it shows
+     up as `unaccounted_node_pins` on `/admin/system` and is removed by unpinning it by hand.
   2. **GC.** Unpinning frees nothing until the node collects: run `ipfs repo gc` (or
      rely on `--enable-gc`, or `IPFS_GC_AFTER_UNPIN=true`) once the run reports
      `completed`.

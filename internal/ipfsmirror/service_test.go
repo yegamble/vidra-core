@@ -256,6 +256,9 @@ func (r *fakeRepo) MarkIPFSPinned(ctx context.Context, arg sqlcgen.MarkIPFSPinne
 func (r *fakeRepo) MarkIPFSPinFailed(ctx context.Context, arg sqlcgen.MarkIPFSPinFailedParams) error {
 	if row, ok := r.rows[arg.ObjectKey]; ok && row.State == arg.ExpectedState {
 		row.State = "failed"
+		if arg.ExpectedState == "pending" && row.Cid != "" && row.CarRoot != "" {
+			row.State = "pinned" // keeps the still-valid old root (see the SQL)
+		}
 		row.Attempts++
 		row.LastError = arg.LastError
 	}

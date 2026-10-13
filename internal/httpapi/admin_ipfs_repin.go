@@ -19,6 +19,7 @@ import (
 type ipfsRepinProvider interface {
 	StartRepin(ctx context.Context) (ipfsmirror.RepinStatus, error)
 	RepinStatus(ctx context.Context) (ipfsmirror.RepinStatus, error)
+	CancelRepin(ctx context.Context) (ipfsmirror.RepinStatus, error)
 }
 
 // ipfsRepinView is the body of both /admin/ipfs/repin-playback-only routes (schema
@@ -60,6 +61,8 @@ func repinError(err error) error {
 	switch {
 	case errors.Is(err, ipfsmirror.ErrRepinRunning):
 		return echo.NewHTTPError(http.StatusConflict, "a playback-only re-pin is already running")
+	case errors.Is(err, ipfsmirror.ErrRepinNotRunning):
+		return echo.NewHTTPError(http.StatusConflict, "no playback-only re-pin is running")
 	case errors.Is(err, ipfsmirror.ErrRepinUnsupported):
 		return echo.NewHTTPError(http.StatusNotImplemented, "this storage backend cannot recompute the playback-only set")
 	}
@@ -97,5 +100,25 @@ func (s *Server) handleGetIPFSRepin(c echo.Context) error {
 	if err != nil {
 		return repinError(err)
 	}
+	return c.JSON(http.StatusOK, toIPFSRepinView(st))
+}
+
+// handleCancelIPFSRepin stops the run from arming further rows. Rows already armed
+// finish through the normal pin path. Works from running and paused. Admin-only, audited.
+func (s *Server) handleCancelIPFSRepin(c echo.Context) error {
+	p, err := s.ipfsRepin()
+	if err != nil {
+		return err
+	}
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
+	}
+	st, err := p.CancelRepin(c.Request().Context())
+	if err != nil {
+		s.audit(c, observability.ActionIPFSRepinCancel, observability.ResultFailure, userID.String(), "rejected")
+		return repinError(err)
+	}
+	s.audit(c, observability.ActionIPFSRepinCancel, observability.ResultSuccess, userID.String(), fmt.Sprintf("in_flight=%d", st.InFlight))
 	return c.JSON(http.StatusOK, toIPFSRepinView(st))
 }

@@ -64,9 +64,29 @@ func (r *repinFake) GetInstanceSetting(_ context.Context, k string) (sqlcgen.Ins
 	return sqlcgen.InstanceSetting{Key: k, Value: v}, nil
 }
 
-func (r *repinFake) UpsertInstanceSetting(_ context.Context, a sqlcgen.UpsertInstanceSettingParams) error {
+func phaseIn(v string, phases ...string) bool {
+	for _, p := range phases {
+		if strings.Contains(v, `"phase":"`+p+`"`) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *repinFake) StartIPFSRepinRun(_ context.Context, a sqlcgen.StartIPFSRepinRunParams) (int64, error) {
+	if phaseIn(r.settings[a.Key], "running", "paused") {
+		return 0, nil
+	}
 	r.settings[a.Key] = a.Value
-	return nil
+	return 1, nil
+}
+
+func (r *repinFake) SaveIPFSRepinRun(_ context.Context, a sqlcgen.SaveIPFSRepinRunParams) (int64, error) {
+	if !phaseIn(r.settings[a.Key], a.ExpectedPhase) {
+		return 0, nil
+	}
+	r.settings[a.Key] = a.Value
+	return 1, nil
 }
 
 type repinEnv struct {
@@ -240,5 +260,83 @@ func TestRepinPausesOnCapacityAndResumes(t *testing.T) {
 	e.client.RepoSizeBytes = 100
 	if st := e.tick(); st.Phase != RepinRunning || st.Queued != 1 || st.PauseReason != "" {
 		t.Fatalf("did not resume: %+v", st)
+	}
+}
+
+// Two starts cannot both win: the second is refused by the SQL compare-and-set, not
+// just by this process's mutex, and the first run's cursor is not reset.
+func TestRepinStartIsACompareAndSet(t *testing.T) {
+	ctx := context.Background()
+	e := newRepinEnv(t, 0)
+	e.pinnedBeforeF6()
+	if _, err := e.svc.StartRepin(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e.tick()
+	before := e.repo.settings[repinSettingKey]
+	// A second replica's start passes the load-and-check (it saw "idle" before the
+	// first start landed) and reaches the store.
+	b := `{"phase":"running","started_at":"2026-01-01T00:00:00Z","cursor":""}`
+	if n, _ := e.repo.StartIPFSRepinRun(ctx, sqlcgen.StartIPFSRepinRunParams{Key: repinSettingKey, Value: b}); n != 0 {
+		t.Fatal("a second start overwrote a running run")
+	}
+	if e.repo.settings[repinSettingKey] != before {
+		t.Fatal("the running state changed")
+	}
+}
+
+// Cancel works from running and from paused, stops arming, and lets what is armed finish.
+func TestRepinCancel(t *testing.T) {
+	ctx := context.Background()
+	e := newRepinEnv(t, 1000)
+	key, oldCID, _ := e.pinnedBeforeF6()
+	if _, err := e.svc.CancelRepin(ctx); err != ErrRepinNotRunning {
+		t.Fatalf("cancel with no run = %v", err)
+	}
+	e.client.RepoSizeBytes = 1000
+	e.svc.StartRepin(ctx)
+	if st := e.tick(); st.Phase != RepinPaused {
+		t.Fatalf("want paused, got %+v", st)
+	}
+	if st, err := e.svc.CancelRepin(ctx); err != nil || st.Phase != RepinCancelled {
+		t.Fatalf("cancel from paused = %+v %v", st, err)
+	}
+	e.client.RepoSizeBytes = 0
+	if st := e.tick(); st.Queued != 0 || e.repo.state(key) != "pinned" {
+		t.Fatalf("armed after cancel: %+v", st)
+	}
+
+	// From running: the armed row finishes and is counted, nothing further is armed.
+	e.svc.StartRepin(ctx)
+	e.tick()
+	if st, err := e.svc.CancelRepin(ctx); err != nil || st.InFlight != 1 {
+		t.Fatalf("cancel from running = %+v %v", st, err)
+	}
+	e.drain()
+	if st := e.tick(); st.Phase != RepinCancelled || st.Done != 1 || st.InFlight != 0 || e.repo.rows[key].CarRoot == oldCID {
+		t.Fatalf("armed row did not finish after cancel: %+v", st)
+	}
+}
+
+// A re-add that dead-letters falls back to the old root, counted failed; Reconcile
+// must not read it as a failed unpin.
+func TestRepinFailureKeepsTheOldRoot(t *testing.T) {
+	ctx := context.Background()
+	e := newRepinEnv(t, 0)
+	key, oldCID, _ := e.pinnedBeforeF6()
+	e.svc.maxAttempts = 1
+	e.svc.StartRepin(ctx)
+	e.tick()
+	e.client.Down = true
+	e.drain()
+	e.client.Down = false
+	if e.repo.state(key) != "pinned" || e.repo.rows[key].CarRoot != oldCID || e.repo.rows[key].LastError == "" {
+		t.Fatalf("not back on the old root: %+v", e.repo.rows[key])
+	}
+	if st := e.tick(); st.Failed != 1 || st.Done != 0 {
+		t.Fatalf("failure not counted: %+v", st)
+	}
+	if _, err := e.svc.Reconcile(ctx); err != nil || e.repo.state(key) != "pinned" || !pinned(e.client, oldCID) {
+		t.Fatalf("reconcile unpinned the good root: state=%q", e.repo.state(key))
 	}
 }
