@@ -102,7 +102,7 @@ func TestSyncOwnsOnlyItsBlocks(t *testing.T) {
 	}
 	ff.body = "#domain,#severity\n" + d("a") + ",suspend\n" + d("b") + ",suspend\n" + d("manual") + ",suspend\n" +
 		d("allowed") + ",suspend\n" + d("silenced") + ",silence\n"
-	res, err := svc.SyncNow(ctx, sub.ID, admin.ID)
+	res, err := svc.SyncNow(ctx, sub.ID, admin.ID, false)
 	if err != nil || res.Status != "ok" || res.Added != 2 || res.Removed != 0 || res.IgnoredSeverity != 1 {
 		t.Fatalf("sync1 = %+v %v", res, err)
 	}
@@ -122,14 +122,14 @@ func TestSyncOwnsOnlyItsBlocks(t *testing.T) {
 	if _, err := q.GetBlocklistSubscription(ctx, other.ID); err != nil {
 		t.Fatal(err)
 	}
-	if res, _ := svc.SyncNow(ctx, other.ID, uuid.Nil); res.Added != 1 {
+	if res, _ := svc.SyncNow(ctx, other.ID, uuid.Nil, false); res.Added != 1 {
 		t.Fatalf("other sync = %+v", res)
 	}
 
 	// Sync 2: the list drops b and manual, adds e. Only b goes.
 	ff.body = "#domain,#severity\n" + d("a") + ",suspend\n" + d("e") + ",suspend\n"
 	unblocked = nil
-	res, err = svc.SyncNow(ctx, sub.ID, admin.ID)
+	res, err = svc.SyncNow(ctx, sub.ID, admin.ID, false)
 	if err != nil || res.Added != 1 || res.Removed != 1 {
 		t.Fatalf("sync2 = %+v %v", res, err)
 	}
@@ -148,7 +148,7 @@ func TestSyncOwnsOnlyItsBlocks(t *testing.T) {
 
 	// A list that yields nothing usable removes NOTHING and reports an error.
 	ff.body = "<html>oops</html>"
-	res, _ = svc.SyncNow(ctx, sub.ID, admin.ID)
+	res, _ = svc.SyncNow(ctx, sub.ID, admin.ID, false)
 	if res.Status != "error" || owner(d("a")) != mine || owner(d("e")) != mine {
 		t.Errorf("empty-list guard failed: %+v", res)
 	}
@@ -178,7 +178,7 @@ func TestSyncOwnsOnlyItsBlocks(t *testing.T) {
 
 	// 304: no change, status recorded.
 	ff.notMod = true
-	if res, _ := svc.SyncNow(ctx, sub.ID, admin.ID); res.Status != "not_modified" {
+	if res, _ := svc.SyncNow(ctx, sub.ID, admin.ID, false); res.Status != "not_modified" {
 		t.Errorf("304 = %+v", res)
 	}
 
@@ -208,5 +208,98 @@ func TestSyncOwnsOnlyItsBlocks(t *testing.T) {
 	}
 	if owner(d("e")) != "manual" || owner(d("manual")) != "manual" || owner(d("c")) != "" {
 		t.Error("delete touched a block it did not own (or kept one it owned)")
+	}
+}
+
+func TestSyncSafetyRails(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	suf := strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
+	d := func(n string) string { return n + "-" + suf + ".example" }
+	admin, err := q.CreateUser(ctx, sqlcgen.CreateUserParams{Username: "sr_" + suf, Email: "sr_" + suf + "@example.test", PasswordHash: "x", Role: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ff := &fakeFetcher{etag: `"v1"`, notMod: true}
+	self := "vidra-" + suf + ".sub.example"
+	svc := blocklistsub.NewService(q, ff, nil, blocklistsub.WithProtectedHost("https://"+self+"/"))
+	owner := func(dom string) string {
+		var src string
+		_ = st.Pool.QueryRow(ctx, `SELECT source FROM blocked_instances WHERE domain=$1`, dom).Scan(&src)
+		return src
+	}
+	sub, err := svc.Create(ctx, admin.ID, "https://lists.example/sr-"+suf+".txt", "", blocklistsub.FormatDomainList, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The instance's own host and its parent domain are never blocked.
+	parent := self[strings.Index(self, ".")+1:]
+	ff.body = d("a") + "\n" + self + "\n" + parent + "\n"
+	res, _ := svc.SyncNow(ctx, sub.ID, admin.ID, false)
+	if res.Status != "ok" || res.Added != 1 || res.Protected != 2 || owner(self) != "" || owner(parent) != "" {
+		t.Fatalf("protected host: %+v self=%q parent=%q", res, owner(self), owner(parent))
+	}
+
+	// An allowlist removal re-applies even though the list's ETag is stable (304).
+	if err := svc.AddAllow(ctx, admin.ID, d("a")); err != nil {
+		t.Fatal(err)
+	}
+	if owner(d("a")) != "" {
+		t.Fatal("allowlisted block should be lifted")
+	}
+	if err := svc.RemoveAllow(ctx, d("a")); err != nil {
+		t.Fatal(err)
+	}
+	res, _ = svc.SyncNow(ctx, sub.ID, admin.ID, false)
+	if res.Status != "ok" || owner(d("a")) != "subscription:"+sub.ID.String() {
+		t.Fatalf("allow removal not re-applied on a stable ETag: %+v owner=%q", res, owner(d("a")))
+	}
+
+	// IDN allowlist entries match the punycode the lists are folded to.
+	ff.notMod = false
+	ff.body = "b\u00fccher-" + suf + ".example\n" + d("keep") + "\n"
+	if err := svc.AddAllow(ctx, admin.ID, "B\u00fccher-"+suf+".example"); err != nil {
+		t.Fatal(err)
+	}
+	res, _ = svc.SyncNow(ctx, sub.ID, admin.ID, false)
+	var n int
+	_ = st.Pool.QueryRow(ctx, `SELECT count(*) FROM blocked_instances WHERE domain LIKE 'xn--%' || $1 || '%'`, suf).Scan(&n)
+	if n != 0 {
+		t.Errorf("an IDN allowlist entry did not exempt the punycode domain (%+v)", res)
+	}
+
+	// Removal cap: seed 60 owned blocks, then a list naming 1 of them is held.
+	var sb strings.Builder
+	for i := 0; i < 60; i++ {
+		sb.WriteString(d("bulk"+string(rune('a'+i/26))+string(rune('a'+i%26))) + "\n")
+	}
+	ff.body = sb.String()
+	if res, _ = svc.SyncNow(ctx, sub.ID, admin.ID, false); res.Status != "ok" {
+		t.Fatalf("seed: %+v", res)
+	}
+	ff.body = d("bulkaa") + "\n"
+	res, _ = svc.SyncNow(ctx, sub.ID, admin.ID, false)
+	if res.Status != "needs_confirmation" || res.Pending < 59 || owner(d("bulkab")) == "" {
+		t.Fatalf("cap did not hold the sync: %+v", res)
+	}
+	got, _ := q.GetBlocklistSubscription(ctx, sub.ID)
+	if got.LastStatus != "needs_confirmation" {
+		t.Errorf("status = %q", got.LastStatus)
+	}
+	// Confirming applies it.
+	res, _ = svc.SyncNow(ctx, sub.ID, admin.ID, true)
+	if res.Status != "ok" || res.Removed < 59 || owner(d("bulkab")) != "" || owner(d("bulkaa")) == "" {
+		t.Fatalf("confirmed sync: %+v", res)
 	}
 }

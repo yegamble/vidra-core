@@ -100,3 +100,16 @@ SELECT count(*)::bigint FROM blocklist_allowlist;
 
 -- name: ListAllBlocklistAllowDomains :many
 SELECT domain FROM blocklist_allowlist;
+
+-- name: CountSubscriptionBlocks :one
+SELECT count(*)::bigint FROM blocked_instances WHERE source = sqlc.arg('source')::text;
+
+-- name: CountSubscriptionBlocksNotIn :one
+-- How many of the subscription's own blocks a sync to this list would remove.
+SELECT count(*)::bigint FROM blocked_instances
+WHERE source = sqlc.arg('source')::text AND NOT (domain = ANY(sqlc.arg('keep')::text[]));
+
+-- name: ClearBlocklistEtags :exec
+-- The allowlist changed, so a list the server would answer 304 for must be
+-- re-evaluated: forget every validator and the next sync refetches in full.
+UPDATE blocklist_subscriptions SET etag = '' WHERE etag <> '';

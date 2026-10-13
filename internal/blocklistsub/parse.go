@@ -13,6 +13,8 @@ import (
 	"io"
 	"regexp"
 	"strings"
+
+	"golang.org/x/net/idna"
 )
 
 // Wire formats.
@@ -58,9 +60,17 @@ var labelRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 // least two labels and no port, wildcard, scheme, path or IP literal. Wildcards
 // and obfuscated names (`exa***.com`) are refused rather than guessed at: blocking
 // a broader or different name than the list meant is worse than skipping a row.
+// NormalizeDomain is cleanDomain for other packages' inputs (the allowlist).
+func NormalizeDomain(raw string) (string, bool) { return cleanDomain(raw) }
+
 func cleanDomain(raw string) (string, bool) {
 	d := strings.ToLower(strings.TrimSpace(strings.Trim(strings.TrimSpace(raw), `"'`)))
 	d = strings.TrimSuffix(d, ".")
+	// Unicode names are compared in their punycode (A-label) form, the form
+	// every stored domain and every federation host uses.
+	if a, err := idna.Lookup.ToASCII(d); err == nil {
+		d = a
+	}
 	if d == "" || len(d) > 253 || !strings.Contains(d, ".") {
 		return "", false
 	}

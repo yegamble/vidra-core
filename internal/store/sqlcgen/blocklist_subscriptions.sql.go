@@ -31,6 +31,17 @@ func (q *Queries) AddBlocklistAllow(ctx context.Context, arg AddBlocklistAllowPa
 	return result.RowsAffected(), nil
 }
 
+const clearBlocklistEtags = `-- name: ClearBlocklistEtags :exec
+UPDATE blocklist_subscriptions SET etag = '' WHERE etag <> ''
+`
+
+// The allowlist changed, so a list the server would answer 304 for must be
+// re-evaluated: forget every validator and the next sync refetches in full.
+func (q *Queries) ClearBlocklistEtags(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, clearBlocklistEtags)
+	return err
+}
+
 const countBlocklistAllow = `-- name: CountBlocklistAllow :one
 SELECT count(*)::bigint FROM blocklist_allowlist
 `
@@ -48,6 +59,35 @@ SELECT count(*)::bigint FROM blocklist_subscriptions
 
 func (q *Queries) CountBlocklistSubscriptions(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countBlocklistSubscriptions)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countSubscriptionBlocks = `-- name: CountSubscriptionBlocks :one
+SELECT count(*)::bigint FROM blocked_instances WHERE source = $1::text
+`
+
+func (q *Queries) CountSubscriptionBlocks(ctx context.Context, source string) (int64, error) {
+	row := q.db.QueryRow(ctx, countSubscriptionBlocks, source)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countSubscriptionBlocksNotIn = `-- name: CountSubscriptionBlocksNotIn :one
+SELECT count(*)::bigint FROM blocked_instances
+WHERE source = $1::text AND NOT (domain = ANY($2::text[]))
+`
+
+type CountSubscriptionBlocksNotInParams struct {
+	Source string   `json:"source"`
+	Keep   []string `json:"keep"`
+}
+
+// How many of the subscription's own blocks a sync to this list would remove.
+func (q *Queries) CountSubscriptionBlocksNotIn(ctx context.Context, arg CountSubscriptionBlocksNotInParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSubscriptionBlocksNotIn, arg.Source, arg.Keep)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err

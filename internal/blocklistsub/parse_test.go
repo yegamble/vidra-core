@@ -95,3 +95,13 @@ func FuzzParse(f *testing.F) {
 		}
 	})
 }
+
+func TestParseFoldsUnicodeToPunycode(t *testing.T) {
+	got, err := Parse(FormatDomainList, []byte("bücher.example\nxn--bcher-kva.example\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Block, []string{"xn--bcher-kva.example"}) {
+		t.Errorf("block = %v, want the single punycode form", got.Block)
+	}
+}

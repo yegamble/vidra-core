@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/net/idna"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/instancemod"
@@ -34,6 +36,11 @@ const (
 	// maxRedeliver bounds how many removed domains one sync resumes deliveries
 	// for; the rest simply stay cancelled, as they were while blocked.
 	maxRedeliver = 200
+	// A sync that would remove more than removalFloor blocks AND more than half
+	// of what the subscription owns is held for an admin to confirm: a list that
+	// was truncated or swapped for something else still parses, and without this
+	// it would silently lift most of the blocks.
+	removalFloor = 25
 	insertChunk  = 5000
 )
 
@@ -56,6 +63,9 @@ type Repository interface {
 	ListBlocklistAllow(ctx context.Context, arg sqlcgen.ListBlocklistAllowParams) ([]sqlcgen.BlocklistAllowlist, error)
 	CountBlocklistAllow(ctx context.Context) (int64, error)
 	ListAllBlocklistAllowDomains(ctx context.Context) ([]string, error)
+	CountSubscriptionBlocks(ctx context.Context, source string) (int64, error)
+	CountSubscriptionBlocksNotIn(ctx context.Context, arg sqlcgen.CountSubscriptionBlocksNotInParams) (int64, error)
+	ClearBlocklistEtags(ctx context.Context) error
 }
 
 // Auditor records the per-sync summary (satisfied by *audit.Service).
@@ -71,6 +81,7 @@ type Service struct {
 	auditor     Auditor
 	onUnblocked func(ctx context.Context, domain string, blockedAt time.Time)
 	logger      *slog.Logger
+	protected   string // this instance's own host: never blockable
 	now         func() time.Time
 }
 
@@ -84,6 +95,21 @@ func WithAuditor(a Auditor) Option { return func(s *Service) { s.auditor = a } }
 // federation layer can resume deliveries the block cancelled.
 func WithOnUnblocked(f func(ctx context.Context, domain string, blockedAt time.Time)) Option {
 	return func(s *Service) { s.onUnblocked = f }
+}
+
+// WithProtectedHost makes the instance's own host (and every parent domain of
+// it) unblockable by a list: a list naming it would otherwise defederate this
+// server from itself.
+func WithProtectedHost(publicBaseURL string) Option {
+	return func(s *Service) {
+		if u, err := url.Parse(publicBaseURL); err == nil {
+			s.protected = strings.ToLower(u.Hostname())
+		}
+	}
+}
+
+func (s *Service) isProtected(d string) bool {
+	return s.protected != "" && (s.protected == d || strings.HasSuffix(s.protected, "."+d))
 }
 
 // WithLogger sets the logger.
@@ -188,6 +214,9 @@ type SyncResult struct {
 	Entries         int
 	IgnoredSeverity int
 	Invalid         int
+	Protected       int // entries naming this instance or a parent of it, skipped
+	// Pending is set with status needs_confirmation: what the sync WOULD remove.
+	Pending int
 }
 
 // SyncDue syncs every enabled subscription not attempted within SyncInterval.
@@ -203,13 +232,13 @@ func (s *Service) SyncDue(ctx context.Context) (int, error) {
 		if ctx.Err() != nil {
 			return 0, ctx.Err()
 		}
-		s.sync(ctx, sub, uuid.Nil)
+		s.sync(ctx, sub, uuid.Nil, false)
 	}
 	return len(subs), nil
 }
 
 // SyncNow syncs one subscription on an admin's request (any enabled state).
-func (s *Service) SyncNow(ctx context.Context, id, actor uuid.UUID) (SyncResult, error) {
+func (s *Service) SyncNow(ctx context.Context, id, actor uuid.UUID, confirm bool) (SyncResult, error) {
 	sub, err := s.repo.GetBlocklistSubscription(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SyncResult{}, ErrNotFound
@@ -217,11 +246,11 @@ func (s *Service) SyncNow(ctx context.Context, id, actor uuid.UUID) (SyncResult,
 	if err != nil {
 		return SyncResult{}, err
 	}
-	return s.sync(ctx, sub, actor), nil
+	return s.sync(ctx, sub, actor, confirm), nil
 }
 
-func (s *Service) sync(ctx context.Context, sub sqlcgen.BlocklistSubscription, actor uuid.UUID) SyncResult {
-	res := s.run(ctx, sub)
+func (s *Service) sync(ctx context.Context, sub sqlcgen.BlocklistSubscription, actor uuid.UUID, confirm bool) SyncResult {
+	res := s.run(ctx, sub, confirm)
 	if err := s.repo.RecordBlocklistSyncResult(ctx, sqlcgen.RecordBlocklistSyncResultParams{
 		ID: sub.ID, Status: res.Status, Error: res.Error, Etag: res.etag,
 		Added: int32(res.Added), Removed: int32(res.Removed), Entries: int32(res.Entries),
@@ -237,9 +266,15 @@ type runResult struct {
 	etag string
 }
 
-func (s *Service) run(ctx context.Context, sub sqlcgen.BlocklistSubscription) runResult {
+func (s *Service) run(ctx context.Context, sub sqlcgen.BlocklistSubscription, confirm bool) runResult {
 	fail := func(msg string) runResult { return runResult{SyncResult: SyncResult{Status: "error", Error: msg}} }
-	got, err := s.fetch.Fetch(ctx, sub.Url, sub.Etag)
+	etag := sub.Etag
+	// A held sync, or a confirmed one, must see the full list: a 304 would
+	// answer "nothing changed" about a list that was never applied.
+	if confirm || sub.LastStatus == "needs_confirmation" {
+		etag = ""
+	}
+	got, err := s.fetch.Fetch(ctx, sub.Url, etag)
 	if err != nil {
 		var se StatusError
 		switch {
@@ -273,17 +308,34 @@ func (s *Service) run(ctx context.Context, sub sqlcgen.BlocklistSubscription) ru
 		exempt[d] = true
 	}
 	desired := make([]string, 0, len(parsed.Block))
+	protected := 0
 	for _, d := range parsed.Block {
-		if !exempt[d] {
+		switch {
+		case s.isProtected(d):
+			protected++
+		case !exempt[d]:
 			desired = append(desired, d)
 		}
 	}
 	out := runResult{SyncResult: SyncResult{
-		Status: "ok", Entries: len(parsed.Block), IgnoredSeverity: parsed.IgnoredSeverity, Invalid: parsed.Invalid,
+		Status: "ok", Entries: len(parsed.Block), IgnoredSeverity: parsed.IgnoredSeverity, Invalid: parsed.Invalid, Protected: protected,
 	}, etag: got.ETag}
 	reason := "Blocklist subscription"
 	if l := strings.TrimSpace(sub.Label); l != "" {
 		reason += ": " + truncate(l, 100)
+	}
+	if !confirm {
+		pending, err := s.repo.CountSubscriptionBlocksNotIn(ctx, sqlcgen.CountSubscriptionBlocksNotInParams{Source: sourceOf(sub.ID), Keep: desired})
+		owned, err2 := s.repo.CountSubscriptionBlocks(ctx, sourceOf(sub.ID))
+		if err != nil || err2 != nil {
+			return fail("internal error")
+		}
+		if pending > removalFloor && pending*2 > owned {
+			return runResult{SyncResult: SyncResult{
+				Status: "needs_confirmation", Entries: len(parsed.Block), Pending: int(pending), Protected: protected,
+				Error: fmt.Sprintf("this list would remove %d of %d blocks; nothing was changed", pending, owned),
+			}}
+		}
 	}
 	for i := 0; i < len(desired); i += insertChunk {
 		end := min(i+insertChunk, len(desired))
@@ -346,7 +398,7 @@ func (s *Service) audit(ctx context.Context, id, actor uuid.UUID, r runResult) {
 // AddAllow exempts a domain from every subscription and drops any
 // subscription-owned block on it now. A manual block is untouched.
 func (s *Service) AddAllow(ctx context.Context, actor uuid.UUID, domain string) error {
-	d, err := instancemod.NormalizeDomain(domain)
+	d, err := allowDomain(domain)
 	if err != nil {
 		return err
 	}
@@ -365,12 +417,34 @@ func (s *Service) AddAllow(ctx context.Context, actor uuid.UUID, domain string) 
 
 // RemoveAllow lifts an exemption (idempotent); the next sync re-applies lists.
 func (s *Service) RemoveAllow(ctx context.Context, domain string) error {
-	d, err := instancemod.NormalizeDomain(domain)
+	d, err := allowDomain(domain)
 	if err != nil {
 		return err
 	}
-	_, err = s.repo.RemoveBlocklistAllow(ctx, d)
-	return err
+	if _, err = s.repo.RemoveBlocklistAllow(ctx, d); err != nil {
+		return err
+	}
+	// Lifting an exemption must take effect on lists the server would answer
+	// 304 for, so forget the validators.
+	return s.repo.ClearBlocklistEtags(ctx)
+}
+
+// BlockCount is how many blocks the subscription currently owns.
+func (s *Service) BlockCount(ctx context.Context, id uuid.UUID) (int64, error) {
+	return s.repo.CountSubscriptionBlocks(ctx, sourceOf(id))
+}
+
+// allowDomain validates like the instance blocklist, then folds a Unicode name
+// to the punycode form the lists are matched in.
+func allowDomain(raw string) (string, error) {
+	d, err := instancemod.NormalizeDomain(raw)
+	if err != nil {
+		return "", err
+	}
+	if a, err := idna.Lookup.ToASCII(d); err == nil {
+		d = a
+	}
+	return d, nil
 }
 
 // ListAllow pages the allowlist.
