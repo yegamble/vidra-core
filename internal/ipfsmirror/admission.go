@@ -112,6 +112,7 @@ func (s *Service) admissionInventory(ctx context.Context, row sqlcgen.MediaIpfsP
 }
 
 func (s *Service) drainManaged(ctx context.Context, nc netClient, batch int, doc ipfscontrol.Document) (int, error) {
+	s.observeAdmission(ctx)
 	r, ok := s.repo.(admissionRepo)
 	if !ok {
 		return 0, errors.New("ipfs admission repository unavailable")
