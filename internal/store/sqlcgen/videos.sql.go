@@ -194,7 +194,7 @@ WHERE v.channel_id = $1 AND (v.privacy = 'public' OR (v.privacy = 'internal' AND
       SELECT 1 FROM user_blocks ub
       WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
   )
-  AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $3::bool, $2::uuid)
+  AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $3::bool, $2::uuid))
 `
 
 type CountPublicVideosByChannelVisibleParams struct {
@@ -231,7 +231,7 @@ WHERE c.owner_id = $1::uuid AND (v.privacy = 'public' OR (v.privacy = 'internal'
       SELECT 1 FROM user_blocks ub
       WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
   )
-  AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $3::bool, $2::uuid)
+  AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $3::bool, $2::uuid))
 `
 
 type CountPublicVideosByOwnerVisibleParams struct {
@@ -300,7 +300,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $5::bool, $1::uuid)
+      AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $5::bool, $1::uuid))
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -327,7 +327,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
-      AND NOT vidra_sensitive_hidden(rv.is_sensitive, rv.sensitive_flags, $5::bool, $1::uuid)
+      AND NOT (rv.is_sensitive AND vidra_sensitive_hidden(rv.is_sensitive, rv.sensitive_flags, $5::bool, $1::uuid))
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $1 AND mi.domain = ra.domain
@@ -473,7 +473,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $9::bool, $2::uuid)
+      AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $9::bool, $2::uuid))
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -508,7 +508,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
-      AND NOT vidra_sensitive_hidden(rv.is_sensitive, rv.sensitive_flags, $9::bool, $2::uuid)
+      AND NOT (rv.is_sensitive AND vidra_sensitive_hidden(rv.is_sensitive, rv.sensitive_flags, $9::bool, $2::uuid))
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $2 AND mi.domain = ra.domain
@@ -1555,7 +1555,7 @@ WHERE v.channel_id = $1 AND (v.privacy = 'public' OR (v.privacy = 'internal' AND
   -- over the whole result set). With a LIMIT that filter has to be in SQL or a
   -- page would silently return fewer rows than asked for and the total would
   -- count rows the caller can never see.
-  AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $3::bool, $2::uuid)
+  AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $3::bool, $2::uuid))
 ORDER BY
     CASE WHEN $4::text = 'published_at' THEN v.created_at END ASC,
     CASE WHEN $4::text <> 'published_at' THEN v.created_at END DESC,
@@ -1670,7 +1670,7 @@ WHERE v.id = ANY ($1::uuid[])
       WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
   )
   AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
-  AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $3::bool, $2::uuid)
+  AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $3::bool, $2::uuid))
 `
 
 type ListPublicVideosByIDsParams struct {
@@ -1781,7 +1781,7 @@ WHERE c.owner_id = $1::uuid AND (v.privacy = 'public' OR (v.privacy = 'internal'
   -- over the whole result set). With a LIMIT that filter has to be in SQL or a
   -- page would silently return fewer rows than asked for and the total would
   -- count rows the caller can never see.
-  AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $3::bool, $2::uuid)
+  AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $3::bool, $2::uuid))
 ORDER BY
     CASE WHEN $4::text = 'published_at' THEN v.created_at END ASC,
     CASE WHEN $4::text <> 'published_at' THEN v.created_at END DESC,
@@ -1925,7 +1925,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $5::bool, $1::uuid)
+      AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $5::bool, $1::uuid))
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -1954,7 +1954,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
-      AND NOT vidra_sensitive_hidden(rv.is_sensitive, rv.sensitive_flags, $5::bool, $1::uuid)
+      AND NOT (rv.is_sensitive AND vidra_sensitive_hidden(rv.is_sensitive, rv.sensitive_flags, $5::bool, $1::uuid))
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $1 AND mi.domain = ra.domain
@@ -2191,7 +2191,7 @@ WHERE v.privacy = 'public' AND v.state = 'published'
       WHERE ub.blocker_id = $3 AND ub.blocked_id = c.owner_id
   )
   AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
-  AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $4::bool, $3::uuid)
+  AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $4::bool, $3::uuid))
   AND (
       v.channel_id = $1
       OR ($5::text IS NOT NULL AND v.category = $5)
@@ -2795,7 +2795,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND NOT vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $9::bool, $2::uuid)
+      AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $9::bool, $2::uuid))
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -2831,7 +2831,7 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
-      AND NOT vidra_sensitive_hidden(rv.is_sensitive, rv.sensitive_flags, $9::bool, $2::uuid)
+      AND NOT (rv.is_sensitive AND vidra_sensitive_hidden(rv.is_sensitive, rv.sensitive_flags, $9::bool, $2::uuid))
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $2 AND mi.domain = ra.domain

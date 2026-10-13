@@ -2243,7 +2243,7 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 		License:         in.License,
 		PublishAt:       timestamptz(in.PublishAt),
 		IsSensitive:     sensitiveWithFlags(in.IsSensitive, in.SensitiveFlags),
-		SensitiveFlags:  sensitiveFlagsPatch(in.SensitiveFlags),
+		SensitiveFlags:  sensitiveFlagsPatch(in.IsSensitive, in.SensitiveFlags),
 		SensitiveReason: pgconv.TrimPtr(in.SensitiveReason),
 		Support:         pgconv.TrimPtr(in.Support),
 		CommentsPolicy:  in.CommentsPolicy,
