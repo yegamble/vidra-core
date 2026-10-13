@@ -69,6 +69,21 @@ Inbox/outbox/followers/following/actor URLs are **derived** from `PUBLIC_BASE_UR
 username/handle at serialization time — not stored (no drift). Remote actors still live in a
 separate `remote_actors` table (Slice 4).
 
+Instance actor (migration 0166, PeerTube parity): one `Application` actor, `peertube`, at
+`/accounts/peertube` — the name and place PeerTube looks for (NodeInfo's
+`https://www.w3.org/ns/activitystreams#Application` link, else WebFinger
+`acct:peertube@host`; its auto-follow-back matches `Application` + `peertube`). Singleton
+key in `instance_actor_keys`, same §3 sealing; the name is held in the 0142 handle
+namespace by the instance actor (`actor_handles.instance_actor`), so no account or channel
+can take it — an account that held it before 0166 keeps it and the instance actor is then
+not served. Instance follows: `instance_followers` (remote instances following ours —
+accepted, or pending under `federation_follower_approval`; `rejected` is sticky) receive
+the instance actor's `Announce` of every federable video, a 50-video backfill on accept,
+and every later Update/Delete/comment of those videos; the outbox pages the Announces.
+`instance_following` (an admin following a remote instance by host) opens the ingestion
+gate for everything that host announces. Admin API: `/api/v1/admin/federation/instance-
+followers` and `/instance-following`.
+
 Remote actors (Slice 4): `remote_actors` table — `id UUID`, `actor_url TEXT UNIQUE`,
 `type`, `preferred_username`, `domain`, `inbox_url`, `shared_inbox_url NULL`,
 `public_key_pem`, `followers_url`, fetched-at/refreshed-at. Remote follows and inbound

@@ -27,10 +27,11 @@ WITH claimed AS (
     )
     RETURNING id, inbox_url, payload, signing_channel_id, signing_channel_handle,
               signing_user_id, signing_username, attempts, created_at,
-              authored_remote_comment_id
+              authored_remote_comment_id, signing_instance_actor
 )
 SELECT id, inbox_url, payload, signing_channel_id, signing_channel_handle,
-       signing_user_id, signing_username, attempts, authored_remote_comment_id
+       signing_user_id, signing_username, attempts, authored_remote_comment_id,
+       signing_instance_actor
 FROM claimed
 ORDER BY created_at, id
 `
@@ -50,6 +51,7 @@ type ClaimDueDeliveriesRow struct {
 	SigningUsername         string      `json:"signing_username"`
 	Attempts                int32       `json:"attempts"`
 	AuthoredRemoteCommentID pgtype.UUID `json:"authored_remote_comment_id"`
+	SigningInstanceActor    bool        `json:"signing_instance_actor"`
 }
 
 // LEASES pending deliveries whose backoff has elapsed, oldest first.
@@ -106,6 +108,7 @@ func (q *Queries) ClaimDueDeliveries(ctx context.Context, arg ClaimDueDeliveries
 			&i.SigningUsername,
 			&i.Attempts,
 			&i.AuthoredRemoteCommentID,
+			&i.SigningInstanceActor,
 		); err != nil {
 			return nil, err
 		}
@@ -122,9 +125,9 @@ const enqueueDelivery = `-- name: EnqueueDelivery :exec
 INSERT INTO federation_deliveries (
     inbox_url, payload, signing_channel_id, signing_channel_handle,
     signing_user_id, signing_username, request_id, correlation_id,
-    authored_remote_comment_id
+    authored_remote_comment_id, signing_instance_actor
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 `
 
 type EnqueueDeliveryParams struct {
@@ -137,6 +140,7 @@ type EnqueueDeliveryParams struct {
 	RequestID               string      `json:"request_id"`
 	CorrelationID           string      `json:"correlation_id"`
 	AuthoredRemoteCommentID pgtype.UUID `json:"authored_remote_comment_id"`
+	SigningInstanceActor    bool        `json:"signing_instance_actor"`
 }
 
 // Outbound federation delivery queue (migration 0038, .ralph/specs/federation.md §8).
@@ -151,6 +155,8 @@ type EnqueueDeliveryParams struct {
 // comment it carries (migration 0147), so the drain can reflect the delivery
 // result onto that comment's delivery_state. NULL for every other delivery
 // (video/comment fan-out, follows).
+// signing_instance_actor ($10) is the third signer (migration 0166): the
+// instance actor, for instance-follow answers and its Announces.
 func (q *Queries) EnqueueDelivery(ctx context.Context, arg EnqueueDeliveryParams) error {
 	_, err := q.db.Exec(ctx, enqueueDelivery,
 		arg.InboxUrl,
@@ -162,6 +168,7 @@ func (q *Queries) EnqueueDelivery(ctx context.Context, arg EnqueueDeliveryParams
 		arg.RequestID,
 		arg.CorrelationID,
 		arg.AuthoredRemoteCommentID,
+		arg.SigningInstanceActor,
 	)
 	return err
 }

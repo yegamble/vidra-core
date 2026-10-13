@@ -956,6 +956,8 @@ func run() error {
 			// it the instance's own gateway keeps serving a withdrawn CID until some
 			// later GC, which A31's rehearsal measured directly.
 			GCAfterUnpin: cfg.IPFSGCAfterUnpin,
+			// Ceiling for an UNMANAGED node (IPFS_REPO_BUDGET_BYTES, Tier A F3); 0 = none.
+			RepoBudgetBytes: cfg.IPFSRepoBudgetBytes,
 			// Private tier (P19.P1) — a dedicated private-swarm node client the worker
 			// routes network='private' rows to (and ONLY those rows).
 			PrivateEnabled:     privateEnabled,
@@ -1050,8 +1052,9 @@ func run() error {
 		logger.Warn("storyboard generation disabled (ffmpeg/ffprobe not on PATH); videos publish without a storyboard")
 	}
 	vopts = append(vopts, video.WithViewDeduper(cache.NewDeduper(rdb.Client)))
-	// Video ownership changes (T21, migration 0165).
-	vopts = append(vopts, video.WithOwnershipRepository(db.Queries()))
+	// Video ownership changes (T21, migration 0165). The accept runs under the
+	// video row lock (see store.OwnershipRepo).
+	vopts = append(vopts, video.WithOwnershipRepository(db.OwnershipRepository()))
 	// The durable audit trail (also mounted on the admin API below) lets the video
 	// service record a content.upload.malware_rejected event when a scan keeps an
 	// upload out of published (infection / unscannable under a non-publishing mode).
@@ -1438,6 +1441,19 @@ func run() error {
 					logger.Warn("ipfs mirror delete unpin failed", "video_id", videoID, "error", err)
 				}
 			}),
+			// Tier A F5: captions, posters and storyboards are pinned under stable keys,
+			// so a delete or an in-place replacement changes nothing the mirror watches
+			// on its own. These two hooks are the only things that tell it.
+			video.WithCaptionChangeHook(func(ctx context.Context, videoID uuid.UUID, key string, deleted bool) {
+				if err := ipfsMirror.OnCaptionChanged(ctx, videoID, key, deleted); err != nil {
+					logger.Warn("ipfs mirror caption change failed", "video_id", videoID, "deleted", deleted, "error", err)
+				}
+			}),
+			video.WithMediaReplacedHook(func(ctx context.Context, videoID uuid.UUID, kind string) {
+				if err := ipfsMirror.OnMediaReplaced(ctx, videoID, kind); err != nil {
+					logger.Warn("ipfs mirror media replacement failed", "video_id", videoID, "kind", kind, "error", err)
+				}
+			}),
 		)
 	}
 	// Search indexing hooks (search-service W4): publish + metadata/privacy edit
@@ -1742,7 +1758,17 @@ func run() error {
 	watchwordsvc := watchword.NewService(db.Queries())
 	opts = append(opts, httpapi.WithWatchWordService(watchwordsvc))
 
-	adminsvc := admin.NewService(db.Queries())
+	adminsvc := admin.NewService(db.Queries(), admin.WithTx(func(ctx context.Context, fn func(admin.Repository) error) error {
+		tx, err := db.Pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := fn(db.Queries().WithTx(tx)); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}))
 	opts = append(opts, httpapi.WithAdminService(adminsvc))
 
 	opts = append(opts, httpapi.WithAuditLog(auditsvc))
@@ -2262,6 +2288,11 @@ func run() error {
 		federation.WithFollowerRequestHook(staffQueueHook("federation_follower_request",
 			func(ctx context.Context, id uuid.UUID) (int64, error) {
 				return notifsvc.NotifyFederationFollowerRequest(ctx, id)
+			})),
+		// ...and so does a remote INSTANCE's follow of this one (0166).
+		federation.WithInstanceFollowerRequestHook(staffQueueHook("federation_instance_follower_request",
+			func(ctx context.Context, _ uuid.UUID) (int64, error) {
+				return notifsvc.NotifyInstanceFollowerRequest(ctx)
 			})),
 		// A remote comment held for approval (0161) pings the video's managers.
 		federation.WithHeldCommentHook(staffQueueHook("comment_held",
@@ -3069,6 +3100,34 @@ func run() error {
 			}
 			return out, nil
 		})
+		// IPFS capacity (Tier A F4): repo usage, budget and the admission-pause reason,
+		// read through the same Runtime the admin page uses so the two cannot disagree.
+		if cfg.IPFSEnabled || ipfsHost != nil {
+			metrics.RegisterIPFSCapacitySource(func(ctx context.Context) (observability.IPFSCapacity, error) {
+				rt, err := ipfsControl.Runtime(ctx)
+				if err != nil {
+					return observability.IPFSCapacity{}, err
+				}
+				out := observability.IPFSCapacity{
+					BudgetBytes: rt.Capacity.BudgetBytes, ReservedBytes: rt.Capacity.ReservedBytes, MinFreeBytes: rt.Capacity.MinFreeBytes,
+					RepoUsedBytes: rt.Capacity.RepoUsedBytes, FilesystemFreeBytes: rt.Capacity.FilesystemFreeBytes,
+				}
+				if rt.Capacity.AdmissionPausedReason != nil {
+					out.PausedReason = *rt.Capacity.AdmissionPausedReason
+				}
+				// An UNMANAGED node (no adopted policy) is governed by IPFS_REPO_BUDGET_BYTES
+				// instead of the managed budget Runtime reports; read its size live.
+				if doc, derr := ipfsControl.Config(ctx); derr == nil && !doc.PolicyActive {
+					if used, budget, ok := ipfsMirror.UnmanagedCapacity(ctx); ok {
+						out = observability.IPFSCapacity{BudgetBytes: budget, RepoUsedBytes: &used}
+						if used >= budget {
+							out.PausedReason = "budget_exhausted"
+						}
+					}
+				}
+				return out, nil
+			})
+		}
 		// The pool gauges (phase-5 multi-node floor). Sampled at scrape time from
 		// the live pool, through the same sampler the admin status page reads.
 		metrics.RegisterDBPoolSource(dbPoolStats)
@@ -3174,6 +3233,13 @@ func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsv
 			Run: func(ctx context.Context, _ time.Time) (int, error) {
 				return fedsvc.DrainDeliveries(ctx, batch)
 			},
+		}, {
+			// Inbound Moves: re-point local follows of a remote actor that moved,
+			// a bounded batch per pass, until every one is done (0167).
+			FailMsg: "federation move drain failed",
+			DoneMsg: "federation move follows re-pointed",
+			Drain:   true,
+			Run:     func(ctx context.Context, _ time.Time) (int, error) { return fedsvc.DrainMoves(ctx) },
 		}},
 	}.Run(ctx, logger)
 }

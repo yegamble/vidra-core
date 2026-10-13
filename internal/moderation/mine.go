@@ -22,6 +22,8 @@ type MyReport struct {
 	MessageCount                       int64
 	VideoID, VideoTitle                string
 	ReportedUsername, RemoteVideoTitle string
+	Reasons                            []string
+	VideoStartSeconds, VideoEndSeconds *int32
 }
 
 // ListMine returns reporterID's own reports, most recently active first, with
@@ -61,6 +63,7 @@ func (s *Service) mine(ctx context.Context, reporterID uuid.UUID, reportID pgtyp
 			CreatedAt: r.CreatedAt, LastActivityAt: r.LastActivityAt, ResolvedAt: pgconv.TimeOrNil(r.ResolvedAt),
 			MessageCount: r.MessageCount, VideoID: uuidString(r.VideoID), VideoTitle: r.VideoTitle,
 			ReportedUsername: pgconv.Deref(r.ReportedUsername), RemoteVideoTitle: pgconv.Deref(r.RemoteVideoTitle),
+			Reasons: r.PredefinedReasons, VideoStartSeconds: r.VideoStartSeconds, VideoEndSeconds: r.VideoEndSeconds,
 		})
 	}
 	return items, nil

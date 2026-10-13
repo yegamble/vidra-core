@@ -71,6 +71,8 @@ type authFakeRepo struct {
 	usage func(uuid.UUID) int64
 	// uploadUsage mirrors the upload_usage_events daily ledger (W7).
 	uploadUsage []uploadUsageEvent
+	// dailyOverride mirrors user_daily_quotas (per-user daily quota override).
+	dailyOverride map[uuid.UUID]int64
 	// Instance-wide aggregate stubs let authFakeRepo satisfy admin.Repository's
 	// overview reads (Stats). Nil means 0; videoServerFullWith wires the
 	// video/comment ones to the real fakes so the admin-stats handler reflects
@@ -747,6 +749,26 @@ func (f *authFakeRepo) SumUploadUsageSince(_ context.Context, a sqlcgen.SumUploa
 	return sum, nil
 }
 
+func (f *authFakeRepo) GetUserDailyQuota(_ context.Context, id uuid.UUID) (int64, error) {
+	if v, ok := f.dailyOverride[id]; ok {
+		return v, nil
+	}
+	return 0, pgx.ErrNoRows
+}
+
+func (f *authFakeRepo) UpsertUserDailyQuota(_ context.Context, a sqlcgen.UpsertUserDailyQuotaParams) error {
+	if f.dailyOverride == nil {
+		f.dailyOverride = map[uuid.UUID]int64{}
+	}
+	f.dailyOverride[a.UserID] = a.DailyQuotaBytes
+	return nil
+}
+
+func (f *authFakeRepo) DeleteUserDailyQuota(_ context.Context, id uuid.UUID) error {
+	delete(f.dailyOverride, id)
+	return nil
+}
+
 func (f *authFakeRepo) PruneUploadUsageEvents(_ context.Context, a sqlcgen.PruneUploadUsageEventsParams) (int64, error) {
 	kept := f.uploadUsage[:0]
 	var n int64
@@ -820,6 +842,14 @@ func (f *authFakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) (
 				StorageQuotaBytes: u.StorageQuotaBytes, StorageUsedBytes: used,
 				BypassQuarantine: u.BypassQuarantine, DeletedAt: u.DeletedAt,
 				IsOwner: u.IsOwner, MfaEnabled: f.mfaEnabledFor(u.ID),
+			}
+			if v, ok := f.dailyOverride[u.ID]; ok {
+				row.DailyQuotaBytes = &v
+			}
+			for _, e := range f.uploadUsage {
+				if e.userID == u.ID && e.createdAt.After(time.Now().Add(-24*time.Hour)) {
+					row.DailyUsedBytes += e.bytes
+				}
 			}
 			if b, ok := f.bans[u.ID]; ok {
 				row.BanReason, row.BannedAt, row.BannedBy = &b.Reason, pgtype.Timestamptz{Time: b.BannedAt, Valid: true}, b.BannedBy
