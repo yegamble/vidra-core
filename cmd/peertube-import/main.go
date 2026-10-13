@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -172,6 +173,11 @@ func main() {
 		CopyConcurrency:     cfg.PeerTubeImportCopyConcurrency,
 		SealKey:             sealKey,
 		SourceAuthoritative: *sourceAuth,
+		// Remote followers' inboxes and keys come from their own actor
+		// documents, fetched through federation's SSRF-guarded resolver.
+		ResolveRemoteActor: federation.NewService(db.Queries(),
+			federation.WithBaseURL(cfg.PublicBaseURL),
+			federation.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs)).ResolveRemoteActor,
 	})
 
 	version, err := importer.Preflight(ctx)
