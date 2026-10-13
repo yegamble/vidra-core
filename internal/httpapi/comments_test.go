@@ -676,3 +676,32 @@ func TestCommentWritesRefuseADisabledAccount(t *testing.T) {
 		t.Errorf("a disabled account's write reached the thread: %s", rec.Body.String())
 	}
 }
+
+// ListManagedVideoComments mirrors the review-queue SQL (0161): comments on
+// videos whose channel the caller owns or is an editor member of, newest
+// first, with the held filter; no viewer mute filtering.
+func (f *commentFakeRepo) ListManagedVideoComments(_ context.Context, a sqlcgen.ListManagedVideoCommentsParams) ([]sqlcgen.ListManagedVideoCommentsRow, error) {
+	var rows []sqlcgen.ListManagedVideoCommentsRow
+	for _, c := range f.comments {
+		v, ok := f.videos.videos[c.VideoID]
+		if !ok || (a.Held != nil && c.HeldForReview != *a.Held) {
+			continue
+		}
+		if manages, _ := f.videos.channels.IsChannelManager(context.Background(), sqlcgen.IsChannelManagerParams{ChannelID: v.ChannelID, UserID: a.UserID}); !manages {
+			continue
+		}
+		username, display := f.author(uuid.UUID(c.UserID.Bytes))
+		rows = append(rows, sqlcgen.ListManagedVideoCommentsRow{
+			ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body, ParentID: c.ParentID,
+			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, HeldForReview: c.HeldForReview,
+			AuthorUsername: username, AuthorDisplayName: display, VideoTitle: v.Title,
+		})
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	return rows, nil
+}
+
+func (f *commentFakeRepo) CountManagedVideoComments(ctx context.Context, a sqlcgen.CountManagedVideoCommentsParams) (int64, error) {
+	rows, err := f.ListManagedVideoComments(ctx, sqlcgen.ListManagedVideoCommentsParams{UserID: a.UserID, Held: a.Held})
+	return int64(len(rows)), err
+}

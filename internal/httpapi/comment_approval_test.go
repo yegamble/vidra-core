@@ -308,6 +308,81 @@ func TestReviewersRejectAHeldCommentByDeletingIt(t *testing.T) {
 	}
 }
 
+// managedCommentList is the GET /me/videos/comments page shape.
+type managedCommentList struct {
+	Comments []struct {
+		commentView
+		VideoTitle string `json:"video_title"`
+	} `json:"comments"`
+	Total int64 `json:"total"`
+}
+
+// TestCommentHeldNotifiesManagersAndFillsTheirQueue: a held comment pings the
+// video's owner and editor (once each, never the commenter or a stranger), and
+// sits in their review queue until approved.
+func TestCommentHeldNotifiesManagersAndFillsTheirQueue(t *testing.T) {
+	c := newApprovalCast(t)
+	held := c.post(t, c.eve, `{"body":"from eve"}`)
+	published := c.post(t, c.bob, `{"body":"from bob"}`)
+
+	heldNotices := func(tok string) int {
+		n := 0
+		for _, nv := range notifTypes(t, c.srv, tok) {
+			if nv.Type == "comment_held" && nv.CommentID == held.ID {
+				n++
+			}
+		}
+		return n
+	}
+	for name, want := range map[string]struct {
+		tok string
+		n   int
+	}{"owner": {c.bob, 1}, "editor": {c.ed, 1}, "commenter": {c.eve, 0}, "stranger": {c.carl, 0}} {
+		if got := heldNotices(want.tok); got != want.n {
+			t.Errorf("%s comment_held notices = %d, want %d", name, got, want.n)
+		}
+	}
+
+	queue := func(tok, query string) (int, managedCommentList) {
+		t.Helper()
+		rec := getWithAuth(c.srv, "/api/v1/me/videos/comments"+query, tok)
+		var out managedCommentList
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	for name, tok := range map[string]string{"owner": c.bob, "editor": c.ed} {
+		code, q := queue(tok, "?held=true")
+		if code != http.StatusOK || q.Total != 1 || len(q.Comments) != 1 || q.Comments[0].ID != held.ID {
+			t.Fatalf("%s held queue = %d %+v, want only eve's held comment", name, code, q)
+		}
+		if !q.Comments[0].HeldForReview || q.Comments[0].VideoTitle != "v" || q.Comments[0].AuthorUsername != "eve" {
+			t.Errorf("%s queue entry = %+v", name, q.Comments[0])
+		}
+	}
+	if _, q := queue(c.bob, ""); q.Total != 2 {
+		t.Errorf("unfiltered queue total = %d, want 2", q.Total)
+	}
+	if _, q := queue(c.bob, "?held=false"); q.Total != 1 || q.Comments[0].ID != published.ID {
+		t.Errorf("held=false queue = %+v, want only the published comment", q)
+	}
+	if _, q := queue(c.carl, "?held=true"); q.Total != 0 {
+		t.Errorf("stranger queue total = %d, want 0", q.Total)
+	}
+	if code, _ := queue("", ""); code != http.StatusUnauthorized {
+		t.Errorf("anonymous queue = %d, want 401", code)
+	}
+	if code, _ := queue(c.bob, "?held=maybe"); code != http.StatusUnprocessableEntity {
+		t.Errorf("held=maybe = %d, want 422", code)
+	}
+
+	if r := c.approve(c.bob, held.ID); r.code != http.StatusOK {
+		t.Fatalf("approve = %d; body=%s", r.code, r.body)
+	}
+	if _, q := queue(c.bob, "?held=true"); q.Total != 0 {
+		t.Errorf("held queue after approval = %d, want 0", q.Total)
+	}
+}
+
 // TestEditsOnApprovalVideoReholdForNonReviewers: on a requires_approval video
 // an approved comment whose author is not a reviewer goes back to held when
 // its body changes (and leaves public view); an unchanged body does not, and a
@@ -359,7 +434,8 @@ func TestApprovalOnANonPublicVideoNotifiesNoThirdParty(t *testing.T) {
 		t.Fatalf("approve = %d; body=%s", r.code, r.body)
 	}
 	for _, nv := range notifTypes(t, c.srv, c.ed) {
-		if nv.CommentID == reply.ID {
+		// (comment_held reaches the editor as a reviewer; the reply notice must not.)
+		if nv.CommentID == reply.ID && nv.Type == "comment_reply" {
 			t.Errorf("parent author notified (%s) about a reply on a private video", nv.Type)
 		}
 	}
@@ -399,6 +475,32 @@ func TestRejectIsAuditedAndAHeldParentLooksUnknown(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].ResourceType != "comment" || rows[0].ResourceID != held.ID {
 		t.Errorf("reject audit rows = %+v, want exactly the reviewer's reject of %s", rows, held.ID)
+	}
+}
+
+// TestReheldEditResurfacesTheReviewersNotice: when an approved comment is
+// re-held by its author's edit, the reviewers' comment_held notice for it
+// comes back unread — one row per reviewer and comment, never a pile.
+func TestReheldEditResurfacesTheReviewersNotice(t *testing.T) {
+	c := newApprovalCast(t)
+	eve := c.post(t, c.eve, `{"body":"first"}`)
+	if rec := sendJSONAuth(c.srv, http.MethodPost, "/api/v1/me/notifications/read-all", "", c.bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("read-all = %d", rec.Code)
+	}
+	if r := c.approve(c.bob, eve.ID); r.code != http.StatusOK {
+		t.Fatalf("approve = %d", r.code)
+	}
+	if rec := sendJSONAuth(c.srv, http.MethodPatch, "/api/v1/comments/"+eve.ID, `{"body":"changed"}`, c.eve); rec.Code != http.StatusOK {
+		t.Fatalf("edit = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var held []notificationView
+	for _, nv := range notifTypes(t, c.srv, c.bob) {
+		if nv.Type == "comment_held" && nv.CommentID == eve.ID {
+			held = append(held, nv)
+		}
+	}
+	if len(held) != 1 || held[0].Read {
+		t.Errorf("owner's comment_held notices for the re-held comment = %+v, want one, unread", held)
 	}
 }
 

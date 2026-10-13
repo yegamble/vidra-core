@@ -1968,6 +1968,7 @@ func (s *Server) routes() {
 			api.POST("/videos/:id/comments", s.handleCreateComment, s.requireAuth)
 			// Comment approval (0161): a video manager releases a held comment.
 			api.POST("/videos/:id/comments/:commentId/approve", s.handleApproveComment, s.requireAuth)
+			api.GET("/me/videos/comments", s.handleListManagedComments, s.requireAuth)
 			api.PATCH("/comments/:id", s.handleUpdateComment, s.requireAuth)
 			api.DELETE("/comments/:id", s.handleDeleteComment, s.requireAuth)
 			// Creator pin + heart (0099): the video owner/editor (or staff) pins at
@@ -2031,6 +2032,9 @@ func (s *Server) routes() {
 	if s.playlistsvc != nil {
 		api.POST("/playlists", s.handleCreatePlaylist, s.requireAuth)
 		api.GET("/me/playlists", s.handleListMyPlaylists, s.requireAuth)
+		if s.channelsvc != nil {
+			api.GET("/channels/:handle/playlists", s.handleListChannelPlaylists, s.optionalAuth)
+		}
 		api.GET("/playlists/:id", s.handleGetPlaylist, s.optionalAuth)
 		api.PATCH("/playlists/:id", s.handleUpdatePlaylist, s.requireAuth)
 		api.DELETE("/playlists/:id", s.handleDeletePlaylist, s.requireAuth)

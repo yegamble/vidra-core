@@ -3921,6 +3921,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/playlists:
+    get:
+      operationId: listChannelPlaylists
+      summary: List a channel's playlists
+      description: >-
+        The channel page's Playlists tab, newest first, paginated with a `total`.
+        Anyone sees the channel's public playlists; a playlist's owner (bearer
+        token) also sees their own unlisted and private ones. Other users and
+        anonymous callers never see those.
+      tags: [playlists]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: The channel's playlists visible to the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistListResponse"
+        "404":
+          description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/videos:
     get:
       operationId: listMyVideos
@@ -6631,6 +6665,47 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/videos/comments:
+    get:
+      operationId: listManagedVideoComments
+      summary: The review queue — comments on the videos you manage
+      description: >-
+        Comments on every video whose channel the caller owns or is an editor
+        member of, newest first, each with its video's title. held=true lists
+        only comments awaiting approval (approve with POST
+        /videos/{id}/comments/{commentId}/approve, reject with DELETE
+        /comments/{id}), held=false only published ones; omitted lists both.
+        The caller's own mutes do not filter this moderation surface.
+      tags: [comments]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: held
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of the queue (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedCommentListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: held is not true or false.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/uploads:
     get:
       operationId: listMyUploads
@@ -7819,7 +7894,8 @@ paths:
         On a "requires_approval" video a non-reviewer's comment is held
         (held_for_review): seen only by its author and the reviewers, not
         federated, and announcing nothing (comment, comment_reply, mentions)
-        until approved; a held parent is a 422 like an unknown one.
+        until approved — only the video's managers get a "comment_held"
+        notification; a held parent is a 422 like an unknown one.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -9015,7 +9091,7 @@ paths:
       summary: Get the caller's notification preferences
       description: >-
         Returns the caller's per-type notification switchboard: every known
-        notification type (caption_ready, comment, comment_mention, comment_reply,
+        notification type (caption_ready, comment, comment_held, comment_mention, comment_reply,
         federation_follower_request, follow, message, new_registration_request,
         new_report, new_video, report_message, report_resolved,
         upload_quarantined, video_blocked, video_ownership_request, video_rejected,
@@ -20450,6 +20526,23 @@ components:
           description: >-
             True while the comment awaits approval; only its author and the
             video's reviewers ever receive it. It cannot be pinned or replied to.
+    ManagedCommentListResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [comments]
+          properties:
+            comments:
+              type: array
+              items:
+                allOf:
+                  - $ref: "#/components/schemas/Comment"
+                  - type: object
+                    required: [video_title]
+                    properties:
+                      video_title:
+                        type: string
+                        description: Title of the video the comment is on.
     CommentListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -21342,8 +21435,8 @@ components:
           format: uuid
         type:
           type: string
-          enum: [follow, comment, comment_reply, comment_mention, message, new_video, new_report, new_registration_request, upload_quarantined, federation_follower_request, report_resolved, report_message, video_rejected, video_blocked, video_unblocked, caption_ready, video_ownership_request]
-          description: What happened. follow = someone followed your channel; comment = someone commented on your video (addressed to the video's OWNER); comment_reply = someone replied to a comment you wrote (addressed to the comment's AUTHOR, who is usually not the video's owner; actor = the replier, video_id/video_title = the video the thread lives on, comment_id = the reply). A reply to a comment written by the video's own owner delivers comment_reply only, never both; message = someone sent you a direct message; new_video = a channel you follow published a new public video (actor = the channel owner, channel_handle/channel_display_name = the channel, video_id/video_title = the video; sent only while your bell for that channel is "all"); new_report = a user filed an abuse report (delivered only to admins/moderators; actor = the reporter, report_id/report_status/report_target_type carry the report); new_registration_request = a registration request awaits approval (delivered only to admins/moderators; no actor, the applicant has no account yet); upload_quarantined = an upload entered the quarantine review queue (delivered only to admins/moderators; actor = the uploader, video_id/video_title/channel_handle carry which one); federation_follower_request = a remote actor asked to follow a channel while follower approval is on (delivered only to admins; channel_handle/channel_display_name = the followed channel); report_resolved = a moderator resolved an abuse report you filed; report_message = a new message on an abuse report's thread (the reporter is told when staff write, with no actor — the moderator is never named; staff who receive new_report are told when the reporter writes, actor = the reporter; report_id/report_status/report_target_type carry the report, and the message body is never included); video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one, moderation_note carries the moderator's written reason when they gave one; the moderator's identity is never included); video_blocked = a moderator blocked one of your PUBLISHED videos, so it is no longer available to viewers (video_id/video_title carry which one; distinct from video_rejected, which is the quarantine outcome for an upload that never published — a block takes down live content and is reversible). The moderator's identity is never included, but moderation_note carries their block reason while the block stands (the A16 ruling made it creator-facing) and is absent once the block is lifted; video_unblocked = a moderator LIFTED the block on one of your videos, so it is available again (video_id/video_title carry which one; no moderator identity and no prose — there is nothing to explain about a restoration). It closes the loop video_blocked opens, and a repeated unblock of the same video delivers only one; caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one). video_ownership_request = another local user offered you one of their videos (actor = the giver; the title is on the request, not on the notification).
+          enum: [follow, comment, comment_held, comment_reply, comment_mention, message, new_video, new_report, new_registration_request, upload_quarantined, federation_follower_request, report_resolved, report_message, video_rejected, video_blocked, video_unblocked, caption_ready, video_ownership_request], caption_ready]
+          description: What happened. follow = someone followed your channel; comment = someone commented on your video (addressed to the video's OWNER); comment_held = a comment on a requires_approval video you manage (as its channel owner or an editor) awaits your approval (actor = the commenter, absent for a federated one; video_id/video_title/comment_id carry which; one per comment, re-surfaced unread when an edit sends an approved comment back for review); comment_reply = someone replied to a comment you wrote (addressed to the comment's AUTHOR, who is usually not the video's owner; actor = the replier, video_id/video_title = the video the thread lives on, comment_id = the reply). A reply to a comment written by the video's own owner delivers comment_reply only, never both; message = someone sent you a direct message; new_video = a channel you follow published a new public video (actor = the channel owner, channel_handle/channel_display_name = the channel, video_id/video_title = the video; sent only while your bell for that channel is "all"); new_report = a user filed an abuse report (delivered only to admins/moderators; actor = the reporter, report_id/report_status/report_target_type carry the report); new_registration_request = a registration request awaits approval (delivered only to admins/moderators; no actor, the applicant has no account yet); upload_quarantined = an upload entered the quarantine review queue (delivered only to admins/moderators; actor = the uploader, video_id/video_title/channel_handle carry which one); federation_follower_request = a remote actor asked to follow a channel while follower approval is on (delivered only to admins; channel_handle/channel_display_name = the followed channel); report_resolved = a moderator resolved an abuse report you filed; report_message = a new message on an abuse report's thread (the reporter is told when staff write, with no actor — the moderator is never named; staff who receive new_report are told when the reporter writes, actor = the reporter; report_id/report_status/report_target_type carry the report, and the message body is never included); video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one, moderation_note carries the moderator's written reason when they gave one; the moderator's identity is never included); video_blocked = a moderator blocked one of your PUBLISHED videos, so it is no longer available to viewers (video_id/video_title carry which one; distinct from video_rejected, which is the quarantine outcome for an upload that never published — a block takes down live content and is reversible). The moderator's identity is never included, but moderation_note carries their block reason while the block stands (the A16 ruling made it creator-facing) and is absent once the block is lifted; video_unblocked = a moderator LIFTED the block on one of your videos, so it is available again (video_id/video_title carry which one; no moderator identity and no prose — there is nothing to explain about a restoration). It closes the loop video_blocked opens, and a repeated unblock of the same video delivers only one; caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one). video_ownership_request = another local user offered you one of their videos (actor = the giver; the title is on the request, not on the notification).; caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one).
         read:
           type: boolean
         created_at:
@@ -21427,7 +21520,7 @@ components:
             this user. Types with no stored preference default to true.
           additionalProperties:
             type: boolean
-          example: { caption_ready: true, comment: true, comment_mention: true, comment_reply: true, federation_follower_request: true, follow: false, message: true, new_registration_request: true, new_report: true, new_video: true, report_message: true, report_resolved: true, upload_quarantined: true, video_blocked: true, video_ownership_request: true, video_rejected: true, video_unblocked: true }
+          example: { caption_ready: true, comment: true, comment_held: true, comment_mention: true, comment_reply: true, federation_follower_request: true, follow: false, message: true, new_registration_request: true, new_report: true, new_video: true, report_message: true, report_resolved: true, upload_quarantined: true, video_blocked: true, video_ownership_request: true, video_rejected: true, video_unblocked: true }
         email:
           type: object
           description: >-
@@ -21449,7 +21542,7 @@ components:
           type: object
           description: >-
             Partial map of notification type -> enabled. Only the types present
-            are changed. Known types: caption_ready, comment, comment_mention, comment_reply,
+            are changed. Known types: caption_ready, comment, comment_held, comment_mention, comment_reply,
             federation_follower_request, follow, message,
             new_registration_request, new_report, new_video, report_message,
             report_resolved, upload_quarantined, video_blocked, video_ownership_request,
@@ -21558,6 +21651,13 @@ components:
           description: >-
             The owning user. Compare it with the signed-in user to decide owner
             controls; GET /me/playlists is paged and cannot answer that.
+        channel_id:
+          type: string
+          format: uuid
+          description: >-
+            The owner's channel this playlist is shown under (its Playlists tab,
+            GET /channels/{handle}/playlists). Omitted when the playlist is not
+            attributed to a channel, or after that channel was deleted.
         title:
           type: string
           example: Watch later picks
@@ -21619,6 +21719,12 @@ components:
           type: string
           enum: [public, unlisted, private]
           description: Defaults to "private" when omitted.
+        channel_id:
+          type: string
+          format: uuid
+          description: >-
+            Optional channel to show the playlist under. It must be a channel
+            the caller owns; otherwise the request fails with 404.
     UpdatePlaylistRequest:
       type: object
       description: Partial update; provide at least one field.
@@ -21633,6 +21739,12 @@ components:
         visibility:
           type: string
           enum: [public, unlisted, private]
+        channel_id:
+          type: [string, "null"]
+          format: uuid
+          description: >-
+            Attach the playlist to a channel the caller owns (404 otherwise), or
+            null to detach it. Omit to leave it unchanged.
     AddPlaylistItemRequest:
       type: object
       required: [video_id]
