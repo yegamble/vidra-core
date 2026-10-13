@@ -74,6 +74,36 @@ type fakeRepo struct {
 	// inst is the instance actor's 0166 state (instance_actor_test.go); nil =
 	// the name is not the instance actor's, so it is not served.
 	inst *fakeInstance
+	// moveClaims are the origins whose Move was claimed (0167); the cooldown
+	// never expires inside a test.
+	moveClaims map[string]string
+}
+
+func (f fakeRepo) ClaimRemoteActorMove(_ context.Context, arg sqlcgen.ClaimRemoteActorMoveParams) (int64, error) {
+	if _, ok := f.moveClaims[arg.OriginActorUrl]; ok {
+		return 0, nil
+	}
+	f.moveClaims[arg.OriginActorUrl] = arg.TargetActorUrl
+	return 1, nil
+}
+
+// ListRemoteChannelFollowsOfActor mirrors the SQL: live edges, oldest first,
+// leaving out users who block the target.
+func (f fakeRepo) ListRemoteChannelFollowsOfActor(_ context.Context, arg sqlcgen.ListRemoteChannelFollowsOfActorParams) ([]sqlcgen.ListRemoteChannelFollowsOfActorRow, error) {
+	var rows []*sqlcgen.RemoteChannelFollow
+	for _, r := range f.rcFollows {
+		if r.RemoteActorUrl == arg.RemoteActorUrl && r.State != "rejected" && !f.remoteBlocks[r.UserID.String()+"|"+arg.TargetActorUrl] {
+			rows = append(rows, r)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt.Before(rows[j].CreatedAt) })
+	var out []sqlcgen.ListRemoteChannelFollowsOfActorRow
+	for _, r := range rows {
+		if len(out) < int(arg.ResultLimit) {
+			out = append(out, sqlcgen.ListRemoteChannelFollowsOfActorRow{ID: r.ID, UserID: r.UserID})
+		}
+	}
+	return out, nil
 }
 
 // GetRemoteVideoByID resolves the VIDEO behind a mirrored comment — the origin

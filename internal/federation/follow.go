@@ -87,14 +87,20 @@ func (s *Service) FollowRemoteChannel(ctx context.Context, userID uuid.UUID, tar
 	if err != nil {
 		return RemoteFollow{}, fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 	}
+	return s.followResolvedActor(ctx, userID, u.Username, ra)
+}
 
+// followResolvedActor follows an already-resolved remote actor as a local user:
+// the pending row, then a signed Follow on a fresh insert only. Shared by a
+// user's own follow and by an inbound Move re-pointing their follow.
+func (s *Service) followResolvedActor(ctx context.Context, userID uuid.UUID, username string, ra sqlcgen.RemoteActor) (RemoteFollow, error) {
 	// Mint the account keypair up front: the queued Follow is signed as this
 	// account at send time.
 	if _, err := s.ensureAccountKey(ctx, userID); err != nil {
 		return RemoteFollow{}, err
 	}
 
-	accountActor := s.baseURL + "/accounts/" + u.Username
+	accountActor := s.baseURL + "/accounts/" + username
 	followID := accountActor + "/activities/follow/" + uuid.NewString()
 	row, err := s.repo.UpsertRemoteChannelFollow(ctx, sqlcgen.UpsertRemoteChannelFollowParams{
 		UserID:            userID,
@@ -118,7 +124,7 @@ func (s *Service) FollowRemoteChannel(ctx context.Context, userID uuid.UUID, tar
 		if err != nil {
 			return RemoteFollow{}, err
 		}
-		if err := s.enqueueAccountDelivery(ctx, userID, u.Username, inbox, payload); err != nil {
+		if err := s.enqueueAccountDelivery(ctx, userID, username, inbox, payload); err != nil {
 			return RemoteFollow{}, err
 		}
 	}
