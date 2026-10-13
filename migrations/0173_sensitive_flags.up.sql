@@ -27,7 +27,7 @@ CREATE TABLE user_content_prefs (
 );
 
 CREATE FUNCTION vidra_sensitive_hidden(is_sensitive boolean, flags text[], base_hide boolean, viewer uuid)
-RETURNS boolean LANGUAGE sql STABLE AS $$
+RETURNS boolean LANGUAGE sql STABLE PARALLEL SAFE AS $$
     SELECT is_sensitive AND CASE
         WHEN cardinality(flags) = 0 THEN base_hide
         ELSE EXISTS (

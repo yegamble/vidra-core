@@ -43,3 +43,24 @@ func TestNormalizeSensitiveFlags(t *testing.T) {
 		t.Error("must be non-nil: the column is NOT NULL")
 	}
 }
+
+func TestSensitiveFlagsPatch(t *testing.T) {
+	f, tr := false, true
+	none := []string{}
+	some := []string{"sex", "bogus"}
+	if got := sensitiveFlagsPatch(&f, nil); got == nil || len(got) != 0 {
+		t.Errorf("is_sensitive=false must clear flags, got %#v", got)
+	}
+	if got := sensitiveFlagsPatch(&tr, nil); got != nil {
+		t.Errorf("is_sensitive=true alone leaves flags, got %#v", got)
+	}
+	if got := sensitiveFlagsPatch(nil, nil); got != nil {
+		t.Errorf("no change expected, got %#v", got)
+	}
+	if got := sensitiveFlagsPatch(nil, &some); len(got) != 1 || got[0] != "sex" {
+		t.Errorf("got %v, want [sex]", got)
+	}
+	if got := sensitiveFlagsPatch(&f, &none); got == nil || len(got) != 0 {
+		t.Errorf("got %#v", got)
+	}
+}

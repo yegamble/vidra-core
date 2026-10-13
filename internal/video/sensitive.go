@@ -80,9 +80,15 @@ func sensitiveWithFlags(is *bool, flags *[]string) *bool {
 	return is
 }
 
-func sensitiveFlagsPatch(flags *[]string) []string {
-	if flags == nil {
-		return nil
+// sensitiveFlagsPatch is the flags column's new value, nil = unchanged. Turning
+// is_sensitive off without naming flags clears them too: is_sensitive is the
+// aggregate, and stale flags on a non-sensitive video would still be federated.
+func sensitiveFlagsPatch(is *bool, flags *[]string) []string {
+	if flags != nil {
+		return NormalizeSensitiveFlags(*flags)
 	}
-	return NormalizeSensitiveFlags(*flags)
+	if is != nil && !*is {
+		return []string{}
+	}
+	return nil
 }
