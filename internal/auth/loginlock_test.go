@@ -363,5 +363,24 @@ func TestGlobalCapExemptsAKnownDevice(t *testing.T) {
 	}
 	if _, err := e.svc.Login(ctx, LoginInput{Identifier: "alice", Password: "supersecret", ClientIP: "198.51.100.6"}, ua); err != nil {
 		t.Fatalf("a recognised device must not be locked out by the account-wide cap: %v", err)
+||||||| c84f322
+func TestPasswordResetClearsLoginLockout(t *testing.T) {
+	e := newLockEnv(t)
+	mailer := &captureMailer{}
+	WithMailer(mailer)(e.svc)
+	for i := 0; i < prefixThreshold; i++ {
+		_ = e.login("203.0.113.7", "wrong")
+	}
+	if err := e.login("203.0.113.7", "supersecret"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected locked: %v", err)
+	}
+	if err := e.svc.RequestPasswordReset(context.Background(), "alice@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ResetPassword(context.Background(), mailer.token, "brand-new-pass"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.login("203.0.113.7", "brand-new-pass"); err != nil {
+		t.Fatalf("reset must lift the lockout: %v", err)
 	}
 }
