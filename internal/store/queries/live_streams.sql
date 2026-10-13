@@ -1,15 +1,15 @@
 -- name: CreateLiveStream :one
 -- Create a live stream for a channel with a pre-hashed stream key. The raw key is
 -- returned to the caller once by the service; only the hash is stored here.
-INSERT INTO live_streams (channel_id, title, description, privacy, permanent, replay_enabled, stream_key_hash)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at;
+INSERT INTO live_streams (channel_id, title, description, privacy, permanent, replay_enabled, stream_key_hash, scheduled_start_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, sqlc.narg('scheduled_start_at'))
+RETURNING id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at, scheduled_start_at;
 
 -- name: GetLiveStreamByID :one
 -- One live stream joined with its owning channel (owner_id for authz, handle +
 -- display name for display). Never returns the stream key hash.
 SELECT ls.id, ls.channel_id, ls.title, ls.description, ls.privacy, ls.state, ls.permanent,
-       ls.replay_enabled, ls.started_at, ls.created_at, ls.updated_at,
+       ls.replay_enabled, ls.started_at, ls.created_at, ls.updated_at, ls.scheduled_start_at,
        ls.terminated_at, ls.terminated_by, ls.termination_reason_code, ls.termination_reason,
        ch.owner_id, ch.handle AS channel_handle, ch.display_name AS channel_display_name
 FROM live_streams ls
@@ -18,7 +18,7 @@ WHERE ls.id = $1;
 
 -- name: ListLiveStreamsByChannel :many
 -- A channel's live streams, newest first (owner management list). No key hash.
-SELECT id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at,
+SELECT id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at, scheduled_start_at,
        terminated_at, terminated_by, termination_reason_code, termination_reason
 FROM live_streams
 WHERE channel_id = sqlc.arg('channel_id')
@@ -82,18 +82,78 @@ WHERE ls.state = 'live' AND ls.privacy = 'public'
       WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = ch.owner_id
   );
 
+-- name: ListUpcomingLiveStreams :many
+-- Public "Upcoming" listing (migration 0168): PUBLIC, offline streams that carry
+-- a planned start, soonest first. A planned start up to one hour in the past is
+-- still listed so a broadcaster who is a few minutes late reads "starting soon"
+-- rather than vanishing; after that the announcement is stale and drops out
+-- (the row is not touched — the owner can still edit or clear it).
+--
+-- Same visibility as every other public discovery surface: privacy = 'public'
+-- only, an ACTIVE owner who has not opted out of discovery (is_active, NOT
+-- unlisted — the clauses ListPublicVideosSorted and SearchChannels carry), a
+-- stream no moderator terminated, and the per-viewer mute/block clause verbatim. channel_handle is an optional filter
+-- for the channel page (NULL = every channel).
+SELECT ls.id, ls.title, ls.description, ls.scheduled_start_at,
+       ch.handle AS channel_handle, ch.display_name AS channel_display_name
+FROM live_streams ls
+JOIN channels ch ON ch.id = ls.channel_id
+JOIN users u ON u.id = ch.owner_id
+WHERE ls.state = 'offline' AND ls.privacy = 'public'
+  AND u.is_active = TRUE AND NOT u.unlisted
+  AND ls.termination_reason_code IS NULL
+  AND ls.scheduled_start_at IS NOT NULL
+  AND ls.scheduled_start_at > now() - interval '1 hour'
+  AND (sqlc.narg('channel_handle')::text IS NULL OR ch.handle = sqlc.narg('channel_handle')::text)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = ch.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = ch.owner_id
+  )
+ORDER BY ls.scheduled_start_at, ls.id
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountUpcomingLiveStreams :one
+-- How many rows ListUpcomingLiveStreams would return, ignoring pagination —
+-- same predicate, including the viewer clause (a total that counted rows the
+-- list filters out would promise a page it cannot serve).
+SELECT count(*)::bigint
+FROM live_streams ls
+JOIN channels ch ON ch.id = ls.channel_id
+JOIN users u ON u.id = ch.owner_id
+WHERE ls.state = 'offline' AND ls.privacy = 'public'
+  AND u.is_active = TRUE AND NOT u.unlisted
+  AND ls.termination_reason_code IS NULL
+  AND ls.scheduled_start_at IS NOT NULL
+  AND ls.scheduled_start_at > now() - interval '1 hour'
+  AND (sqlc.narg('channel_handle')::text IS NULL OR ch.handle = sqlc.narg('channel_handle')::text)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = ch.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = ch.owner_id
+  );
+
 -- name: UpdateLiveStreamKey :exec
 -- Rotate a stream's key (store the new hash).
 UPDATE live_streams SET stream_key_hash = $2, updated_at = now() WHERE id = $1;
 
 -- name: UpdateLiveStream :one
 -- Edit a stream's mutable metadata (title/description/privacy/permanent/
--- replay_enabled). The caller has already authorised ownership. Never touches the
+-- replay_enabled/scheduled_start_at — the last is REPLACED, so NULL clears it). The caller has already authorised ownership. Never touches the
 -- stream key or live state.
 UPDATE live_streams
-SET title = $2, description = $3, privacy = $4, permanent = $5, replay_enabled = $6, updated_at = now()
+SET title = $2, description = $3, privacy = $4, permanent = $5, replay_enabled = $6,
+    -- A stream that went live after the caller's check cannot be announced.
+    scheduled_start_at = CASE WHEN state = 'live' THEN NULL ELSE sqlc.narg('scheduled_start_at')::timestamptz END,
+    updated_at = now()
 WHERE id = $1
-RETURNING id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at;
+RETURNING id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at, scheduled_start_at;
 
 -- name: GetLiveStreamByKeyHash :one
 -- Look up a stream by its key hash — the RTMP ingest boundary authenticates a
@@ -154,6 +214,7 @@ SET state = $2,
         WHEN $2 = 'live' THEN started_at
         ELSE NULL
     END,
+    scheduled_start_at = CASE WHEN $2 = 'live' THEN NULL ELSE scheduled_start_at END,
     terminated_at = CASE WHEN $2 = 'live' THEN NULL ELSE terminated_at END,
     terminated_by = CASE WHEN $2 = 'live' THEN NULL ELSE terminated_by END,
     termination_reason_code = CASE WHEN $2 = 'live' THEN NULL ELSE termination_reason_code END,
@@ -180,6 +241,7 @@ DELETE FROM live_streams WHERE id = $1;
 UPDATE live_streams
 SET state = $2,
     started_at = NULL,
+    scheduled_start_at = NULL,
     terminated_at = now(),
     terminated_by = sqlc.narg('terminated_by'),
     termination_reason_code = sqlc.narg('termination_reason_code'),
