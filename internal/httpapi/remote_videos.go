@@ -39,6 +39,8 @@ type remoteVideoView struct {
 	// IsSensitive is the origin's flag; the viewer's policy applies to it as
 	// to a local video's is_sensitive (T05).
 	IsSensitive bool `json:"is_sensitive"`
+	// SensitiveFlags are the origin's PeerTube flags mapped to vidra's.
+	SensitiveFlags []string `json:"sensitive_flags"`
 }
 
 // newRemoteVideoView shapes one remote-video read model as its public view
@@ -60,6 +62,7 @@ func newRemoteVideoView(rv remotevideo.RemoteVideo) remoteVideoView {
 		PublishedAt:     rv.PublishedAt,
 		HasThumbnail:    rv.HasThumbnail,
 		IsSensitive:     rv.IsSensitive,
+		SensitiveFlags:  nonNilStrings(rv.SensitiveFlags),
 	}
 }
 

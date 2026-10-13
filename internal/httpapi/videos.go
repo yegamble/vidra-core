@@ -56,6 +56,9 @@ type createVideoRequest struct {
 	// IsSensitive optionally marks the video as sensitive content
 	// (instance-platform-info); defaults to false.
 	IsSensitive bool `json:"is_sensitive"`
+	// SensitiveFlags are the kinds of sensitive content: violent, shocking,
+	// sex. Any flag marks the video sensitive.
+	SensitiveFlags []string `json:"sensitive_flags"`
 	// SensitiveReason is the creator's optional content-warning text (trimmed,
 	// capped at maxSensitiveReasonLen). Storable regardless of IsSensitive — the
 	// frontend pairs them.
@@ -94,6 +97,7 @@ func (r createVideoRequest) Validate() []FieldError {
 	if len(strings.TrimSpace(r.SensitiveReason)) > maxSensitiveReasonLen {
 		fes = append(fes, FieldError{Field: "sensitive_reason", Message: "must be at most 280 characters"})
 	}
+	fes = append(fes, validateSensitiveFlags(r.SensitiveFlags)...)
 	fes = append(fes, validateSupport(r.Support)...)
 	fes = append(fes, validateTaxonomy(r.Category, r.Language, r.License)...)
 	fes = append(fes, validateTags(r.Tags)...)
@@ -183,6 +187,9 @@ type videoView struct {
 	// IsSensitive marks sensitive content (instance-platform-info). Always
 	// emitted; false for remote cards (no local flag exists for them).
 	IsSensitive bool `json:"is_sensitive"`
+	// SensitiveFlags are the kinds of sensitive content (violent, shocking,
+	// sex); always emitted, [] when none.
+	SensitiveFlags []string `json:"sensitive_flags"`
 	// SensitiveReason is the creator's optional content-warning text, paired with
 	// IsSensitive by the frontend. Always emitted (empty string when unset or on
 	// remote cards).
@@ -330,6 +337,7 @@ func newVideoView(v sqlcgen.Video) videoView {
 		Privacy:               v.Privacy,
 		State:                 v.State,
 		IsSensitive:           v.IsSensitive,
+		SensitiveFlags:        nonNilStrings(v.SensitiveFlags),
 		SensitiveReason:       v.SensitiveReason,
 		CreatedAt:             v.CreatedAt,
 		Category:              v.Category,
@@ -357,6 +365,7 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 		Privacy:         v.Privacy,
 		State:           v.State,
 		IsSensitive:     v.IsSensitive,
+		SensitiveFlags:  nonNilStrings(v.SensitiveFlags),
 		SensitiveReason: v.SensitiveReason,
 		CreatedAt:       v.CreatedAt,
 		Category:        v.Category,
@@ -416,6 +425,7 @@ func (s *Server) handleCreateVideo(c echo.Context) error {
 		Tags:            in.Tags,
 		PublishAt:       in.PublishAt,
 		IsSensitive:     in.IsSensitive,
+		SensitiveFlags:  in.SensitiveFlags,
 		SensitiveReason: in.SensitiveReason,
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
@@ -1098,6 +1108,9 @@ type updateVideoRequest struct {
 	// records a wrong one is not something this endpoint can adjudicate.
 	OriginallyPublishedAt *time.Time `json:"originally_published_at"`
 	IsSensitive           *bool      `json:"is_sensitive"`
+	// SensitiveFlags: nil leaves the flags unchanged; a non-nil array replaces
+	// them ([] clears). A non-empty set also marks the video sensitive.
+	SensitiveFlags *[]string `json:"sensitive_flags"`
 	// SensitiveReason: nil leaves the content-warning text unchanged; a non-nil
 	// value sets it (an empty string clears it). Trimmed, capped at
 	// maxSensitiveReasonLen.
@@ -1124,7 +1137,7 @@ func (r updateVideoRequest) Validate() []FieldError {
 	if r.Title == nil && r.Description == nil && r.Privacy == nil &&
 		r.Category == nil && r.Language == nil && r.License == nil && r.Support == nil && r.Tags == nil &&
 		r.PublishAt == nil && r.OriginallyPublishedAt == nil &&
-		r.IsSensitive == nil && r.SensitiveReason == nil &&
+		r.IsSensitive == nil && r.SensitiveFlags == nil && r.SensitiveReason == nil &&
 		r.CommentsPolicy == nil && r.DownloadEnabled == nil && r.PublishAfterTranscode == nil &&
 		r.ChannelID == nil {
 		return []FieldError{{Field: "title", Message: "at least one updatable field is required"}}
@@ -1149,6 +1162,9 @@ func (r updateVideoRequest) Validate() []FieldError {
 	}
 	if r.SensitiveReason != nil && len(strings.TrimSpace(*r.SensitiveReason)) > maxSensitiveReasonLen {
 		fes = append(fes, FieldError{Field: "sensitive_reason", Message: "must be at most 280 characters"})
+	}
+	if r.SensitiveFlags != nil {
+		fes = append(fes, validateSensitiveFlags(*r.SensitiveFlags)...)
 	}
 	// A provided taxonomy field must be a known, non-empty id (clearing to unset
 	// is not supported via update).
@@ -1270,6 +1286,7 @@ func (s *Server) applyVideoUpdate(c echo.Context, userID uuid.UUID, role string,
 		Tags:            in.Tags,
 		PublishAt:       in.PublishAt,
 		IsSensitive:     in.IsSensitive,
+		SensitiveFlags:  in.SensitiveFlags,
 		SensitiveReason: in.SensitiveReason,
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
@@ -1347,6 +1364,9 @@ func updateVideoFieldNames(in updateVideoRequest) []string {
 	}
 	if in.IsSensitive != nil {
 		fields = append(fields, "is_sensitive")
+	}
+	if in.SensitiveFlags != nil {
+		fields = append(fields, "sensitive_flags")
 	}
 	if in.SensitiveReason != nil {
 		fields = append(fields, "sensitive_reason")
@@ -2196,4 +2216,15 @@ func videoError(err error) error {
 	default:
 		return err
 	}
+}
+
+// validateSensitiveFlags rejects an unknown flag (silently dropping it would
+// hide a typo that leaves the video unflagged).
+func validateSensitiveFlags(flags []string) []FieldError {
+	for _, f := range flags {
+		if !video.IsSensitiveFlag(f) {
+			return []FieldError{{Field: "sensitive_flags", Message: "must contain only violent, shocking, sex"}}
+		}
+	}
+	return nil
 }

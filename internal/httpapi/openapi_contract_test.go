@@ -49,6 +49,7 @@ import (
 	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
+	"github.com/vidra/vidra-core/internal/viewerprefs"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
@@ -76,6 +77,7 @@ func fullRouteOptions() []Option {
 		WithRatingService(rating.NewService(nil)),
 		WithNotificationService(notification.NewService(nil)),
 		WithPlayerSettingsService(playersettings.NewService(nil)),
+		WithViewerPrefsService(viewerprefs.NewService(nil)),
 		WithPlaylistService(playlist.NewService(nil)),
 		WithModerationService(moderation.NewService(nil)),
 		WithMuteService(mute.NewService(nil)),
