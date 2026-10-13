@@ -1276,6 +1276,21 @@ type VideoPassword struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+type VideoPlaybackDay struct {
+	VideoID      uuid.UUID   `json:"video_id"`
+	Day          pgtype.Date `json:"day"`
+	Plays        int64       `json:"plays"`
+	WatchSeconds int64       `json:"watch_seconds"`
+}
+
+type VideoPlaybackDim struct {
+	VideoID uuid.UUID   `json:"video_id"`
+	Day     pgtype.Date `json:"day"`
+	Kind    string      `json:"kind"`
+	Key     string      `json:"key"`
+	Value   int64       `json:"value"`
+}
+
 type VideoRating struct {
 	VideoID   uuid.UUID `json:"video_id"`
 	UserID    uuid.UUID `json:"user_id"`
