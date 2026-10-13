@@ -191,6 +191,11 @@ type ChannelFollowBack struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
+type ChannelFollowerBackfill struct {
+	Host           string    `json:"host"`
+	LastBackfillAt time.Time `json:"last_backfill_at"`
+}
+
 type ChannelHandleAlias struct {
 	HandleLower string    `json:"handle_lower"`
 	ChannelID   uuid.UUID `json:"channel_id"`

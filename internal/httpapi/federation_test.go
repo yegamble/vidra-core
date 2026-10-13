@@ -839,6 +839,14 @@ func (f fakeFedRepo) GetChannelActorAlias(_ context.Context, channelID uuid.UUID
 	return "", pgx.ErrNoRows
 }
 
+func (f fakeFedRepo) ListChannelBackfillVideoIDs(context.Context, sqlcgen.ListChannelBackfillVideoIDsParams) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
+func (f fakeFedRepo) ClaimChannelFollowerBackfill(context.Context, sqlcgen.ClaimChannelFollowerBackfillParams) (int64, error) {
+	return 0, nil
+}
+
 func (f fakeFedRepo) IsRemoteActorBlockedInstanceWide(_ context.Context, actorURL string) (bool, error) {
 	if _, ok := f.adminActorBlocks[actorURL]; ok {
 		return true, nil

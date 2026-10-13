@@ -71,6 +71,32 @@ type fakeRepo struct {
 	// adminActorBlocks are the instance-wide per-actor blocks (0142), keyed by
 	// actor url.
 	adminActorBlocks map[string]string
+	// backfillIDs are the videos ListChannelBackfillVideoIDs returns per channel
+	// (the canonical-predicate SQL is proven by the integration test; the fake
+	// serves what that query would), already ordered newest first.
+	backfillIDs map[uuid.UUID][]uuid.UUID
+	// backfillClaims records the hosts the cooldown ledger holds (nil = every
+	// claim succeeds).
+	backfillClaims map[string]bool
+}
+
+func (f fakeRepo) ListChannelBackfillVideoIDs(_ context.Context, arg sqlcgen.ListChannelBackfillVideoIDsParams) ([]uuid.UUID, error) {
+	ids := f.backfillIDs[arg.ChannelID]
+	if int32(len(ids)) > arg.ResultLimit {
+		ids = ids[:arg.ResultLimit]
+	}
+	return ids, nil
+}
+
+func (f fakeRepo) ClaimChannelFollowerBackfill(_ context.Context, arg sqlcgen.ClaimChannelFollowerBackfillParams) (int64, error) {
+	if f.backfillClaims == nil {
+		return 1, nil
+	}
+	if f.backfillClaims[arg.Host] {
+		return 0, nil
+	}
+	f.backfillClaims[arg.Host] = true
+	return 1, nil
 }
 
 // GetRemoteVideoByID resolves the VIDEO behind a mirrored comment — the origin

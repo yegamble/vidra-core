@@ -239,6 +239,7 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 	if err := s.enqueueAcceptFollow(ctx, ch.ID, handle, signerActorURL, act.ID); err != nil {
 		return err
 	}
+	s.backfillAfterAccept(ctx, ch.ID, handle, signerActorURL)
 	return s.maybeAutoFollowBack(ctx, ch.ID, handle, signerActorURL)
 }
 

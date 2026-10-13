@@ -136,6 +136,10 @@ type Repository interface {
 	UnblockRemoteActorInstanceWide(ctx context.Context, remoteActorURL string) (int64, error)
 	ListBlockedRemoteActors(ctx context.Context, arg sqlcgen.ListBlockedRemoteActorsParams) ([]sqlcgen.ListBlockedRemoteActorsRow, error)
 	CountBlockedRemoteActors(ctx context.Context) (int64, error)
+
+	// New-follower channel backfill (migration 0169).
+	ListChannelBackfillVideoIDs(ctx context.Context, arg sqlcgen.ListChannelBackfillVideoIDsParams) ([]uuid.UUID, error)
+	ClaimChannelFollowerBackfill(ctx context.Context, arg sqlcgen.ClaimChannelFollowerBackfillParams) (int64, error)
 }
 
 // CommentFlagger runs the watched-words moderation flagging over a stored
