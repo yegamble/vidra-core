@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"net/netip"
 	"strconv"
 	"time"
 
@@ -203,7 +204,7 @@ func (s *Server) mailTestRateLimit() echo.MiddlewareFunc {
 func (s *Server) authRateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
 		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
-			return limiter, "auth:" + c.RealIP(), true
+			return limiter, "auth:" + limiterIPKey(c.RealIP()), true
 		},
 		unavailable: "auth rate limiter unavailable, failing open",
 		denied:      "rate limit exceeded",
@@ -246,4 +247,17 @@ func (s *Server) bulkVideosRateLimit() echo.MiddlewareFunc {
 		unavailable: "bulk video rate limiter unavailable, failing open",
 		denied:      "too many bulk actions; wait a minute and try again",
 	})
+}
+
+// limiterIPKey collapses an IPv6 address to its /64 for rate-limit keying: a
+// single IPv6 host controls a /64 (or far more) of source addresses, so keying
+// on the full address gives an attacker an effectively unlimited budget. IPv4
+// and unparseable values are returned unchanged.
+func limiterIPKey(raw string) string {
+	addr, err := netip.ParseAddr(raw)
+	if err != nil || addr.Unmap().Is4() {
+		return raw
+	}
+	p, _ := addr.Prefix(64)
+	return p.String()
 }

@@ -25,9 +25,15 @@ type memLockStore struct {
 	locked map[uuid.UUID]bool
 }
 
-func (m *memLockStore) RecordLoginFailure(_ context.Context, a sqlcgen.RecordLoginFailureParams) (int32, error) {
+func (m *memLockStore) EnsureLoginThrottle(context.Context, sqlcgen.EnsureLoginThrottleParams) error {
+	return nil
+}
+func (m *memLockStore) RecordLoginAttempt(_ context.Context, a sqlcgen.RecordLoginAttemptParams) (sqlcgen.RecordLoginAttemptRow, error) {
+	if a.Scope == "all" {
+		return sqlcgen.RecordLoginAttemptRow{FailCount: 1}, nil
+	}
 	m.count[a.UserID]++
-	return m.count[a.UserID], nil
+	return sqlcgen.RecordLoginAttemptRow{FailCount: m.count[a.UserID]}, nil
 }
 func (m *memLockStore) SetLoginLock(_ context.Context, a sqlcgen.SetLoginLockParams) error {
 	m.locked[a.UserID] = true
@@ -38,6 +44,15 @@ func (m *memLockStore) CountActiveLoginLocks(_ context.Context, a sqlcgen.CountA
 		return 1, nil
 	}
 	return 0, nil
+}
+func (m *memLockStore) RecordLoginSuccess(context.Context, sqlcgen.RecordLoginSuccessParams) error {
+	return nil
+}
+func (m *memLockStore) HasRecentLoginSuccess(context.Context, sqlcgen.HasRecentLoginSuccessParams) (bool, error) {
+	return false, nil
+}
+func (m *memLockStore) ReleaseLoginAttempt(context.Context, sqlcgen.ReleaseLoginAttemptParams) error {
+	return nil
 }
 func (m *memLockStore) ClearLoginThrottleScope(context.Context, sqlcgen.ClearLoginThrottleScopeParams) error {
 	return nil
@@ -119,3 +134,15 @@ var reqIDRe = regexp.MustCompile(`"request_id":"[^"]*"`)
 
 // noReqID drops the per-request correlation id, the one field that legitimately differs.
 func noReqID(b string) string { return reqIDRe.ReplaceAllString(b, "") }
+
+func TestLimiterIPKeyCollapsesIPv6To64(t *testing.T) {
+	if a, b := limiterIPKey("2001:db8:1:2:aaaa::1"), limiterIPKey("2001:db8:1:2:bbbb::9"); a != b {
+		t.Fatalf("same /64 must share a key: %s vs %s", a, b)
+	}
+	if limiterIPKey("2001:db8:1:3::1") == limiterIPKey("2001:db8:1:2::1") {
+		t.Fatal("different /64s must not share a key")
+	}
+	if limiterIPKey("203.0.113.9") != "203.0.113.9" {
+		t.Fatal("IPv4 must be unchanged")
+	}
+}

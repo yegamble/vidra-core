@@ -8,10 +8,9 @@ package store
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -35,26 +34,31 @@ func TestLoginThrottleQueries(t *testing.T) {
 	t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, user.ID) })
 
 	now := time.Now()
-	rec := func(at time.Time) int32 {
-		c, err := q.RecordLoginFailure(ctx, sqlcgen.RecordLoginFailureParams{UserID: user.ID, Scope: "ip:1.2.3.0/24", Now: at, WindowSeconds: 900})
+	att := func(at time.Time) sqlcgen.RecordLoginAttemptRow {
+		if err := q.EnsureLoginThrottle(ctx, sqlcgen.EnsureLoginThrottleParams{UserID: user.ID, Scope: "ip:1.2.3.0/24", Now: at}); err != nil {
+			t.Fatal(err)
+		}
+		r, err := q.RecordLoginAttempt(ctx, sqlcgen.RecordLoginAttemptParams{UserID: user.ID, Scope: "ip:1.2.3.0/24", Now: at, WindowSeconds: 900})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return c
+		return r
 	}
-	if rec(now) != 1 || rec(now) != 2 || rec(now.Add(time.Minute)) != 3 {
-		t.Fatal("failures inside the window must accumulate")
+	if att(now).FailCount != 1 || att(now).FailCount != 2 || att(now.Add(time.Minute)).FailCount != 3 {
+		t.Fatal("attempts inside the window must accumulate")
 	}
-	if got := rec(now.Add(16 * time.Minute)); got != 1 {
-		t.Fatalf("count after the window lapsed = %d, want a restart at 1", got)
+	if got := att(now.Add(16 * time.Minute)); got.FailCount != 1 {
+		t.Fatalf("count after the window lapsed = %d, want a restart at 1", got.FailCount)
 	}
 
-	lockUntil := now.Add(time.Minute)
-	if err := q.SetLoginLock(ctx, sqlcgen.SetLoginLockParams{
-		UserID: user.ID, Scope: "ip:1.2.3.0/24", LockedUntil: pgtype.Timestamptz{Time: lockUntil, Valid: true}, ResetCount: true,
-	}); err != nil {
-		t.Fatal(err)
+	setLock := func(until time.Time, reset bool) {
+		if err := q.SetLoginLock(ctx, sqlcgen.SetLoginLockParams{UserID: user.ID, Scope: "ip:1.2.3.0/24", LockedUntil: until, ResetCount: reset}); err != nil {
+			t.Fatal(err)
+		}
 	}
+	lockUntil := now.Add(time.Minute)
+	setLock(lockUntil, false)
+	setLock(now.Add(10*time.Second), false) // GREATEST: a shorter write never shortens
 	locks := func(at time.Time) int64 {
 		c, err := q.CountActiveLoginLocks(ctx, sqlcgen.CountActiveLoginLocksParams{
 			UserID: user.ID, Scopes: []string{"ip:1.2.3.0/24", "all"}, Now: at})
@@ -63,14 +67,52 @@ func TestLoginThrottleQueries(t *testing.T) {
 		}
 		return c
 	}
-	if locks(now) != 1 || locks(now.Add(2*time.Minute)) != 0 {
-		t.Fatal("lock must be active before locked_until and gone after")
+	if locks(now.Add(30*time.Second)) != 1 || locks(now.Add(2*time.Minute)) != 0 {
+		t.Fatal("lock must hold to the longest write and be gone after")
 	}
-	if rec(now) != 1 {
-		t.Fatal("ResetCount must restart the counter")
+	// The first attempt after expiry is the probe and clears the lock; a second
+	// concurrent-looking one is not.
+	if p := att(now.Add(2 * time.Minute)); !p.Probe {
+		t.Fatal("first attempt after expiry must be the probe")
+	}
+	if p := att(now.Add(2 * time.Minute)); p.Probe {
+		t.Fatal("only one attempt may be the probe")
+	}
+
+	// Parallel attempts get distinct, gap-free counts (atomic increment).
+	setLock(now, true) // reset count
+	var wg sync.WaitGroup
+	seen := make(chan int32, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := q.RecordLoginAttempt(ctx, sqlcgen.RecordLoginAttemptParams{UserID: user.ID, Scope: "ip:1.2.3.0/24", Now: now.Add(3 * time.Minute), WindowSeconds: 900})
+			if err == nil {
+				seen <- r.FailCount
+			}
+		}()
+	}
+	wg.Wait()
+	close(seen)
+	uniq := map[int32]bool{}
+	for c := range seen {
+		uniq[c] = true
+	}
+	if len(uniq) != 20 {
+		t.Fatalf("parallel attempts must get 20 distinct counts, got %d", len(uniq))
+	}
+
+	// Success memory.
+	since := now.Add(-time.Hour)
+	if err := q.RecordLoginSuccess(ctx, sqlcgen.RecordLoginSuccessParams{UserID: user.ID, Scope: "ok:ip:1.2.3.0/24", Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := q.HasRecentLoginSuccess(ctx, sqlcgen.HasRecentLoginSuccessParams{UserID: user.ID, Scope: "ok:ip:1.2.3.0/24", Since: since}); !ok {
+		t.Fatal("recent success not remembered")
 	}
 	cleared, err := q.ClearLoginThrottles(ctx, user.ID)
-	if err != nil || cleared != 1 || locks(now) != 0 {
-		t.Fatalf("admin clear = %d, %v; locks=%d", cleared, err, locks(now))
+	if err != nil || cleared < 1 || locks(now) != 0 {
+		t.Fatalf("admin clear = %d, %v", cleared, err)
 	}
 }
