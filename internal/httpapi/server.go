@@ -98,7 +98,13 @@ type Server struct {
 	unlockLimit *ratelimit.Limiter
 	// bulkVideosLimit throttles POST /me/videos/bulk PER USER (see ratelimit.go).
 	bulkVideosLimit *ratelimit.Limiter
-	attachmentLimit *ratelimit.Limiter
+	// playbackStats + playbackLimit back the watch-time beacon and its owner
+	// report (playback_stats.go). Nil playbackStats leaves both routes unmounted.
+	playbackStats playbackStatsService
+	playbackLimit *ratelimit.Limiter
+	// playbackStartLimit bounds how often one client can count a new play.
+	playbackStartLimit *ratelimit.Limiter
+	attachmentLimit    *ratelimit.Limiter
 	// contactLimit throttles the public contact form (POST /instance/contact) —
 	// its own fixed-window budget, 1 request/IP/hour in production (wired in
 	// cmd/api via WithContactRateLimiter). Nil (e.g. unit tests) mounts the
@@ -1216,6 +1222,8 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// Bulk video actions each run the full delete/update pipeline up to 100
 	// times, so they always carry a per-user budget, wired in-process like unlock.
 	s.bulkVideosLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultBulkVideosRateLimit, defaultBulkVideosRateWindow)
+	s.playbackLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackRateLimit, defaultPlaybackRateWindow)
+	s.playbackStartLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackStartLimit, defaultPlaybackStartWindow)
 	// Remote-URI search resolution (config-parity W13) triggers outbound
 	// fetches, so it always carries a per-caller budget: the wired limiter
 	// (Redis-backed in cmd/api) when present, else an in-memory default.
@@ -1927,6 +1935,10 @@ func (s *Server) routes() {
 		// Creator statistics (owner-only; non-owners get 404).
 		api.GET("/videos/:id/stats", s.handleGetVideoStats, s.requireAuth)
 		api.GET("/channels/:handle/stats", s.handleGetChannelStats, s.requireAuth)
+		if s.playbackStats != nil {
+			api.POST("/videos/:id/playback", s.handlePlaybackBeacon, s.optionalAuth, s.playbackRateLimit())
+			api.GET("/videos/:id/playback-stats", s.handleGetPlaybackStats, s.requireAuth)
+		}
 		// Account-level rollup across all channels the caller owns (studio
 		// "All channels" analytics scope). Owner-scoped by construction.
 		api.GET("/me/stats", s.handleGetAccountStats, s.requireAuth)

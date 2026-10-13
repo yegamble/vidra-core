@@ -5000,6 +5000,88 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/playback:
+    post:
+      operationId: recordVideoPlayback
+      summary: Anonymous watch-time beacon
+      description: >-
+        One periodic playback sample (about every 10 s while playing). Folded
+        into the video's daily aggregates; no IP address, User-Agent, session or
+        viewer id is stored. Device class and OS family are bucketed from the
+        User-Agent server-side and the raw value is discarded. Rate limited per
+        client and video; the owner's own plays are ignored; a play may be marked started once per client per 10 minutes. 204 on success, 404 for a video that is not published or visible.
+      tags: [videos]
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaybackBeaconRequest"
+      responses:
+        "204":
+          description: Sample accepted (or ignored).
+        "400":
+          description: Malformed body or out-of-range value.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: No such video, or not visible to the caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429":
+          description: Beacon budget exceeded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /api/v1/videos/{id}/playback-stats:
+    get:
+      operationId: getVideoPlaybackStats
+      summary: Watch-time, retention and device analytics for a video (owner or channel editor)
+      description: >-
+        Last 30 days of playback aggregates: plays, watch seconds, average view
+        duration, a 20-bucket audience retention curve (omitted when the video
+        duration is unknown or nothing was watched), a device-class and OS split
+        and a daily series. Country is not available (no GeoIP in core). A
+        non-owner/non-editor or unknown id is reported as 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The video's playback statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackStatsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: No such video, or the caller may not manage it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /api/v1/channels/{handle}/stats:
     get:
       operationId: getChannelStats
@@ -21098,6 +21180,76 @@ components:
           description: Dense 30-day series, oldest first, zero-filled.
           items:
             $ref: "#/components/schemas/DailyViews"
+    PlaybackBeaconRequest:
+      type: object
+      required: [position_seconds, watched_seconds]
+      properties:
+        position_seconds:
+          type: integer
+          minimum: 0
+          description: Playhead position at sample time.
+        watched_seconds:
+          type: integer
+          minimum: 0
+          maximum: 12
+          description: Seconds actually played since the previous sample (heartbeat is 10 s).
+        started:
+          type: boolean
+          description: True on the first sample of a play.
+    PlaybackShare:
+      type: object
+      required: [key, watch_seconds, share]
+      properties:
+        key:
+          type: string
+        watch_seconds:
+          type: integer
+          format: int64
+        share:
+          type: number
+          description: Fraction of total watch seconds, 0..1.
+    PlaybackDay:
+      type: object
+      required: [day, plays, watch_seconds]
+      properties:
+        day:
+          type: string
+          format: date
+        plays:
+          type: integer
+          format: int64
+        watch_seconds:
+          type: integer
+          format: int64
+    PlaybackStatsResponse:
+      type: object
+      required: [plays, watch_seconds, avg_view_duration_seconds, duration_seconds, devices, os, daily]
+      properties:
+        plays:
+          type: integer
+          format: int64
+        watch_seconds:
+          type: integer
+          format: int64
+        avg_view_duration_seconds:
+          type: number
+        duration_seconds:
+          type: integer
+          description: Probed video duration; 0 when unknown.
+        retention:
+          type: [array, "null"]
+          description: 20 buckets of the video's length, each 0..1.
+          items:
+            type: number
+        devices:
+          type: array
+          items: { $ref: "#/components/schemas/PlaybackShare" }
+        os:
+          type: array
+          items: { $ref: "#/components/schemas/PlaybackShare" }
+        daily:
+          type: array
+          items: { $ref: "#/components/schemas/PlaybackDay" }
     ChannelStatsResponse:
       type: object
       required: [views, likes, dislikes, comments, followers, videos, daily_views]
