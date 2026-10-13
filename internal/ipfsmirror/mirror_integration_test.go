@@ -71,6 +71,8 @@ func TestIntegrationMirrorPinsPromotedGeneration(t *testing.T) {
 	putBlob(t, blobs, promoted+"/720p/playlist.m3u8", "#EXTM3U\nseg_00000.ts\n")
 	putBlob(t, blobs, promoted+"/720p/seg_00000.ts", "promoted-seg-"+nonce)
 	putBlob(t, blobs, promoted+"/"+media.VP9WebMFilename, "webm-alt-"+nonce)
+	putBlob(t, blobs, promoted+"/720p/"+media.HLSMuxedDownloadFilename, "download-"+nonce)
+	putBlob(t, blobs, promoted+"/"+media.HLSAudioDownloadFilename, "audio-download-"+nonce)
 
 	seedPendingVideo(repo, stable, string(ClassHLS), vid)
 	svc := New(repo, &fakeLookups{hlsTree: promoted}, blobs, client, testConfig())
@@ -97,7 +99,7 @@ func TestIntegrationMirrorPinsPromotedGeneration(t *testing.T) {
 	}
 	// The superseded generation is not carried along, and neither is the VP9/WebM
 	// alternate that shares the promoted directory (its own media class).
-	for _, rel := range []string{"/r1/master.m3u8", "/r2/master.m3u8", "/" + media.VP9WebMFilename} {
+	for _, rel := range []string{"/r1/master.m3u8", "/r2/master.m3u8", "/" + media.VP9WebMFilename, "/720p/" + media.HLSMuxedDownloadFilename, "/" + media.HLSAudioDownloadFilename} {
 		if code := statusViaGateway(t, gateway, "/ipfs/"+root+rel); code == http.StatusOK {
 			t.Errorf("gateway served %s from the HLS car_root, want absent", rel)
 		}

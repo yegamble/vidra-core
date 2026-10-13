@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"path"
 	"strings"
 	"testing"
 
@@ -66,6 +67,12 @@ func TestLegacyIPFSHLSRecordsOnlyCopiedCurrentGeneration(t *testing.T) {
 				copiedKey += "-other"
 			}
 			if _, err = blobs.Put(ctx, copiedKey, strings.NewReader("#EXTM3U\n")); err != nil {
+				t.Fatal(err)
+			}
+			// A served child beside the copied key: the mirror pins only what the HLS
+			// routes serve (F6), so without one the "master absent" tree would be empty
+			// rather than a tree that merely lacks the current master.
+			if _, err = blobs.Put(ctx, path.Dir(master)+"/720p/playlist.m3u8", strings.NewReader("#EXTM3U\n")); err != nil {
 				t.Fatal(err)
 			}
 			q := st.Queries().WithTx(tx)
