@@ -111,8 +111,17 @@ func (s *Service) DrainMoves(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// Blocks are re-checked every pass: a target (or its instance) blocked by an
+	// admin mid-move abandons the move rather than following it on.
+	blocked, err := s.repo.IsInstanceBlocked(ctx, hostOf(mv.TargetActorUrl))
+	if err == nil && !blocked {
+		blocked, err = s.repo.IsRemoteActorBlockedInstanceWide(ctx, mv.TargetActorUrl)
+	}
+	if err != nil {
+		return 0, err
+	}
 	target, err := s.repo.GetRemoteActor(ctx, mv.TargetActorUrl)
-	if len(edges) == 0 || errors.Is(err, pgx.ErrNoRows) { // done, or the target was deleted since
+	if len(edges) == 0 || blocked || errors.Is(err, pgx.ErrNoRows) { // done, abandoned, or the target was deleted since
 		return 1, s.repo.SetRemoteActorMoveState(ctx, sqlcgen.SetRemoteActorMoveStateParams{OriginActorUrl: mv.OriginActorUrl, State: "done"})
 	} else if err != nil {
 		return 0, err

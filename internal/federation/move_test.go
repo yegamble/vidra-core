@@ -245,3 +245,23 @@ func TestInboundMoveRepointsEveryFollowInBatches(t *testing.T) {
 		t.Errorf("%d follows left on the old actor, state %q; want 0, done", left, w.repo.moveStates[moveOrigin])
 	}
 }
+
+// An admin block of the target (or its instance) mid-move abandons the move:
+// it is marked done and no further Follow goes out.
+func TestInboundMoveAbandonedWhenTargetBlockedMidMove(t *testing.T) {
+	for name, block := range map[string]func(*moveWorld){
+		"actor":    func(w *moveWorld) { w.repo.adminActorBlocks[w.target] = "" },
+		"instance": func(w *moveWorld) { w.repo.blockedDomains[hostOf(w.target)] = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newMoveWorld(t, moveOrigin)
+			if err := w.move(t, "https://old.example/moves/1", moveOrigin, moveOrigin, moveOrigin, w.target); err != nil {
+				t.Fatal(err)
+			}
+			block(&w)
+			if got := w.drain(t); !slices.Equal(got, []int{1, 0}) || w.repo.moveStates[moveOrigin] != "done" || len(w.repo.deliveries) != 0 {
+				t.Errorf("drain %v, state %q, %d deliveries; want [1 0], done, 0", got, w.repo.moveStates[moveOrigin], len(w.repo.deliveries))
+			}
+		})
+	}
+}
