@@ -94,7 +94,7 @@ WHERE (sqlc.narg('status')::text IS NULL
        OR (sqlc.narg('status')::text = 'resolved' AND r.status <> 'open')
        OR r.status = sqlc.narg('status')::text)
   AND (sqlc.narg('predefined_reason')::text IS NULL
-       OR sqlc.narg('predefined_reason')::text = ANY(r.predefined_reasons))
+       OR r.predefined_reasons @> ARRAY[sqlc.narg('predefined_reason')::text])
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
@@ -109,7 +109,7 @@ WHERE (sqlc.narg('status')::text IS NULL
        OR (sqlc.narg('status')::text = 'resolved' AND r.status <> 'open')
        OR r.status = sqlc.narg('status')::text)
   AND (sqlc.narg('predefined_reason')::text IS NULL
-       OR sqlc.narg('predefined_reason')::text = ANY(r.predefined_reasons));
+       OR r.predefined_reasons @> ARRAY[sqlc.narg('predefined_reason')::text]);
 
 -- name: DeleteReport :execrows
 -- Hard-delete a report row (admin purge). Notifications referencing it cascade

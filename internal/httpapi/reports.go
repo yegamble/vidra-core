@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -21,9 +22,11 @@ type createReportRequest struct {
 	Reason string `json:"reason"`
 	// Video reports only (0170): PeerTube-style predefined reasons and an
 	// optional timestamp range in whole seconds.
-	Reasons      []string `json:"reasons"`
-	StartSeconds *int32   `json:"start_seconds"`
-	EndSeconds   *int32   `json:"end_seconds"`
+	Reasons []string `json:"reasons"`
+	// int64 on the wire so an out-of-int32 value reaches Validate (422) instead
+	// of failing the JSON bind (400).
+	StartSeconds *int64 `json:"start_seconds"`
+	EndSeconds   *int64 `json:"end_seconds"`
 }
 
 func (r createReportRequest) Validate() []FieldError {
@@ -39,6 +42,11 @@ func (r createReportRequest) Validate() []FieldError {
 			return []FieldError{{Field: "reasons", Message: "must be a known reason"}}
 		}
 	}
+	for field, v := range map[string]*int64{"start_seconds": r.StartSeconds, "end_seconds": r.EndSeconds} {
+		if v != nil && (*v < math.MinInt32 || *v > math.MaxInt32) {
+			return []FieldError{{Field: field, Message: "is out of range"}}
+		}
+	}
 	return nil
 }
 
@@ -47,7 +55,14 @@ func (r createReportRequest) hasVideoDetail() bool {
 }
 
 func (r createReportRequest) videoDetail() moderation.VideoReportDetail {
-	return moderation.VideoReportDetail{Reasons: r.Reasons, StartSeconds: r.StartSeconds, EndSeconds: r.EndSeconds}
+	narrow := func(v *int64) *int32 { // Validate has bounded it to int32
+		if v == nil {
+			return nil
+		}
+		n := int32(*v)
+		return &n
+	}
+	return moderation.VideoReportDetail{Reasons: r.Reasons, StartSeconds: narrow(r.StartSeconds), EndSeconds: narrow(r.EndSeconds)}
 }
 
 // videoOnlyDetailError is the 422 for reasons/timestamps on a non-video report.

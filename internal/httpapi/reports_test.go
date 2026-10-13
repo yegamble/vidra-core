@@ -1055,10 +1055,12 @@ func TestReportVideoReasonsAndRange(t *testing.T) {
 	path := "/api/v1/videos/" + vid + "/report"
 
 	for name, body := range map[string]string{
-		"unknown reason": `{"reason":"x","reasons":["nope"]}`,
-		"negative start": `{"reason":"x","start_seconds":-1}`,
-		"end <= start":   `{"reason":"x","start_seconds":10,"end_seconds":10}`,
-		"end w/o start":  `{"reason":"x","end_seconds":10}`,
+		"unknown reason":        `{"reason":"x","reasons":["nope"]}`,
+		"negative start":        `{"reason":"x","start_seconds":-1}`,
+		"end <= start":          `{"reason":"x","start_seconds":10,"end_seconds":10}`,
+		"end w/o start":         `{"reason":"x","end_seconds":10}`,
+		"start overflows int32": `{"reason":"x","start_seconds":3000000000}`,
+		"end overflows int32":   `{"reason":"x","start_seconds":1,"end_seconds":99999999999}`,
 	} {
 		if rec := sendJSONAuth(srv, http.MethodPost, path, body, bob); rec.Code != http.StatusUnprocessableEntity {
 			t.Errorf("%s = %d, want 422; body=%s", name, rec.Code, rec.Body.String())

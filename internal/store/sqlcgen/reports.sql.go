@@ -34,7 +34,7 @@ WHERE ($1::text IS NULL
        OR ($1::text = 'resolved' AND r.status <> 'open')
        OR r.status = $1::text)
   AND ($2::text IS NULL
-       OR $2::text = ANY(r.predefined_reasons))
+       OR r.predefined_reasons @> ARRAY[$2::text])
 `
 
 type CountReportsParams struct {
@@ -365,7 +365,7 @@ WHERE ($1::text IS NULL
        OR ($1::text = 'resolved' AND r.status <> 'open')
        OR r.status = $1::text)
   AND ($2::text IS NULL
-       OR $2::text = ANY(r.predefined_reasons))
+       OR r.predefined_reasons @> ARRAY[$2::text])
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT $4 OFFSET $3
 `
