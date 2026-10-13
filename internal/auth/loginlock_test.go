@@ -386,3 +386,40 @@ func TestPasswordResetClearsLoginLockout(t *testing.T) {
 		t.Fatalf("reset must lift the lockout: %v", err)
 	}
 }
+
+func TestDelayOnlyModeNeverHardLocksAPrefix(t *testing.T) {
+	e := newLockEnv(t)
+	WithDelayOnlyPrefixBackoff()(e.svc)
+	var slept []time.Duration
+	e.svc.sleep = func(d time.Duration) { slept = append(slept, d) }
+	for i := 0; i < prefixThreshold+4; i++ {
+		_ = e.login("203.0.113.7", "wrong")
+	}
+	if len(slept) == 0 || slept[len(slept)-1] <= slept[0] {
+		t.Fatalf("attempts past the threshold must be delayed, growing: %v", slept)
+	}
+	for _, d := range slept {
+		if d > maxDelayOnly {
+			t.Fatalf("delay %v exceeds the cap", d)
+		}
+	}
+	// The same shared edge address still signs the owner in: no hard lock.
+	if err := e.login("203.0.113.7", "supersecret"); err != nil {
+		t.Fatalf("delay-only mode must not lock the prefix: %v", err)
+	}
+}
+
+func TestWithTrustedProxiesPrefixStillHardLocks(t *testing.T) {
+	e := newLockEnv(t) // default mode = per-network lockout
+	var slept int
+	e.svc.sleep = func(time.Duration) { slept++ }
+	for i := 0; i < prefixThreshold; i++ {
+		_ = e.login("203.0.113.7", "wrong")
+	}
+	if err := e.login("203.0.113.7", "supersecret"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("lock mode must hard-lock the prefix: %v", err)
+	}
+	if slept != 0 {
+		t.Fatal("lock mode must not use delays")
+	}
+}

@@ -468,9 +468,11 @@ func run() error {
 	var authOpts []auth.Option
 	authOpts = append(authOpts, auth.WithLoginLockStore(db.Queries()), auth.WithDeviceStore(db.Queries()))
 	if len(cfg.TrustedProxyCIDRs) == 0 {
-		// The per-account lockout is scoped by client network prefix. Behind a CDN or
-		// proxy this server does not trust, every client shares the edge's prefix.
-		logger.Warn("failed-login lockout is scoped by client network, and TRUSTED_PROXY_CIDRS is unset: behind a CDN/proxy outside the built-in trusted ranges all clients share the edge's prefix — list its CIDRs")
+		// Per-network lockout needs the real client address. Behind a CDN/proxy outside
+		// the built-in trusted ranges every visitor shares the edge's, so a prefix
+		// lock would lock an account for everyone: fall back to delay-only backoff.
+		authOpts = append(authOpts, auth.WithDelayOnlyPrefixBackoff())
+		logger.Warn("TRUSTED_PROXY_CIDRS is unset: failed-login backoff is delay-only (never hard-locks per network); set it to your CDN/proxy ranges to enable per-network lockout")
 	}
 	authOpts = append(authOpts, auth.WithRegistrationRequestHook(staffQueueHook("registration_request",
 		func(ctx context.Context, id uuid.UUID) (int64, error) {
