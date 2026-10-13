@@ -11305,6 +11305,14 @@ paths:
           description: Case-insensitive body substring filter.
           schema:
             type: string
+        - name: auto_tag
+          in: query
+          required: false
+          description: >-
+            Keep only comments carrying this automatic tag (`external-link`, or
+            an instance watched-word list name); case-insensitive exact match.
+          schema:
+            type: string
         - $ref: "#/components/parameters/PageLimit"
         - $ref: "#/components/parameters/PageOffset"
       responses:
@@ -23588,7 +23596,7 @@ components:
     AdminComment:
       type: object
       description: A comment in the admin/moderator overview, with author + video context.
-      required: [id, video_id, video_title, body, author_username, author_display_name, remote, created_at, deleted]
+      required: [id, video_id, video_title, body, author_username, author_display_name, remote, created_at, deleted, automatic_tags]
       properties:
         id:
           type: string
@@ -23618,6 +23626,16 @@ components:
           description: >-
             True for a tombstoned comment (its author's account was permanently
             deleted); body renders as "[deleted]".
+        automatic_tags:
+          type: array
+          description: >-
+            Tags computed from the body when it was posted or last edited:
+            `external-link` (it contains a URL) and the NAME of each instance
+            watched-word list it matches. Never the matched words. Empty for an
+            untagged comment, and for one that predates the feature until it is
+            edited.
+          items:
+            type: string
     AdminCommentListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

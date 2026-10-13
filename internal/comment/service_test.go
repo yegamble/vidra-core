@@ -248,7 +248,7 @@ func TestListForAdmin(t *testing.T) {
 	_, _ = svc.Create(ctx, uuid.New(), user, "hello world", nil)
 	_, _ = svc.Create(ctx, uuid.New(), user, "spam spam", nil)
 
-	all, _, err := svc.ListForAdmin(ctx, "", 20, 0)
+	all, _, err := svc.ListForAdmin(ctx, "", "", 20, 0)
 	if err != nil {
 		t.Fatalf("ListForAdmin: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestListForAdmin(t *testing.T) {
 		t.Errorf("author = %q, want ada", all[0].AuthorUsername)
 	}
 	// The body filter narrows the result.
-	filtered, _, _ := svc.ListForAdmin(ctx, "spam", 20, 0)
+	filtered, _, _ := svc.ListForAdmin(ctx, "spam", "", 20, 0)
 	if len(filtered) != 1 || filtered[0].Body != "spam spam" {
 		t.Errorf("q=spam = %+v, want only [spam spam]", filtered)
 	}
@@ -506,8 +506,8 @@ func (f *fakeRepo) CountCommentsByVideo(ctx context.Context, a sqlcgen.CountComm
 	return int64(len(rows)), err
 }
 
-func (f *fakeRepo) CountAdminComments(ctx context.Context, query *string) (int64, error) {
-	rows, err := f.ListAdminComments(ctx, sqlcgen.ListAdminCommentsParams{Query: query, ResultLimit: 1 << 30})
+func (f *fakeRepo) CountAdminComments(ctx context.Context, a sqlcgen.CountAdminCommentsParams) (int64, error) {
+	rows, err := f.ListAdminComments(ctx, sqlcgen.ListAdminCommentsParams{Query: a.Query, AutoTag: a.AutoTag, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
 }
 

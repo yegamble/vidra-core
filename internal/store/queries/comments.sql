@@ -272,19 +272,23 @@ SELECT count(*) FROM comments WHERE user_id IS NOT NULL AND NOT held_for_review;
 -- name: ListAdminComments :many
 -- The admin/moderator comments overview: ALL comments newest first, with the
 -- author's identity (local user or remote actor + domain, §6) and the video
--- they're on. An optional case-insensitive body filter (NULL = no filter).
+-- they're on. An optional case-insensitive body filter and an optional
+-- automatic-tag filter (0177); NULL = no filter.
 SELECT c.id, c.video_id, c.body, c.created_at, c.deleted_at,
        COALESCE(u.username, '')::text AS author_username,
        COALESCE(u.display_name, '')::text AS author_display_name,
        c.remote_actor_url,
        COALESCE(c.remote_author_name, '')::text AS remote_author_name,
        COALESCE(ra.domain, '')::text AS author_domain,
-       v.title AS video_title
+       v.title AS video_title,
+       COALESCE((SELECT array_agg(t.tag ORDER BY t.tag) FROM comment_automatic_tags t WHERE t.comment_id = c.id), '{}')::text[] AS automatic_tags
 FROM comments c
 LEFT JOIN users u ON u.id = c.user_id
 LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
 JOIN videos v ON v.id = c.video_id
 WHERE (sqlc.narg('query')::text IS NULL OR c.body ILIKE '%' || sqlc.narg('query') || '%')
+  AND (sqlc.narg('auto_tag')::text IS NULL OR EXISTS (
+        SELECT 1 FROM comment_automatic_tags t WHERE t.comment_id = c.id AND lower(t.tag) = lower(sqlc.narg('auto_tag')::text)))
 ORDER BY c.created_at DESC, c.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
@@ -297,7 +301,9 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 SELECT count(*)::bigint
 FROM comments c
 JOIN videos v ON v.id = c.video_id
-WHERE (sqlc.narg('query')::text IS NULL OR c.body ILIKE '%' || sqlc.narg('query') || '%');
+WHERE (sqlc.narg('query')::text IS NULL OR c.body ILIKE '%' || sqlc.narg('query') || '%')
+  AND (sqlc.narg('auto_tag')::text IS NULL OR EXISTS (
+        SELECT 1 FROM comment_automatic_tags t WHERE t.comment_id = c.id AND lower(t.tag) = lower(sqlc.narg('auto_tag')::text)));
 
 -- name: TombstoneUserComments :exec
 -- §1 hard delete: a deleted account's comments become tombstones — the body is

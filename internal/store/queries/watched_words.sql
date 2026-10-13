@@ -174,3 +174,16 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 SELECT count(*)::bigint
 FROM watched_word_matches m
 WHERE m.list_owner_id IS NULL AND (sqlc.narg('status')::text IS NULL OR m.status = sqlc.narg('status')::text);
+
+-- name: ReplaceCommentAutomaticTags :exec
+-- Make a comment carry exactly the given automatic tags (0177), atomically in
+-- one statement: tags not in the set are deleted, new ones inserted, kept ones
+-- untouched (the DELETE and the INSERT must not touch the same key, which is
+-- why this is not "delete all, insert all" in one CTE).
+WITH removed AS (
+    DELETE FROM comment_automatic_tags
+    WHERE comment_id = sqlc.arg('comment_id') AND tag <> ALL (sqlc.arg('tags')::text[])
+)
+INSERT INTO comment_automatic_tags (comment_id, tag)
+SELECT sqlc.arg('comment_id'), t FROM unnest(sqlc.arg('tags')::text[]) AS t
+ON CONFLICT (comment_id, tag) DO NOTHING;

@@ -81,6 +81,7 @@ type Repository interface {
 	MatchWatchedWordsForVideo(ctx context.Context, arg sqlcgen.MatchWatchedWordsForVideoParams) ([]sqlcgen.MatchWatchedWordsForVideoRow, error)
 	GetComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)
 	WordListRepository
+	ReplaceCommentAutomaticTags(ctx context.Context, arg sqlcgen.ReplaceCommentAutomaticTagsParams) error
 	RecordWatchedWordMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordMatchParams) error
 	RecordWatchedWordVideoMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordVideoMatchParams) error
 	RecordWatchedWordAuthoredRemoteCommentMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordAuthoredRemoteCommentMatchParams) error
@@ -173,6 +174,11 @@ func (s *Service) FlagComment(ctx context.Context, commentID uuid.UUID, body str
 	}
 	matches, err := s.matchForVideo(ctx, c.VideoID, body)
 	if err != nil {
+		return 0, err
+	}
+	// Automatic tags (0177) come from the SAME matches, replaced on every
+	// call so an edit that drops a URL or a term drops its tag.
+	if err := s.recordCommentTags(ctx, commentID, body, matches); err != nil {
 		return 0, err
 	}
 	for _, m := range matches {
