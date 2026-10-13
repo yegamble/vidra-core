@@ -236,6 +236,8 @@ type Config struct {
 // call the enqueue helpers unconditionally.
 type Service struct {
 	control             *ipfscontrol.Service
+	pauseMu             sync.Mutex
+	pauseReason         string // last admission-pause reason logged (observeAdmission)
 	legacyPublicEnabled bool
 	repo                Repository
 	lookups             Lookups

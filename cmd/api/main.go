@@ -3066,6 +3066,24 @@ func run() error {
 			}
 			return out, nil
 		})
+		// IPFS capacity (Tier A F4): repo usage, budget and the admission-pause reason,
+		// read through the same Runtime the admin page uses so the two cannot disagree.
+		if cfg.IPFSEnabled || ipfsHost != nil {
+			metrics.RegisterIPFSCapacitySource(func(ctx context.Context) (observability.IPFSCapacity, error) {
+				rt, err := ipfsControl.Runtime(ctx)
+				if err != nil {
+					return observability.IPFSCapacity{}, err
+				}
+				out := observability.IPFSCapacity{
+					BudgetBytes: rt.Capacity.BudgetBytes, ReservedBytes: rt.Capacity.ReservedBytes, MinFreeBytes: rt.Capacity.MinFreeBytes,
+					RepoUsedBytes: rt.Capacity.RepoUsedBytes, FilesystemFreeBytes: rt.Capacity.FilesystemFreeBytes,
+				}
+				if rt.Capacity.AdmissionPausedReason != nil {
+					out.PausedReason = *rt.Capacity.AdmissionPausedReason
+				}
+				return out, nil
+			})
+		}
 		// The pool gauges (phase-5 multi-node floor). Sampled at scrape time from
 		// the live pool, through the same sampler the admin status page reads.
 		metrics.RegisterDBPoolSource(dbPoolStats)
