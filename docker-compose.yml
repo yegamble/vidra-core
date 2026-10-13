@@ -470,6 +470,10 @@ x-api-env: &api-env
   # LIVE_RTMP_URL is the base RTMP ingest URL returned to a streamer alongside a
   # freshly minted stream key (informational; empty by default).
   LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}
+  # LIVE_RTMPS_URL is the optional TLS twin (rtmps://host:1936/live) offered to
+  # streamers ahead of LIVE_RTMP_URL so the stream key is not sent in cleartext.
+  # It only advertises the URL; the TLS listener is the meta repo's `rtmps` service.
+  LIVE_RTMPS_URL: ${LIVE_RTMPS_URL:-}
   # LIVE_INGEST_SECRET is the shared secret the media server (RTMP ingest) presents
   # on the media-server-facing /live/ingest hooks. When empty (default) the hooks
   # are disabled (404). Set it to enable them (dev/test harnesses; a real deploy
