@@ -77,6 +77,30 @@ type fakeRepo struct {
 	// moveClaims are the origins whose Move was claimed (0167); the cooldown
 	// never expires inside a test.
 	moveClaims map[string]string
+	moveStates map[string]string // origin → claimed | moving | done (absent = claimed)
+}
+
+func (f fakeRepo) ReleaseRemoteActorMove(_ context.Context, origin string) error {
+	if st := f.moveStates[origin]; st == "" || st == "claimed" {
+		delete(f.moveClaims, origin)
+	}
+	return nil
+}
+
+func (f fakeRepo) SetRemoteActorMoveState(_ context.Context, arg sqlcgen.SetRemoteActorMoveStateParams) error {
+	f.moveStates[arg.OriginActorUrl] = arg.State
+	return nil
+}
+
+func (f fakeRepo) CarryRemoteActorBlocks(_ context.Context, arg sqlcgen.CarryRemoteActorBlocksParams) (int64, error) {
+	var n int64
+	for key := range f.remoteBlocks {
+		if blocker, url, _ := strings.Cut(key, "|"); url == arg.OriginActorUrl && !f.remoteBlocks[blocker+"|"+arg.TargetActorUrl] {
+			f.remoteBlocks[blocker+"|"+arg.TargetActorUrl] = true
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (f fakeRepo) ClaimRemoteActorMove(_ context.Context, arg sqlcgen.ClaimRemoteActorMoveParams) (int64, error) {
