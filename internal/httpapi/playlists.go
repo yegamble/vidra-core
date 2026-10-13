@@ -2,12 +2,14 @@ package httpapi
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/delivery"
@@ -24,15 +26,27 @@ var validPlaylistVisibility = map[string]bool{"public": true, "unlisted": true, 
 // decide owner controls from the playlist itself; searching GET /me/playlists
 // for it only ever sees one page.
 type playlistView struct {
-	ID           string    `json:"id"`
-	OwnerID      string    `json:"owner_id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Visibility   string    `json:"visibility"`
-	VideoCount   int64     `json:"video_count"`
-	HasThumbnail bool      `json:"has_thumbnail"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string `json:"id"`
+	OwnerID      string `json:"owner_id"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	Visibility   string `json:"visibility"`
+	VideoCount   int64  `json:"video_count"`
+	HasThumbnail bool   `json:"has_thumbnail"`
+	// ChannelID is the owner's channel this playlist is shown under (migration
+	// 0164); omitted when it is not attributed to one.
+	ChannelID *string   `json:"channel_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// pgUUIDString renders an optional channel id for JSON (nil = unset).
+func pgUUIDString(u pgtype.UUID) *string {
+	if !u.Valid {
+		return nil
+	}
+	s := uuid.UUID(u.Bytes).String()
+	return &s
 }
 
 func newPlaylistView(p sqlcgen.Playlist, count int64) playlistView {
@@ -44,6 +58,7 @@ func newPlaylistView(p sqlcgen.Playlist, count int64) playlistView {
 		Visibility:   p.Visibility,
 		VideoCount:   count,
 		HasThumbnail: p.ThumbnailExt != nil && *p.ThumbnailExt != "",
+		ChannelID:    pgUUIDString(p.ChannelID),
 		CreatedAt:    p.CreatedAt,
 		UpdatedAt:    p.UpdatedAt,
 	}
@@ -58,6 +73,7 @@ func playlistViewRow(r sqlcgen.GetPlaylistByIDRow) playlistView {
 		Visibility:   r.Visibility,
 		VideoCount:   r.VideoCount,
 		HasThumbnail: r.ThumbnailExt != nil && *r.ThumbnailExt != "",
+		ChannelID:    pgUUIDString(r.ChannelID),
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}
@@ -91,10 +107,17 @@ type createPlaylistRequest struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Visibility  string `json:"visibility"`
+	// ChannelID optionally attributes the playlist to one of the caller's channels.
+	ChannelID *string `json:"channel_id"`
 }
 
 func (r createPlaylistRequest) Validate() []FieldError {
 	var fes []FieldError
+	if r.ChannelID != nil {
+		if _, err := uuid.Parse(*r.ChannelID); err != nil {
+			fes = append(fes, FieldError{Field: "channel_id", Message: "must be a channel id"})
+		}
+	}
 	switch n := len(strings.TrimSpace(r.Title)); {
 	case n == 0:
 		fes = append(fes, FieldError{Field: "title", Message: "is required"})
@@ -124,13 +147,19 @@ func (s *Server) handleCreatePlaylist(c echo.Context) error {
 	if visibility == "" {
 		visibility = "private"
 	}
+	var channelID *uuid.UUID
+	if in.ChannelID != nil {
+		id, _ := uuid.Parse(*in.ChannelID) // validated
+		channelID = &id
+	}
 	p, err := s.playlistsvc.Create(c.Request().Context(), userID, playlist.CreateInput{
 		Title:       in.Title,
 		Description: in.Description,
 		Visibility:  visibility,
+		ChannelID:   channelID,
 	})
 	if err != nil {
-		return err
+		return playlistError(err)
 	}
 	return c.JSON(http.StatusCreated, newPlaylistView(p, 0))
 }
@@ -164,9 +193,35 @@ func (s *Server) handleListMyPlaylists(c echo.Context) error {
 			Visibility:   r.Visibility,
 			VideoCount:   r.VideoCount,
 			HasThumbnail: r.ThumbnailExt != nil && *r.ThumbnailExt != "",
+			ChannelID:    pgUUIDString(r.ChannelID),
 			CreatedAt:    r.CreatedAt,
 			UpdatedAt:    r.UpdatedAt,
 		})
+	}
+	return c.JSON(http.StatusOK, playlistListResponse{Playlists: views, pageMeta: page.meta(total)})
+}
+
+// handleListChannelPlaylists lists a channel's playlists (the channel page's
+// Playlists tab). optionalAuth: anyone gets the public ones, a playlist's owner
+// also sees their own unlisted/private ones; paginated like every list here.
+func (s *Server) handleListChannelPlaylists(c echo.Context) error {
+	ctx := c.Request().Context()
+	ch, err := s.channelsvc.GetByHandle(ctx, c.Param("handle"))
+	if err != nil {
+		return channelError(err)
+	}
+	var viewer *uuid.UUID
+	if uid, _, ok := principalFromContext(c); ok {
+		viewer = &uid
+	}
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	rows, total, err := s.playlistsvc.ListByChannel(ctx, ch.ID, viewer, page.Limit32(), page.Offset32())
+	if err != nil {
+		return err
+	}
+	views := make([]playlistView, 0, len(rows))
+	for _, r := range rows {
+		views = append(views, playlistViewRow(sqlcgen.GetPlaylistByIDRow(r)))
 	}
 	return c.JSON(http.StatusOK, playlistListResponse{Playlists: views, pageMeta: page.meta(total)})
 }
@@ -220,13 +275,38 @@ type updatePlaylistRequest struct {
 	Title       *string `json:"title"`
 	Description *string `json:"description"`
 	Visibility  *string `json:"visibility"`
+	// ChannelID is raw so absent (leave) and null (unlink) stay distinguishable.
+	ChannelID json.RawMessage `json:"channel_id"`
+}
+
+// channelChange decodes ChannelID: set=false when absent; set=true with a nil id
+// when explicitly null; ok=false when it is neither null nor a uuid string.
+func (r updatePlaylistRequest) channelChange() (id *uuid.UUID, set, ok bool) {
+	if len(r.ChannelID) == 0 {
+		return nil, false, true
+	}
+	if string(bytes.TrimSpace(r.ChannelID)) == "null" {
+		return nil, true, true
+	}
+	var str string
+	if json.Unmarshal(r.ChannelID, &str) != nil {
+		return nil, true, false
+	}
+	u, err := uuid.Parse(str)
+	if err != nil {
+		return nil, true, false
+	}
+	return &u, true, true
 }
 
 func (r updatePlaylistRequest) Validate() []FieldError {
-	if r.Title == nil && r.Description == nil && r.Visibility == nil {
-		return []FieldError{{Field: "title", Message: "at least one of title, description, visibility is required"}}
+	if r.Title == nil && r.Description == nil && r.Visibility == nil && len(r.ChannelID) == 0 {
+		return []FieldError{{Field: "title", Message: "at least one of title, description, visibility, channel_id is required"}}
 	}
 	var fes []FieldError
+	if _, _, ok := r.channelChange(); !ok {
+		fes = append(fes, FieldError{Field: "channel_id", Message: "must be a channel id or null"})
+	}
 	if r.Title != nil {
 		switch n := len(strings.TrimSpace(*r.Title)); {
 		case n == 0:
@@ -268,10 +348,13 @@ func (s *Server) handleUpdatePlaylist(c echo.Context) error {
 	if in.Visibility != nil {
 		oldCover = s.playlistCoverEdgePath(ctx, id)
 	}
+	chID, setChannel, _ := in.channelChange()
 	if _, err := s.playlistsvc.Update(ctx, userID, id, playlist.UpdateInput{
 		Title:       in.Title,
 		Description: in.Description,
 		Visibility:  in.Visibility,
+		SetChannel:  setChannel,
+		ChannelID:   chID,
 	}); err != nil {
 		return playlistError(err)
 	}
@@ -616,6 +699,8 @@ func playlistError(err error) error {
 	switch {
 	case errors.Is(err, playlist.ErrNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+	case errors.Is(err, playlist.ErrChannelRefused):
+		return echo.NewHTTPError(http.StatusNotFound, "channel not found")
 	case errors.Is(err, playlist.ErrForbidden):
 		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
 	default:

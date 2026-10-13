@@ -3921,6 +3921,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/playlists:
+    get:
+      operationId: listChannelPlaylists
+      summary: List a channel's playlists
+      description: >-
+        The channel page's Playlists tab, newest first, paginated with a `total`.
+        Anyone sees the channel's public playlists; a playlist's owner (bearer
+        token) also sees their own unlisted and private ones. Other users and
+        anonymous callers never see those.
+      tags: [playlists]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: The channel's playlists visible to the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistListResponse"
+        "404":
+          description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/videos:
     get:
       operationId: listMyVideos
@@ -21495,6 +21529,13 @@ components:
           description: >-
             The owning user. Compare it with the signed-in user to decide owner
             controls; GET /me/playlists is paged and cannot answer that.
+        channel_id:
+          type: string
+          format: uuid
+          description: >-
+            The owner's channel this playlist is shown under (its Playlists tab,
+            GET /channels/{handle}/playlists). Omitted when the playlist is not
+            attributed to a channel, or after that channel was deleted.
         title:
           type: string
           example: Watch later picks
@@ -21556,6 +21597,12 @@ components:
           type: string
           enum: [public, unlisted, private]
           description: Defaults to "private" when omitted.
+        channel_id:
+          type: string
+          format: uuid
+          description: >-
+            Optional channel to show the playlist under. It must be a channel
+            the caller owns; otherwise the request fails with 404.
     UpdatePlaylistRequest:
       type: object
       description: Partial update; provide at least one field.
@@ -21570,6 +21617,12 @@ components:
         visibility:
           type: string
           enum: [public, unlisted, private]
+        channel_id:
+          type: [string, "null"]
+          format: uuid
+          description: >-
+            Attach the playlist to a channel the caller owns (404 otherwise), or
+            null to detach it. Omit to leave it unchanged.
     AddPlaylistItemRequest:
       type: object
       required: [video_id]
