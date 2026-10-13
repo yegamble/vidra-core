@@ -2227,6 +2227,17 @@ func (s *Server) routes() {
 		api.GET("/admin/watched-words", s.handleListWatchedWords, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/watched-words", s.handleAddWatchedWord, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.DELETE("/admin/watched-words/:id", s.handleDeleteWatchedWord, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.GET("/admin/watched-word-lists", s.handleAdminListWordLists, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/watched-word-lists", s.handleAdminCreateWordList, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.GET("/admin/watched-word-lists/:id", s.handleAdminGetWordList, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.PATCH("/admin/watched-word-lists/:id", s.handleAdminUpdateWordList, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.DELETE("/admin/watched-word-lists/:id", s.handleAdminDeleteWordList, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		// A creator's own lists (0172): applied to comments on their own videos only.
+		api.GET("/me/watched-word-lists", s.handleMyListWordLists, s.requireAuth)
+		api.POST("/me/watched-word-lists", s.handleMyCreateWordList, s.requireAuth)
+		api.GET("/me/watched-word-lists/:id", s.handleMyGetWordList, s.requireAuth)
+		api.PATCH("/me/watched-word-lists/:id", s.handleMyUpdateWordList, s.requireAuth)
+		api.DELETE("/me/watched-word-lists/:id", s.handleMyDeleteWordList, s.requireAuth)
 		api.GET("/admin/watched-word-matches", s.handleListWatchedWordMatches, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/watched-word-matches/:id/resolve", s.handleResolveWatchedWordMatch, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}

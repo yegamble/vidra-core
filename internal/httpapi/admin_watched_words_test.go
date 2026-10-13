@@ -29,13 +29,14 @@ import (
 // back as the live body could not tell a snapshot from a live join, which is the
 // whole defect this slice closes.
 type watchwordFakeRepo struct {
-	auth     *authFakeRepo
-	videos   *videoFakeRepo
-	comments *commentFakeRepo
-	words    map[uuid.UUID]sqlcgen.WatchedWord
-	order    []uuid.UUID
-	present  map[string]bool
-	matches  []watchwordFakeMatch
+	watchword.WordListRepository // list management is store-integration territory; nil here
+	auth                         *authFakeRepo
+	videos                       *videoFakeRepo
+	comments                     *commentFakeRepo
+	words                        map[uuid.UUID]sqlcgen.WatchedWord
+	order                        []uuid.UUID
+	present                      map[string]bool
+	matches                      []watchwordFakeMatch
 }
 
 // watchwordFakeMatch is one stored watched_word_matches row.
@@ -56,19 +57,19 @@ type watchwordFakeMatch struct {
 	createdAt               time.Time
 }
 
-func (f *watchwordFakeRepo) CreateWatchedWord(_ context.Context, a sqlcgen.CreateWatchedWordParams) (sqlcgen.WatchedWord, error) {
+func (f *watchwordFakeRepo) CreateWatchedWord(_ context.Context, a sqlcgen.CreateWatchedWordParams) (sqlcgen.CreateWatchedWordRow, error) {
 	if f.words == nil {
 		f.words = map[uuid.UUID]sqlcgen.WatchedWord{}
 		f.present = map[string]bool{}
 	}
 	if f.present[strings.ToLower(a.Word)] {
-		return sqlcgen.WatchedWord{}, &pgconn.PgError{Code: "23505"}
+		return sqlcgen.CreateWatchedWordRow{}, &pgconn.PgError{Code: "23505"}
 	}
 	w := sqlcgen.WatchedWord{ID: uuid.New(), Word: a.Word, CreatedBy: a.CreatedBy, CreatedAt: time.Now()}
 	f.words[w.ID] = w
 	f.order = append(f.order, w.ID)
 	f.present[strings.ToLower(a.Word)] = true
-	return w, nil
+	return sqlcgen.CreateWatchedWordRow{ID: w.ID, Word: w.Word, CreatedBy: w.CreatedBy, CreatedAt: w.CreatedAt}, nil
 }
 
 func (f *watchwordFakeRepo) ListWatchedWords(_ context.Context, _ sqlcgen.ListWatchedWordsParams) ([]sqlcgen.ListWatchedWordsRow, error) {
@@ -115,6 +116,24 @@ func (f *watchwordFakeRepo) MatchWatchedWords(_ context.Context, text string) ([
 		}
 	}
 	return out, nil
+}
+
+func (f *watchwordFakeRepo) MatchWatchedWordsForVideo(ctx context.Context, a sqlcgen.MatchWatchedWordsForVideoParams) ([]sqlcgen.MatchWatchedWordsForVideoRow, error) {
+	rows, _ := f.MatchWatchedWords(ctx, a.Text)
+	out := make([]sqlcgen.MatchWatchedWordsForVideoRow, 0, len(rows))
+	for _, r := range rows {
+		action := watchword.ActionFlag
+		// Test convention: a term prefixed "hold-" lives in a list whose action is hold.
+		if strings.HasPrefix(strings.ToLower(r.Word), "hold-") {
+			action = watchword.ActionHold
+		}
+		out = append(out, sqlcgen.MatchWatchedWordsForVideoRow{ID: r.ID, Word: r.Word, ListName: "Default", ListAction: action})
+	}
+	return out, nil
+}
+
+func (f *watchwordFakeRepo) GetComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error) {
+	return f.comments.GetComment(ctx, id)
 }
 
 func (f *watchwordFakeRepo) RecordWatchedWordMatch(_ context.Context, a sqlcgen.RecordWatchedWordMatchParams) error {

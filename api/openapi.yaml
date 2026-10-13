@@ -10473,6 +10473,418 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/watched-word-lists:
+    get:
+      operationId: listAdminWatchedWordLists
+      summary: List instance watched-word lists
+      description: >-
+        Instance named watched-word lists, default list first, each with its
+        word count (not its words). Paginated via limit (1-100, default 20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of lists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordListsPage"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createAdminWatchedWordList
+      summary: Create a instance watched-word list
+      description: >-
+        Creates a named list with an optional word set (at most 500 words, each at
+        most 100 characters). action is "flag" (default; record a match for review)
+        or "hold" (also hold the comment for approval through the held-for-review
+        queue). Names are unique per scope, case-insensitively.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWatchedWordListRequest"
+      responses:
+        "201":
+          description: The list was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The name is already used, or the per-account list limit (20) is reached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/watched-word-lists/{id}:
+    get:
+      operationId: getAdminWatchedWordList
+      summary: Get a instance watched-word list
+      description: One list with its words (the default list's words are paged via the flat watched-words endpoints and omitted here). A list in the other scope is 404.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such list in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateAdminWatchedWordList
+      summary: Update a instance watched-word list
+      description: >-
+        Renames the list and/or changes its action; when words is present it REPLACES
+        the list's terms (an empty array clears them). Replacing the default list's
+        words is refused (409).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWatchedWordListRequest"
+      responses:
+        "200":
+          description: The updated list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such list in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Name already used, or words on the default list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteAdminWatchedWordList
+      summary: Delete a instance watched-word list
+      description: Deletes the list and its terms; existing matches keep their snapshot. The default list cannot be deleted (409).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The list was deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such list in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The default list cannot be deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/watched-word-lists:
+    get:
+      operationId: listMyWatchedWordLists
+      summary: List your own watched-word lists
+      description: >-
+        Your own named watched-word lists, default list first, each with its
+        word count (not its words). Paginated via limit (1-100, default 20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of lists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordListsPage"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createMyWatchedWordList
+      summary: Create a your own watched-word list
+      description: >-
+        Creates a named list with an optional word set (at most 500 words, each at
+        most 100 characters). action is "flag" (default; record a match for review)
+        or "hold" (also hold the comment for approval through the held-for-review
+        queue). Names are unique per scope, case-insensitively.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWatchedWordListRequest"
+      responses:
+        "201":
+          description: The list was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The name is already used, or the per-account list limit (20) is reached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/watched-word-lists/{id}:
+    get:
+      operationId: getMyWatchedWordList
+      summary: Get a your own watched-word list
+      description: One list with its words (the default list's words are paged via the flat watched-words endpoints and omitted here). A list in the other scope is 404.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such list in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateMyWatchedWordList
+      summary: Update a your own watched-word list
+      description: >-
+        Renames the list and/or changes its action; when words is present it REPLACES
+        the list's terms (an empty array clears them). Replacing the default list's
+        words is refused (409).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWatchedWordListRequest"
+      responses:
+        "200":
+          description: The updated list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such list in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Name already used, or words on the default list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteMyWatchedWordList
+      summary: Delete a your own watched-word list
+      description: Deletes the list and its terms; existing matches keep their snapshot. The default list cannot be deleted (409).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The list was deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such list in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The default list cannot be deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/watched-word-matches/{id}/resolve:
     post:
       operationId: resolveWatchedWordMatch
@@ -22455,6 +22867,59 @@ components:
           type: integer
         offset:
           type: integer
+    WatchedWordList:
+      type: object
+      description: >-
+        A named watched-word list. Instance lists (admin) apply to every comment;
+        a creator's own lists apply only to comments on their videos. words is
+        present on get/create/update only, and never for the default list.
+      required: [id, name, action, is_default, word_count, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        action:
+          type: string
+          enum: [flag, hold]
+        is_default: {type: boolean}
+        word_count: {type: integer, format: int64}
+        words:
+          type: array
+          items: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    WatchedWordListsPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [lists]
+          properties:
+            lists:
+              type: array
+              items:
+                $ref: "#/components/schemas/WatchedWordList"
+    CreateWatchedWordListRequest:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, maxLength: 100}
+        action:
+          type: string
+          enum: [flag, hold]
+        words:
+          type: array
+          maxItems: 500
+          items: {type: string, maxLength: 100}
+    UpdateWatchedWordListRequest:
+      type: object
+      properties:
+        name: {type: string, maxLength: 100}
+        action:
+          type: string
+          enum: [flag, hold]
+        words:
+          type: array
+          maxItems: 500
+          items: {type: string, maxLength: 100}
     WatchedWordListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -22500,6 +22965,9 @@ components:
           description: >-
             The watched term that matched, as it read when the flag was raised.
             It survives the term being deleted from the list (see term_active).
+        list_name:
+          type: string
+          description: The watched-word list that matched (a snapshot; absent for matches that predate named lists).
         type:
           type: string
           enum: [comment, video]

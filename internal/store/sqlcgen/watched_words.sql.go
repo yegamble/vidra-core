@@ -32,6 +32,7 @@ func (q *Queries) CountWatchedWordMatches(ctx context.Context, status *string) (
 
 const countWatchedWords = `-- name: CountWatchedWords :one
 SELECT count(*)::bigint FROM watched_words
+WHERE list_id = (SELECT id FROM watched_word_lists WHERE is_default)
 `
 
 // How many rows ListWatchedWords would return, ignoring pagination.
@@ -43,9 +44,9 @@ func (q *Queries) CountWatchedWords(ctx context.Context) (int64, error) {
 }
 
 const createWatchedWord = `-- name: CreateWatchedWord :one
-INSERT INTO watched_words (word, created_by)
-VALUES ($1, $2)
-RETURNING id, word, created_by, created_at
+INSERT INTO watched_words (list_id, word, created_by)
+VALUES ((SELECT id FROM watched_word_lists WHERE is_default), $1, $2)
+RETURNING id, list_id, word, created_by, created_at
 `
 
 type CreateWatchedWordParams struct {
@@ -53,13 +54,22 @@ type CreateWatchedWordParams struct {
 	CreatedBy pgtype.UUID `json:"created_by"`
 }
 
+type CreateWatchedWordRow struct {
+	ID        uuid.UUID   `json:"id"`
+	ListID    pgtype.UUID `json:"list_id"`
+	Word      string      `json:"word"`
+	CreatedBy pgtype.UUID `json:"created_by"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
 // Add a watched word. A duplicate term (case-insensitive) raises a unique
 // violation (SQLSTATE 23505), which the service maps to "already exists".
-func (q *Queries) CreateWatchedWord(ctx context.Context, arg CreateWatchedWordParams) (WatchedWord, error) {
+func (q *Queries) CreateWatchedWord(ctx context.Context, arg CreateWatchedWordParams) (CreateWatchedWordRow, error) {
 	row := q.db.QueryRow(ctx, createWatchedWord, arg.Word, arg.CreatedBy)
-	var i WatchedWord
+	var i CreateWatchedWordRow
 	err := row.Scan(
 		&i.ID,
+		&i.ListID,
 		&i.Word,
 		&i.CreatedBy,
 		&i.CreatedAt,
@@ -68,7 +78,9 @@ func (q *Queries) CreateWatchedWord(ctx context.Context, arg CreateWatchedWordPa
 }
 
 const deleteWatchedWord = `-- name: DeleteWatchedWord :execrows
-DELETE FROM watched_words WHERE id = $1
+DELETE FROM watched_words
+WHERE watched_words.id = $1
+  AND list_id = (SELECT d.id FROM watched_word_lists d WHERE d.is_default)
 `
 
 // Remove a watched word (idempotent). Returns rows deleted (0 = no such word).
@@ -85,6 +97,7 @@ SELECT m.id, m.created_at,
        COALESCE(NULLIF(m.matched_term, ''), w.word, '')::text AS word,
        m.matched_text, m.match_offset, m.match_length, m.snapshot_backfilled,
        m.status, m.moderator_note, m.resolved_at,
+       m.list_name,
        ru.username AS resolved_by_username,
        (m.watched_word_id IS NOT NULL)::bool AS term_active,
        m.comment_id, c.body AS comment_body,
@@ -140,6 +153,7 @@ type ListWatchedWordMatchesRow struct {
 	Status                    string             `json:"status"`
 	ModeratorNote             string             `json:"moderator_note"`
 	ResolvedAt                pgtype.Timestamptz `json:"resolved_at"`
+	ListName                  string             `json:"list_name"`
 	ResolvedByUsername        *string            `json:"resolved_by_username"`
 	TermActive                bool               `json:"term_active"`
 	CommentID                 pgtype.UUID        `json:"comment_id"`
@@ -201,6 +215,7 @@ func (q *Queries) ListWatchedWordMatches(ctx context.Context, arg ListWatchedWor
 			&i.Status,
 			&i.ModeratorNote,
 			&i.ResolvedAt,
+			&i.ListName,
 			&i.ResolvedByUsername,
 			&i.TermActive,
 			&i.CommentID,
@@ -228,6 +243,7 @@ const listWatchedWords = `-- name: ListWatchedWords :many
 SELECT w.id, w.word, w.created_at, u.username AS created_by_username
 FROM watched_words w
 LEFT JOIN users u ON u.id = w.created_by
+WHERE w.list_id = (SELECT id FROM watched_word_lists WHERE is_default)
 ORDER BY w.created_at DESC, w.id
 LIMIT $2 OFFSET $1
 `
@@ -272,16 +288,24 @@ func (q *Queries) ListWatchedWords(ctx context.Context, arg ListWatchedWordsPara
 }
 
 const matchWatchedWords = `-- name: MatchWatchedWords :many
-SELECT id, word FROM watched_words
-WHERE strpos(lower($1::text), lower(word)) > 0
+SELECT w.id, w.word, l.id AS list_id, l.name AS list_name, l.action AS list_action
+FROM watched_words w
+JOIN watched_word_lists l ON l.id = w.list_id
+WHERE l.owner_id IS NULL
+  AND strpos(lower($1::text), lower(w.word)) > 0
 `
 
 type MatchWatchedWordsRow struct {
-	ID   uuid.UUID `json:"id"`
-	Word string    `json:"word"`
+	ID         uuid.UUID `json:"id"`
+	Word       string    `json:"word"`
+	ListID     uuid.UUID `json:"list_id"`
+	ListName   string    `json:"list_name"`
+	ListAction string    `json:"list_action"`
 }
 
-// Watched terms that occur (case-insensitive substring) in the given text.
+// INSTANCE-list terms that occur (case-insensitive substring) in the given
+// text, with the list that holds them. Videos and comments on remote videos
+// have no local owner, so per-account lists never apply to them.
 func (q *Queries) MatchWatchedWords(ctx context.Context, text string) ([]MatchWatchedWordsRow, error) {
 	rows, err := q.db.Query(ctx, matchWatchedWords, text)
 	if err != nil {
@@ -291,7 +315,65 @@ func (q *Queries) MatchWatchedWords(ctx context.Context, text string) ([]MatchWa
 	var items []MatchWatchedWordsRow
 	for rows.Next() {
 		var i MatchWatchedWordsRow
-		if err := rows.Scan(&i.ID, &i.Word); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Word,
+			&i.ListID,
+			&i.ListName,
+			&i.ListAction,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const matchWatchedWordsForVideo = `-- name: MatchWatchedWordsForVideo :many
+SELECT w.id, w.word, l.id AS list_id, l.name AS list_name, l.action AS list_action
+FROM watched_words w
+JOIN watched_word_lists l ON l.id = w.list_id
+WHERE (l.owner_id IS NULL
+       OR l.owner_id = (SELECT ch.owner_id FROM videos v JOIN channels ch ON ch.id = v.channel_id
+                        WHERE v.id = $1))
+  AND strpos(lower($2::text), lower(w.word)) > 0
+`
+
+type MatchWatchedWordsForVideoParams struct {
+	VideoID uuid.UUID `json:"video_id"`
+	Text    string    `json:"text"`
+}
+
+type MatchWatchedWordsForVideoRow struct {
+	ID         uuid.UUID `json:"id"`
+	Word       string    `json:"word"`
+	ListID     uuid.UUID `json:"list_id"`
+	ListName   string    `json:"list_name"`
+	ListAction string    `json:"list_action"`
+}
+
+// Instance-list terms PLUS the terms of the lists owned by the owner of the
+// channel the given video belongs to — a comment on a creator's video is
+// checked against that creator's own lists and nobody else's.
+func (q *Queries) MatchWatchedWordsForVideo(ctx context.Context, arg MatchWatchedWordsForVideoParams) ([]MatchWatchedWordsForVideoRow, error) {
+	rows, err := q.db.Query(ctx, matchWatchedWordsForVideo, arg.VideoID, arg.Text)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MatchWatchedWordsForVideoRow
+	for rows.Next() {
+		var i MatchWatchedWordsForVideoRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Word,
+			&i.ListID,
+			&i.ListName,
+			&i.ListAction,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -304,9 +386,9 @@ func (q *Queries) MatchWatchedWords(ctx context.Context, text string) ([]MatchWa
 
 const recordWatchedWordAuthoredRemoteCommentMatch = `-- name: RecordWatchedWordAuthoredRemoteCommentMatch :exec
 INSERT INTO watched_word_matches (
-    watched_word_id, authored_remote_comment_id, matched_text, matched_term, match_offset, match_length
+    watched_word_id, authored_remote_comment_id, matched_text, matched_term, match_offset, match_length, list_id, list_name
 ) VALUES ($1, $2, $3, $4,
-          $5, $6)
+          $5, $6, $7, $8)
 ON CONFLICT (watched_word_id, authored_remote_comment_id) WHERE authored_remote_comment_id IS NOT NULL DO NOTHING
 `
 
@@ -317,6 +399,8 @@ type RecordWatchedWordAuthoredRemoteCommentMatchParams struct {
 	MatchedTerm             string      `json:"matched_term"`
 	MatchOffset             int32       `json:"match_offset"`
 	MatchLength             int32       `json:"match_length"`
+	ListID                  pgtype.UUID `json:"list_id"`
+	ListName                string      `json:"list_name"`
 }
 
 // Record that a locally-authored comment on a remote video matched a watched term
@@ -331,15 +415,17 @@ func (q *Queries) RecordWatchedWordAuthoredRemoteCommentMatch(ctx context.Contex
 		arg.MatchedTerm,
 		arg.MatchOffset,
 		arg.MatchLength,
+		arg.ListID,
+		arg.ListName,
 	)
 	return err
 }
 
 const recordWatchedWordMatch = `-- name: RecordWatchedWordMatch :exec
 INSERT INTO watched_word_matches (
-    watched_word_id, comment_id, matched_text, matched_term, match_offset, match_length
+    watched_word_id, comment_id, matched_text, matched_term, match_offset, match_length, list_id, list_name
 ) VALUES ($1, $2, $3, $4,
-          $5, $6)
+          $5, $6, $7, $8)
 ON CONFLICT (watched_word_id, comment_id) DO NOTHING
 `
 
@@ -350,6 +436,8 @@ type RecordWatchedWordMatchParams struct {
 	MatchedTerm   string      `json:"matched_term"`
 	MatchOffset   int32       `json:"match_offset"`
 	MatchLength   int32       `json:"match_length"`
+	ListID        pgtype.UUID `json:"list_id"`
+	ListName      string      `json:"list_name"`
 }
 
 // Record that a comment matched a watched term (idempotent per word+comment),
@@ -367,15 +455,17 @@ func (q *Queries) RecordWatchedWordMatch(ctx context.Context, arg RecordWatchedW
 		arg.MatchedTerm,
 		arg.MatchOffset,
 		arg.MatchLength,
+		arg.ListID,
+		arg.ListName,
 	)
 	return err
 }
 
 const recordWatchedWordVideoMatch = `-- name: RecordWatchedWordVideoMatch :exec
 INSERT INTO watched_word_matches (
-    watched_word_id, video_id, matched_text, matched_term, match_offset, match_length
+    watched_word_id, video_id, matched_text, matched_term, match_offset, match_length, list_id, list_name
 ) VALUES ($1, $2, $3, $4,
-          $5, $6)
+          $5, $6, $7, $8)
 ON CONFLICT (watched_word_id, video_id) WHERE video_id IS NOT NULL DO NOTHING
 `
 
@@ -386,6 +476,8 @@ type RecordWatchedWordVideoMatchParams struct {
 	MatchedTerm   string      `json:"matched_term"`
 	MatchOffset   int32       `json:"match_offset"`
 	MatchLength   int32       `json:"match_length"`
+	ListID        pgtype.UUID `json:"list_id"`
+	ListName      string      `json:"list_name"`
 }
 
 // Record that a video's title/description matched a watched term (idempotent
@@ -399,6 +491,8 @@ func (q *Queries) RecordWatchedWordVideoMatch(ctx context.Context, arg RecordWat
 		arg.MatchedTerm,
 		arg.MatchOffset,
 		arg.MatchLength,
+		arg.ListID,
+		arg.ListName,
 	)
 	return err
 }
