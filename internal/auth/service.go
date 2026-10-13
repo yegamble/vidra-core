@@ -608,16 +608,16 @@ func (s *Service) Login(ctx context.Context, in LoginInput, userAgent string) (L
 	// Backoff (loginlock.go): a locked (account, prefix) is refused BEFORE the
 	// password is looked at, with the same error and the same bcrypt cost as an
 	// unknown account, so a lock cannot be told apart from either.
-	scope := ipScope(in.ClientIP)
-	if s.loginLocked(ctx, user.ID, scope) {
+	gate := s.gateLogin(ctx, user, in.ClientIP, userAgent)
+	if gate.refuse {
 		dummyPasswordCompare(in.Password)
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	if err := CheckPassword(user.PasswordHash, in.Password); err != nil {
-		s.recordLoginFailure(ctx, user.ID, scope)
+		s.loginFailed(ctx, user, gate)
 		return LoginResult{}, ErrInvalidCredentials
 	}
-	s.clearLoginFailures(ctx, user.ID, scope)
+	s.loginSucceeded(ctx, user, gate)
 	if !user.IsActive {
 		return LoginResult{}, ErrAccountDisabled
 	}

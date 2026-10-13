@@ -467,6 +467,11 @@ func run() error {
 	}
 	var authOpts []auth.Option
 	authOpts = append(authOpts, auth.WithLoginLockStore(db.Queries()))
+	if len(cfg.TrustedProxyCIDRs) == 0 {
+		// The per-account lockout is scoped by client network prefix. Behind a CDN or
+		// proxy this server does not trust, every client shares the edge's prefix.
+		logger.Warn("failed-login lockout is scoped by client network, and TRUSTED_PROXY_CIDRS is unset: behind a CDN/proxy outside the built-in trusted ranges all clients share the edge's prefix — list its CIDRs")
+	}
 	authOpts = append(authOpts, auth.WithRegistrationRequestHook(staffQueueHook("registration_request",
 		func(ctx context.Context, id uuid.UUID) (int64, error) {
 			return notifsvc.NotifyNewRegistrationRequest(ctx, id)

@@ -7,6 +7,8 @@
 -- rows are the primary brake: an attacker elsewhere cannot lock the owner out
 -- from the owner's own network. Unknown identifiers have no row by
 -- construction, so nothing here can tell a caller whether an account exists.
+-- scope 'ok:<prefix>' rows (window_start = last success) record prefixes the
+-- account signs in from, which the account-wide cap never locks out.
 CREATE TABLE login_throttles (
     user_id      UUID        NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     scope        TEXT        NOT NULL,
@@ -17,8 +19,9 @@ CREATE TABLE login_throttles (
 );
 
 -- user_known_devices: devices a successful sign-in has been seen from. The key
--- is a SHA-256 of a long-lived random device cookie (or, for clients that keep
--- no cookies, of UA family + OS). The raw cookie and any IP are never stored;
+-- is a SHA-256 of a long-lived random device cookie plus UA family + OS (a client
+-- that keeps no cookies is a fresh device each sign-in; rows are capped and
+-- pruned per user by the application). The raw cookie and any IP are never stored;
 -- label is the coarse "Chrome on macOS" shown back to the user.
 CREATE TABLE user_known_devices (
     id            UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
