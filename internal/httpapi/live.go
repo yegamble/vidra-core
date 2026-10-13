@@ -254,12 +254,15 @@ func (s *Server) handleListLivePublicStreams(c echo.Context) error {
 type liveStreamKeyView struct {
 	StreamKey string `json:"stream_key"`
 	RTMPURL   string `json:"rtmp_url,omitempty"`
+	// RTMPSURL is the TLS ingest URL, present only when LIVE_RTMPS_URL is set.
+	RTMPSURL string `json:"rtmps_url,omitempty"`
 }
 
 type createLiveStreamResponse struct {
 	LiveStream liveStreamView `json:"live_stream"`
 	StreamKey  string         `json:"stream_key"`
 	RTMPURL    string         `json:"rtmp_url,omitempty"`
+	RTMPSURL   string         `json:"rtmps_url,omitempty"`
 }
 
 type liveStreamListResponse struct {
@@ -322,6 +325,7 @@ func (s *Server) handleCreateLiveStream(c echo.Context) error {
 		LiveStream: s.newLiveStreamView(c, stream),
 		StreamKey:  key,
 		RTMPURL:    s.cfg.LiveRTMPURL,
+		RTMPSURL:   s.cfg.LiveRTMPSURL,
 	})
 }
 
@@ -429,7 +433,7 @@ func (s *Server) handleRegenerateLiveStreamKey(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, liveStreamKeyView{StreamKey: key, RTMPURL: s.cfg.LiveRTMPURL})
+	return c.JSON(http.StatusOK, liveStreamKeyView{StreamKey: key, RTMPURL: s.cfg.LiveRTMPURL, RTMPSURL: s.cfg.LiveRTMPSURL})
 }
 
 // liveIngestRequest is the JSON body of the internal RTMP ingest hooks — the

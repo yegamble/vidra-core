@@ -23570,6 +23570,12 @@ components:
         rtmp_url:
           type: string
           description: RTMP ingest base URL (omitted when no ingest is configured).
+        rtmps_url:
+          type: string
+          description: >-
+            RTMPS (RTMP over TLS) ingest base URL, present only when the
+            operator configured LIVE_RTMPS_URL. Prefer it over rtmp_url: plain
+            RTMP sends the stream key in cleartext.
     LiveStreamListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -23639,6 +23645,12 @@ components:
           description: The new stream key, shown ONCE.
         rtmp_url:
           type: string
+        rtmps_url:
+          type: string
+          description: >-
+            RTMPS (RTMP over TLS) ingest base URL, present only when the
+            operator configured LIVE_RTMPS_URL. Prefer it over rtmp_url: plain
+            RTMP sends the stream key in cleartext.
     LiveIngestRequest:
       type: object
       required: [stream_key]
@@ -25434,6 +25446,9 @@ components:
               description: >-
                 LIVE_RTMP_URL — already handed verbatim to every streamer on
                 stream creation.
+            rtmps_url:
+              type: string
+              description: LIVE_RTMPS_URL; absent when RTMPS is not offered.
             hls_root:
               type: string
               description: >-
