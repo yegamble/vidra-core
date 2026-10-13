@@ -571,6 +571,7 @@ func (s *Server) handleLogin(c echo.Context) error {
 		Email:      in.Email,
 		Identifier: in.Identifier,
 		Password:   in.Password,
+		ClientIP:   c.RealIP(),
 	}, c.Request().UserAgent())
 	if err != nil {
 		switch {

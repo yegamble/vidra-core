@@ -517,7 +517,11 @@ paths:
         wins — the owner of an address is the only account that string can reach,
         so a lookalike username can never shadow someone else's sign-in.
         Unknown account and wrong password are reported identically (401) to
-        prevent account enumeration. Browser cookie mode also sets `vidra_video_access`,
+        prevent account enumeration. So is a temporarily LOCKED account: after
+        repeated failures from one network prefix (IPv4 /24, IPv6 /48), or a
+        larger number across all networks, sign-in is refused with the same 401
+        body, the same status and no Retry-After — even with the right password
+        — until the backoff expires or an administrator clears it. Browser cookie mode also sets `vidra_video_access`,
         an HttpOnly, SameSite=Lax access-token cookie scoped to `/api/v1/videos/`,
         Secure on HTTPS, with the access-token TTL. It authorizes only private or
         unpublished video GET/HEAD reads, never mutations; public playback ignores
@@ -17707,6 +17711,45 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Attempt to hard-delete the caller's own account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/users/{id}/login-lockout:
+    delete:
+      operationId: adminClearLoginLockout
+      summary: Clear an account's failed-login lockout (admin)
+      description: >-
+        Drops every failed-login counter and lock for the account, so the holder
+        can sign in again immediately. Admin-only; audited as
+        `admin.user.login_lockout_clear` with the target named. Idempotent: 204
+        whether or not a lockout existed. No password step-up — it only removes a
+        brake.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: Any lockout on the account was cleared.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such user.
           content:
             application/json:
               schema:

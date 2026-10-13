@@ -2252,6 +2252,9 @@ func (s *Server) routes() {
 		// exactly like login.
 		adminMFAMW := s.adminPasswordStepUpMW()
 		api.DELETE("/admin/users/:id/mfa", s.handleAdminRemoveUserMFA, adminMFAMW...)
+		// Clear a failed-login lockout (admin-only, audited). It only removes a
+		// brake, so no password step-up.
+		api.DELETE("/admin/users/:id/login-lockout", s.handleAdminClearLoginLockout, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		// One-time reset link for a locked-out ordinary user on an instance with
 		// no working mail. Same step-up (caller's own password) and strict limiter.
 		api.POST("/admin/users/:id/password-reset-link", s.handleAdminPasswordResetLink, adminMFAMW...)

@@ -262,6 +262,10 @@ type Service struct {
 	mfaIssuerName string            // otpauth:// issuer label
 	mfaTokens     *TokenIssuer      // single-purpose mfa_token minting/parsing
 
+	// lockStore backs the per-account failed-login backoff (loginlock.go);
+	// nil = no per-account throttling.
+	lockStore LoginLockStore
+
 	// onRegistrationRequest is the WithRegistrationRequestHook callback (nil = none).
 	onRegistrationRequest func(context.Context, uuid.UUID)
 }
@@ -472,6 +476,9 @@ type LoginInput struct {
 	// so exactly one is ever meaningful.
 	Identifier string
 	Password   string
+	// ClientIP is the caller's address, used ONLY to derive the coarse prefix
+	// the failed-login backoff is scoped to; it is never stored.
+	ClientIP string
 }
 
 // loginIdentifier collapses Email/Identifier to the single, trimmed string the
@@ -595,12 +602,22 @@ func (s *Service) Login(ctx context.Context, in LoginInput, userAgent string) (L
 	if err != nil {
 		// Run a dummy compare to keep timing roughly constant whether or not the
 		// account exists, reducing user-enumeration via response time.
-		_ = CheckPassword("$2a$12$0000000000000000000000000000000000000000000000000000", in.Password)
+		dummyPasswordCompare(in.Password)
+		return LoginResult{}, ErrInvalidCredentials
+	}
+	// Backoff (loginlock.go): a locked (account, prefix) is refused BEFORE the
+	// password is looked at, with the same error and the same bcrypt cost as an
+	// unknown account, so a lock cannot be told apart from either.
+	scope := ipScope(in.ClientIP)
+	if s.loginLocked(ctx, user.ID, scope) {
+		dummyPasswordCompare(in.Password)
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	if err := CheckPassword(user.PasswordHash, in.Password); err != nil {
+		s.recordLoginFailure(ctx, user.ID, scope)
 		return LoginResult{}, ErrInvalidCredentials
 	}
+	s.clearLoginFailures(ctx, user.ID, scope)
 	if !user.IsActive {
 		return LoginResult{}, ErrAccountDisabled
 	}

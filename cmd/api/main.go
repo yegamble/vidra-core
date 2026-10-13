@@ -466,6 +466,7 @@ func run() error {
 		})
 	}
 	var authOpts []auth.Option
+	authOpts = append(authOpts, auth.WithLoginLockStore(db.Queries()))
 	authOpts = append(authOpts, auth.WithRegistrationRequestHook(staffQueueHook("registration_request",
 		func(ctx context.Context, id uuid.UUID) (int64, error) {
 			return notifsvc.NotifyNewRegistrationRequest(ctx, id)

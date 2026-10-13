@@ -532,6 +532,14 @@ type LiveStream struct {
 	TerminationReason     string             `json:"termination_reason"`
 }
 
+type LoginThrottle struct {
+	UserID      uuid.UUID          `json:"user_id"`
+	Scope       string             `json:"scope"`
+	FailCount   int32              `json:"fail_count"`
+	WindowStart time.Time          `json:"window_start"`
+	LockedUntil pgtype.Timestamptz `json:"locked_until"`
+}
+
 type MailConfig struct {
 	ID          bool        `json:"id"`
 	Transport   string      `json:"transport"`
@@ -1167,6 +1175,15 @@ type UserImage struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type UserKnownDevice struct {
+	ID          uuid.UUID `json:"id"`
+	UserID      uuid.UUID `json:"user_id"`
+	DeviceHash  string    `json:"device_hash"`
+	Label       string    `json:"label"`
+	FirstSeenAt time.Time `json:"first_seen_at"`
+	LastSeenAt  time.Time `json:"last_seen_at"`
+}
+
 type UserMfa struct {
 	UserID           uuid.UUID `json:"user_id"`
 	TotpSecretSealed string    `json:"totp_secret_sealed"`
@@ -1184,6 +1201,12 @@ type UserPlayerSetting struct {
 	TheaterDefault           bool           `json:"theater_default"`
 	UpdatedAt                time.Time      `json:"updated_at"`
 	VideoCardPreviewsEnabled *bool          `json:"video_card_previews_enabled"`
+}
+
+type UserSecurityPref struct {
+	UserID               uuid.UUID          `json:"user_id"`
+	NewDeviceEmail       bool               `json:"new_device_email"`
+	LastNewDeviceEmailAt pgtype.Timestamptz `json:"last_new_device_email_at"`
 }
 
 type Video struct {
