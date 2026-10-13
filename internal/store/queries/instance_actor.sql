@@ -24,3 +24,19 @@ SELECT count(*)::bigint FROM instance_followers WHERE state = 'accepted';
 
 -- name: CountAcceptedInstanceFollowing :one
 SELECT count(*)::bigint FROM instance_following WHERE state = 'accepted';
+
+-- name: InsertInstanceFollowerIfAbsent :execrows
+-- A remote instance actor Follows ours. 1 = a new follower (accepted, or
+-- pending for an admin under federation_follower_approval); 0 = it was already
+-- known, in whatever state the admin left it.
+INSERT INTO instance_followers (remote_actor_url, state, follow_activity_url)
+VALUES ($1, $2, $3)
+ON CONFLICT (remote_actor_url) DO NOTHING;
+
+-- name: GetInstanceFollowerByActor :one
+SELECT id, state, follow_activity_url FROM instance_followers WHERE remote_actor_url = $1;
+
+-- name: DeleteInstanceFollowerByActor :execrows
+-- Undo{Follow} from the follower. A follower the admin REJECTED stays
+-- rejected: an Undo-then-Follow must not walk past the admin's refusal.
+DELETE FROM instance_followers WHERE remote_actor_url = $1 AND state <> 'rejected';

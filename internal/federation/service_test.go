@@ -496,6 +496,7 @@ func (f fakeRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDelivery
 			SigningUserID:           arg.SigningUserID,
 			SigningUsername:         arg.SigningUsername,
 			AuthoredRemoteCommentID: arg.AuthoredRemoteCommentID,
+			SigningInstanceActor:    arg.SigningInstanceActor,
 		},
 		state:    "pending",
 		enqueued: arg,

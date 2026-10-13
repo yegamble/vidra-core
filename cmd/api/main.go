@@ -2279,6 +2279,11 @@ func run() error {
 			func(ctx context.Context, id uuid.UUID) (int64, error) {
 				return notifsvc.NotifyFederationFollowerRequest(ctx, id)
 			})),
+		// ...and so does a remote INSTANCE's follow of this one (0166).
+		federation.WithInstanceFollowerRequestHook(staffQueueHook("federation_instance_follower_request",
+			func(ctx context.Context, _ uuid.UUID) (int64, error) {
+				return notifsvc.NotifyInstanceFollowerRequest(ctx)
+			})),
 		// A remote comment held for approval (0161) pings the video's managers.
 		federation.WithHeldCommentHook(staffQueueHook("comment_held",
 			func(ctx context.Context, id uuid.UUID) (int64, error) {

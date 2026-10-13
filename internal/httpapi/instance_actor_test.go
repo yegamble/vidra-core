@@ -46,6 +46,16 @@ func (r *instanceFedRepo) CountAcceptedInstanceFollowing(context.Context) (int64
 	return 0, nil
 }
 
+func (r *instanceFedRepo) InsertInstanceFollowerIfAbsent(context.Context, sqlcgen.InsertInstanceFollowerIfAbsentParams) (int64, error) {
+	return 0, nil
+}
+func (r *instanceFedRepo) GetInstanceFollowerByActor(context.Context, string) (sqlcgen.GetInstanceFollowerByActorRow, error) {
+	return sqlcgen.GetInstanceFollowerByActorRow{}, pgx.ErrNoRows
+}
+func (r *instanceFedRepo) DeleteInstanceFollowerByActor(context.Context, string) (int64, error) {
+	return 0, nil
+}
+
 func instanceFedServer() *Server {
 	cfg := fedTestConfig()
 	repo := &instanceFedRepo{fakeFedRepo: newFedRepoFor(cfg)}

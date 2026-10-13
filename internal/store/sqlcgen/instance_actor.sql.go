@@ -7,6 +7,8 @@ package sqlcgen
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 const countAcceptedInstanceFollowers = `-- name: CountAcceptedInstanceFollowers :one
@@ -31,6 +33,20 @@ func (q *Queries) CountAcceptedInstanceFollowing(ctx context.Context) (int64, er
 	return column_1, err
 }
 
+const deleteInstanceFollowerByActor = `-- name: DeleteInstanceFollowerByActor :execrows
+DELETE FROM instance_followers WHERE remote_actor_url = $1 AND state <> 'rejected'
+`
+
+// Undo{Follow} from the follower. A follower the admin REJECTED stays
+// rejected: an Undo-then-Follow must not walk past the admin's refusal.
+func (q *Queries) DeleteInstanceFollowerByActor(ctx context.Context, remoteActorUrl string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteInstanceFollowerByActor, remoteActorUrl)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getInstanceActorKey = `-- name: GetInstanceActorKey :one
 SELECT public_key_pem, private_key_pem FROM instance_actor_keys WHERE singleton
 `
@@ -44,6 +60,23 @@ func (q *Queries) GetInstanceActorKey(ctx context.Context) (GetInstanceActorKeyR
 	row := q.db.QueryRow(ctx, getInstanceActorKey)
 	var i GetInstanceActorKeyRow
 	err := row.Scan(&i.PublicKeyPem, &i.PrivateKeyPem)
+	return i, err
+}
+
+const getInstanceFollowerByActor = `-- name: GetInstanceFollowerByActor :one
+SELECT id, state, follow_activity_url FROM instance_followers WHERE remote_actor_url = $1
+`
+
+type GetInstanceFollowerByActorRow struct {
+	ID                uuid.UUID `json:"id"`
+	State             string    `json:"state"`
+	FollowActivityUrl string    `json:"follow_activity_url"`
+}
+
+func (q *Queries) GetInstanceFollowerByActor(ctx context.Context, remoteActorUrl string) (GetInstanceFollowerByActorRow, error) {
+	row := q.db.QueryRow(ctx, getInstanceFollowerByActor, remoteActorUrl)
+	var i GetInstanceFollowerByActorRow
+	err := row.Scan(&i.ID, &i.State, &i.FollowActivityUrl)
 	return i, err
 }
 
@@ -62,6 +95,29 @@ type InsertInstanceActorKeyIfAbsentParams struct {
 // and every caller re-reads the winner.
 func (q *Queries) InsertInstanceActorKeyIfAbsent(ctx context.Context, arg InsertInstanceActorKeyIfAbsentParams) (int64, error) {
 	result, err := q.db.Exec(ctx, insertInstanceActorKeyIfAbsent, arg.PublicKeyPem, arg.PrivateKeyPem)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertInstanceFollowerIfAbsent = `-- name: InsertInstanceFollowerIfAbsent :execrows
+INSERT INTO instance_followers (remote_actor_url, state, follow_activity_url)
+VALUES ($1, $2, $3)
+ON CONFLICT (remote_actor_url) DO NOTHING
+`
+
+type InsertInstanceFollowerIfAbsentParams struct {
+	RemoteActorUrl    string `json:"remote_actor_url"`
+	State             string `json:"state"`
+	FollowActivityUrl string `json:"follow_activity_url"`
+}
+
+// A remote instance actor Follows ours. 1 = a new follower (accepted, or
+// pending for an admin under federation_follower_approval); 0 = it was already
+// known, in whatever state the admin left it.
+func (q *Queries) InsertInstanceFollowerIfAbsent(ctx context.Context, arg InsertInstanceFollowerIfAbsentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertInstanceFollowerIfAbsent, arg.RemoteActorUrl, arg.State, arg.FollowActivityUrl)
 	if err != nil {
 		return 0, err
 	}
