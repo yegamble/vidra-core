@@ -67,6 +67,8 @@ type BlockedInstance struct {
 	Reason    string
 	BlockedBy *uuid.UUID
 	BlockedAt time.Time
+	// Source is "manual" or "subscription:<id>".
+	Source string
 }
 
 // NormalizeDomain lowercases and validates a bare instance domain (host, or
@@ -185,7 +187,7 @@ func (s *Service) ListBlockedInstances(ctx context.Context, limit, offset int32)
 	}
 	out := make([]BlockedInstance, 0, len(rows))
 	for _, r := range rows {
-		bi := BlockedInstance{Domain: r.Domain, Reason: r.Reason, BlockedAt: r.CreatedAt}
+		bi := BlockedInstance{Domain: r.Domain, Reason: r.Reason, BlockedAt: r.CreatedAt, Source: r.Source}
 		if r.BlockedBy.Valid {
 			id := uuid.UUID(r.BlockedBy.Bytes)
 			bi.BlockedBy = &id

@@ -136,6 +136,15 @@ func (s *Service) List(ctx context.Context, limit, offset int32) ([]sqlcgen.List
 	return rows, total, err
 }
 
+// Get returns one subscription.
+func (s *Service) Get(ctx context.Context, id uuid.UUID) (sqlcgen.BlocklistSubscription, error) {
+	sub, err := s.repo.GetBlocklistSubscription(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sub, ErrNotFound
+	}
+	return sub, err
+}
+
 // Update changes the label/enabled flag. Disabling stops future syncs; the
 // blocks already applied stay until the subscription is deleted.
 func (s *Service) Update(ctx context.Context, id uuid.UUID, label string, enabled bool) (sqlcgen.BlocklistSubscription, error) {

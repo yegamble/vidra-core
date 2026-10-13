@@ -24,6 +24,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/authoredremotecomment"
 	"github.com/vidra/vidra-core/internal/block"
+	"github.com/vidra/vidra-core/internal/blocklistsub"
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/cdnpurge"
 	"github.com/vidra/vidra-core/internal/channel"
@@ -170,7 +171,11 @@ type Server struct {
 	remotevideosvc    *remotevideo.Service
 	authoredrcsvc     *authoredremotecomment.Service
 	instancemodsvc    *instancemod.Service
-	settingssvc       *instancesettings.Service
+	blocklistsvc      *blocklistsub.Service
+	// blocklistSyncLimit throttles the admin "sync now" action (it fetches an
+	// admin-supplied URL).
+	blocklistSyncLimit *ratelimit.Limiter
+	settingssvc        *instancesettings.Service
 	// settingsSync is the settings-version poller's health record (core#115),
 	// read by the admin status page's settings_sync component. An interface so
 	// the page depends on the one question it asks, and nil — unit tests,
@@ -1214,6 +1219,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	if s.searchResolveLimit == nil {
 		s.searchResolveLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultSearchResolveRateLimit, defaultSearchResolveRateWindow)
 	}
+	s.blocklistSyncLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), blocklistSyncRateLimit, blocklistSyncRateWindow)
 	if s.reportMessageLimit == nil {
 		s.reportMessageLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultReportMessageRateLimit, time.Hour)
 	}
@@ -2132,6 +2138,22 @@ func (s *Server) routes() {
 		api.GET("/admin/instances/blocked", s.handleListBlockedInstances, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/instances/blocked", s.handleBlockInstance, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.DELETE("/admin/instances/blocked/:domain", s.handleUnblockInstance, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+	}
+
+	// Blocklist subscriptions: shared denylists synced into the instance
+	// blocklist, plus the allowlist that exempts a domain from all of them.
+	// ADMIN-only (not moderator): subscribing makes the server fetch a URL and
+	// can add thousands of blocks.
+	if s.blocklistsvc != nil {
+		const bl = "/admin/instances/blocklist-subscriptions"
+		api.GET(bl, s.handleListBlocklistSubscriptions, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST(bl, s.handleCreateBlocklistSubscription, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.PATCH(bl+"/:id", s.handleUpdateBlocklistSubscription, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE(bl+"/:id", s.handleDeleteBlocklistSubscription, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST(bl+"/:id/sync", s.handleSyncBlocklistSubscription, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.GET("/admin/instances/blocklist-allowlist", s.handleListBlocklistAllow, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/instances/blocklist-allowlist", s.handleAddBlocklistAllow, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/instances/blocklist-allowlist/:domain", s.handleRemoveBlocklistAllow, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// Per-remote-account blocks (A29-F7). Mounted with the federation service,
