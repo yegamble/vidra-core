@@ -71,6 +71,9 @@ type fakeRepo struct {
 	// adminActorBlocks are the instance-wide per-actor blocks (0142), keyed by
 	// actor url.
 	adminActorBlocks map[string]string
+	// inst is the instance actor's 0166 state (instance_actor_test.go); nil =
+	// the name is not the instance actor's, so it is not served.
+	inst *fakeInstance
 	// moveClaims are the origins whose Move was claimed (0167); the cooldown
 	// never expires inside a test.
 	moveClaims map[string]string
@@ -547,6 +550,7 @@ func (f fakeRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDelivery
 			SigningUserID:           arg.SigningUserID,
 			SigningUsername:         arg.SigningUsername,
 			AuthoredRemoteCommentID: arg.AuthoredRemoteCommentID,
+			SigningInstanceActor:    arg.SigningInstanceActor,
 		},
 		state:    "pending",
 		enqueued: arg,

@@ -40,6 +40,18 @@ func (s *Server) managedIPFSStatus(ctx context.Context, gateway componentStatus)
 	}
 	m := runtime.Management
 	detail["node_state"] = m.ObservedState
+	// Capacity facts (Tier A F4). ADDITIVE ONLY: the component's status is not
+	// changed by a full budget, because a component that turns "degraded" demotes
+	// the whole /admin/system page and vidra-user has to decide how to show it. The
+	// reason is also exported as vidra_ipfs_admission_paused and logged on every
+	// transition, so a full budget is visible without waiting for that decision.
+	detail["budget_bytes"] = strconv.FormatInt(runtime.Capacity.BudgetBytes, 10)
+	if runtime.Capacity.RepoUsedBytes != nil {
+		detail["repo_used_bytes"] = strconv.FormatInt(*runtime.Capacity.RepoUsedBytes, 10)
+	}
+	if runtime.Capacity.AdmissionPausedReason != nil {
+		detail["admission_paused_reason"] = *runtime.Capacity.AdmissionPausedReason
+	}
 	if !m.Available || m.ObservedState != "running" || m.LastErrorCode != nil {
 		return verdict("down", "The configured IPFS node is unavailable or unhealthy. Media continues through server storage.")
 	}

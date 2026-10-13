@@ -49,40 +49,22 @@ const (
 	hlsStableCacheControl    = delivery.CacheStableRevalidate
 )
 
-// The file shapes reachable under a video's HLS prefix. Anything else —
-// including any traversal attempt — is 404.
-//
-// hlsRenditionName/hlsFileName are the MPEG-TS tree: rendition directories named
-// "<height>p" holding a variant playlist, the trick-play pair, and numbered
-// segments.
-//
-// hlsCMAFFileName is the CMAF tree, which lives in ONE directory ("cmaf") under
-// the same prefix because HLS and DASH must resolve the SAME segments relative
-// to their own manifests. It is deliberately an exhaustive list of the six names
-// the packager emits rather than a permissive "anything that looks like a media
-// file": this route is an authorization boundary, and the only reason the
-// PeerTube pass-through below gets a loose pattern is that its tree was written
-// by another program whose naming Vidra does not control.
-//
-// The representation index is unbounded on purpose. A tree has one video
-// representation per ladder rung PER CODEC (TRANSCODING_HEVC_ENABLED /
-// TRANSCODING_AV1_ENABLED) plus the shared audio one, so "how many are there"
-// is a packaging decision this route must not restate — the names are what is
-// pinned, not the count. media's own tests assert every stored object matches
-// this pattern.
+// The file shapes reachable under a video's HLS prefix are defined in
+// internal/mediaroute (HLSChildShape and the name patterns), because the IPFS
+// mirror pins exactly the files this route serves and must read the same list.
+// Anything else — including any traversal attempt — is 404.
 var (
-	hlsRenditionName = regexp.MustCompile(`^[0-9]{2,4}p$`)
-	hlsFileName      = regexp.MustCompile(`^(playlist\.m3u8|iframe\.m3u8|iframe\.ts|seg_[0-9]+\.ts)$`)
-	hlsCMAFFileName  = regexp.MustCompile(
-		`^(stream\.mpd|media_[0-9]+\.m3u8|init-[0-9]+\.mp4|chunk-[0-9]+-[0-9]+\.m4s|iframe-[0-9]+\.m3u8|iframe-[0-9]+\.mp4)$`)
-	hlsPeerTubeFileName  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.(m3u8|mp4|m4s|ts)$`)
+	hlsRenditionName     = mediaroute.HLSRenditionName
+	hlsFileName          = mediaroute.HLSFileName
+	hlsCMAFFileName      = mediaroute.HLSCMAFFileName
+	hlsPeerTubeFileName  = mediaroute.HLSPeerTubeFileName
 	hlsPlaylistURIAttrRE = regexp.MustCompile(`URI="([^"]+)"`)
 )
 
 // hlsCMAFRendition is the pseudo-rendition the CMAF directory is served under,
 // so /videos/{id}/hls/cmaf/stream.mpd is the DASH manifest and every relative
 // URI inside it resolves against its siblings with no rewriting at all.
-const hlsCMAFRendition = "cmaf"
+const hlsCMAFRendition = mediaroute.HLSCMAFRendition
 
 // hlsCMAFManifestFile is the manifest's name within that directory, so the
 // canonical DASH URL is /api/v1/videos/{id}/hls/cmaf/stream.mpd.
@@ -152,9 +134,7 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 		return err
 	}
 	rendition, file := c.Param("rendition"), c.Param("file")
-	canonical := hlsRenditionName.MatchString(rendition) && hlsFileName.MatchString(file)
-	cmaf := rendition == hlsCMAFRendition && hlsCMAFFileName.MatchString(file)
-	peertube := rendition == "peertube" && hlsPeerTubeFileName.MatchString(file)
+	canonical, cmaf, peertube := mediaroute.HLSChildShape(rendition, file)
 	if !canonical && !cmaf && !peertube {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
@@ -305,7 +285,7 @@ func (s *Server) servePeerTubeHLSMaster(c echo.Context, sp sqlcgen.StreamingPlay
 }
 
 func isPeerTubeHLSMasterKey(key string) bool {
-	return strings.HasPrefix(key, "streaming-playlists/hls/")
+	return mediaroute.IsPeerTubeHLSMasterKey(key)
 }
 
 // rewritePlaylistToken appends ?pt=<token> to every relative URI in an m3u8,

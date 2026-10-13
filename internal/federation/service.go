@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 
@@ -179,6 +180,13 @@ type Service struct {
 	baseURL string            // canonical public origin, e.g. https://videos.example (no trailing slash)
 	cipher  *secretbox.Cipher // nil in dev → private keys stored raw
 
+	// inst is the instance actor's persistence (instance_actor.go), picked up
+	// from repo when it provides it. Nil = no instance actor. instAvailable
+	// caches the one fact about it that can only ever turn true: that 0166's
+	// reservation of its name is the instance actor's.
+	inst          InstanceRepository
+	instAvailable atomic.Bool
+
 	// edges gates remote-video ingestion on an accepted local follow edge
 	// (see FollowEdgeChecker). Nil = consult the repository's
 	// remote_channel_follows edges directly (the production wiring).
@@ -200,6 +208,8 @@ type Service struct {
 	notifyNewReport func(context.Context, uuid.UUID) (int64, error)
 	// onFollowerRequest: see WithFollowerRequestHook (nil = none).
 	onFollowerRequest func(context.Context, uuid.UUID)
+	// onInstanceFollowerRequest: see WithInstanceFollowerRequestHook.
+	onInstanceFollowerRequest func(context.Context, uuid.UUID)
 	// onHeldComment: see WithHeldCommentHook (nil = none).
 	onHeldComment func(context.Context, uuid.UUID)
 
@@ -285,8 +295,8 @@ func WithAllowChannelFollowersFunc(f func() bool) Option {
 // WithFollowerApprovalFunc wires the federation_follower_approval gate
 // (config-parity W12): when it reports true, a new inbound channel Follow is
 // recorded PENDING (no Accept sent) and waits in the admin follower-requests
-// queue. Applies to CHANNEL followers — a documented vidra deviation from
-// PeerTube's instance-follower approval, since vidra has no instance actor.
+// queue. Applies to channel followers and, since the instance actor (0166),
+// to instance followers too — which is PeerTube's instance-follower approval.
 func WithFollowerApprovalFunc(f func() bool) Option {
 	return func(s *Service) { s.followerApproval = f }
 }
@@ -294,9 +304,9 @@ func WithFollowerApprovalFunc(f func() bool) Option {
 // WithAutoFollowBackFunc wires the federation_auto_follow_back gate
 // (config-parity W12): when it reports true, an ACCEPTED inbound channel
 // Follow triggers an outbound follow-back of the follower, signed by the
-// FOLLOWED CHANNEL's actor (vidra has no instance-level AP actor — the
-// followed channel is the only local actor with a relationship to the
-// follower). Respects the domain blocklist and never duplicates an existing
+// FOLLOWED CHANNEL's actor — the local actor with a relationship to the
+// follower. (Following back an INSTANCE follower, as PeerTube does, is not
+// implemented.) Respects the domain blocklist and never duplicates an existing
 // follow/follow-back edge.
 func WithAutoFollowBackFunc(f func() bool) Option {
 	return func(s *Service) { s.autoFollowBack = f }
@@ -335,6 +345,9 @@ func (s *Service) autoFollowBackEnabled() bool {
 // NewService builds a federation Service over the given repository.
 func NewService(repo Repository, opts ...Option) *Service {
 	s := &Service{repo: repo}
+	if ir, ok := repo.(InstanceRepository); ok {
+		s.inst = ir
+	}
 	for _, o := range opts {
 		o(s)
 	}

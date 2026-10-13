@@ -539,6 +539,14 @@ type Config struct {
 	// ingest is provisioned; the create response then omits it.
 	LiveRTMPURL string
 
+	// LiveRTMPSURL is the OPTIONAL TLS twin of LiveRTMPURL (rtmps://host:1936/live),
+	// served by a TLS-terminating front the operator runs ahead of the RTMP
+	// ingest (the meta repo's `rtmps` service). Plain RTMP carries the stream
+	// key in cleartext; when this is set the Go-live panel prefers it and keeps
+	// LiveRTMPURL as the fallback. Empty (default) = no RTMPS offered. It does not
+	// gate live: LIVE_RTMP_URL still decides whether live is available.
+	LiveRTMPSURL string
+
 	// LiveIngestSecret is the shared secret the media server (RTMP ingest) presents
 	// on the internal live-ingest start/stop hooks, so only it can flip a stream's
 	// live state. Empty disables the ingest hooks entirely (they 404) — they are
@@ -950,6 +958,14 @@ type Config struct {
 	// 404. An operator who needs a takedown to complete on their own gateway
 	// promptly turns this on, or runs the node with --enable-gc.
 	IPFSGCAfterUnpin bool
+	// IPFSRepoBudgetBytes is the ceiling for an UNMANAGED node (Tier A F3): when the
+	// node's repo/stat RepoSize reaches it, the legacy drain stops ADDING (unpins
+	// still run). 0, the default, is no ceiling — the behaviour before this knob
+	// existed. It is a repo-size budget, not a free-space floor: core cannot statvfs
+	// a node it only reaches over RPC, so set it below disk size minus database
+	// growth minus media scratch. Ignored once a managed policy is adopted (the
+	// managed budget governs then).
+	IPFSRepoBudgetBytes int64
 	// IPFSMirrorPrivate is the master opt-in for the PRIVATE mirroring tier
 	// (fix_plan P19.P, .ralph/specs/ipfs-media-private.md). It defaults false and,
 	// when true, REQUIRES a dedicated private-swarm kubo at IPFSPrivateAPIURL —
@@ -1258,6 +1274,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		SearchReconcileInterval:                p.Duration("SEARCH_RECONCILE_INTERVAL", 24*time.Hour),
 		SearchHealthInterval:                   p.Duration("SEARCH_HEALTH_INTERVAL", 15*time.Second),
 		LiveRTMPURL:                            liveRTMPURL,
+		LiveRTMPSURL:                           strings.TrimSpace(getEnv("LIVE_RTMPS_URL", "")),
 		LiveIngestSecret:                       getEnv("LIVE_INGEST_SECRET", ""),
 		LiveHLSRoot:                            strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
 		LiveIngestControlURL:                   strings.TrimRight(getEnv("LIVE_INGEST_CONTROL_URL", ""), "/"),
@@ -1346,6 +1363,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		IPFSReconcileInterval:                  p.Duration("IPFS_RECONCILE_INTERVAL", 5*time.Minute),
 		IPFSHealthProbeInterval:                p.Duration("IPFS_HEALTH_PROBE_INTERVAL", DefaultIPFSHealthProbeInterval),
 		IPFSGCAfterUnpin:                       p.Bool("IPFS_GC_AFTER_UNPIN", false),
+		IPFSRepoBudgetBytes:                    p.Int64("IPFS_REPO_BUDGET_BYTES", 0),
 		IPFSMirrorPrivate:                      p.Bool("IPFS_MIRROR_PRIVATE", false),
 		IPFSClusterAPIURL:                      strings.TrimRight(getEnv("IPFS_CLUSTER_API_URL", ""), "/"),
 		IPFSClusterToken:                       getEnv("IPFS_CLUSTER_TOKEN", ""),
@@ -2235,6 +2253,10 @@ func (c *Config) validateIPFS() error {
 		errs = append(errs, varErrorf("IPFS_HEALTH_PROBE_INTERVAL",
 			"config: IPFS_HEALTH_PROBE_INTERVAL must be at least %s (got %s): each probe is a gateway fetch plus one pin/ls per swarm, in every process, so a shorter interval is a load generator rather than a health check; the default is %s",
 			MinIPFSHealthProbeInterval, c.IPFSHealthProbeInterval, DefaultIPFSHealthProbeInterval))
+	}
+	if c.IPFSRepoBudgetBytes < 0 {
+		errs = append(errs, varErrorf("IPFS_REPO_BUDGET_BYTES",
+			"config: IPFS_REPO_BUDGET_BYTES must be 0 (no ceiling) or a positive byte count (got %d)", c.IPFSRepoBudgetBytes))
 	}
 	if !c.IPFSEnabled && c.IPFSManagerSocket == "" {
 		return errors.Join(errs...)
