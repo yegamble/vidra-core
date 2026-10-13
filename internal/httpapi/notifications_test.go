@@ -1138,6 +1138,68 @@ func TestFollowNotificationRespectsMutesAndBlocks(t *testing.T) {
 	}
 }
 
+// NotifyManagersOfHeldComment mirrors the comment_held fan-out (0161): the
+// held comment's video's channel owner plus every editor member, minus the
+// commenter, inactive/deleted accounts, a disabled preference, and mute/block
+// in either direction; one notification per (recipient, comment). The
+// statement itself is proved in store.TestManagedCommentQueueOnRealPG.
+func (f *notifFakeRepo) NotifyManagersOfHeldComment(_ context.Context, commentID uuid.UUID) (int64, error) {
+	if f.createErr != nil {
+		return 0, f.createErr
+	}
+	c, ok := f.comments.comments[commentID]
+	if !ok || !c.HeldForReview || c.DeletedAt.Valid {
+		return 0, nil
+	}
+	ch, ok := f.channelByID(f.videos.videos[c.VideoID].ChannelID)
+	if !ok {
+		return 0, nil
+	}
+	recipients := []uuid.UUID{ch.OwnerID}
+	for _, m := range f.channels.members {
+		if m.ChannelID == ch.ID {
+			recipients = append(recipients, m.UserID)
+		}
+	}
+	commenter := uuid.UUID(c.UserID.Bytes)
+	var notified int64
+	for _, r := range recipients {
+		u, ok := f.userByID(r)
+		if !ok || !u.IsActive || u.DeletedAt.Valid || (c.UserID.Valid && r == commenter) {
+			continue
+		}
+		if enabled, ok := f.prefs[notifPrefKey(r, notification.TypeCommentHeld)]; ok && !enabled {
+			continue
+		}
+		if c.UserID.Valid && (f.comments.mutes.isMuted(r, commenter) ||
+			f.comments.userBlocks.isBlocked(r, commenter) || f.comments.userBlocks.isBlocked(commenter, r)) {
+			continue
+		}
+		// One row per (recipient, comment); a READ one is re-surfaced (a
+		// re-held edit), an unread one is left alone — mirrors the SQL.
+		duplicate := false
+		for i, n := range f.notifs {
+			if n.UserID == r && n.Type == notification.TypeCommentHeld && n.CommentID.Bytes == commentID {
+				duplicate = true
+				if n.ReadAt.Valid {
+					f.notifs[i].ReadAt, f.notifs[i].CreatedAt = pgtype.Timestamptz{}, time.Now()
+					notified++
+				}
+			}
+		}
+		if duplicate {
+			continue
+		}
+		f.notifs = append(f.notifs, sqlcgen.Notification{
+			ID: uuid.New(), UserID: r, Type: notification.TypeCommentHeld, ActorID: c.UserID,
+			VideoID:   pgtype.UUID{Bytes: c.VideoID, Valid: true},
+			CommentID: pgtype.UUID{Bytes: commentID, Valid: true}, CreatedAt: time.Now(),
+		})
+		notified++
+	}
+	return notified, nil
+}
+
 // TestCommentMentionsReachTheFanOut: posting and editing a comment hands the
 // parsed LOCAL usernames to the mention fan-out (the SQL gates are proved in
 // store.TestNotifyCommentMentionsOnRealPG), and a body with none never calls it.

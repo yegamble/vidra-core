@@ -1187,6 +1187,38 @@ func TestNotifyVideoOwnershipRequest(t *testing.T) {
 	}
 }
 
+func (f *fakeRepo) NotifyManagersOfHeldComment(_ context.Context, id uuid.UUID) (int64, error) {
+	f.staffQueue = append(f.staffQueue, "comment_held:"+id.String())
+	return f.fanOutN, f.fanOutErr
+}
+
+// TestCommentHeldRegisteredAndFansOut: comment_held (0161) is a preference
+// type like any other, and NotifyCommentHeld is the set-based fan-out — one
+// repo call, its count returned, its error surfaced for the best-effort caller.
+func TestCommentHeldRegisteredAndFansOut(t *testing.T) {
+	if !knownType(TypeCommentHeld) {
+		t.Error("knownType(comment_held) = false")
+	}
+	found := false
+	for _, k := range KnownTypes() {
+		found = found || k == TypeCommentHeld
+	}
+	if !found {
+		t.Error("KnownTypes() missing comment_held")
+	}
+	if emailType(TypeCommentHeld) {
+		t.Error("comment_held offers email; it is in-app only")
+	}
+	repo := &fakeRepo{fanOutN: 2}
+	id := uuid.New()
+	if n, err := NewService(repo).NotifyCommentHeld(context.Background(), id); err != nil || n != 2 {
+		t.Errorf("NotifyCommentHeld = %d, %v; want 2, nil", n, err)
+	}
+	if len(repo.staffQueue) != 1 || repo.staffQueue[0] != "comment_held:"+id.String() {
+		t.Errorf("fan-out calls = %v", repo.staffQueue)
+	}
+}
+
 func (f *fakeRepo) NotifyReportMessage(_ context.Context, messageID uuid.UUID) (int64, error) {
 	f.reportMessageFanOut = append(f.reportMessageFanOut, messageID)
 	if f.fanOutErr != nil {

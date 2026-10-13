@@ -2372,7 +2372,7 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`CREATE TABLE "videoTag" ("videoId" integer NOT NULL, "tagId" integer NOT NULL)`,
 		`CREATE TABLE "actorFollow" (
 			id serial PRIMARY KEY, state text NOT NULL, "actorId" integer NOT NULL,
-			"targetActorId" integer NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now())`,
+			"targetActorId" integer NOT NULL, url text, "createdAt" timestamptz NOT NULL DEFAULT now())`,
 		// videoBlacklist is a table of its own and touches NEITHER video.privacy nor
 		// video.state, so a blacklisted video is indistinguishable from a published
 		// one in every column the importer reads. Its mapping onto video_blocks

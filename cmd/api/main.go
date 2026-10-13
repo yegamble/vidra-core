@@ -2263,6 +2263,11 @@ func run() error {
 			func(ctx context.Context, id uuid.UUID) (int64, error) {
 				return notifsvc.NotifyFederationFollowerRequest(ctx, id)
 			})),
+		// A remote comment held for approval (0161) pings the video's managers.
+		federation.WithHeldCommentHook(staffQueueHook("comment_held",
+			func(ctx context.Context, id uuid.UUID) (int64, error) {
+				return notifsvc.NotifyCommentHeld(ctx, id)
+			})),
 		// Federation policy gates (config-parity W12): runtime provider funcs
 		// over the settings overlay, read per inbound activity so an admin
 		// change applies without a restart. All gate the ActivityPub inbox

@@ -741,14 +741,15 @@ type PipelineRun struct {
 }
 
 type Playlist struct {
-	ID           uuid.UUID `json:"id"`
-	OwnerID      uuid.UUID `json:"owner_id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Visibility   string    `json:"visibility"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	ThumbnailExt *string   `json:"thumbnail_ext"`
+	ID           uuid.UUID   `json:"id"`
+	OwnerID      uuid.UUID   `json:"owner_id"`
+	Title        string      `json:"title"`
+	Description  string      `json:"description"`
+	Visibility   string      `json:"visibility"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+	ThumbnailExt *string     `json:"thumbnail_ext"`
+	ChannelID    pgtype.UUID `json:"channel_id"`
 }
 
 type PlaylistItem struct {

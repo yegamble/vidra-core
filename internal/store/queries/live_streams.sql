@@ -34,6 +34,9 @@ SELECT count(*)::bigint FROM live_streams WHERE channel_id = sqlc.arg('channel_i
 -- most-recently-started first. Unlisted/private streams and offline/ended streams
 -- never appear. Joined with the owning channel for display; never the key hash.
 --
+-- Owner gate: an active owner who has not opted out of discovery (is_active,
+-- NOT unlisted), the same clauses ListPublicVideosSorted and SearchChannels carry.
+--
 -- A16 ruling: the per-viewer mute/block clause, verbatim from
 -- ListPublicVideosSorted and ListPublicVideosByChannel. This rail took NO viewer
 -- at all, so a muted or blocked account's live stream stayed on the muter's home
@@ -43,7 +46,9 @@ SELECT ls.id, ls.title, ls.description, ls.started_at,
        ch.handle AS channel_handle, ch.display_name AS channel_display_name
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
+JOIN users u ON u.id = ch.owner_id
 WHERE ls.state = 'live' AND ls.privacy = 'public'
+  AND u.is_active = TRUE AND NOT u.unlisted
   AND NOT EXISTS (
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = ch.owner_id
@@ -65,7 +70,9 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 SELECT count(*)::bigint
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
+JOIN users u ON u.id = ch.owner_id
 WHERE ls.state = 'live' AND ls.privacy = 'public'
+  AND u.is_active = TRUE AND NOT u.unlisted
   AND NOT EXISTS (
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = ch.owner_id
