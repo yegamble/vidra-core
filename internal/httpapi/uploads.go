@@ -235,8 +235,11 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 	if qerr := s.checkUploadQuotas(ctx, v.OwnerID, in.Size); qerr != nil {
 		return qerr
 	}
-	sess, err := s.uploadsvc.CreateSession(ctx, id, userID, strings.TrimSpace(in.Filename), in.Size, strings.TrimSpace(in.FileFingerprint), upload.PurposeUpload)
+	sess, err := s.uploadsvc.CreateSession(ctx, id, v.ChannelID, userID, strings.TrimSpace(in.Filename), in.Size, strings.TrimSpace(in.FileFingerprint), upload.PurposeUpload)
 	if err != nil {
+		if errors.Is(err, upload.ErrVideoChanged) {
+			return echo.NewHTTPError(http.StatusConflict, "the video changed while the upload was being set up; reload and try again")
+		}
 		// Batch guard (UPLOAD-10): the caller holds the max concurrent active
 		// sessions → 429 too_many_active_uploads so the client queues on it.
 		if errors.Is(err, upload.ErrTooManyActiveSessions) {

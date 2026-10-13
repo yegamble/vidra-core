@@ -1510,7 +1510,7 @@ func (s *Server) routes() {
 			s.echo.GET("/accounts/:handle/"+kind, s.accountCollection(kind))
 		}
 		s.echo.GET("/video-channels/:handle/outbox", s.channelOutbox)
-		s.echo.GET("/accounts/:handle/outbox", s.accountCollection("outbox"))
+		s.echo.GET("/accounts/:handle/outbox", s.accountOutbox)
 		// The OBJECT ids vidra mints (A29-F2). They live on frontend paths, so
 		// they are reachable here only when the operator's proxy
 		// content-negotiates an ActivityPub Accept to the api — which the
@@ -1830,6 +1830,12 @@ func (s *Server) routes() {
 		api.DELETE("/me/history", s.handleClearHistory, s.requireAuth)
 		api.DELETE("/me/history/:id", s.handleDeleteHistoryEntry, s.requireAuth)
 		api.GET("/videos/:id/watch-progress", s.handleGetWatchProgress, s.requireAuth)
+		// Ownership changes (T21): give a video to another local user.
+		api.POST("/videos/:id/give-ownership", s.handleGiveVideoOwnership, s.requireAuth)
+		api.DELETE("/videos/:id/give-ownership", s.handleCancelVideoOwnership, s.requireAuth)
+		api.GET("/me/video-ownership-changes", s.handleListVideoOwnershipChanges, s.requireAuth)
+		api.POST("/me/video-ownership-changes/:id/accept", s.handleAcceptVideoOwnership, s.requireAuth)
+		api.POST("/me/video-ownership-changes/:id/refuse", s.handleRefuseVideoOwnership, s.requireAuth)
 		api.PUT("/videos/:id/watch-progress", s.handleRecordWatchProgress, s.requireAuth)
 		api.GET("/videos/config", s.handleVideoConfig)
 		api.GET("/videos/search", s.handleSearchVideos, s.optionalAuth)
@@ -2198,6 +2204,16 @@ func (s *Server) routes() {
 		api.GET("/admin/federation/follower-requests", s.handleListFederationFollowerRequests, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/federation/follower-requests/:id/approve", s.handleApproveFederationFollowerRequest, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/federation/follower-requests/:id/reject", s.handleRejectFederationFollowerRequest, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// Instance follows (migration 0166): the instances following ours —
+		// PeerTube's /server/followers. Admin only, like the queue above.
+		api.GET("/admin/federation/instance-followers", s.handleListInstanceFollowers, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/instance-followers/:id/accept", s.instanceFollowDecision(s.fedsvc.AcceptInstanceFollower, observability.ActionFederationInstanceFollowerAccept), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/instance-followers/:id/reject", s.instanceFollowDecision(s.fedsvc.RejectInstanceFollower, observability.ActionFederationInstanceFollowerReject), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/federation/instance-followers/:id", s.instanceFollowDecision(s.fedsvc.RemoveInstanceFollower, observability.ActionFederationInstanceFollowerRemove), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// ...and the instances ours follows — PeerTube's /server/following.
+		api.GET("/admin/federation/instance-following", s.handleListInstanceFollowing, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/instance-following", s.handleFollowInstance, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/federation/instance-following/:id", s.instanceFollowDecision(s.fedsvc.UnfollowInstance, observability.ActionFederationInstanceUnfollow), s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// ATProto / Bluesky link (P10.2 extension): the caller links/inspects/unlinks
@@ -2422,6 +2438,9 @@ func (s *Server) routes() {
 		// Public "Live now" listing (home rail): currently-live PUBLIC streams
 		// across all channels. Public read; unlisted/private never listed.
 		api.GET("/live", s.handleListLivePublicStreams, s.optionalAuth)
+		// Public "Upcoming" listing (scheduled lives, migration 0168). Static
+		// segment, registered beside /live/:id — Echo prefers the static route.
+		api.GET("/live/upcoming", s.handleListUpcomingLiveStreams, s.optionalAuth)
 		api.GET("/live/:id", s.handleGetLiveStream, s.optionalAuth)
 		api.PATCH("/live/:id", s.handleUpdateLiveStream, s.requireAuth)
 		api.POST("/live/:id/key", s.handleRegenerateLiveStreamKey, s.requireAuth)

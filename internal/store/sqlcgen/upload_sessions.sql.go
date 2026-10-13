@@ -34,13 +34,19 @@ func (q *Queries) CountActiveUploadSessionsForUser(ctx context.Context, userID u
 
 const createUploadSession = `-- name: CreateUploadSession :one
 
+WITH locked AS (
+    SELECT lv.id AS video_id FROM videos lv
+    WHERE lv.id = $8 AND lv.channel_id = $9
+    FOR UPDATE
+)
 INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, expires_at, file_fingerprint, purpose)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+SELECT locked.video_id, $1, $2, $3, $4,
+       $5, $6, $7
+FROM locked
 RETURNING id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at, file_fingerprint, purpose, failure_reason
 `
 
 type CreateUploadSessionParams struct {
-	VideoID         uuid.UUID `json:"video_id"`
 	UserID          uuid.UUID `json:"user_id"`
 	Filename        string    `json:"filename"`
 	TotalSize       int64     `json:"total_size"`
@@ -48,14 +54,21 @@ type CreateUploadSessionParams struct {
 	ExpiresAt       time.Time `json:"expires_at"`
 	FileFingerprint string    `json:"file_fingerprint"`
 	Purpose         string    `json:"purpose"`
+	VideoID         uuid.UUID `json:"video_id"`
+	ChannelID       uuid.UUID `json:"channel_id"`
 }
 
 // Resumable upload sessions + received-chunk ledger (migration 0059, fix_plan
 // P6.1). The chunk bytes live in the blob backend at uploads/<session>/<n>;
 // these rows are the resume contract + sweeper input.
+// Opens a session only while the video is still in channel_id, the channel the
+// caller was authorised against, and under the video row lock that accepting an
+// ownership change also takes (AcceptVideoOwnershipChange runs after locking the
+// same row). Either the session is committed first and the accept sees it, or
+// the accept commits first and this re-check sees the video's new channel and
+// inserts nothing (pgx.ErrNoRows).
 func (q *Queries) CreateUploadSession(ctx context.Context, arg CreateUploadSessionParams) (UploadSession, error) {
 	row := q.db.QueryRow(ctx, createUploadSession,
-		arg.VideoID,
 		arg.UserID,
 		arg.Filename,
 		arg.TotalSize,
@@ -63,6 +76,8 @@ func (q *Queries) CreateUploadSession(ctx context.Context, arg CreateUploadSessi
 		arg.ExpiresAt,
 		arg.FileFingerprint,
 		arg.Purpose,
+		arg.VideoID,
+		arg.ChannelID,
 	)
 	var i UploadSession
 	err := row.Scan(
