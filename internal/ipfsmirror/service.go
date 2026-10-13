@@ -1210,11 +1210,25 @@ func (s *Service) drainNetwork(ctx context.Context, nc netClient, batch int) (in
 			return s.drainManaged(ctx, nc, batch, doc)
 		}
 	}
-	rows, err := s.repo.ClaimDueIPFSPins(ctx, sqlcgen.ClaimDueIPFSPinsParams{
+	claim := sqlcgen.ClaimDueIPFSPinsParams{
 		Network:      nc.network,
 		LeaseSeconds: leaseSeconds,
 		BatchSize:    int32(batch),
-	})
+	}
+	var rows []sqlcgen.ClaimDueIPFSPinsRow
+	var err error
+	// Probe the node's size ONCE per tick (F3). Over the ceiling, claim only
+	// removals: claiming pending rows just to drop them would lease each for the
+	// full lease and queue takedowns behind the backlog.
+	if unpinner, ok := s.repo.(unpinClaimer); ok && s.unmanagedOverBudget(ctx, nc) {
+		var un []sqlcgen.ClaimDueIPFSUnpinsRow
+		un, err = unpinner.ClaimDueIPFSUnpins(ctx, sqlcgen.ClaimDueIPFSUnpinsParams(claim))
+		for _, r := range un {
+			rows = append(rows, sqlcgen.ClaimDueIPFSPinsRow(r))
+		}
+	} else {
+		rows, err = s.repo.ClaimDueIPFSPins(ctx, claim)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -1231,9 +1245,6 @@ func (s *Service) drainNetwork(ctx context.Context, nc netClient, batch int) (in
 		go func(row sqlcgen.ClaimDueIPFSPinsRow) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if row.State == "pending" && !s.unmanagedAdmits(ctx, nc) {
-				return // over the F3 ceiling: the claim's lease is the retry delay
-			}
 			if !s.process(ctx, nc, row) {
 				return
 			}

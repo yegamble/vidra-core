@@ -1446,8 +1446,8 @@ bytes:
   mirror stops *adding* (unpins always run) and resumes by itself when space frees.
   It is a repo-size budget, not a free-space floor — core cannot see the node's
   filesystem and RepoSize excludes flatfs slack — so set it **below disk size minus
-  database growth minus media scratch**. It is checked per add, so up to
-  `IPFS_PIN_CONCURRENCY` trees in flight can overshoot it. Only the public node is
+  database growth minus media scratch**. It is probed once per drain tick (over it the drain claims removals only), so a
+  tick's adds can overshoot it. Only the public node is
   budgeted.
 - **Probe cadence.** `IPFS_HEALTH_PROBE_INTERVAL` (default `5m`, minimum `10s`) is
   how often **every** role re-asks the gateway whether it is serving and re-compares

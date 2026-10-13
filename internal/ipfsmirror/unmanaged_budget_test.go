@@ -3,6 +3,7 @@ package ipfsmirror
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -91,5 +92,43 @@ func TestUnmanagedCeilingIsOffByDefaultAndFailsOpen(t *testing.T) {
 				t.Fatalf("add was blocked: n=%d err=%v state=%q", n, err, repo.state(key))
 			}
 		})
+	}
+}
+
+// TestOverBudgetUnpinsDoNotQueueBehindAPendingBacklog: with more pending rows than a
+// batch, ordered ahead of the unpin, an over-budget tick must still reach the unpin
+// in its FIRST pass, lease none of the pending rows, and probe the node once.
+func TestOverBudgetUnpinsDoNotQueueBehindAPendingBacklog(t *testing.T) {
+	ctx := context.Background()
+	s, repo, client, _ := budgetService(t, 1000)
+	vid := uuid.New()
+	early := time.Now().Add(-time.Hour)
+	var pendingKeys []string
+	for i := 0; i < 5; i++ {
+		k := fmt.Sprintf("captions/%s/p%d.vtt", vid, i)
+		putBlob(t, s.blobs, k, "WEBVTT\n\nx")
+		seedPendingVideo(repo, k, string(ClassCaption), vid)
+		repo.rows[k].NextAttemptAt = early // sorts ahead of the unpin
+		pendingKeys = append(pendingKeys, k)
+	}
+	goneKey := "captions/" + vid.String() + "/gone.vtt"
+	seedPinned(repo, goneKey, string(ClassCaption), "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku", vid)
+	repo.rows[goneKey].State = "unpinning"
+	repo.rows[goneKey].NextAttemptAt = time.Now().Add(-time.Minute)
+
+	client.RepoSizeBytes = 5000
+	if _, err := s.DrainDue(ctx, 2); err != nil { // batch (2) < backlog (5)
+		t.Fatal(err)
+	}
+	if repo.state(goneKey) != "unpinned" {
+		t.Fatalf("the unpin waited behind the backlog: state=%q", repo.state(goneKey))
+	}
+	for _, k := range pendingKeys {
+		if !repo.rows[k].NextAttemptAt.Equal(early) || repo.state(k) != "pending" {
+			t.Fatalf("%s was claimed/leased while over budget (next=%v state=%s)", k, repo.rows[k].NextAttemptAt, repo.state(k))
+		}
+	}
+	if client.AddCount != 0 || client.RepoSizeCalls != 1 {
+		t.Fatalf("adds=%d size probes=%d, want 0 and exactly 1 per tick", client.AddCount, client.RepoSizeCalls)
 	}
 }

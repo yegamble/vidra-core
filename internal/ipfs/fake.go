@@ -51,6 +51,8 @@ type FakeIPFSClient struct {
 
 	// RepoSizeBytes is what RepoSize reports (the F3 budget tests set it).
 	RepoSizeBytes int64
+	// RepoSizeCalls counts RepoSize probes (the F3 once-per-tick assertion).
+	RepoSizeCalls int
 
 	// content maps CID → stored bytes; pins is the set of currently-pinned CIDs.
 	content map[string][]byte
@@ -246,6 +248,7 @@ func (f *FakeIPFSClient) ListPins(ctx context.Context, max int) (map[string]stru
 func (f *FakeIPFSClient) RepoSize(ctx context.Context) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.RepoSizeCalls++
 	if f.Down {
 		return 0, errNodeDown
 	}
