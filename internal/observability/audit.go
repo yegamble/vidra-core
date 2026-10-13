@@ -290,6 +290,8 @@ const (
 	ActionFederationInstanceFollowerAccept = "admin.federation.instance_follower_accept"
 	ActionFederationInstanceFollowerReject = "admin.federation.instance_follower_reject"
 	ActionFederationInstanceFollowerRemove = "admin.federation.instance_follower_remove"
+	ActionFederationInstanceFollow         = "admin.federation.instance_follow"
+	ActionFederationInstanceUnfollow       = "admin.federation.instance_unfollow"
 	// Suggestion bans (search-service moderation): a moderator/admin suppressing
 	// a query string from instance-wide autosuggest, or lifting that ban. The
 	// domain is `moderation`, not `admin`, because that is what the action IS —
