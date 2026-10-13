@@ -956,6 +956,8 @@ func run() error {
 			// it the instance's own gateway keeps serving a withdrawn CID until some
 			// later GC, which A31's rehearsal measured directly.
 			GCAfterUnpin: cfg.IPFSGCAfterUnpin,
+			// Ceiling for an UNMANAGED node (IPFS_REPO_BUDGET_BYTES, Tier A F3); 0 = none.
+			RepoBudgetBytes: cfg.IPFSRepoBudgetBytes,
 			// Private tier (P19.P1) — a dedicated private-swarm node client the worker
 			// routes network='private' rows to (and ONLY those rows).
 			PrivateEnabled:     privateEnabled,
@@ -3097,6 +3099,16 @@ func run() error {
 				}
 				if rt.Capacity.AdmissionPausedReason != nil {
 					out.PausedReason = *rt.Capacity.AdmissionPausedReason
+				}
+				// An UNMANAGED node (no adopted policy) is governed by IPFS_REPO_BUDGET_BYTES
+				// instead of the managed budget Runtime reports; read its size live.
+				if doc, derr := ipfsControl.Config(ctx); derr == nil && !doc.PolicyActive {
+					if used, budget, ok := ipfsMirror.UnmanagedCapacity(ctx); ok {
+						out = observability.IPFSCapacity{BudgetBytes: budget, RepoUsedBytes: &used}
+						if used >= budget {
+							out.PausedReason = "budget_exhausted"
+						}
+					}
 				}
 				return out, nil
 			})

@@ -210,6 +210,9 @@ type Config struct {
 	// Service.collectGarbage for why this is off by default and what leaving it off
 	// costs a moderator.
 	GCAfterUnpin bool
+	// RepoBudgetBytes is the unmanaged-node ceiling (IPFS_REPO_BUDGET_BYTES, 0 =
+	// none). See Service.unmanagedAdmits.
+	RepoBudgetBytes int64
 	// Catalog is the read-only source the one-shot admin backfill (P19.6) scans to
 	// seed pin intents for pre-existing eligible objects. Nil except in the wiring
 	// that serves POST /admin/ipfs/reconcile; Backfill errors cleanly when it is nil.
@@ -239,6 +242,7 @@ type Service struct {
 	control             *ipfscontrol.Service
 	pauseMu             sync.Mutex
 	pauseReason         string // last admission-pause reason logged (observeAdmission)
+	repoBudget          int64  // unmanaged-node ceiling in repo/stat bytes; 0 = none (F3)
 	legacyPublicEnabled bool
 	repo                Repository
 	lookups             Lookups
@@ -316,6 +320,7 @@ func New(repo Repository, lookups Lookups, blobs storage.Backend, client ipfs.Cl
 		// no-ops only when both are off.
 		enabled:        cfg.Enabled || cfg.PrivateEnabled,
 		gcAfterUnpin:   cfg.GCAfterUnpin,
+		repoBudget:     cfg.RepoBudgetBytes,
 		gatewayURL:     cfg.GatewayURL,
 		clusterEnabled: cfg.ClusterEnabled,
 		addTimeout:     cfg.AddTimeout,
@@ -1238,11 +1243,25 @@ func (s *Service) drainNetwork(ctx context.Context, nc netClient, batch int) (in
 			return s.drainManaged(ctx, nc, batch, doc)
 		}
 	}
-	rows, err := s.repo.ClaimDueIPFSPins(ctx, sqlcgen.ClaimDueIPFSPinsParams{
+	claim := sqlcgen.ClaimDueIPFSPinsParams{
 		Network:      nc.network,
 		LeaseSeconds: leaseSeconds,
 		BatchSize:    int32(batch),
-	})
+	}
+	var rows []sqlcgen.ClaimDueIPFSPinsRow
+	var err error
+	// Probe the node's size ONCE per tick (F3). Over the ceiling, claim only
+	// removals: claiming pending rows just to drop them would lease each for the
+	// full lease and queue takedowns behind the backlog.
+	if unpinner, ok := s.repo.(unpinClaimer); ok && s.unmanagedOverBudget(ctx, nc) {
+		var un []sqlcgen.ClaimDueIPFSUnpinsRow
+		un, err = unpinner.ClaimDueIPFSUnpins(ctx, sqlcgen.ClaimDueIPFSUnpinsParams(claim))
+		for _, r := range un {
+			rows = append(rows, sqlcgen.ClaimDueIPFSPinsRow(r))
+		}
+	} else {
+		rows, err = s.repo.ClaimDueIPFSPins(ctx, claim)
+	}
 	if err != nil {
 		return 0, err
 	}
