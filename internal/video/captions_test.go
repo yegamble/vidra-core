@@ -1,6 +1,14 @@
 package video
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/storage"
+)
 
 func TestIsWebVTT(t *testing.T) {
 	cases := []struct {
@@ -39,6 +47,51 @@ func TestLangPattern(t *testing.T) {
 	for _, v := range invalid {
 		if langPattern.MatchString(v) {
 			t.Errorf("langPattern accepted invalid %q", v)
+		}
+	}
+}
+
+type captionChange struct {
+	key     string
+	deleted bool
+}
+
+// TestCaptionChangeHookFiresOnStoreReplaceAndDelete: the mirror pins a caption
+// under its stable key, so it has to hear about every change to that key.
+func TestCaptionChangeHookFiresOnStoreReplaceAndDelete(t *testing.T) {
+	owner := uuid.New()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []captionChange
+	svc := NewService(newFakeRepo(owner), blobs, WithCaptionChangeHook(func(_ context.Context, _ uuid.UUID, key string, deleted bool) {
+		got = append(got, captionChange{key, deleted})
+	}))
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	add := func(body string) {
+		t.Helper()
+		if _, err := svc.AddCaption(ctx, owner, v.ID, CaptionInput{Language: "en", Reader: strings.NewReader(body)}); err != nil {
+			t.Fatalf("AddCaption: %v", err)
+		}
+	}
+	add("WEBVTT\n\nfirst")
+	add("WEBVTT\n\nsecond") // replace: same key, new bytes
+	if err := svc.DeleteCaption(ctx, owner, v.ID, "en"); err != nil {
+		t.Fatalf("DeleteCaption: %v", err)
+	}
+	if err := svc.DeleteCaption(ctx, owner, v.ID, "en"); err != nil { // idempotent: nothing left to tell anyone about
+		t.Fatalf("DeleteCaption again: %v", err)
+	}
+	key := captionKey(v.ID, "en")
+	want := []captionChange{{key, false}, {key, false}, {key, true}}
+	if len(got) != len(want) {
+		t.Fatalf("hook calls = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("hook calls = %v, want %v", got, want)
 		}
 	}
 }

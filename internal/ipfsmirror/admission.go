@@ -71,7 +71,8 @@ func (s *Service) admissionInventory(ctx context.Context, row sqlcgen.MediaIpfsP
 			return nil, "", 0, err
 		}
 		for _, object := range objects {
-			if path.Base(object.Key) != media.VP9WebMFilename {
+			// The SAME filter as pinDirectory: reserve for what will be added.
+			if hlsServed(path.Dir(master)+"/", master, object.Key) {
 				files[object.Key] = object.Size
 			}
 		}
@@ -106,11 +107,41 @@ func (s *Service) admissionInventory(ctx context.Context, row sqlcgen.MediaIpfsP
 		}
 		bytes += size
 	}
-	// Include ample UnixFS/chunk/directory overhead and never assume deduplication.
-	return files, generation, 2*bytes + int64(len(files))*16384 + (1 << 20), nil
+	return files, generation, reservationBytes(bytes, len(files)), nil
+}
+
+// Reservation model (Tier A F1). A copy add grows the repo by the payload plus a
+// little UnixFS/chunk/directory overhead; the reservation must cover that growth
+// until the host's next repo/stat sees it, and nothing more, because every byte
+// over-reserved is a byte of budget that cannot be admitted (it was 2x the
+// payload, so a budget stopped admitting at about half its nominal figure).
+//
+// MEASURED (spike T5, docs/evidence/ipfs-reference-pinning-spike-2026-09-20 on
+// meta PR #244): a 67,108,864-byte copy add grew repo/stat RepoSize by
+// 68,031,550 — 1.0137x, on incompressible data with default chunking. A second
+// sample on a three-rendition, 34-file MPEG-TS HLS tree built with ffmpeg
+// (41,886,737 payload bytes, cid-v1 raw-leaves, Kubo 0.40.1) grew it by
+// 41,909,024 — 1.0005x, ~650 bytes per file. repo/stat excludes flatfs slack and
+// inodes, which the host's filesystem_free_bytes floor (MinFreeBytes) covers.
+//
+// So: payload x 1.02 (the worst measured 1.0137 plus headroom), plus the
+// 16 KiB-per-file and 1 MiB terms kept from the old model (25x the measured
+// per-file cost — they dominate for small trees and absorb directory nodes).
+// ipfsReservationFactorDivisor is 1/0.02 so the arithmetic stays in int64.
+const (
+	ipfsReservationFactorDivisor = 50 // payload/50 == +2%
+	ipfsReservationPerFileBytes  = 16 << 10
+	ipfsReservationFixedBytes    = 1 << 20
+)
+
+// reservationBytes is what one copy of bytes payload in files files reserves.
+// Callers have bounded bytes to <= 1<<50, so none of this overflows int64.
+func reservationBytes(bytes int64, files int) int64 {
+	return bytes + bytes/ipfsReservationFactorDivisor + int64(files)*ipfsReservationPerFileBytes + ipfsReservationFixedBytes
 }
 
 func (s *Service) drainManaged(ctx context.Context, nc netClient, batch int, doc ipfscontrol.Document) (int, error) {
+	s.observeAdmission(ctx)
 	r, ok := s.repo.(admissionRepo)
 	if !ok {
 		return 0, errors.New("ipfs admission repository unavailable")

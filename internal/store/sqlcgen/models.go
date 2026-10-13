@@ -667,6 +667,7 @@ type Notification struct {
 	ReportID              pgtype.UUID        `json:"report_id"`
 	RegistrationRequestID pgtype.UUID        `json:"registration_request_id"`
 	RemoteFollowID        pgtype.UUID        `json:"remote_follow_id"`
+	ReportMessageID       pgtype.UUID        `json:"report_message_id"`
 }
 
 type NotificationEmail struct {
@@ -766,14 +767,15 @@ type PipelineRun struct {
 }
 
 type Playlist struct {
-	ID           uuid.UUID `json:"id"`
-	OwnerID      uuid.UUID `json:"owner_id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Visibility   string    `json:"visibility"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	ThumbnailExt *string   `json:"thumbnail_ext"`
+	ID           uuid.UUID   `json:"id"`
+	OwnerID      uuid.UUID   `json:"owner_id"`
+	Title        string      `json:"title"`
+	Description  string      `json:"description"`
+	Visibility   string      `json:"visibility"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+	ThumbnailExt *string     `json:"thumbnail_ext"`
+	ChannelID    pgtype.UUID `json:"channel_id"`
 }
 
 type PlaylistItem struct {
@@ -962,6 +964,15 @@ type Report struct {
 	RemoteReporterActorUrl *string            `json:"remote_reporter_actor_url"`
 	RemoteReporterDomain   *string            `json:"remote_reporter_domain"`
 	RemoteFlagActivityID   *string            `json:"remote_flag_activity_id"`
+}
+
+type ReportMessage struct {
+	ID          uuid.UUID   `json:"id"`
+	ReportID    uuid.UUID   `json:"report_id"`
+	AuthorID    pgtype.UUID `json:"author_id"`
+	IsModerator bool        `json:"is_moderator"`
+	Body        string      `json:"body"`
+	CreatedAt   time.Time   `json:"created_at"`
 }
 
 type SavedVideo struct {
@@ -1166,6 +1177,12 @@ type UserBlock struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type UserFeedToken struct {
+	UserID    uuid.UUID `json:"user_id"`
+	TokenHash string    `json:"token_hash"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type UserImage struct {
 	UserID      uuid.UUID `json:"user_id"`
 	Kind        string    `json:"kind"`
@@ -1265,6 +1282,17 @@ type VideoMetadatum struct {
 	Width           *int32    `json:"width"`
 	Height          *int32    `json:"height"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type VideoOwnershipChange struct {
+	ID          uuid.UUID `json:"id"`
+	VideoID     uuid.UUID `json:"video_id"`
+	InitiatorID uuid.UUID `json:"initiator_id"`
+	NextOwnerID uuid.UUID `json:"next_owner_id"`
+	VideoTitle  string    `json:"video_title"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type VideoPassword struct {

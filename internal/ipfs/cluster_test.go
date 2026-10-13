@@ -127,3 +127,30 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+func TestKuboRepoSizeParsesAndRefusesGarbage(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       int64
+		wantErr    bool
+	}{
+		{"ok", `{"RepoSize":41921986}`, 41921986, false},
+		{"missing", `{"StorageMax":1}`, 0, true},
+		{"negative", `{"RepoSize":-1}`, 0, true},
+		{"not json", `nope`, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v0/repo/stat" || r.URL.Query().Get("size-only") != "true" {
+					t.Errorf("unexpected request %s", r.URL)
+				}
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			got, err := NewKuboClient(srv.URL, srv.Client()).RepoSize(context.Background())
+			if (err != nil) != tc.wantErr || got != tc.want {
+				t.Fatalf("RepoSize = %d, %v; want %d, err=%v", got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}

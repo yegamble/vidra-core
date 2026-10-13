@@ -587,8 +587,8 @@ var (
 	// seeded default.
 	VideoPrivacyOptions = []string{"public", "unlisted", "private"}
 	// CommentPolicyOptions for the per-video comment-policy default (W9 builds
-	// the per-video field; requires_approval is deliberately deferred).
-	CommentPolicyOptions = []string{"enabled", "disabled"}
+	// the per-video field; requires_approval holds comments for review, 0161).
+	CommentPolicyOptions = []string{"enabled", "disabled", "requires_approval"}
 )
 
 // Default values for the core-config-surface keys.

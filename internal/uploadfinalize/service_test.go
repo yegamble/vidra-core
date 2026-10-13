@@ -380,7 +380,7 @@ func (h *harness) openAndFill(t *testing.T, payload string, purpose string) sqlc
 	t.Helper()
 	ctx := context.Background()
 	user := uuid.New()
-	sess, err := h.uploads.CreateSession(ctx, h.video, user, "clip.mp4", int64(len(payload)), "", purpose)
+	sess, err := h.uploads.CreateSession(ctx, h.video, uuid.Nil, user, "clip.mp4", int64(len(payload)), "", purpose)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}

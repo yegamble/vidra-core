@@ -11,14 +11,14 @@
 WITH n AS (
     INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id, report_id)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id, registration_request_id, remote_follow_id
+    RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id, registration_request_id, remote_follow_id, report_message_id
 ), owed AS (
     INSERT INTO notification_emails (notification_id)
     SELECT n.id FROM n
     JOIN notification_prefs np ON np.user_id = n.user_id AND np.type = n.type
     WHERE np.email_enabled
 )
-SELECT id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id, registration_request_id, remote_follow_id
+SELECT id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id, registration_request_id, remote_follow_id, report_message_id
 FROM n;
 
 -- name: NotifyFollowersOfNewVideo :one
@@ -117,6 +117,83 @@ WHERE r.id = sqlc.arg('report_id')
       WHERE np.user_id = u.id AND np.type = 'new_report' AND np.enabled = FALSE
   )
 ON CONFLICT (user_id, report_id) WHERE type = 'new_report' DO NOTHING;
+
+-- name: NotifyManagersOfHeldComment :execrows
+-- The "a comment awaits your approval" fan-out (0161), fired whenever a comment
+-- is HELD (posted, re-held by an edit, or a federated Note), set-based like
+-- NotifyStaffOfNewReport, to its reviewers: the channel owner and editors.
+-- Notified only when the comment is still held and not a tombstone, and the
+-- recipient is not the commenter, is active and non-deleted, has not turned
+-- 'comment_held' off, and has not muted (nor blocked, nor been blocked by) the
+-- commenter — the comment still waits in the queue; only the push is withheld.
+-- ON CONFLICT rides notifications_comment_held_unique_idx: one row per
+-- (recipient, comment). A READ one is re-surfaced (a re-held edit is news
+-- again); an unread one is left alone, so a re-fired hook never piles up.
+INSERT INTO notifications (user_id, type, actor_id, video_id, comment_id)
+SELECT r.user_id, 'comment_held', c.user_id, c.video_id, c.id
+FROM comments c
+JOIN videos v ON v.id = c.video_id
+JOIN channels ch ON ch.id = v.channel_id
+CROSS JOIN LATERAL (
+    SELECT ch.owner_id AS user_id
+    UNION
+    SELECT m.user_id FROM channel_members m WHERE m.channel_id = ch.id
+) r
+JOIN users u ON u.id = r.user_id
+WHERE c.id = sqlc.arg('comment_id')
+  AND c.held_for_review
+  AND c.deleted_at IS NULL
+  AND r.user_id IS DISTINCT FROM c.user_id
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = r.user_id AND np.type = 'comment_held' AND np.enabled = FALSE
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts ma
+      WHERE ma.muter_id = r.user_id AND ma.muted_id = c.user_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE (ub.blocker_id = r.user_id AND ub.blocked_id = c.user_id)
+         OR (ub.blocker_id = c.user_id AND ub.blocked_id = r.user_id)
+  )
+ON CONFLICT (user_id, comment_id) WHERE type = 'comment_held'
+DO UPDATE SET read_at = NULL, created_at = now()
+WHERE notifications.read_at IS NOT NULL;
+
+-- name: NotifyReportMessage :execrows
+-- The report_message fan-out (migration 0163): a new message on an abuse
+-- report's thread tells the OTHER side, in one set-based statement.
+--   * a moderator's message tells the report's LOCAL reporter (none for a
+--     remote Flag report, whose reporter_id is NULL — the join finds nobody);
+--   * the reporter's message tells the new_report recipient set: active,
+--     non-deleted admins and moderators.
+-- Either way the author is never told about their own message, the recipient
+-- must be active and non-deleted, and a recipient who turned report_message off
+-- is skipped. A moderator's identity is never stored (actor_id NULL), matching
+-- report_resolved; on a reporter's message the actor is the reporter, as on
+-- new_report. The body is never copied: the notification only points at the
+-- message. ON CONFLICT rides notifications_report_message_unique_idx, so a
+-- repeat call for the same message inserts nothing.
+INSERT INTO notifications (user_id, type, actor_id, report_id, report_message_id)
+SELECT u.id, 'report_message',
+       CASE WHEN m.is_moderator THEN NULL::uuid ELSE m.author_id END,
+       m.report_id, m.id
+FROM report_messages m
+JOIN reports r ON r.id = m.report_id
+JOIN users u ON CASE WHEN m.is_moderator THEN u.id = r.reporter_id
+                     ELSE u.role IN ('admin', 'moderator') END
+WHERE m.id = sqlc.arg('message_id')
+  AND u.id IS DISTINCT FROM m.author_id
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = u.id AND np.type = 'report_message' AND np.enabled = FALSE
+  )
+ON CONFLICT (user_id, report_message_id) WHERE type = 'report_message' DO NOTHING;
 
 -- name: NotifyStaffOfNewRegistrationRequest :execrows
 -- Staff push signal for the registration approval queue (migration 0156), fired
@@ -368,8 +445,9 @@ WHERE c.id = sqlc.arg('comment_id')
 -- simply match no row.
 --
 -- A mention notifies only when ALL of these hold:
---   * the comment is live (not a tombstone, 0057) and on a public, published,
---     unblocked video — a mention must not leak a private video's existence;
+--   * the comment is live (not a tombstone, 0057), not held for review (0161 —
+--     its mentions wait for approval), and on a public, published, unblocked
+--     video — a mention must not leak a private video's existence;
 --   * the recipient is an active, non-deleted account and not the author;
 --   * the recipient has not muted the author and neither side blocked the other
 --     (for a federated comment user_id is NULL, so these are vacuously true);
@@ -390,6 +468,7 @@ WITH cand AS (
     LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
     WHERE c.id = sqlc.arg('comment_id')::uuid
       AND c.deleted_at IS NULL
+      AND NOT c.held_for_review
       AND v.privacy = 'public' AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks vb WHERE vb.video_id = v.id)
       AND c.user_id IS DISTINCT FROM u.id
