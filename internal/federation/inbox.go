@@ -35,6 +35,8 @@ type inboxActivity struct {
 	// Read only by Flag; raw so an odd shape never fails other activities.
 	Content json.RawMessage `json:"content"`
 	Tag     json.RawMessage `json:"tag"`
+	// Read only by Move: the actor the mover now lives at.
+	Target json.RawMessage `json:"target"`
 }
 
 // HandleInbox dispatches a signature-verified inbound activity. signerActorURL is
@@ -120,6 +122,8 @@ func (s *Service) dispatchActivity(ctx context.Context, act inboxActivity, signe
 		return s.handleReject(ctx, act, signerActorURL)
 	case "Flag":
 		return s.handleFlag(ctx, act, signerActorURL)
+	case "Move":
+		return s.handleMove(ctx, act, signerActorURL)
 	default:
 		return nil // unhandled activity types are accepted-and-ignored
 	}
@@ -140,6 +144,9 @@ func (s *Service) handleUndo(ctx context.Context, act inboxActivity, signerActor
 	// The undoer must be the request signer and (if named) the Follow's actor.
 	if act.Actor != signerActorURL || (inner.Actor != "" && inner.Actor != signerActorURL) {
 		return ErrActorMismatch
+	}
+	if s.isInstanceActorID(ctx, objectID(inner.Object)) {
+		return s.undoInstanceFollow(ctx, signerActorURL)
 	}
 	handle, ok := s.localChannelHandle(objectID(inner.Object))
 	if !ok {
@@ -172,6 +179,9 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 	// The signer must be the Follow's actor — no following on another's behalf.
 	if act.Actor != signerActorURL {
 		return ErrActorMismatch
+	}
+	if s.isInstanceActorID(ctx, objectID(act.Object)) {
+		return s.handleInstanceFollow(ctx, act, signerActorURL)
 	}
 	handle, ok := s.localChannelHandle(objectID(act.Object))
 	if !ok {
@@ -239,6 +249,7 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 	if err := s.enqueueAcceptFollow(ctx, ch.ID, handle, signerActorURL, act.ID); err != nil {
 		return err
 	}
+	s.backfillAfterAccept(ctx, ch.ID, handle, signerActorURL)
 	return s.maybeAutoFollowBack(ctx, ch.ID, handle, signerActorURL)
 }
 
@@ -324,6 +335,15 @@ func (s *Service) rejectAccountFollow(ctx context.Context, object, followerURL, 
 // the distinguishable answer the silence exists to avoid.
 func (s *Service) rejectFollowFromBlockedSender(ctx context.Context, act inboxActivity, signerActorURL string) {
 	if act.Type != "Follow" || act.Actor != signerActorURL {
+		return
+	}
+	if s.isInstanceActorID(ctx, objectID(act.Object)) {
+		// An instance follow refused by the same block gets the same answer,
+		// from the actor it addressed.
+		if err := s.answerInstanceFollow(ctx, "Reject", signerActorURL, act.ID); err != nil && s.logger != nil {
+			s.logger.Warn("federation: could not queue the Reject for an instance Follow refused by an instance block",
+				"activity_id", act.ID, "actor", signerActorURL, "error", err)
+		}
 		return
 	}
 	handle, ok := s.localChannelHandle(objectID(act.Object))

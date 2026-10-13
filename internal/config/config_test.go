@@ -2308,3 +2308,23 @@ func TestPeerTubeImportCopyConcurrency(t *testing.T) {
 		})
 	}
 }
+
+// TestIPFSRepoBudgetDefaultsOffAndRejectsNegative: F3's ceiling is opt-in — the
+// unmanaged drain's behaviour is unchanged for everyone who does not set it.
+func TestIPFSRepoBudgetDefaultsOffAndRejectsNegative(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load default: %v", err)
+	}
+	if cfg.IPFSRepoBudgetBytes != 0 {
+		t.Errorf("IPFS_REPO_BUDGET_BYTES defaults to %d, want 0 (no ceiling)", cfg.IPFSRepoBudgetBytes)
+	}
+	t.Setenv("IPFS_REPO_BUDGET_BYTES", "10737418240")
+	if cfg, err = Load(); err != nil || cfg.IPFSRepoBudgetBytes != 10<<30 {
+		t.Fatalf("IPFS_REPO_BUDGET_BYTES=10GiB: %d, %v", cfg.IPFSRepoBudgetBytes, err)
+	}
+	t.Setenv("IPFS_REPO_BUDGET_BYTES", "-1")
+	if _, err = Load(); err == nil {
+		t.Fatal("a negative IPFS_REPO_BUDGET_BYTES must be refused, not read as off")
+	}
+}
