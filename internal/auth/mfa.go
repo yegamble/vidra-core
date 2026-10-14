@@ -547,6 +547,7 @@ func (s *Service) CompleteMFAChallenge(ctx context.Context, mfaToken, code, user
 	if err != nil {
 		return sqlcgen.User{}, Tokens{}, "", err
 	}
+	s.noteSignIn(ctx, user, userAgent)
 	return user, tokens, method, nil
 }
 

@@ -567,6 +567,7 @@ func (s *Server) handleLogin(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
+	deviceTok := s.withDevice(c)
 	res, err := s.authsvc.Login(c.Request().Context(), auth.LoginInput{
 		Email:      in.Email,
 		Identifier: in.Identifier,
@@ -602,6 +603,7 @@ func (s *Server) handleLogin(c echo.Context) error {
 		return c.JSON(http.StatusOK, mfaRequiredResponse{MFARequired: true, MFAToken: res.MFAToken})
 	}
 	s.audit(c, observability.ActionLogin, observability.ResultSuccess, res.User.ID.String(), "")
+	s.setDeviceCookie(c, deviceTok)
 	cookieMode := in.CookieMode || refreshCookieToken(c) != ""
 	return s.authResponse(http.StatusOK, c, res.User, res.Tokens, cookieMode)
 }

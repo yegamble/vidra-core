@@ -1498,6 +1498,101 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/devices:
+    get:
+      operationId: listRecognisedDevices
+      summary: List recognised devices
+      description: >-
+        The browsers and devices the account has signed in from, most recent
+        first, and whether the new-device sign-in email is on. A device is a
+        long-lived random `vidra_device` cookie (httpOnly, Path=/api/v1/auth)
+        bound to the browser family and OS; only a hash and a coarse label such
+        as "Chrome on macOS" are stored, never an IP address. `current` marks the
+        device making this request.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The account's recognised devices.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecognisedDevicesResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/devices/{id}:
+    delete:
+      operationId: forgetRecognisedDevice
+      summary: Forget a recognised device
+      description: >-
+        Removes the record, so the next sign-in from that device is treated as
+        new (and mails the account, unless that is turned off). It does NOT end
+        sessions: sessions carry no device link, so use sign out of all devices
+        for that. Audited as `auth.device.forget`.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: The device was forgotten.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such device on this account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/security-prefs:
+    patch:
+      operationId: updateSecurityPrefs
+      summary: Turn the new-device sign-in email on or off
+      description: >-
+        The email is on by default. At most one such email is sent to an account
+        per hour, and an account with no recognised device yet never gets one
+        (its first sign-in just records).
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecurityPrefsRequest"
+      responses:
+        "200":
+          description: The stored preference.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityPrefsRequest"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (new_device_email is required).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/auth/mfa:
     get:
       operationId: getMFAStatus
@@ -28572,6 +28667,33 @@ components:
           description: >-
             Short-lived (5 min) single-purpose token. Not an access token — it
             is only accepted by the MFA challenge endpoint.
+    RecognisedDevice:
+      type: object
+      required: [id, label, first_seen_at, last_seen_at, current]
+      properties:
+        id: {type: string, format: uuid}
+        label: {type: string, example: Chrome on macOS}
+        first_seen_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        current:
+          type: boolean
+          description: True for the device making this request.
+    RecognisedDevicesResponse:
+      type: object
+      required: [devices, new_device_email]
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecognisedDevice"
+        new_device_email:
+          type: boolean
+          description: Whether the new-device sign-in email is on (default true).
+    SecurityPrefsRequest:
+      type: object
+      required: [new_device_email]
+      properties:
+        new_device_email: {type: boolean}
     MFAStatusResponse:
       type: object
       required: [enabled, recovery_codes_remaining]

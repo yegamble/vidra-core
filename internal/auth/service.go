@@ -270,6 +270,12 @@ type Service struct {
 	delayOnlyPrefix bool
 	sleep           func(time.Duration)
 
+	// deviceStore backs new-device recognition and notices (devices.go);
+	// nil = off.
+	deviceStore DeviceStore
+	// async runs background sends; nil = a goroutine (tests set it inline).
+	async func(func())
+
 	// onRegistrationRequest is the WithRegistrationRequestHook callback (nil = none).
 	onRegistrationRequest func(context.Context, uuid.UUID)
 }
@@ -648,6 +654,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput, userAgent string) (L
 	if err != nil {
 		return LoginResult{}, err
 	}
+	s.noteSignIn(ctx, user, userAgent)
 	return LoginResult{User: user, Tokens: tokens}, nil
 }
 
