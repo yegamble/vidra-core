@@ -66,6 +66,9 @@ const (
 	// is an ADMIN-domain action against a target account, distinct from
 	// auth.mfa.disable, which the account holder performs on themselves.
 	ActionAdminMFAReset = "admin.user.mfa_reset"
+	// ActionAdminLoginLockoutClear: an administrator cleared an account's
+	// failed-login counters and locks. No credential or address is recorded.
+	ActionAdminLoginLockoutClear = "admin.user.login_lockout_clear"
 	// ActionAdminPasswordResetLink: an administrator minted a one-time reset link
 	// for a locked-out ordinary user. The token and link are never recorded.
 	ActionAdminPasswordResetLink = "admin.user.password_reset_link"
