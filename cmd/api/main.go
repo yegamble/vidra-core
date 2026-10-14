@@ -68,6 +68,7 @@ import (
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/peertubearchive"
+	"github.com/vidra/vidra-core/internal/peertubefollows"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
 	"github.com/vidra/vidra-core/internal/playbackstats"
 	"github.com/vidra/vidra-core/internal/playersettings"
@@ -1232,6 +1233,8 @@ func run() error {
 		// deferred-assignment, nil-guarded seam as every other closure in this
 		// block.
 		fedsvc *federation.Service
+		// ptFollows is assigned beside fedsvc and read by the worker below.
+		ptFollows *peertubefollows.Service
 	)
 	// releaseHold releases a publish-after-transcode hold once no live job
 	// remains (0098), shared by the completion and terminal-failure hooks. The
@@ -1705,12 +1708,13 @@ func run() error {
 
 	playlistsvc := playlist.NewService(db.Queries(), playlist.WithStorage(blobs), playlist.WithMirror(ipfsMirror))
 	opts = append(opts, httpapi.WithPlaylistService(playlistsvc))
-	opts = append(opts, httpapi.WithPeerTubeArchiveImporter(&peertubearchive.Importer{
+	ptImporter := &peertubearchive.Importer{
 		Channels: channelsvc, Playlists: playlistsvc, PlayerSettings: playersettingssvc,
 		Lock: func(ctx context.Context, userID uuid.UUID) (func(), error) {
 			return lockUserImport(ctx, db.Pool, userID)
 		},
-	}))
+	}
+	opts = append(opts, httpapi.WithPeerTubeArchiveImporter(ptImporter))
 
 	// Media garbage collection: admin-triggered sweep + a daily scheduled sweep.
 	// The endpoint is mounted whatever MEDIA_GC_ENABLED says — the flag governs
@@ -2366,6 +2370,13 @@ func run() error {
 	if cfg.FederationEnabled {
 		opts = append(opts, httpapi.WithVideoFederation(fedsvc))
 	}
+	// PeerTube export "following": queued here, followed by the worker below
+	// through fedsvc.FollowRemoteChannel (the POST /me/remote-follows path).
+	ptFollows = &peertubefollows.Service{
+		Repo: db.Queries(), Follower: fedsvc, Enabled: func() bool { return cfg.FederationEnabled },
+	}
+	ptImporter.Follows = ptFollows
+	opts = append(opts, httpapi.WithPeerTubeFollowStatus(ptFollows))
 
 	// ATProto / Bluesky extension (P10.2, .ralph/specs/atproto.md) — v1 outbound
 	// cross-posting only. Always constructed so the /me/atproto routes are a stable
@@ -2594,6 +2605,17 @@ func run() error {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runFederationDeliveryWorker(workerCtx, logger, fedsvc)
+		go jobloop.Loop{
+			Interval: 15 * time.Second,
+			Jitter:   true,
+			Passes: []jobloop.Pass{{
+				FailMsg: "peertube follow import drain failed",
+				Run:     func(ctx context.Context, _ time.Time) (int, error) { return ptFollows.Drain(ctx) },
+			}, {
+				FailMsg: "peertube follow import prune failed",
+				Run:     func(ctx context.Context, _ time.Time) (int, error) { return ptFollows.Prune(ctx) },
+			}},
+		}.Run(workerCtx, logger)
 		logger.Info("federation delivery worker started")
 	}
 

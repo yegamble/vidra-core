@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/peertubefollows"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -251,5 +252,35 @@ func TestImportMapsHandlesCollisionsAndPlaylistChannel(t *testing.T) {
 	}
 	if again.ChannelsCreated != 0 || again.ChannelsExisting != 3 || len(ch.byHandle) != 4 {
 		t.Fatalf("re-import: %+v", again)
+	}
+}
+
+type fakeFollows struct {
+	got []string
+	out peertubefollows.Queued
+}
+
+func (f *fakeFollows) Enqueue(_ context.Context, _ uuid.UUID, t []string) (peertubefollows.Queued, error) {
+	f.got = t
+	return f.out, nil
+}
+
+func TestImportQueuesFollows(t *testing.T) {
+	id := uuid.New()
+	f := &fakeFollows{out: peertubefollows.Queued{JobID: &id, Queued: 2}}
+	im := &Importer{Channels: &fakeChannels{byHandle: map[string]sqlcgen.Channel{}}, Playlists: &fakePlaylists{}, Follows: f}
+	a := &Archive{Following: []string{"a@x.example", "b@y.example", "b@y.example"}}
+	sum, err := im.Import(context.Background(), uuid.New(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.FollowsQueued != 2 || sum.FollowsJobID == nil || *sum.FollowsJobID != id.String() || sum.SkippedSections["following"] != 1 {
+		t.Fatalf("%+v", sum)
+	}
+	// No queue wired: the handles are counted as skipped, nothing is lost silently.
+	bare := &Importer{Channels: im.Channels, Playlists: im.Playlists}
+	sum, _ = bare.Import(context.Background(), uuid.New(), a)
+	if sum.FollowsJobID != nil || sum.SkippedSections["following"] != 3 {
+		t.Fatalf("%+v", sum)
 	}
 }

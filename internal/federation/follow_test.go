@@ -463,3 +463,33 @@ func TestFollowRemoteChannelKeepsTheSingleSelfLink(t *testing.T) {
 		t.Fatalf("followed %q, want %q", follow.ActorURL, want)
 	}
 }
+
+// A blocked domain is refused before any WebFinger fetch: the service has no
+// HTTP client wired here, so reaching the fetch would fail as unresolvable
+// rather than as blocked.
+func TestFollowRemoteChannelRefusesBlockedDomain(t *testing.T) {
+	userID := uuid.New()
+	repo := newFollowRepo(userID)
+	repo.blockedDomains = map[string]bool{"bad.example": true}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	for _, target := range []string{
+		"movies@bad.example", "@Movies@BAD.example", "https://bad.example/video-channels/movies",
+		"movies@bad.example:8443", "movies@bad.example.", "movies@Bad.Example", "https://bad.example.:8443/x",
+	} {
+		if _, err := svc.FollowRemoteChannel(context.Background(), userID, target); !errors.Is(err, ErrBlockedFollowTarget) {
+			t.Errorf("%q err = %v, want ErrBlockedFollowTarget", target, err)
+		}
+	}
+	// Malformed hosts are refused as bad targets, never fetched.
+	for _, target := range []string{"movies@bad.example?x", "movies@bad.example#f", "movies@bad..example", "movies@bad.example\\evil", "movies@.example"} {
+		if _, err := svc.FollowRemoteChannel(context.Background(), userID, target); !errors.Is(err, ErrBadFollowTarget) {
+			t.Errorf("%q err = %v, want ErrBadFollowTarget", target, err)
+		}
+	}
+	if h, ok := NormalizeFollowHost("BÜCHER.example.:443"); !ok || h != "xn--bcher-kva.example" {
+		t.Errorf("idna host = %q %v", h, ok)
+	}
+	if len(repo.deliveries) != 0 || len(repo.rcFollows) != 0 {
+		t.Error("a blocked target must not enqueue or store anything")
+	}
+}

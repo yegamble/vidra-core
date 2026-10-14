@@ -242,11 +242,8 @@ func (s *Service) fetchVideoObject(ctx context.Context, objectURL string) (apVid
 	if err != nil {
 		return apVideoObject{}, fmt.Errorf("federation: unsafe object URL: %w", err)
 	}
-	client := s.fetchClient
-	if client == nil {
-		client = guard.NewClient(remoteFetchTimeout)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	client := s.remoteClient(guard)
+	req, err := http.NewRequestWithContext(withSameHostRedirects(ctx), http.MethodGet, target.String(), nil)
 	if err != nil {
 		return apVideoObject{}, err
 	}
@@ -283,10 +280,12 @@ func (s *Service) cacheRemoteThumbnail(ctx context.Context, videoID uuid.UUID, t
 	if err != nil {
 		return
 	}
-	client := s.fetchClient
-	if client == nil {
-		client = guard.NewClient(remoteFetchTimeout)
+	// A poster may live on another host than the video (a CDN), but never on a
+	// blocked one; redirects are held to the same rule by remoteClient.
+	if blocked, err := s.hostBlocked(ctx, target); err != nil || blocked {
+		return
 	}
+	client := s.remoteClient(guard)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return
