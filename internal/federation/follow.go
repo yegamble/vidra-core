@@ -411,10 +411,7 @@ func (s *Service) fetchJRD(ctx context.Context, jrdURL string) (*JRD, error) {
 	if err != nil {
 		return nil, fmt.Errorf("federation: unsafe webfinger URL: %w", err)
 	}
-	client := s.fetchClient
-	if client == nil {
-		client = guard.NewClient(remoteFetchTimeout)
-	}
+	client := s.remoteClient(guard)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, err

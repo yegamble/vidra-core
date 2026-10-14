@@ -202,11 +202,8 @@ func (s *Service) fetchActor(ctx context.Context, actorURL string) (fetchedActor
 	if err != nil {
 		return fetchedActor{}, fmt.Errorf("federation: unsafe actor URL: %w", err)
 	}
-	client := s.fetchClient
-	if client == nil {
-		client = guard.NewClient(remoteFetchTimeout)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	client := s.remoteClient(guard)
+	req, err := http.NewRequestWithContext(withSameHostRedirects(ctx), http.MethodGet, target.String(), nil)
 	if err != nil {
 		return fetchedActor{}, err
 	}
@@ -226,6 +223,12 @@ func (s *Service) fetchActor(ctx context.Context, actorURL string) (fetchedActor
 	var fa fetchedActor
 	if err := json.Unmarshal(body, &fa); err != nil {
 		return fetchedActor{}, fmt.Errorf("federation: parse actor: %w", err)
+	}
+	// The document is cached under actorURL, so it must speak for that host.
+	// Redirects cannot leave the host (withSameHostRedirects), which makes the
+	// requested host and the answering host one and the same.
+	if !sameHost(fa.ID, target.String()) {
+		return fetchedActor{}, errors.New("federation: actor id is not on the fetched host")
 	}
 	if strings.TrimSpace(fa.PublicKey.PublicKeyPem) == "" {
 		return fetchedActor{}, errors.New("federation: remote actor has no public key")
