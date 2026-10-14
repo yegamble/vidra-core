@@ -23,18 +23,24 @@ import (
 	"strings"
 )
 
-// Limits. A metadata-only archive is a few KiB; real exports that bundle video
-// files are far larger and are refused by the caller's body limit before they
-// reach this package.
+// Limits. A metadata-only archive is a few KiB; a real export bundles the video
+// files (multi-GB). The caller streams the upload to a file and hands it to
+// ReadAt, which only ever opens the peertube/*.json entries: the media entries
+// are validated by NAME and TYPE and then left alone, so their size is bounded
+// only by the caller's upload cap, never read or decompressed here.
 const (
-	MaxEntries       = 2000
-	MaxDeclaredTotal = 64 << 20 // sum of every entry's declared uncompressed size
+	MaxEntries = 20000
+	// MaxDirectoryBytes bounds the zip central directory. archive/zip loads the
+	// whole directory into memory before we see one entry, so without this a
+	// hostile multi-GB file made of empty entries is a memory bomb. 4 MiB is
+	// MaxEntries at ~200 bytes a record (46-byte header + name + extra fields).
+	MaxDirectoryBytes = 4 << 20
+	// MaxDeclaredTotal bounds the sum of the declared uncompressed sizes of the
+	// peertube/ entries only (the ones that may be read).
+	MaxDeclaredTotal = 64 << 20
 	MaxJSONBytes     = 8 << 20  // per entry actually read
 	MaxReadTotal     = 16 << 20 // across all entries actually read
 	maxNameLen       = 512
-
-	// MaxUploadBytes bounds the zip itself (the default HTTP body limit).
-	MaxUploadBytes = 8 << 20
 
 	// MaxStreamBytes bounds the decompressed bytes scanned for counted-only
 	// sections, per section and in total. They are scanned, never buffered.
@@ -93,12 +99,23 @@ func invalid(format string, a ...any) error {
 // CPU spent on uploads stays flat however many users upload together.
 var parseSlots = make(chan struct{}, 2)
 
-// Read parses a zip held in memory. It returns ErrInvalid for anything
-// hostile or malformed, and an archive with no recognised JSON as invalid too.
+// Read parses a zip held in memory (see ReadAt).
 func Read(raw []byte) (*Archive, error) {
+	return ReadAt(bytes.NewReader(raw), int64(len(raw)))
+}
+
+// ReadAt parses a zip through random access (an *os.File), so a multi-GB export
+// costs only its central directory and the few JSON entries. It returns
+// ErrInvalid for anything hostile or malformed, and an archive with no
+// recognised JSON as invalid too. The parse slot is held only here, never while
+// the caller is receiving the upload.
+func ReadAt(ra io.ReaderAt, size int64) (*Archive, error) {
 	parseSlots <- struct{}{}
 	defer func() { <-parseSlots }()
-	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err := checkDirectory(ra, size); err != nil {
+		return nil, err
+	}
+	zr, err := zip.NewReader(ra, size)
 	if err != nil {
 		return nil, invalid("not a zip")
 	}
@@ -117,9 +134,13 @@ func Read(raw []byte) (*Archive, error) {
 			return nil, invalid("duplicate entry")
 		}
 		seen[key] = true
-		declared += f.UncompressedSize64
-		if declared > MaxDeclaredTotal {
-			return nil, invalid("declared size too large")
+		// Only the entries we may read count toward the declared total; a media
+		// entry's declared size is never acted on.
+		if strings.HasPrefix(f.Name, "peertube/") {
+			declared += f.UncompressedSize64
+			if declared > MaxDeclaredTotal {
+				return nil, invalid("declared size too large")
+			}
 		}
 		files[f.Name] = f
 	}

@@ -307,6 +307,42 @@ func TestUploadMaxSizeDefaultAndOverride(t *testing.T) {
 	}
 }
 
+// The large PeerTube archive cap is opt-in: unset means HTTP_BODY_LIMIT.
+func TestPeerTubeImportMaxSizeAndTmpDir(t *testing.T) {
+	t.Setenv("PEERTUBE_IMPORT_MAX_SIZE", "")
+	t.Setenv("PEERTUBE_IMPORT_TMPDIR", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.PeerTubeImportMaxSize != "" || cfg.PeerTubeImportTmpDir != "" {
+		t.Errorf("defaults = %q / %q, want both empty", cfg.PeerTubeImportMaxSize, cfg.PeerTubeImportTmpDir)
+	}
+	for _, ok := range []string{"0", "20G"} {
+		t.Setenv("PEERTUBE_IMPORT_MAX_SIZE", ok)
+		if _, err := Load(); err != nil {
+			t.Errorf("PEERTUBE_IMPORT_MAX_SIZE=%s: %v", ok, err)
+		}
+	}
+	t.Setenv("PEERTUBE_IMPORT_MAX_SIZE", "lots")
+	if _, err := Load(); err == nil {
+		t.Error("invalid PEERTUBE_IMPORT_MAX_SIZE accepted")
+	}
+	t.Setenv("PEERTUBE_IMPORT_MAX_SIZE", "")
+	t.Setenv("PEERTUBE_IMPORT_TMPDIR", "relative/dir")
+	if _, err := Load(); err == nil {
+		t.Error("relative PEERTUBE_IMPORT_TMPDIR accepted")
+	}
+	t.Setenv("PEERTUBE_IMPORT_TMPDIR", "/var/spool/vidra")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("absolute PEERTUBE_IMPORT_TMPDIR: %v", err)
+	}
+	if cfg.PeerTubeImportTmpDir != "/var/spool/vidra" {
+		t.Errorf("PeerTubeImportTmpDir = %q", cfg.PeerTubeImportTmpDir)
+	}
+}
+
 func TestImportAllowPrivateURLsDefaultAndOverride(t *testing.T) {
 	t.Setenv("HTTP_IMPORT_ALLOW_PRIVATE_URLS", "")
 	cfg, err := Load()

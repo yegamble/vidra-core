@@ -3377,11 +3377,17 @@ paths:
         the autoplay-next setting. Videos, likes, dislikes, comments, watch
         history, blocklists, followers and following are NOT imported yet and
         are counted under skipped_sections. Synchronous: the work is bounded
-        and touches no network or media. The zip is parsed in memory, never
-        extracted, and refused whole on traversal, symlink, encrypted,
-        duplicate or oversize entries; the body is bounded by the HTTP body
-        limit (default 8 MB), so an export that bundles video files must be
-        trimmed to its peertube/*.json entries first. 403 feature_disabled
+        and touches no network or media. The body cap for this route is
+        PEERTUBE_IMPORT_MAX_SIZE, which defaults to the global HTTP body limit
+        (8 MB), enough for an export trimmed to its peertube/*.json entries; an
+        instance that raises it also accepts the full export including its
+        video files. A Content-Length is required (411 without one). The upload
+        is streamed to a temporary file that is always removed, and only the
+        peertube/*.json entries are ever read; media entries are never opened.
+        The archive is refused whole on traversal, symlink, encrypted,
+        duplicate or oversize JSON entries, or an oversized or ambiguous
+        central directory (more than 20000 entries or 4 MiB). An upload that
+        stops sending for 60 s is abandoned with 408. 403 feature_disabled
         when user_import_enabled is off. At most 3 imports per user per hour.
         At most 50 channels may be owned after an import, existing ones
         included. If the import stops part-way on a server error, the answer is
@@ -3421,8 +3427,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "408":
+          description: The upload stopped sending for 60 seconds and was abandoned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "411":
+          description: The request has no Content-Length.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "413":
-          description: The archive exceeds the request body limit.
+          description: >-
+            The request body exceeds PEERTUBE_IMPORT_MAX_SIZE (default: the
+            global HTTP body limit), declared or actually streamed.
           content:
             application/json:
               schema:
@@ -3435,6 +3455,15 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "429":
           description: Too many imports in the window (3 per user per hour).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            The server is already receiving the maximum number of archives, or
+            has too little free temporary space for this one (also when space
+            runs short mid-upload); retry after the Retry-After seconds.
           content:
             application/json:
               schema:

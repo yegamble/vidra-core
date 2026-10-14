@@ -102,6 +102,8 @@ type Server struct {
 	bulkVideosLimit *ratelimit.Limiter
 	// peertubeImportLimit throttles POST /me/import/peertube PER USER.
 	peertubeImportLimit *ratelimit.Limiter
+	// ptSpool admits PeerTube archive uploads to local disk (process-wide).
+	ptSpool *peertubeSpool
 	// playbackStats + playbackLimit back the watch-time beacon and its owner
 	// report (playback_stats.go). Nil playbackStats leaves both routes unmounted.
 	playbackStats playbackStatsService
@@ -402,6 +404,11 @@ const uploadChunkRoutePath = "/api/v1/uploads/:upload_id/chunks/:n"
 // upload. Exempted from the default JSON body limit; the messaging service caps
 // each attachment at 100 MiB itself (messaging-v2.md D6).
 const attachmentUploadRoutePath = "/api/v1/conversations/:id/attachments"
+
+// peertubeImportRoutePath is the Echo route template for the PeerTube archive
+// import. It is exempt from the global body limit and gets its own
+// PEERTUBE_IMPORT_MAX_SIZE cap (a real export bundles the video files).
+const peertubeImportRoutePath = "/api/v1/me/import/peertube"
 
 // adminJobEventsPath is the admin job-events SSE stream. It is the one route
 // that gets neither a request context deadline nor a socket write deadline — it
@@ -1232,6 +1239,11 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// times, so they always carry a per-user budget, wired in-process like unlock.
 	s.bulkVideosLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultBulkVideosRateLimit, defaultBulkVideosRateWindow)
 	s.peertubeImportLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPeerTubeImportRateLimit, defaultPeerTubeImportRateWindow)
+	s.ptSpool = newPeerTubeSpool()
+	if s.peertubeArchive != nil {
+		// A process killed mid-import leaves its spool file behind; reclaim it.
+		sweepStalePeerTubeSpools(s.peertubeSpoolDir(), 2*time.Hour, time.Now(), s.logger)
+	}
 	s.playbackLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackRateLimit, defaultPlaybackRateWindow)
 	s.playbackStartLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackStartLimit, defaultPlaybackStartWindow)
 	// Remote-URI search resolution (config-parity W13) triggers outbound
@@ -1311,6 +1323,9 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 			}
 			// DM attachment uploads carry a bounded (100 MiB) media body.
 			if r.Method == http.MethodPost && c.Path() == attachmentUploadRoutePath {
+				return true
+			}
+			if r.Method == http.MethodPost && c.Path() == peertubeImportRoutePath {
 				return true
 			}
 			// Resumable chunk PUTs carry raw media bytes (up to the chunk size);
@@ -1740,7 +1755,7 @@ func (s *Server) routes() {
 		api.GET("/me/export/download", s.handleDownloadAccountExport, s.requireAuth)
 		api.POST("/me/import", s.handleImportAccount, s.requireAuth, s.requireScannerGate)
 		if s.peertubeArchive != nil {
-			api.POST("/me/import/peertube", s.handlePeerTubeArchiveImport, s.requireAuth, s.peertubeImportRateLimit())
+			api.POST("/me/import/peertube", s.handlePeerTubeArchiveImport, s.requireAuth, s.peertubeImportRateLimit(), s.peertubeImportBodyLimit())
 		}
 	}
 
