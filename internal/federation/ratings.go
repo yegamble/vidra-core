@@ -15,6 +15,14 @@ import (
 // maxRateIDLen bounds a Like/Dislike activity id (the column's CHECK, 0178).
 const maxRateIDLen = 2048
 
+// maxNewRemoteRatingsPerDomainHour caps the NEW votes one remote domain can add
+// across this instance per rolling hour. Past it, further new voters are
+// accepted and ignored (a voter already on file can still change their vote):
+// a domain minting accounts to stuff counts gets a bounded effect, and the
+// remedy for a hostile domain is the instance block, which also stops its
+// existing votes counting (CountVideoRatings).
+const maxNewRemoteRatingsPerDomainHour = 100
+
 // handleRate records a remote actor's Like or Dislike (PeerTube's two rating
 // activities) of one of OUR videos, as one row per (actor, video) in
 // remote_video_ratings: a repeat changes nothing, a switch flips the row. The
@@ -43,12 +51,16 @@ func (s *Service) handleRate(ctx context.Context, act inboxActivity, signerActor
 	if err != nil || !ok {
 		return err
 	}
-	return s.repo.UpsertRemoteVideoRating(ctx, sqlcgen.UpsertRemoteVideoRatingParams{
+	// 0 rows = the domain's hourly cap on new votes: accepted and ignored.
+	_, err = s.repo.UpsertRemoteVideoRating(ctx, sqlcgen.UpsertRemoteVideoRatingParams{
 		VideoID:        videoID,
 		RemoteActorUrl: signerActorURL,
 		Rating:         strings.ToLower(act.Type),
 		ActivityUrl:    act.ID,
+		Domain:         hostOf(signerActorURL),
+		DomainCap:      maxNewRemoteRatingsPerDomainHour,
 	})
+	return err
 }
 
 // rateTarget resolves a Like/Dislike object to a local video this actor may

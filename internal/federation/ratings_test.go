@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -14,12 +15,26 @@ import (
 // The fake mirrors remote_video_ratings (0178): one row per (actor, video), an
 // upsert replacing it in place, and the Undo delete matching either the
 // (video, kind) pair or the rating's own activity id.
-func (f fakeRepo) UpsertRemoteVideoRating(_ context.Context, arg sqlcgen.UpsertRemoteVideoRatingParams) error {
+// The cap mirrors the SQL: a NEW row only while the domain holds fewer than
+// DomainCap rows (every fake row counts as recent); a switch is never capped.
+func (f fakeRepo) UpsertRemoteVideoRating(_ context.Context, arg sqlcgen.UpsertRemoteVideoRatingParams) (int64, error) {
 	if f.remoteRatings == nil {
-		return errors.New("fake: remoteRatings not seeded")
+		return 0, errors.New("fake: remoteRatings not seeded")
 	}
-	f.remoteRatings[arg.RemoteActorUrl+"|"+arg.VideoID.String()] = &arg
-	return nil
+	key := arg.RemoteActorUrl + "|" + arg.VideoID.String()
+	if _, exists := f.remoteRatings[key]; !exists {
+		var n int64
+		for _, r := range f.remoteRatings {
+			if r.Domain == arg.Domain {
+				n++
+			}
+		}
+		if n >= arg.DomainCap {
+			return 0, nil
+		}
+	}
+	f.remoteRatings[key] = &arg
+	return 1, nil
 }
 
 func (f fakeRepo) DeleteRemoteVideoRating(_ context.Context, arg sqlcgen.DeleteRemoteVideoRatingParams) error {
@@ -74,6 +89,9 @@ func TestInboundLikeDislikeUndoOnLocalVideo(t *testing.T) {
 	send(rateActivity(rtLikeID, "Like", ctPTAccount, rtVideoURL))
 	if got := ratingOf(repo, ctPTAccount); got != "like" {
 		t.Fatalf("after Like: rating = %q, want like", got)
+	}
+	if row := repo.remoteRatings[ctPTAccount+"|"+ctVideoID.String()]; row.Domain != "peertube.example" || row.DomainCap != maxNewRemoteRatingsPerDomainHour {
+		t.Fatalf("stored domain/cap = %q/%d", row.Domain, row.DomainCap)
 	}
 	// A second Like (new activity id) is still ONE vote.
 	send(rateActivity(ctPTAccount+"/likes/78", "Like", ctPTAccount, rtVideoURL))
@@ -230,5 +248,35 @@ func TestInboundRatingRefusals(t *testing.T) {
 				t.Fatalf("refused activity changed the ratings: %+v", repo.remoteRatings)
 			}
 		})
+	}
+}
+
+// A domain at its hourly cap of NEW votes has further new voters accepted and
+// ignored; a voter already on file can still change their vote.
+func TestInboundRatingDomainCap(t *testing.T) {
+	ctx := context.Background()
+	repo := ratingRepo()
+	for i := 0; i < maxNewRemoteRatingsPerDomainHour; i++ {
+		repo.remoteRatings[fmt.Sprintf("seed%d", i)] = &sqlcgen.UpsertRemoteVideoRatingParams{
+			RemoteActorUrl: fmt.Sprintf("https://peertube.example/accounts/s%d", i), VideoID: uuid.New(),
+			Rating: "like", Domain: "peertube.example",
+		}
+	}
+	svc := NewService(repo, WithBaseURL(contractBase))
+	if err := svc.HandleInbox(ctx, ctPTAccount, rateActivity(rtLikeID, "Like", ctPTAccount, rtVideoURL)); err != nil {
+		t.Fatalf("capped Like: %v, want accept-and-ignore", err)
+	}
+	if got := ratingOf(repo, ctPTAccount); got != "" {
+		t.Fatalf("a new vote past the domain cap was stored: %q", got)
+	}
+	// An already-recorded voter switches regardless of the cap.
+	repo.remoteRatings[ctPTAccount+"|"+ctVideoID.String()] = &sqlcgen.UpsertRemoteVideoRatingParams{
+		VideoID: ctVideoID, RemoteActorUrl: ctPTAccount, Rating: "like", Domain: "peertube.example",
+	}
+	if err := svc.HandleInbox(ctx, ctPTAccount, rateActivity(ctPTAccount+"/dislikes/9", "Dislike", ctPTAccount, rtVideoURL)); err != nil {
+		t.Fatal(err)
+	}
+	if got := ratingOf(repo, ctPTAccount); got != "dislike" {
+		t.Fatalf("existing voter's switch = %q, want dislike", got)
 	}
 }

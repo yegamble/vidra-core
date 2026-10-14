@@ -142,7 +142,7 @@ type Repository interface {
 	GetChannelActorAlias(ctx context.Context, channelID uuid.UUID) (string, error)
 	IsRemoteActorBlockedInstanceWide(ctx context.Context, actorURL string) (bool, error)
 	// Remote actors' Like/Dislike votes on local videos (0178).
-	UpsertRemoteVideoRating(ctx context.Context, arg sqlcgen.UpsertRemoteVideoRatingParams) error
+	UpsertRemoteVideoRating(ctx context.Context, arg sqlcgen.UpsertRemoteVideoRatingParams) (int64, error)
 	DeleteRemoteVideoRating(ctx context.Context, arg sqlcgen.DeleteRemoteVideoRatingParams) error
 	BlockRemoteActorInstanceWide(ctx context.Context, arg sqlcgen.BlockRemoteActorInstanceWideParams) error
 	UnblockRemoteActorInstanceWide(ctx context.Context, remoteActorURL string) (int64, error)
