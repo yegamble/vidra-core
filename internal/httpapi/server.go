@@ -47,6 +47,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/peertubearchive"
 	"github.com/vidra/vidra-core/internal/playback"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
@@ -147,6 +148,7 @@ type Server struct {
 	ratingsvc         *rating.Service
 	notifsvc          *notification.Service
 	playersettingssvc *playersettings.Service
+	peertubeArchive   *peertubearchive.Importer
 	viewerprefssvc    *viewerprefs.Service
 	playlistsvc       *playlist.Service
 	moderationsvc     *moderation.Service
@@ -1725,6 +1727,9 @@ func (s *Server) routes() {
 		api.GET("/me/export", s.handleGetAccountExport, s.requireAuth)
 		api.GET("/me/export/download", s.handleDownloadAccountExport, s.requireAuth)
 		api.POST("/me/import", s.handleImportAccount, s.requireAuth, s.requireScannerGate)
+		if s.peertubeArchive != nil {
+			api.POST("/me/import/peertube", s.handlePeerTubeArchiveImport, s.requireAuth)
+		}
 	}
 
 	// DEV-ONLY: expose captured account-security tokens so e2e tests can complete

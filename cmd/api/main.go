@@ -65,6 +65,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/peertubearchive"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
 	"github.com/vidra/vidra-core/internal/playbackstats"
 	"github.com/vidra/vidra-core/internal/playersettings"
@@ -1702,6 +1703,9 @@ func run() error {
 
 	playlistsvc := playlist.NewService(db.Queries(), playlist.WithStorage(blobs), playlist.WithMirror(ipfsMirror))
 	opts = append(opts, httpapi.WithPlaylistService(playlistsvc))
+	opts = append(opts, httpapi.WithPeerTubeArchiveImporter(&peertubearchive.Importer{
+		Channels: channelsvc, Playlists: playlistsvc, PlayerSettings: playersettingssvc,
+	}))
 
 	// Media garbage collection: admin-triggered sweep + a daily scheduled sweep.
 	// The endpoint is mounted whatever MEDIA_GC_ENABLED says — the flag governs

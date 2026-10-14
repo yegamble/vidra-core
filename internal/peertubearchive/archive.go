@@ -31,6 +31,9 @@ const (
 	MaxJSONBytes     = 8 << 20  // per entry actually read
 	MaxReadTotal     = 16 << 20 // across all entries actually read
 	maxNameLen       = 512
+
+	// MaxUploadBytes bounds the zip itself (the default HTTP body limit).
+	MaxUploadBytes = 8 << 20
 )
 
 // ErrInvalid wraps every reason an archive is refused.

@@ -36,6 +36,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/peertubearchive"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
 	"github.com/vidra/vidra-core/internal/playbackstats"
 	"github.com/vidra/vidra-core/internal/playersettings"
@@ -80,6 +81,7 @@ func fullRouteOptions() []Option {
 		WithPlayerSettingsService(playersettings.NewService(nil)),
 		WithViewerPrefsService(viewerprefs.NewService(nil)),
 		WithPlaylistService(playlist.NewService(nil)),
+		WithPeerTubeArchiveImporter(&peertubearchive.Importer{}),
 		WithModerationService(moderation.NewService(nil)),
 		WithMuteService(mute.NewService(nil)),
 		WithBlockService(block.NewService(nil)),
