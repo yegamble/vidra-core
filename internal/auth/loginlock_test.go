@@ -18,6 +18,8 @@ import (
 type fakeLockStore struct {
 	mu   sync.Mutex
 	rows map[string]*fakeLockRow
+	// handed records every count RecordLoginAttempt returned, per key, in order.
+	handed map[string][]int32
 }
 type fakeLockRow struct {
 	count  int32
@@ -25,7 +27,9 @@ type fakeLockRow struct {
 	locked time.Time // zero = NULL
 }
 
-func newFakeLockStore() *fakeLockStore         { return &fakeLockStore{rows: map[string]*fakeLockRow{}} }
+func newFakeLockStore() *fakeLockStore {
+	return &fakeLockStore{rows: map[string]*fakeLockRow{}, handed: map[string][]int32{}}
+}
 func lockKey(u uuid.UUID, scope string) string { return u.String() + "|" + scope }
 
 func (f *fakeLockStore) EnsureLoginThrottle(context.Context, sqlcgen.EnsureLoginThrottleParams) error {
@@ -50,6 +54,7 @@ func (f *fakeLockStore) RecordLoginAttempt(_ context.Context, a sqlcgen.RecordLo
 	if probe {
 		r.locked = time.Time{}
 	}
+	f.handed[k] = append(f.handed[k], r.count)
 	return sqlcgen.RecordLoginAttemptRow{FailCount: r.count, Probe: probe}, nil
 }
 func (f *fakeLockStore) SetLoginLock(_ context.Context, a sqlcgen.SetLoginLockParams) error {
@@ -258,13 +263,27 @@ func TestParallelBurstCannotPassTheThreshold(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	// Only the first prefixThreshold attempts may have reached the compare: the
-	// counter says so, and the rest were refused before it.
+	// The guarantee: every attempt that reached the compare was handed a
+	// DISTINCT count, and no more than prefixThreshold of them were within the
+	// threshold. How many further attempts were counted at all is scheduling:
+	// once the lock lands, later arrivals are refused before they are counted
+	// (so the final count may be exactly prefixThreshold), which is correct.
 	e.store.mu.Lock()
-	n := e.store.rows[lockKey(e.user.ID, ipScope("203.0.113.7"))].count
+	handed := append([]int32(nil), e.store.handed[lockKey(e.user.ID, ipScope("203.0.113.7"))]...)
 	e.store.mu.Unlock()
-	if n <= prefixThreshold {
-		t.Fatalf("attempts past the threshold must have been counted and refused; count=%d", n)
+	seen := map[int32]bool{}
+	within := 0
+	for _, c := range handed {
+		if seen[c] {
+			t.Fatalf("count %d handed out twice: attempts were not serialised (%v)", c, handed)
+		}
+		seen[c] = true
+		if c <= prefixThreshold {
+			within++
+		}
+	}
+	if within != prefixThreshold {
+		t.Fatalf("exactly %d attempts may be admitted under the threshold, got %d (%v)", prefixThreshold, within, handed)
 	}
 	if err := e.login("203.0.113.7", "supersecret"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("burst must leave the prefix locked: %v", err)
