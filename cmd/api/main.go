@@ -2340,6 +2340,9 @@ func run() error {
 			return settingssvc.Bool(instancesettings.KeyFederationAutoFollowBack)
 		}),
 		federation.WithLogger(logger),
+		// A local view of a remote video is federated to its origin once per
+		// viewer per window, deduped in Redis like a local view.
+		federation.WithRemoteViewDeduper(cache.NewDeduper(rdb.Client)),
 	}
 	if cfg.FederationKeyKEK != "" {
 		cipher, err := secretbox.NewCipherFromBase64(cfg.FederationKeyKEK)

@@ -2246,6 +2246,9 @@ func (s *Server) routes() {
 			api.GET("/remote-videos/:id/rating", s.handleGetRemoteVideoRating, s.requireAuth)
 			api.PUT("/remote-videos/:id/rating", s.handlePutRemoteVideoRating, s.requireAuth, s.remoteRatingRateLimit())
 			api.DELETE("/remote-videos/:id/rating", s.handleDeleteRemoteVideoRating, s.requireAuth, s.remoteRatingRateLimit())
+			// A view of a remote video, federated to the origin as a View from
+			// the instance actor (remote_video_views.go).
+			api.POST("/remote-videos/:id/view", s.handleRecordRemoteVideoView, s.optionalAuth)
 		}
 		// The WRITE side (migration 0147, the home-instance-hosts-and-federates
 		// ruling): a signed-in local user authors a comment ON a remote video, and

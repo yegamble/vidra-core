@@ -243,6 +243,9 @@ type Service struct {
 	allowChannelFollowers func() bool
 	followerApproval      func() bool
 	autoFollowBack        func() bool
+	// remoteViewDeduper gates federated views of remote videos
+	// (views_outbound.go). Nil = not federated.
+	remoteViewDeduper ViewDeduper
 	// logger, when set, records dropped/refused inbound activities (the
 	// federation_accept_remote_comments drop path). Nil = silent.
 	logger *slog.Logger
