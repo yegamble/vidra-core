@@ -24,7 +24,8 @@ type fakeRepo struct {
 	// live maps a target id to its CURRENT text, so the fake can project the
 	// live excerpt and target_status the SQL computes rather than echoing the
 	// snapshot back — the distinction this slice exists to make.
-	live map[uuid.UUID]string
+	live     map[uuid.UUID]string
+	autoTags map[uuid.UUID][]string // comment_automatic_tags (0177)
 }
 
 func newFakeRepo() *fakeRepo {
@@ -103,6 +104,14 @@ func (f *fakeRepo) MatchWatchedWordsForVideo(ctx context.Context, a sqlcgen.Matc
 
 func (f *fakeRepo) GetComment(context.Context, uuid.UUID) (sqlcgen.Comment, error) {
 	return sqlcgen.Comment{}, nil
+}
+
+func (f *fakeRepo) ReplaceCommentAutomaticTags(_ context.Context, a sqlcgen.ReplaceCommentAutomaticTagsParams) error {
+	if f.autoTags == nil {
+		f.autoTags = map[uuid.UUID][]string{}
+	}
+	f.autoTags[a.CommentID] = a.Tags
+	return nil
 }
 
 func (f *fakeRepo) RecordWatchedWordMatch(_ context.Context, a sqlcgen.RecordWatchedWordMatchParams) error {

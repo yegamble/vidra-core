@@ -285,6 +285,11 @@ type Comment struct {
 	HeldForReview    bool               `json:"held_for_review"`
 }
 
+type CommentAutomaticTag struct {
+	CommentID uuid.UUID `json:"comment_id"`
+	Tag       string    `json:"tag"`
+}
+
 type Conversation struct {
 	ID        uuid.UUID `json:"id"`
 	DmKey     *string   `json:"dm_key"`
