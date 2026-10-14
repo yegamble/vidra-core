@@ -12879,6 +12879,125 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/remote-videos/{id}/rating:
+    get:
+      operationId: getRemoteVideoRating
+      summary: Your own rating of a federated video
+      description: >-
+        Returns the caller's like/dislike of a remote video, or null. The
+        counts belong to the origin instance and are not reported here.
+      tags: [ratings]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The caller's rating.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteVideoRating"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such remote video, or it (or its origin) is blocked here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: setRemoteVideoRating
+      summary: Like or dislike a federated video
+      description: >-
+        Records the caller's like/dislike and federates it to the video's origin
+        as an ActivityPub Like or Dislike signed by the caller's account actor;
+        changing a rating also sends an Undo of the previous one. Repeating the
+        same rating sends nothing.
+      tags: [ratings]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating]
+              properties:
+                rating:
+                  type: string
+                  enum: [like, dislike]
+      responses:
+        "200":
+          description: The caller's rating.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteVideoRating"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such remote video, or it (or its origin) is blocked here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteRemoteVideoRating
+      summary: Clear your rating of a federated video
+      description: >-
+        Removes the caller's rating (idempotent) and federates an Undo of it to
+        the origin.
+      tags: [ratings]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The rating is cleared (my_rating null).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteVideoRating"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such remote video, or it (or its origin) is blocked here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/remote-videos/{id}/comments:
     get:
       operationId: listRemoteVideoComments
@@ -23053,6 +23172,14 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/BlockedUser"
+    RemoteVideoRating:
+      type: object
+      required: [my_rating]
+      properties:
+        my_rating:
+          type: [string, "null"]
+          enum: [like, dislike, null]
+          description: The caller's own rating of the remote video, or null.
     VideoRating:
       type: object
       required: [like_count, dislike_count, my_rating]

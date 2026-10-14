@@ -2215,6 +2215,11 @@ func (s *Server) routes() {
 		// instance mutes and remote-account blocks filter the thread.
 		if s.fedsvc != nil {
 			api.GET("/remote-videos/:id/comments", s.handleListRemoteVideoComments, s.optionalAuth)
+			// A local user's vote on a remote video (0179), federated to the
+			// origin as Like/Dislike/Undo; the origin owns the counts.
+			api.GET("/remote-videos/:id/rating", s.handleGetRemoteVideoRating, s.requireAuth)
+			api.PUT("/remote-videos/:id/rating", s.handlePutRemoteVideoRating, s.requireAuth)
+			api.DELETE("/remote-videos/:id/rating", s.handleDeleteRemoteVideoRating, s.requireAuth)
 		}
 		// The WRITE side (migration 0147, the home-instance-hosts-and-federates
 		// ruling): a signed-in local user authors a comment ON a remote video, and
