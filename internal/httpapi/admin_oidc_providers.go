@@ -144,19 +144,50 @@ func (s *Server) oidcProviderError(c echo.Context, action string, callerID uuid.
 	return refuse("save_failed", err)
 }
 
+// oidcDeleteRequest carries the fresh credential a delete needs.
+type oidcDeleteRequest struct {
+	CurrentPassword string `json:"current_password"`
+	StepUpToken     string `json:"step_up_token"`
+}
+
 // --- DELETE /api/v1/admin/oidc-providers/{name} ---
 //
-// Removes the row; an environment provider of the same name applies again.
-// No fresh credential: removing a provider can only narrow who signs in.
+// Removes a database-only provider. Takes a fresh credential like the other
+// destructive admin writes.
+//
+// A row that overrides an ENVIRONMENT provider of the same name is refused
+// (disable or edit it instead): deleting it would silently put the
+// environment provider back without the row's restrictions (enabled,
+// auto_provision, allowed_email_domains). The same thing happens on an
+// app-only rollback to a core without migration 0182, which ignores the
+// table — a rollback concern tracked outside this handler.
 func (s *Server) handleDeleteOIDCProvider(c echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
 	}
+	action := observability.ActionAdminOIDCProviderDelete
+	var in oidcDeleteRequest
+	// No body is "no proof" (403 step_up_required below), not a malformed one.
+	if c.Request().ContentLength != 0 {
+		if err := decodeAdminDocumentBody(c, &in); err != nil {
+			return err
+		}
+	}
+	if err := s.confirmFreshAdminWriter(c, callerID, action, in.CurrentPassword, in.StepUpToken); err != nil {
+		return err
+	}
 	name := c.Param("name")
+	for _, p := range s.cfg.OAuthProviders {
+		if p.Name == name {
+			return s.oidcProviderError(c, action, callerID, &oidcproviders.ValidationError{Fields: []oidcproviders.FieldError{{
+				Field: "name", Msg: "overrides an environment provider; disable or edit it instead of deleting it",
+			}}})
+		}
+	}
 	existed, err := s.oidcprovsvc.Delete(c.Request().Context(), name)
 	if err != nil {
-		return s.oidcProviderError(c, observability.ActionAdminOIDCProviderDelete, callerID, err)
+		return s.oidcProviderError(c, action, callerID, err)
 	}
 	if !existed {
 		return echo.NewHTTPError(http.StatusNotFound, "no such OIDC provider")

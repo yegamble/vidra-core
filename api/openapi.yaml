@@ -16276,8 +16276,10 @@ paths:
         linked through that name from a different issuer (only the issuer of
         an environment provider of the same name may be re-used). Discovery,
         JWKS and token calls for this provider go through the SSRF guard;
-        `issuer_url` must be https on a public host unless the deployment
-        allows private import URLs. `client_secret` is required and stored
+        `issuer_url` must be https on a public host, and every endpoint the
+        discovery document names must be https, unless
+        OIDC_ALLOW_PRIVATE_ISSUERS is on. A name configured in the
+        environment may be overridden only with that provider's issuer. `client_secret` is required and stored
         sealed.
 
 
@@ -16431,16 +16433,33 @@ paths:
       operationId: deleteOIDCProvider
       summary: Remove an OIDC login provider (admin)
       description: >-
-        Removes the stored provider and its sealed secret; an environment
-        provider of the same name applies again. Linked identities are kept.
-        No fresh credential is needed — removing a provider only narrows who
-        can sign in. Audited as `admin.oidc_provider.delete`.
+        Removes a stored provider and its sealed secret. Linked identities are
+        kept. A provider whose name is also configured in the environment
+        (OAUTH_PROVIDERS) cannot be deleted — disable or edit it instead —
+        because deleting it would restore the environment provider without
+        the stored row's restrictions. Requires a fresh credential, like the
+        other writes. Audited as `admin.oidc_provider.delete`.
       tags: [admin]
       security:
         - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_password: {type: string, writeOnly: true}
+                step_up_token: {type: string, writeOnly: true}
       responses:
         "204":
           description: The provider was removed.
+        "400":
+          description: Malformed body, or a field the document does not define.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing, invalid, or expired token.
           content:
@@ -16448,13 +16467,29 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: The caller is not an admin.
+          description: >-
+            The caller is not an admin; `current_password` is incorrect; or
+            `step_up_required`.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No provider with this name is stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The provider overrides an environment provider (`fields` names
+            `name`), or both proofs were sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many credential attempts.
           content:
             application/json:
               schema:

@@ -2453,7 +2453,7 @@ func (s *Server) routes() {
 		api.GET("/admin/oidc-providers", s.handleListOIDCProviders, adminOnly...)
 		api.POST("/admin/oidc-providers", s.handleCreateOIDCProvider, s.adminPasswordStepUpMW()...)
 		api.PUT("/admin/oidc-providers/:name", s.handleUpdateOIDCProvider, s.adminPasswordStepUpMW()...)
-		api.DELETE("/admin/oidc-providers/:name", s.handleDeleteOIDCProvider, adminOnly...)
+		api.DELETE("/admin/oidc-providers/:name", s.handleDeleteOIDCProvider, s.adminPasswordStepUpMW()...)
 	}
 
 	// Admin operations: durable-queue depth snapshot + recent failures (P17.4).
