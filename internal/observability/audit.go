@@ -122,6 +122,7 @@ const (
 	// ActionBlocklistSubscriptionAdd/Remove record an admin adding/removing a
 	// subscription; ActionBlocklistAllow/Disallow the allowlist exemption.
 	ActionBlocklistSubscriptionAdd    = "moderation.blocklist.subscription_add"
+	ActionBlocklistSubscriptionUpdate = "moderation.blocklist.subscription_update"
 	ActionBlocklistSubscriptionRemove = "moderation.blocklist.subscription_remove"
 	ActionBlocklistAllow              = "moderation.blocklist.allow"
 	ActionBlocklistDisallow           = "moderation.blocklist.disallow"

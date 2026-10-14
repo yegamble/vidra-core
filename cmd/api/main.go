@@ -2462,6 +2462,7 @@ func run() error {
 	}
 	blocklistFetcher := blocklistsub.NewHTTPFetcher(cfg.ImportAllowPrivateURLs)
 	blocklistsvc := blocklistsub.NewService(db.Queries(), blocklistFetcher, blocklistFetcher.ValidateURL, blocklistOpts...)
+	opts = append(opts, httpapi.WithBlocklistSubscriptionService(blocklistsvc))
 
 	// LEADER ELECTION for the singleton background sweeps. The workers that CLAIM
 	// from a durable queue run on every instance -- that is what the leases are
