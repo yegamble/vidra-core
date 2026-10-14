@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/vidra/vidra-core/internal/auth"
@@ -41,5 +44,31 @@ func TestOAuthCallbackProviderSignupPolicy(t *testing.T) {
 				t.Error("a refused provider signup must not create an account or a session")
 			}
 		})
+	}
+}
+
+// TestInstanceListsDatabaseOAuthProviders: the public instance document lists
+// the EFFECTIVE providers (environment merged with admin-managed rows), so a
+// provider added from the admin API gets a sign-in button without a restart.
+func TestInstanceListsDatabaseOAuthProviders(t *testing.T) {
+	env := newOAuthEnv(t)
+	env.oauthsvc.SetDatabaseProviders([]auth.OAuthProvider{
+		{Name: "corp", DisplayName: "Corp SSO", IssuerURL: "https://sso.example", ClientID: "c"},
+	})
+	rec := httptest.NewRecorder()
+	env.srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/instance", nil))
+	var body struct {
+		Names   []string `json:"oauth_providers"`
+		Details []struct {
+			Name        string `json:"name"`
+			DisplayName string `json:"display_name"`
+		} `json:"oauth_provider_details"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(body.Names, ",") != "fake,corp" || len(body.Details) != 2 ||
+		body.Details[0].DisplayName != "fake" || body.Details[1].DisplayName != "Corp SSO" {
+		t.Errorf("instance providers = %+v", body)
 	}
 }
