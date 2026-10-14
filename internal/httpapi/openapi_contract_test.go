@@ -37,6 +37,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/oidcproviders"
 	"github.com/vidra/vidra-core/internal/peertubearchive"
 	"github.com/vidra/vidra-core/internal/peertubefollows"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
@@ -109,6 +110,7 @@ func fullRouteOptions() []Option {
 		// configured, so the page that edits it cannot be gated on mail being
 		// configured already).
 		WithMailConfigService(mailconfig.NewService(nil, nil, mailconfig.EnvConfig{})),
+		WithOIDCProviderService(oidcproviders.NewService(nil, nil, nil)),
 		WithInstanceDocumentsService(instancedocs.NewService(nil)),
 		WithFeedTokenService(feedtoken.NewService(nil)),
 		WithRemoteVideoService(remotevideo.NewService(nil, nil)),

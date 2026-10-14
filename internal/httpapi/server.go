@@ -254,6 +254,8 @@ type Server struct {
 	// (internal/mailconfig). Nil in tests that predate it, in which case every
 	// mail capability read falls back to the boot facts it replaced.
 	mailconfigsvc mailConfigProvider
+	// oidcprovsvc owns the admin-managed OIDC login providers (0182).
+	oidcprovsvc   oidcProviderManager
 	ipfsmirrorsvc ipfsMirrorProvider
 	// ipfsHealth is the mirror's cached gateway/node probe record (system_ipfs.go).
 	// It is set from the SAME option that wires ipfsmirrorsvc, by type assertion,
@@ -2435,6 +2437,17 @@ func (s *Server) routes() {
 		// general limiter's rate.
 		api.PUT("/admin/mail-config", s.handleUpdateMailConfig, s.adminPasswordStepUpMW()...)
 		api.DELETE("/admin/mail-config", s.handleDeleteMailConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	}
+
+	// Admin-managed OIDC login providers (0182). Writes take a fresh credential
+	// and the strict auth limiter, like the mail document: a login provider
+	// decides who can sign in. GET never returns a client secret.
+	if s.oidcprovsvc != nil {
+		adminOnly := []echo.MiddlewareFunc{s.requireAuth, s.requireRole(admin.RoleAdmin)}
+		api.GET("/admin/oidc-providers", s.handleListOIDCProviders, adminOnly...)
+		api.POST("/admin/oidc-providers", s.handleCreateOIDCProvider, s.adminPasswordStepUpMW()...)
+		api.PUT("/admin/oidc-providers/:name", s.handleUpdateOIDCProvider, s.adminPasswordStepUpMW()...)
+		api.DELETE("/admin/oidc-providers/:name", s.handleDeleteOIDCProvider, adminOnly...)
 	}
 
 	// Admin operations: durable-queue depth snapshot + recent failures (P17.4).

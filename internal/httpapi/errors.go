@@ -134,6 +134,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var oue *OAuthUpstreamError
 	var mtf *MailTestFailedError
 	var mskm *MailSecretsKeyMissingError
+	var oskm *OIDCSecretsKeyMissingError
 	var mnc *MailNotConfiguredError
 	var hr *HandleReservedError
 	var op *OwnerProtectedError
@@ -211,6 +212,10 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusConflict
 		message = "this deployment has no key-encryption key, so a mail password or provider API key cannot be stored sealed — and vidra will not store one in the clear. Set MFA_KEY_KEK (or share FEDERATION_KEY_KEK) and restart the api, then save again. An SMTP relay that needs no password can be saved without one"
 		code = "mail_secrets_key_missing"
+	case errors.As(err, &oskm):
+		status = http.StatusConflict
+		message = "this deployment has no key-encryption key, so an OIDC client secret cannot be stored sealed — and vidra will not store one in the clear. Set MFA_KEY_KEK (or share FEDERATION_KEY_KEK) and restart the api, then save again"
+		code = "oidc_secrets_key_missing"
 	case errors.As(err, &mnc):
 		status = http.StatusServiceUnavailable
 		message = "this instance has no outbound mail path, so " + mnc.consequence() +
@@ -676,6 +681,13 @@ func (e *MailTestFailedError) Error() string { return "mail test failed" }
 type MailSecretsKeyMissingError struct{}
 
 func (e *MailSecretsKeyMissingError) Error() string { return "mail secrets key missing" }
+
+// OIDCSecretsKeyMissingError renders as 409 "oidc_secrets_key_missing": an
+// OIDC provider save carried a client secret on a deployment with no KEK. Same
+// sealed-or-not-at-all rule as MailSecretsKeyMissingError.
+type OIDCSecretsKeyMissingError struct{}
+
+func (e *OIDCSecretsKeyMissingError) Error() string { return "oidc secrets key missing" }
 
 // SearchUnavailableError renders as 503 with the stable code "search_unavailable"
 // (search-service W4): a search-history read/delete could not reach vidra-search
