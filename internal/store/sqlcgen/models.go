@@ -750,6 +750,21 @@ type OauthIdentity struct {
 	Handle    *string   `json:"handle"`
 }
 
+type OidcProvider struct {
+	Name                string      `json:"name"`
+	DisplayName         string      `json:"display_name"`
+	IssuerUrl           string      `json:"issuer_url"`
+	ClientID            string      `json:"client_id"`
+	ClientSecret        string      `json:"client_secret"`
+	Scopes              []string    `json:"scopes"`
+	Enabled             bool        `json:"enabled"`
+	AutoProvision       bool        `json:"auto_provision"`
+	AllowedEmailDomains []string    `json:"allowed_email_domains"`
+	UpdatedBy           pgtype.UUID `json:"updated_by"`
+	CreatedAt           time.Time   `json:"created_at"`
+	UpdatedAt           time.Time   `json:"updated_at"`
+}
+
 type OwnerClaimToken struct {
 	ID        bool               `json:"id"`
 	TokenHash string             `json:"token_hash"`
