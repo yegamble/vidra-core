@@ -220,10 +220,6 @@ func (s *Service) process(ctx context.Context, r sqlcgen.ClaimDuePeerTubeFollowT
 		return finish(stateDone, "")
 	case errors.Is(err, federation.ErrBadFollowTarget), errors.Is(err, federation.ErrLocalFollowTarget):
 		return finish(skippedInvalid, "")
-	case errors.Is(err, federation.ErrBlockedFollowTarget):
-		// Recorded exactly like an unresolvable target: the status must not
-		// reveal which domains this instance blocks.
-		return finish(stateFailed, "unresolvable")
 	case errors.Is(err, federation.ErrNotFound):
 		return finish(stateFailed, "user_missing")
 	case ctx.Err() != nil:
@@ -232,7 +228,10 @@ func (s *Service) process(ctx context.Context, r sqlcgen.ClaimDuePeerTubeFollowT
 	// last_error holds a fixed class, never the error text: it can echo the
 	// remote host's response.
 	class := "internal"
-	if errors.Is(err, federation.ErrRemoteUnresolvable) {
+	// A blocked domain takes the unresolvable path in full (same retries,
+	// same timing, same terminal state): the status must not reveal which
+	// domains this instance blocks.
+	if errors.Is(err, federation.ErrRemoteUnresolvable) || errors.Is(err, federation.ErrBlockedFollowTarget) {
 		class = "unresolvable"
 	}
 	max := s.MaxAttempts

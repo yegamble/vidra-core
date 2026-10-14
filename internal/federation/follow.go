@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/net/idna"
 
+	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 )
@@ -160,7 +161,7 @@ func followTargetHost(target string) (string, bool) {
 }
 
 func (s *Service) refuseBlockedFollowHost(ctx context.Context, host string) error {
-	blocked, err := s.repo.IsInstanceBlocked(ctx, host)
+	blocked, err := instancemod.BlockMatches(ctx, s.repo.IsInstanceBlocked, host)
 	if err != nil {
 		return err
 	}

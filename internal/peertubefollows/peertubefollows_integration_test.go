@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -62,10 +63,10 @@ func TestQueueLifecycleOnPostgres(t *testing.T) {
 		}
 	}
 	s1, err := svc.Status(ctx, me, *q.JobID)
-	if err != nil || s1.Total != 4 || s1.Done != 1 || s1.Failed != 1 || s1.SkippedInvalid != 1 || s1.Pending != 1 {
+	if err != nil || s1.Total != 4 || s1.Done != 1 || s1.Failed != 0 || s1.SkippedInvalid != 1 || s1.Pending != 2 {
 		t.Fatalf("after first drain: %+v %v", s1, err)
 	}
-	// down@c is backed off an hour: not due yet.
+	// down@c and blocked@b are backed off an hour: not due yet.
 	if n, _ := svc.Drain(ctx); n != 0 {
 		t.Fatalf("backed-off target re-claimed: %d", n)
 	}
@@ -73,7 +74,7 @@ func TestQueueLifecycleOnPostgres(t *testing.T) {
 	if _, err := st.Pool.Exec(ctx, `UPDATE peertube_follow_import_targets SET next_attempt_at = now() WHERE import_id = $1`, *q.JobID); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := svc.Drain(ctx); n != 1 {
+	if n, _ := svc.Drain(ctx); n != 2 { // blocked and unresolvable retry alike
 		t.Fatalf("retry drain: %d", n)
 	}
 	s2, _ := svc.Status(ctx, me, *q.JobID)
@@ -192,4 +193,98 @@ func TestClaimIsFairAcrossUsersAndLeasedOnce(t *testing.T) {
 	}
 	close(f.release)
 	<-drained
+}
+
+func statusLine(t *testing.T, ctx context.Context, svc *Service, user, job uuid.UUID) string {
+	t.Helper()
+	s, err := svc.Status(ctx, user, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("pending=%d failed=%d done=%d", s.Pending, s.Failed, s.Done)
+}
+
+// A blocked target and an unresolvable one must be indistinguishable through
+// the status API, attempt for attempt.
+func TestBlockedAndUnresolvableLookIdentical(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var a, b uuid.UUID
+	for _, u := range []*uuid.UUID{&a, &b} {
+		n := uuid.NewString()[:8]
+		if err := st.Pool.QueryRow(ctx, `INSERT INTO users (username, email, password_hash) VALUES ($1,$2,'x') RETURNING id`,
+			"pi-"+n, "pi-"+n+"@example.test").Scan(u); err != nil {
+			t.Fatal(err)
+		}
+		defer func(id uuid.UUID) { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, id) }(*u)
+	}
+	svc := &Service{Repo: st.Queries(), MaxAttempts: 3, BackoffBase: time.Millisecond,
+		Follower: scriptedFollower{errs: map[string]error{
+			"x@blocked.example": federation.ErrBlockedFollowTarget, "x@down.example": federation.ErrRemoteUnresolvable}}}
+	qa, _ := svc.Enqueue(ctx, a, []string{"x@blocked.example"})
+	qb, _ := svc.Enqueue(ctx, b, []string{"x@down.example"})
+	var sa, sb []string
+	for i := 0; i < 5; i++ {
+		if _, err := st.Pool.Exec(ctx, `UPDATE peertube_follow_import_targets SET next_attempt_at = now() WHERE user_id IN ($1, $2)`, a, b); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.Drain(ctx); err != nil {
+			t.Fatal(err)
+		}
+		sa = append(sa, statusLine(t, ctx, svc, a, *qa.JobID))
+		sb = append(sb, statusLine(t, ctx, svc, b, *qb.JobID))
+	}
+	for i := range sa {
+		if sa[i] != sb[i] {
+			t.Fatalf("status sequences differ:\nblocked      %v\nunresolvable %v", sa, sb)
+		}
+	}
+	if sa[len(sa)-1] != "pending=0 failed=1 done=0" || sa[0] != "pending=1 failed=0 done=0" || sa[1] != "pending=1 failed=0 done=0" {
+		t.Fatalf("unexpected sequence %v", sa)
+	}
+}
+
+// The list stores admin entries lower-cased only; a probe must still match an
+// IDN entry in either spelling and a host:port entry by its bare host.
+func TestBlockListMatchesEquivalentForms(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	sfx := uuid.NewString()[:6]
+	koelnPuny, _ := federation.NormalizeFollowHost("köln" + sfx + ".example")
+	entries := []string{"bücher" + sfx + ".example", koelnPuny, "evil" + sfx + ".example:8443"}
+	for _, e := range entries {
+		if _, err := st.Pool.Exec(ctx, `INSERT INTO blocked_instances (domain) VALUES ($1)`, e); err != nil {
+			t.Fatal(err)
+		}
+		defer func(d string) {
+			_, _ = st.Pool.Exec(context.Background(), `DELETE FROM blocked_instances WHERE domain=$1`, d)
+		}(e)
+	}
+	punyOfFirst, _ := federation.NormalizeFollowHost(entries[0])
+	for _, probe := range []string{punyOfFirst, "köln" + sfx + ".example", "evil" + sfx + ".example"} {
+		if ok, err := instancemod.BlockMatches(ctx, st.Queries().IsInstanceBlocked, probe); err != nil || !ok {
+			t.Errorf("probe %q not blocked (%v)", probe, err)
+		}
+	}
+	if ok, _ := instancemod.BlockMatches(ctx, st.Queries().IsInstanceBlocked, "fine"+sfx+".example"); ok {
+		t.Error("unrelated host blocked")
+	}
 }
