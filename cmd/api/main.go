@@ -1710,6 +1710,7 @@ func run() error {
 	opts = append(opts, httpapi.WithPlaylistService(playlistsvc))
 	ptImporter := &peertubearchive.Importer{
 		Channels: channelsvc, Playlists: playlistsvc, PlayerSettings: playersettingssvc,
+		Videos: videosvc,
 		Lock: func(ctx context.Context, userID uuid.UUID) (func(), error) {
 			return lockUserImport(ctx, db.Pool, userID)
 		},
@@ -1771,6 +1772,7 @@ func run() error {
 	opts = append(opts, httpapi.WithStorageMigrationService(storagemigrationsvc))
 
 	moderationsvc := moderation.NewService(db.Queries())
+	ptImporter.Blocks = moderationsvc // playlist items: a blocked video is not addable
 	opts = append(opts, httpapi.WithModerationService(moderationsvc))
 
 	mutesvc := mute.NewService(db.Queries())

@@ -58,6 +58,7 @@ type fakePlaylists struct {
 	failAt  int // 1-based Create call that fails; 0 = never
 	calls   int
 	preload []string
+	added   map[uuid.UUID][]uuid.UUID
 }
 
 func (f *fakePlaylists) Create(_ context.Context, _ uuid.UUID, in playlist.CreateInput) (sqlcgen.Playlist, error) {
@@ -65,7 +66,7 @@ func (f *fakePlaylists) Create(_ context.Context, _ uuid.UUID, in playlist.Creat
 		return sqlcgen.Playlist{}, errors.New("db down")
 	}
 	f.made = append(f.made, in)
-	return sqlcgen.Playlist{}, nil
+	return sqlcgen.Playlist{ID: uuid.New()}, nil
 }
 func (f *fakePlaylists) ListOwn(_ context.Context, _ uuid.UUID, limit, offset int32) ([]sqlcgen.ListPlaylistsByOwnerRow, int64, error) {
 	var all []sqlcgen.ListPlaylistsByOwnerRow
@@ -80,6 +81,14 @@ func (f *fakePlaylists) ListOwn(_ context.Context, _ uuid.UUID, limit, offset in
 	}
 	end := min(int(offset+limit), len(all))
 	return all[offset:end], int64(len(all)), nil
+}
+
+func (f *fakePlaylists) AddItem(_ context.Context, _, pl, vid uuid.UUID) error {
+	if f.added == nil {
+		f.added = map[uuid.UUID][]uuid.UUID{}
+	}
+	f.added[pl] = append(f.added[pl], vid)
+	return nil
 }
 
 type fakeSettings struct{ got *bool }
@@ -281,6 +290,123 @@ func TestImportQueuesFollows(t *testing.T) {
 	bare := &Importer{Channels: im.Channels, Playlists: im.Playlists}
 	sum, _ = bare.Import(context.Background(), uuid.New(), a)
 	if sum.FollowsJobID != nil || sum.SkippedSections["following"] != 3 {
+		t.Fatalf("%+v", sum)
+	}
+}
+
+type fakeVideos struct {
+	byLegacy map[uuid.UUID]uuid.UUID
+	byCode   map[string]uuid.UUID
+	rows     map[uuid.UUID]sqlcgen.GetVideoByIDRow
+}
+
+func (f *fakeVideos) IDByLegacyUUID(_ context.Context, l uuid.UUID) (uuid.UUID, error) {
+	if id, ok := f.byLegacy[l]; ok {
+		return id, nil
+	}
+	return uuid.Nil, errors.New("nf")
+}
+func (f *fakeVideos) IDByShortCode(_ context.Context, c string) (uuid.UUID, error) {
+	if id, ok := f.byCode[c]; ok {
+		return id, nil
+	}
+	return uuid.Nil, errors.New("nf")
+}
+func (f *fakeVideos) GetByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+	if r, ok := f.rows[id]; ok {
+		return r, nil
+	}
+	return sqlcgen.GetVideoByIDRow{}, errors.New("nf")
+}
+
+type fakeBlocks map[uuid.UUID]bool
+
+func (f fakeBlocks) IsBlocked(_ context.Context, id uuid.UUID) (bool, error) { return f[id], nil }
+
+func TestImportPlaylistItems(t *testing.T) {
+	pub, priv, blocked, imported := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	src := uuid.New() // the imported video's PeerTube source uuid
+	row := func(state, privacy string) sqlcgen.GetVideoByIDRow {
+		return sqlcgen.GetVideoByIDRow{State: state, Privacy: privacy}
+	}
+	vids := &fakeVideos{
+		byLegacy: map[uuid.UUID]uuid.UUID{pub: pub, priv: priv, blocked: blocked, src: imported},
+		byCode:   map[string]uuid.UUID{"ABCDEFGHJKL": pub},
+		rows: map[uuid.UUID]sqlcgen.GetVideoByIDRow{
+			pub: row("published", "public"), priv: row("published", "private"),
+			blocked: row("published", "public"), imported: row("published", "public"),
+		},
+	}
+	pl := &fakePlaylists{}
+	im := &Importer{Channels: &fakeChannels{byHandle: map[string]sqlcgen.Channel{}}, Playlists: pl, Videos: vids, Blocks: fakeBlocks{blocked: true}}
+	items := []string{
+		"https://tube.example/videos/watch/" + pub.String(),
+		"https://tube.example/videos/watch/" + src.String(), // imported: legacy lookup
+		"https://tube.example/videos/watch/" + pub.String(), // duplicate
+		"https://tube.example/v/ABCDEFGHJKL",                // short code, same video
+		"https://tube.example/videos/watch/" + priv.String(),
+		"https://tube.example/videos/watch/" + blocked.String(),
+		"https://tube.example/videos/watch/" + uuid.NewString(), // unknown
+		"https://tube.example/w/abcdefghijklmnopqrstuv",         // undecoded form
+		"javascript:alert(1)",
+		"https://tube.example/videos/watch/not-a-uuid",
+	}
+	a := &Archive{Playlists: []Playlist{{DisplayName: "P", Type: 1, Privacy: 1, Elements: len(items), Items: items}}}
+	sum, err := im.Import(context.Background(), uuid.New(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.PlaylistItemsAdded != 2 || sum.PlaylistItemsSkipped != 6 ||
+		sum.SkippedSections[reasonUnavailable] != 2 || sum.SkippedSections[reasonUnresolved] != 4 {
+		t.Fatalf("summary: %+v", sum)
+	}
+	// Two distinct videos reach AddItem, in export order; the URL repeat and the
+	// short-code twin of the same video are folded before the call.
+	for _, got := range pl.added {
+		if len(got) != 2 || got[0] != pub || got[1] != imported {
+			t.Fatalf("order/targets: %v", got)
+		}
+	}
+}
+
+func TestImportPlaylistItemsReImportFillsExisting(t *testing.T) {
+	v := uuid.New()
+	vids := &fakeVideos{byLegacy: map[uuid.UUID]uuid.UUID{v: v}, rows: map[uuid.UUID]sqlcgen.GetVideoByIDRow{v: {State: "published", Privacy: "public"}}}
+	pl := &fakePlaylists{preload: []string{"Mine"}}
+	im := &Importer{Channels: &fakeChannels{byHandle: map[string]sqlcgen.Channel{}}, Playlists: pl, Videos: vids}
+	a := &Archive{Playlists: []Playlist{{DisplayName: "Mine", Type: 1, Elements: 1, Items: []string{"https://x.example/videos/watch/" + v.String()}}}}
+	sum, err := im.Import(context.Background(), uuid.New(), a)
+	if err != nil || sum.PlaylistsExisting != 1 || sum.PlaylistItemsAdded != 1 {
+		t.Fatalf("%+v %v", sum, err)
+	}
+}
+
+func TestImportPlaylistItemsBounded(t *testing.T) {
+	pl := &fakePlaylists{}
+	im := &Importer{Channels: &fakeChannels{byHandle: map[string]sqlcgen.Channel{}}, Playlists: pl, Videos: &fakeVideos{}}
+	items := make([]string, 1000)
+	for i := range items {
+		items[i] = "https://x.example/videos/watch/" + uuid.NewString()
+	}
+	a := &Archive{Playlists: []Playlist{
+		{DisplayName: "A", Type: 1, Elements: 1500, Items: items},
+		{DisplayName: "B", Type: 1, Elements: 1000, Items: items},
+		{DisplayName: "C", Type: 1, Elements: 1000, Items: items},
+	}}
+	sum, err := im.Import(context.Background(), uuid.New(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 500 unretained + 1000 + 1000 looked up (budget 2000 spent) + 1000 over budget.
+	if sum.SkippedSections[reasonOverCap] != 500+1000 || sum.PlaylistItemsSkipped != 3500 {
+		t.Fatalf("summary: %+v", sum)
+	}
+}
+
+func TestImportPlaylistItemsWithoutResolver(t *testing.T) {
+	im := &Importer{Channels: &fakeChannels{byHandle: map[string]sqlcgen.Channel{}}, Playlists: &fakePlaylists{}}
+	sum, _ := im.Import(context.Background(), uuid.New(), &Archive{Playlists: []Playlist{{DisplayName: "A", Type: 1, Elements: 4}}})
+	if sum.PlaylistItemsSkipped != 4 || sum.PlaylistItemsAdded != 0 {
 		t.Fatalf("%+v", sum)
 	}
 }

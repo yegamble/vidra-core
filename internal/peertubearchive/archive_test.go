@@ -258,3 +258,20 @@ func TestReadAtRefusesHostileDirectories(t *testing.T) {
 		t.Fatalf("control archive refused: %v", err)
 	}
 }
+
+func TestReadPlaylistItemsAreBounded(t *testing.T) {
+	var els []string
+	for i := 0; i < MaxPlaylistItems+5; i++ {
+		els = append(els, fmt.Sprintf(`{"videoUrl":"https://t.example/videos/watch/%d"}`, i))
+	}
+	els = append(els, `{"videoUrl":"https://t.example/`+strings.Repeat("a", 5000)+`"}`, `{}`)
+	body := `{"videoPlaylists":[{"displayName":"P","type":1,"elements":[` + strings.Join(els, ",") + `]}]}`
+	a, err := Read(buildZip(t, entry{name: "peertube/video-playlists.json", body: body}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := a.Playlists[0]
+	if len(p.Items) != MaxPlaylistItems || p.Elements != MaxPlaylistItems+7 {
+		t.Fatalf("items %d elements %d", len(p.Items), p.Elements)
+	}
+}

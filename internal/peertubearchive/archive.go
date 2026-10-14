@@ -66,6 +66,9 @@ type Playlist struct {
 	Privacy     int
 	Type        int
 	Elements    int
+	// Items are the exported elements' video URLs, in order, at most
+	// MaxPlaylistItems; the rest are counted in Elements only.
+	Items []string
 	// ChannelName is the exported owning channel's PeerTube name ("" if none).
 	ChannelName string
 }
@@ -86,6 +89,9 @@ type Archive struct {
 	Following []string
 	Skipped   map[string]int
 }
+
+// MaxPlaylistItems bounds how many element URLs are retained per playlist.
+const MaxPlaylistItems = 1000
 
 // MaxFollowing bounds how many following.json handles are retained.
 const MaxFollowing = 5000
@@ -183,12 +189,14 @@ func ReadAt(ra io.ReaderAt, size int64) (*Archive, error) {
 	} else if b != nil {
 		var doc struct {
 			Playlists []struct {
-				DisplayName string     `json:"displayName"`
-				Description string     `json:"description"`
-				Privacy     int        `json:"privacy"`
-				Type        int        `json:"type"`
-				Elements    []struct{} `json:"elements"`
-				Channel     *struct {
+				DisplayName string `json:"displayName"`
+				Description string `json:"description"`
+				Privacy     int    `json:"privacy"`
+				Type        int    `json:"type"`
+				Elements    []struct {
+					VideoURL string `json:"videoUrl"`
+				} `json:"elements"`
+				Channel *struct {
 					Name string `json:"name"`
 				} `json:"channel"`
 			} `json:"videoPlaylists"`
@@ -198,6 +206,11 @@ func ReadAt(ra io.ReaderAt, size int64) (*Archive, error) {
 		}
 		for _, p := range doc.Playlists {
 			pl := Playlist{DisplayName: p.DisplayName, Description: p.Description, Privacy: p.Privacy, Type: p.Type, Elements: len(p.Elements)}
+			for _, e := range p.Elements {
+				if u := strings.TrimSpace(e.VideoURL); len(pl.Items) < MaxPlaylistItems && len(u) <= 2048 {
+					pl.Items = append(pl.Items, u)
+				}
+			}
 			if p.Channel != nil {
 				pl.ChannelName = strings.TrimSpace(p.Channel.Name)
 			}
