@@ -1987,7 +1987,10 @@ paths:
 
         User-actionable failures redirect with an `oauth_error` query code
         (`access_denied`, `email_conflict`, `email_required`,
-        `account_disabled`, `conflict`); protocol violations (missing/forged/
+        `account_disabled`, `conflict`, and for a provider that does not
+        create accounts `signup_disabled` or `email_domain_not_allowed` — the
+        latter also when the address in an allowed domain is unverified);
+        protocol violations (missing/forged/
         expired state, nonce mismatch) are 400.
       tags: [auth]
       parameters:

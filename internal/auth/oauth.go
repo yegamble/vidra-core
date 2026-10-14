@@ -49,6 +49,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -57,6 +58,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/urlsafety"
 )
 
 // Sentinel errors the HTTP layer maps to responses.
@@ -93,6 +95,14 @@ var (
 	// for this provider (the (user_id, provider) unique index). One provider
 	// links one identity per account; unlink the current one first.
 	ErrOAuthProviderAlreadyLinked = errors.New("auth: this provider is already linked to your account")
+	// ErrOAuthSignupDisabled means the provider is configured to sign in
+	// already-linked identities only (auto-provisioning off), and this subject
+	// is not linked to any account.
+	ErrOAuthSignupDisabled = errors.New("auth: this provider does not create new accounts")
+	// ErrOAuthEmailDomainNotAllowed means the provider restricts new accounts
+	// to listed email domains and the id_token did not carry a VERIFIED address
+	// in one of them.
+	ErrOAuthEmailDomainNotAllowed = errors.New("auth: this provider does not create accounts for that email domain")
 )
 
 // OAuthProvider is one configured OIDC provider (mirrors
@@ -103,6 +113,37 @@ type OAuthProvider struct {
 	ClientID     string
 	ClientSecret string
 	Scopes       []string
+
+	// The fields below are set by admin-managed (database) providers; the
+	// zero values are the environment behavior.
+
+	// DisplayName is the label a sign-in button shows ("" = use Name).
+	DisplayName string
+	// Disabled switches the name off. Only meaningful in SetDatabaseProviders:
+	// a disabled row still shadows the environment provider of the same name.
+	Disabled bool
+	// DisableSignup refuses an unknown subject instead of creating an account.
+	DisableSignup bool
+	// AllowedEmailDomains, when non-empty, restricts NEW accounts to a verified
+	// email in one of these (lowercase) domains.
+	AllowedEmailDomains []string
+	// Guarded sends discovery, JWKS and token calls through the SSRF guard.
+	// Set for admin-managed providers: their issuer is typed into an API, not
+	// placed in the deployment's environment by the operator.
+	Guarded bool
+}
+
+// providerSet is one immutable view of the active providers. It is swapped
+// whole, so a request never sees half of an admin's change.
+type providerSet struct {
+	list    []OAuthProvider
+	clients map[string]*oidcClient
+}
+
+// clientKey identifies a discovery cache: a changed issuer or guard must never
+// reuse a document fetched for the old one.
+func clientKey(p OAuthProvider) string {
+	return p.Name + "\x00" + p.IssuerURL + "\x00" + strconv.FormatBool(p.Guarded)
 }
 
 // OAuthRepository is the data access the OAuth service needs.
@@ -148,14 +189,29 @@ func (c *oidcClient) get(ctx context.Context, hc *http.Client, issuer string) (*
 // OAuthService implements OIDC login/link on top of the core auth service
 // (which issues the resulting Vidra session).
 type OAuthService struct {
-	repo      OAuthRepository
-	auth      *Service
-	providers []OAuthProvider
-	clients   map[string]*oidcClient
-	// httpClient performs discovery/JWKS/token-endpoint calls. Issuer URLs are
-	// operator configuration (not user input), so no SSRF guard is needed; the
-	// timeout bounds a slow IdP.
+	repo OAuthRepository
+	auth *Service
+	// env is the environment provider list; set holds the effective list
+	// (environment merged with the database rows, database winning by name).
+	env   []OAuthProvider
+	setMu sync.Mutex
+	set   atomic.Pointer[providerSet]
+	// httpClient performs discovery/JWKS/token-endpoint calls for ENVIRONMENT
+	// providers. Their issuer URLs are operator configuration (and commonly an
+	// IdP on the private network), so no SSRF guard applies; the timeout bounds
+	// a slow IdP.
 	httpClient *http.Client
+	// guardedClient serves Guarded (admin-managed) providers: dial-time public-IP
+	// guard, https only, unless allowPrivate (a lab or an internal IdP).
+	guardedClient *http.Client
+	allowPrivate  bool
+}
+
+// WithOAuthAllowPrivateIssuers relaxes the SSRF guard for admin-managed
+// providers (loopback/private addresses and plain http), the same escape hatch
+// the import and ATProto clients take from IMPORT_ALLOW_PRIVATE_URLS.
+func WithOAuthAllowPrivateIssuers(allow bool) OAuthOption {
+	return func(s *OAuthService) { s.allowPrivate = allow }
 }
 
 // OAuthOption configures optional OAuthService behavior.
@@ -177,24 +233,73 @@ func NewOAuthService(repo OAuthRepository, svc *Service, providers []OAuthProvid
 	s := &OAuthService{
 		repo:       repo,
 		auth:       svc,
-		providers:  providers,
-		clients:    make(map[string]*oidcClient, len(providers)),
+		env:        providers,
 		httpClient: &http.Client{Timeout: 15 * time.Second},
-	}
-	for _, p := range providers {
-		s.clients[p.Name] = &oidcClient{}
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
+	s.guardedClient = urlsafety.Guard{AllowPrivate: s.allowPrivate}.NewClient(15 * time.Second)
+	s.SetDatabaseProviders(nil)
 	return s
+}
+
+// SetDatabaseProviders installs the admin-managed providers. A row REPLACES the
+// environment provider of the same name (database > environment); a Disabled
+// row removes that name. Environment order is kept, database-only providers
+// follow in the order given. Discovery caches survive for providers whose
+// issuer and guard did not change. Safe for concurrent use with logins.
+func (s *OAuthService) SetDatabaseProviders(db []OAuthProvider) {
+	s.setMu.Lock()
+	defer s.setMu.Unlock()
+	byName := make(map[string]OAuthProvider, len(db))
+	for _, p := range db {
+		byName[p.Name] = p
+	}
+	merged := make([]OAuthProvider, 0, len(s.env)+len(db))
+	for _, p := range s.env {
+		if o, ok := byName[p.Name]; ok {
+			p = o
+			delete(byName, p.Name)
+		}
+		merged = append(merged, p)
+	}
+	for _, p := range db {
+		if _, ok := byName[p.Name]; ok {
+			merged = append(merged, p)
+		}
+	}
+	old := s.set.Load()
+	next := &providerSet{clients: make(map[string]*oidcClient, len(merged))}
+	for _, p := range merged {
+		if p.Disabled {
+			continue
+		}
+		next.list = append(next.list, p)
+		k := clientKey(p)
+		if old != nil && old.clients[k] != nil {
+			next.clients[k] = old.clients[k]
+		} else {
+			next.clients[k] = &oidcClient{}
+		}
+	}
+	s.set.Store(next)
+}
+
+// clientFor picks the outbound client for a provider.
+func (s *OAuthService) clientFor(p OAuthProvider) *http.Client {
+	if p.Guarded {
+		return s.guardedClient
+	}
+	return s.httpClient
 }
 
 // ProviderNames returns the configured provider names in configuration order.
 // Never nil.
 func (s *OAuthService) ProviderNames() []string {
-	names := make([]string, 0, len(s.providers))
-	for _, p := range s.providers {
+	set := s.set.Load()
+	names := make([]string, 0, len(set.list))
+	for _, p := range set.list {
 		names = append(names, p.Name)
 	}
 	return names
@@ -207,9 +312,10 @@ func (s *OAuthService) Enabled(name string) bool {
 }
 
 func (s *OAuthService) lookup(name string) (OAuthProvider, *oidcClient, error) {
-	for _, p := range s.providers {
+	set := s.set.Load()
+	for _, p := range set.list {
 		if p.Name == name {
-			return p, s.clients[p.Name], nil
+			return p, set.clients[clientKey(p)], nil
 		}
 	}
 	return OAuthProvider{}, nil, ErrUnknownOAuthProvider
@@ -262,7 +368,7 @@ func (s *OAuthService) BeginAuth(ctx context.Context, provider, redirectURI stri
 	if err != nil {
 		return "", OAuthState{}, err
 	}
-	op, err := cl.get(ctx, s.httpClient, p.IssuerURL)
+	op, err := cl.get(ctx, s.clientFor(p), p.IssuerURL)
 	if err != nil {
 		return "", OAuthState{}, err
 	}
@@ -364,12 +470,12 @@ func (s *OAuthService) verifyAssertion(ctx context.Context, provider, redirectUR
 	if err != nil {
 		return "", "", claims, err
 	}
-	op, err := cl.get(ctx, s.httpClient, p.IssuerURL)
+	op, err := cl.get(ctx, s.clientFor(p), p.IssuerURL)
 	if err != nil {
 		return "", "", claims, err
 	}
 
-	octx := oidc.ClientContext(ctx, s.httpClient)
+	octx := oidc.ClientContext(ctx, s.clientFor(p))
 	tok, err := oauthConfig(p, op, redirectURI).Exchange(octx, code, oauth2.VerifierOption(st.Verifier))
 	if err != nil {
 		return "", "", claims, fmt.Errorf("%w: %v", ErrOAuthExchange, err)
@@ -583,6 +689,9 @@ func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject st
 	if email == "" {
 		return OAuthSession{}, ErrOAuthEmailMissing
 	}
+	if err := s.signupAllowed(provider, email, claims.EmailVerified); err != nil {
+		return OAuthSession{}, err
+	}
 	username, err := s.deriveUsername(ctx, claims.PreferredUsername, claims.Name, email)
 	if err != nil {
 		return OAuthSession{}, err
@@ -639,6 +748,32 @@ func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject st
 		return OAuthSession{}, err
 	}
 	return s.auth.providerSession(ctx, user, OAuthCreated, userAgent)
+}
+
+// signupAllowed applies the provider's account-creation policy to an UNKNOWN
+// subject. A domain allow-list is only as strong as the address it checks, so
+// an unverified claim never satisfies it.
+func (s *OAuthService) signupAllowed(provider, email string, verified bool) error {
+	p, _, err := s.lookup(provider)
+	if err != nil {
+		// Removed between verification and here: fail closed, never create.
+		return err
+	}
+	if p.DisableSignup {
+		return ErrOAuthSignupDisabled
+	}
+	if len(p.AllowedEmailDomains) == 0 {
+		return nil
+	}
+	_, domain, _ := strings.Cut(strings.ToLower(email), "@")
+	if verified {
+		for _, d := range p.AllowedEmailDomains {
+			if domain == d {
+				return nil
+			}
+		}
+	}
+	return ErrOAuthEmailDomainNotAllowed
 }
 
 // Identities lists the caller's linked OAuth identities (oldest first).
