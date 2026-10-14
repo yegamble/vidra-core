@@ -365,11 +365,8 @@ func (s *Service) deliverActivity(ctx context.Context, signer httpsig.Signer, in
 	if err != nil {
 		return fmt.Errorf("federation: unsafe inbox URL: %w", err)
 	}
-	client := s.fetchClient
-	if client == nil {
-		client = guard.NewClient(remoteFetchTimeout)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(payload))
+	client := s.remoteClient(guard)
+	req, err := http.NewRequestWithContext(withSameHostRedirects(ctx), http.MethodPost, target.String(), bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
