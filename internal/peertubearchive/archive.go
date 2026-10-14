@@ -55,6 +55,12 @@ type Channel struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName"`
 	Description string `json:"description"`
+	// ArchiveFiles names the exported avatar/banner by path inside the zip.
+	// Parsed as references only; ImageEntry resolves them to a real entry.
+	ArchiveFiles struct {
+		Avatar string `json:"avatar"`
+		Banner string `json:"banner"`
+	} `json:"archiveFiles"`
 }
 
 // Playlist is one exported playlist. Privacy: 1 public, 2 unlisted, 3 private.
@@ -88,6 +94,10 @@ type Archive struct {
 	// entry, at most MaxFollowing; entries past that are counted in Skipped.
 	Following []string
 	Skipped   map[string]int
+
+	// files is the zip's entries by name, kept so ReadImage can open the few
+	// image entries a channel references; nothing else is ever opened lazily.
+	files map[string]*zip.File
 }
 
 // MaxPlaylistItems bounds how many element URLs are retained per playlist.
@@ -159,7 +169,7 @@ func ReadAt(ra io.ReaderAt, size int64) (*Archive, error) {
 		files[f.Name] = f
 	}
 
-	a := &Archive{Skipped: map[string]int{}}
+	a := &Archive{Skipped: map[string]int{}, files: files}
 	var budget int64 = MaxReadTotal
 	read := func(name string) ([]byte, error) {
 		f, ok := files["peertube/"+name]

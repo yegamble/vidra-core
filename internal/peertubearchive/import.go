@@ -54,7 +54,13 @@ type Importer struct {
 	// Videos, when set, resolves playlist items to videos already in the
 	// database (never the network). Without it every item is counted skipped.
 	Videos Videos
-	Blocks Blocks // optional moderator-block check for items
+	// Images, when set, applies exported channel avatars/banners through the
+	// profile-image service (only where the channel has none). ScanImage, when
+	// set, is the instance's malware-scan policy for small user files; a
+	// refusal skips that image.
+	Images    ChannelImages
+	ScanImage func(ctx context.Context, kind string, data []byte) error
+	Blocks    Blocks // optional moderator-block check for items
 	// Follows, when set, queues the export's following.json handles for a
 	// background follow (see the peertubefollows package).
 	Follows FollowQueue
@@ -76,9 +82,14 @@ type Summary struct {
 	PlaylistItemsSkipped int `json:"playlist_items_skipped"`
 	// PlaylistItemsAdded counts items resolved to a video and present in the
 	// playlist; a re-import re-confirms them (adding is idempotent).
-	PlaylistItemsAdded int            `json:"playlist_items_added"`
-	SettingsApplied    int            `json:"settings_applied"`
-	SkippedSections    map[string]int `json:"skipped_sections"`
+	PlaylistItemsAdded int `json:"playlist_items_added"`
+	// ChannelImagesSet counts avatars/banners applied; ChannelImagesSkipped
+	// those named by the export but refused (not a usable image entry, wrong
+	// type, too large, out-of-bounds dimensions, scan, no storage).
+	ChannelImagesSet     int            `json:"channel_images_set"`
+	ChannelImagesSkipped int            `json:"channel_images_skipped"`
+	SettingsApplied      int            `json:"settings_applied"`
+	SkippedSections      map[string]int `json:"skipped_sections"`
 	// ChannelsMapped lists every channel whose PeerTube name was rewritten into
 	// vidra's handle alphabet (original -> handle actually used).
 	ChannelsMapped []ChannelMapping `json:"channels_mapped"`
@@ -249,6 +260,10 @@ func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (S
 				return sum, err
 			}
 		}
+	}
+
+	if err := im.importChannelImages(ctx, userID, a, ids, &sum); err != nil {
+		return sum, err
 	}
 
 	if len(a.Playlists) > 0 {

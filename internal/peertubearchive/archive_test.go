@@ -275,3 +275,15 @@ func TestReadPlaylistItemsAreBounded(t *testing.T) {
 		t.Fatalf("items %d elements %d", len(p.Items), p.Elements)
 	}
 }
+
+func TestReadChannelArchiveFilesReferences(t *testing.T) {
+	a, err := Read(buildZip(t,
+		entry{name: "peertube/channels.json", body: `{"channels":[{"name":"c","archiveFiles":{"avatar":"x/a.png","banner":null}}]}`},
+		entry{name: "files/x/a.png", body: "x"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := a.Channels[0]; c.ArchiveFiles.Avatar != "x/a.png" || c.ArchiveFiles.Banner != "" || a.ImageEntry(c.ArchiveFiles.Avatar) != "files/x/a.png" {
+		t.Fatalf("%+v", c)
+	}
+}

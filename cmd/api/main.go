@@ -1920,6 +1920,7 @@ func run() error {
 		return err
 	}
 	opts = append(opts, httpapi.WithProfileImageService(imagesvc))
+	ptImporter.Images = imagesvc // PeerTube archive import: exported channel avatars/banners
 
 	// Cross-replica cache invalidation (phase-5 item 8a). Every process polls one
 	// counter row and reloads the three caches above when another process has

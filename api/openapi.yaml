@@ -3414,7 +3414,11 @@ paths:
         playlist service when that video is public, published and not blocked;
         everything else is counted in playlist_items_skipped with its reason in
         skipped_sections, and a re-import fills items into an existing playlist
-        without duplicating), and the autoplay-next setting. Videos, likes, dislikes, comments, watch
+        without duplicating), the autoplay-next setting, and channel
+        avatars/banners referenced by channels.json archiveFiles (only the
+        referenced image entries are read; each goes through the avatar upload
+        type allowlist plus content sniffing, the 8 MiB cap, dimension bounds
+        and the instance scan policy, and never replaces an existing image). Videos, likes, dislikes, comments, watch
         history, blocklists and followers are NOT imported yet and are counted
         under skipped_sections. The accounts in following.json (up to 1000) are
         queued and followed in the background through the same path as
@@ -25600,6 +25604,8 @@ components:
         - playlists_skipped
         - playlist_items_skipped
         - playlist_items_added
+        - channel_images_set
+        - channel_images_skipped
         - settings_applied
         - skipped_sections
         - channels_mapped
@@ -25649,6 +25655,12 @@ components:
         playlist_items_added:
           type: integer
           description: "Items resolved to a local video and present in the playlist (a re-import re-confirms them)."
+        channel_images_set:
+          type: integer
+          description: "Channel avatars/banners from the export applied to channels that had none."
+        channel_images_skipped:
+          type: integer
+          description: "Avatars/banners the export names but that were refused (not a usable files/ image entry, wrong or mismatched type, over 8 MiB, out-of-bounds dimensions, scan policy, no storage)."
         settings_applied: {type: integer}
         skipped_sections:
           type: object

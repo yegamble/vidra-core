@@ -12,6 +12,8 @@ import (
 
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/playlist"
+	"github.com/vidra/vidra-core/internal/profileimage"
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -127,5 +129,63 @@ func TestImportPlaylistItemsAgainstRealServices(t *testing.T) {
 	var count int
 	if err := st.Pool.QueryRow(ctx, `SELECT count(*) FROM playlist_items pi JOIN playlists p ON p.id=pi.playlist_id WHERE p.owner_id=$1`, me).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("items = %d err %v", count, err)
+	}
+}
+
+// TestImportChannelImagesAgainstRealServices runs an export's avatar through the
+// real profile-image service and local storage: it is stored, served metadata
+// is right, a hostile sibling is refused, and a re-import does not replace it.
+func TestImportChannelImagesAgainstRealServices(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	n := uuid.NewString()[:8]
+	var me uuid.UUID
+	if err := st.Pool.QueryRow(ctx, `INSERT INTO users (username, email, password_hash) VALUES ($1,$2,'x') RETURNING id`,
+		"ci-"+n, "ci-"+n+"@example.test").Scan(&me); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, me) }()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	imgs := profileimage.NewService(st.Queries(), blobs)
+	chans := channel.NewService(st.Queries())
+	im := &Importer{Channels: chans, Playlists: playlist.NewService(st.Queries()), Images: imgs}
+	handle := "ci" + n
+	raw := buildZip(t,
+		entry{name: "peertube/channels.json", body: `{"channels":[{"name":"` + handle + `","archiveFiles":{"avatar":"video-channels/1/avatar.png","banner":"banner.png"}}]}`},
+		entry{name: "files/video-channels/1/avatar.png", body: string(pngBytes(t, 16, 16))},
+		entry{name: "files/banner.png", body: "not an image at all"},
+	)
+	a, err := Read(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum, err := im.Import(ctx, me, a)
+	if err != nil || sum.ChannelImagesSet != 1 || sum.ChannelImagesSkipped != 1 {
+		t.Fatalf("import: %+v %v", sum, err)
+	}
+	ch, _ := chans.GetByHandle(ctx, handle)
+	img, err := imgs.ChannelImage(ctx, ch.ID, profileimage.KindAvatar)
+	if err != nil || img.ContentType != "image/png" || imgs.HasChannelImage(ctx, ch.ID, profileimage.KindBanner) {
+		t.Fatalf("avatar %+v err %v", img, err)
+	}
+	before := img.UpdatedAt
+	if _, err := im.Import(ctx, me, a); err != nil {
+		t.Fatal(err)
+	}
+	img2, _ := imgs.ChannelImage(ctx, ch.ID, profileimage.KindAvatar)
+	if !img2.UpdatedAt.Equal(before) {
+		t.Fatal("re-import replaced the avatar")
 	}
 }
