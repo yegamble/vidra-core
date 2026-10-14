@@ -99,6 +99,12 @@ const (
 	// actually removed.
 	ActionAdminWatchedWordCreate = "admin.watched_word.create"
 	ActionAdminWatchedWordDelete = "admin.watched_word.delete"
+	// ActionAdminWatchedWordList* record a moderator creating / changing /
+	// deleting a named INSTANCE list (0172); the resource is the list id and no
+	// name or term is recorded. A creator's own lists are theirs and not audited.
+	ActionAdminWatchedWordListCreate = "admin.watched_word_list.create"
+	ActionAdminWatchedWordListUpdate = "admin.watched_word_list.update"
+	ActionAdminWatchedWordListDelete = "admin.watched_word_list.delete"
 	// ActionAdminCommentBulkRemove records a moderator removing every comment of
 	// one account in one request. The resource is the account (id, or a
 	// fingerprint for a remote actor URL); metadata carries only the count.
@@ -292,6 +298,14 @@ const (
 	// never the activity payload.
 	ActionFederationFollowerApprove = "admin.federation.follower_approve"
 	ActionFederationFollowerReject  = "admin.federation.follower_reject"
+	// Instance follows (migration 0166): an admin accepting, rejecting or
+	// removing a remote instance that follows ours, and following/unfollowing
+	// one. ResourceID carries the safe follow row id only.
+	ActionFederationInstanceFollowerAccept = "admin.federation.instance_follower_accept"
+	ActionFederationInstanceFollowerReject = "admin.federation.instance_follower_reject"
+	ActionFederationInstanceFollowerRemove = "admin.federation.instance_follower_remove"
+	ActionFederationInstanceFollow         = "admin.federation.instance_follow"
+	ActionFederationInstanceUnfollow       = "admin.federation.instance_unfollow"
 	// Suggestion bans (search-service moderation): a moderator/admin suppressing
 	// a query string from instance-wide autosuggest, or lifting that ban. The
 	// domain is `moderation`, not `admin`, because that is what the action IS —

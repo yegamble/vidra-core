@@ -142,6 +142,9 @@ func (s *Service) ChannelOutboxPage(ctx context.Context, handle string, page int
 // Accounts here are attribution actors — not followed, and videos belong to
 // channels — so their followers/following/outbox are empty for now.
 func (s *Service) AccountCollection(ctx context.Context, username, kind string) (*OrderedCollection, error) {
+	if s.isInstanceActorName(ctx, username) {
+		return s.instanceCollection(ctx, kind)
+	}
 	u, err := s.repo.GetUserActorByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

@@ -154,6 +154,11 @@ func (f *fakeRepo) NotifyStaffOfFederationFollowerRequest(_ context.Context, id 
 	return f.fanOutN, f.fanOutErr
 }
 
+func (f *fakeRepo) NotifyStaffOfInstanceFollowerRequest(context.Context) (int64, error) {
+	f.staffQueue = append(f.staffQueue, "federation_follower_request:instance")
+	return f.fanOutN, f.fanOutErr
+}
+
 func prefKey(userID uuid.UUID, typ string) string { return userID.String() + "\x00" + typ }
 
 func (f *fakeRepo) ListNotificationPrefs(_ context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationPrefsRow, error) {

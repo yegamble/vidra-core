@@ -84,7 +84,7 @@ func (f *liveFakeRepo) CreateLiveStream(_ context.Context, a sqlcgen.CreateLiveS
 	row := sqlcgen.CreateLiveStreamRow{
 		ID: uuid.New(), ChannelID: a.ChannelID, Title: a.Title, Description: a.Description,
 		Privacy: a.Privacy, State: "offline", Permanent: a.Permanent, ReplayEnabled: a.ReplayEnabled,
-		CreatedAt: now, UpdatedAt: now,
+		ScheduledStartAt: a.ScheduledStartAt, CreatedAt: now, UpdatedAt: now,
 	}
 	f.rows[row.ID] = row
 	f.hashes[row.ID] = a.StreamKeyHash
@@ -100,7 +100,7 @@ func (f *liveFakeRepo) GetLiveStreamByID(_ context.Context, id uuid.UUID) (sqlcg
 	out := sqlcgen.GetLiveStreamByIDRow{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
-		StartedAt: r.StartedAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		StartedAt: r.StartedAt, ScheduledStartAt: r.ScheduledStartAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		OwnerID: ch.OwnerID, ChannelHandle: ch.Handle, ChannelDisplayName: ch.DisplayName,
 	}
 	if t, ok := f.terminatedAt[id]; ok {
@@ -168,12 +168,16 @@ func (f *liveFakeRepo) UpdateLiveStream(_ context.Context, a sqlcgen.UpdateLiveS
 		return sqlcgen.UpdateLiveStreamRow{}, errors.New("not found")
 	}
 	r.Title, r.Description, r.Privacy, r.Permanent, r.ReplayEnabled = a.Title, a.Description, a.Privacy, a.Permanent, a.ReplayEnabled
+	r.ScheduledStartAt = a.ScheduledStartAt
+	if r.State == "live" { // mirrors the SQL guard: a live stream cannot be announced
+		r.ScheduledStartAt = pgtype.Timestamptz{}
+	}
 	r.UpdatedAt = time.Now()
 	f.rows[a.ID] = r
 	return sqlcgen.UpdateLiveStreamRow{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
-		StartedAt: r.StartedAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		StartedAt: r.StartedAt, ScheduledStartAt: r.ScheduledStartAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}, nil
 }
 
@@ -235,6 +239,7 @@ func (f *liveFakeRepo) SetLiveStreamState(_ context.Context, a sqlcgen.SetLiveSt
 		// Migration 0141: going live clears a previous termination; leaving live
 		// does not, because that is exactly when the creator needs to read it.
 		if a.State == "live" {
+			r.ScheduledStartAt = pgtype.Timestamptz{} // going live consumes the announcement (0168)
 			delete(f.terminatedAt, a.ID)
 			delete(f.termination, a.ID)
 		}
@@ -251,6 +256,7 @@ func (f *liveFakeRepo) TerminateLiveStream(_ context.Context, a sqlcgen.Terminat
 	}
 	r.State = a.State
 	r.StartedAt = pgtype.Timestamptz{}
+	r.ScheduledStartAt = pgtype.Timestamptz{} // termination clears the announcement
 	f.rows[a.ID] = r
 	f.terminatedAt[a.ID] = time.Now()
 	f.termination[a.ID] = a
@@ -1050,6 +1056,42 @@ func TestListLivePublicStreamsUngatedRead(t *testing.T) {
 	if len(out.LiveStreams) != 0 {
 		t.Fatalf("want 0 live streams, got %d", len(out.LiveStreams))
 	}
+}
+
+// upcoming mirrors ListUpcomingLiveStreams: offline + public + a planned start
+// not more than an hour stale, optional channel filter, per-viewer mute/block,
+// soonest first.
+func (f *liveFakeRepo) upcoming(handle *string, viewer pgtype.UUID) []sqlcgen.CreateLiveStreamRow {
+	var rows []sqlcgen.CreateLiveStreamRow
+	for _, r := range f.rows {
+		if r.State != "offline" || r.Privacy != "public" || !r.ScheduledStartAt.Valid ||
+			!r.ScheduledStartAt.Time.After(time.Now().Add(-time.Hour)) || f.hiddenFromViewer(viewer, r.ChannelID) {
+			continue
+		}
+		if ch, _ := f.channelByID(r.ChannelID); handle != nil && ch.Handle != *handle {
+			continue
+		}
+		rows = append(rows, r)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ScheduledStartAt.Time.Before(rows[j].ScheduledStartAt.Time) })
+	return rows
+}
+
+func (f *liveFakeRepo) ListUpcomingLiveStreams(_ context.Context, a sqlcgen.ListUpcomingLiveStreamsParams) ([]sqlcgen.ListUpcomingLiveStreamsRow, error) {
+	out := []sqlcgen.ListUpcomingLiveStreamsRow{}
+	for _, r := range f.upcoming(a.ChannelHandle, a.ViewerID) {
+		ch, _ := f.channelByID(r.ChannelID)
+		out = append(out, sqlcgen.ListUpcomingLiveStreamsRow{
+			ID: r.ID, Title: r.Title, Description: r.Description, ScheduledStartAt: r.ScheduledStartAt,
+			ChannelHandle: ch.Handle, ChannelDisplayName: ch.DisplayName,
+		})
+	}
+	lo := min(int(a.ResultOffset), len(out))
+	return out[lo:min(lo+int(a.ResultLimit), len(out))], nil
+}
+
+func (f *liveFakeRepo) CountUpcomingLiveStreams(_ context.Context, a sqlcgen.CountUpcomingLiveStreamsParams) (int64, error) {
+	return int64(len(f.upcoming(a.ChannelHandle, a.ViewerID))), nil
 }
 
 func (f *liveFakeRepo) CountLiveStreamsByChannel(ctx context.Context, channelID uuid.UUID) (int64, error) {

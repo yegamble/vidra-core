@@ -33,12 +33,19 @@ WHERE ($1::text IS NULL
        -- is open/accepted/rejected, so "resolved" means "no longer open".
        OR ($1::text = 'resolved' AND r.status <> 'open')
        OR r.status = $1::text)
+  AND ($2::text IS NULL
+       OR r.predefined_reasons @> ARRAY[$2::text])
 `
 
-// How many rows ListReports would return for the same status filter, ignoring
+type CountReportsParams struct {
+	Status           *string `json:"status"`
+	PredefinedReason *string `json:"predefined_reason"`
+}
+
+// How many rows ListReports would return for the same status/reason filter, ignoring
 // pagination. The WHERE must stay identical to it (its joins are all LEFT).
-func (q *Queries) CountReports(ctx context.Context, status *string) (int64, error) {
-	row := q.db.QueryRow(ctx, countReports, status)
+func (q *Queries) CountReports(ctx context.Context, arg CountReportsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countReports, arg.Status, arg.PredefinedReason)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -123,23 +130,24 @@ func (q *Queries) CreateMessageReport(ctx context.Context, arg CreateMessageRepo
 }
 
 const createRemoteFlagReport = `-- name: CreateRemoteFlagReport :one
-INSERT INTO reports (target_type, video_id, comment_id, reported_user_id, reason,
+INSERT INTO reports (target_type, video_id, comment_id, reported_user_id, reason, predefined_reasons,
                      remote_reporter_actor_url, remote_reporter_domain, remote_flag_activity_id)
 VALUES ($1, $2, $3, $4,
-        $5, $6::text, $7::text, $8::text)
+        $5, COALESCE($6::text[], '{}'), $7::text, $8::text, $9::text)
 ON CONFLICT DO NOTHING
 RETURNING id
 `
 
 type CreateRemoteFlagReportParams struct {
-	TargetType     string      `json:"target_type"`
-	VideoID        pgtype.UUID `json:"video_id"`
-	CommentID      pgtype.UUID `json:"comment_id"`
-	ReportedUserID pgtype.UUID `json:"reported_user_id"`
-	Reason         string      `json:"reason"`
-	ActorUrl       string      `json:"actor_url"`
-	Domain         string      `json:"domain"`
-	FlagActivityID string      `json:"flag_activity_id"`
+	TargetType        string      `json:"target_type"`
+	VideoID           pgtype.UUID `json:"video_id"`
+	CommentID         pgtype.UUID `json:"comment_id"`
+	ReportedUserID    pgtype.UUID `json:"reported_user_id"`
+	Reason            string      `json:"reason"`
+	PredefinedReasons []string    `json:"predefined_reasons"`
+	ActorUrl          string      `json:"actor_url"`
+	Domain            string      `json:"domain"`
+	FlagActivityID    string      `json:"flag_activity_id"`
 }
 
 // A remote Flag report (0153). No row for a repeat (Flag, target) or while the
@@ -151,6 +159,7 @@ func (q *Queries) CreateRemoteFlagReport(ctx context.Context, arg CreateRemoteFl
 		arg.CommentID,
 		arg.ReportedUserID,
 		arg.Reason,
+		arg.PredefinedReasons,
 		arg.ActorUrl,
 		arg.Domain,
 		arg.FlagActivityID,
@@ -185,16 +194,22 @@ func (q *Queries) CreateRemoteVideoReport(ctx context.Context, arg CreateRemoteV
 }
 
 const createVideoReport = `-- name: CreateVideoReport :one
-INSERT INTO reports (reporter_id, target_type, video_id, reason)
-VALUES ($1::uuid, 'video', $2, $3)
+INSERT INTO reports (reporter_id, target_type, video_id, reason, predefined_reasons,
+                     video_start_seconds, video_end_seconds)
+VALUES ($1::uuid, 'video', $2, $3,
+        COALESCE($4::text[], '{}'), $5::int,
+        $6::int)
 ON CONFLICT (reporter_id, video_id) WHERE video_id IS NOT NULL DO NOTHING
 RETURNING id
 `
 
 type CreateVideoReportParams struct {
-	ReporterID uuid.UUID   `json:"reporter_id"`
-	VideoID    pgtype.UUID `json:"video_id"`
-	Reason     string      `json:"reason"`
+	ReporterID        uuid.UUID   `json:"reporter_id"`
+	VideoID           pgtype.UUID `json:"video_id"`
+	Reason            string      `json:"reason"`
+	PredefinedReasons []string    `json:"predefined_reasons"`
+	VideoStartSeconds *int32      `json:"video_start_seconds"`
+	VideoEndSeconds   *int32      `json:"video_end_seconds"`
 }
 
 // Report a video (idempotent per reporter+video). Returns the new report's id;
@@ -203,7 +218,14 @@ type CreateVideoReportParams struct {
 // fan-out fires only for genuinely new reports. The ::uuid casts keep a local
 // report's reporter_id required although the column is nullable since 0153.
 func (q *Queries) CreateVideoReport(ctx context.Context, arg CreateVideoReportParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, createVideoReport, arg.ReporterID, arg.VideoID, arg.Reason)
+	row := q.db.QueryRow(ctx, createVideoReport,
+		arg.ReporterID,
+		arg.VideoID,
+		arg.Reason,
+		arg.PredefinedReasons,
+		arg.VideoStartSeconds,
+		arg.VideoEndSeconds,
+	)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -226,6 +248,7 @@ func (q *Queries) DeleteReport(ctx context.Context, id uuid.UUID) (int64, error)
 
 const listMyReports = `-- name: ListMyReports :many
 SELECT r.id, r.target_type, r.status, r.reason, r.created_at, r.resolved_at,
+       r.predefined_reasons, r.video_start_seconds, r.video_end_seconds,
        r.video_id,
        COALESCE(CASE WHEN v.privacy = 'public' AND v.state = 'published'
                       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
@@ -255,18 +278,21 @@ type ListMyReportsParams struct {
 }
 
 type ListMyReportsRow struct {
-	ID               uuid.UUID          `json:"id"`
-	TargetType       string             `json:"target_type"`
-	Status           string             `json:"status"`
-	Reason           string             `json:"reason"`
-	CreatedAt        time.Time          `json:"created_at"`
-	ResolvedAt       pgtype.Timestamptz `json:"resolved_at"`
-	VideoID          pgtype.UUID        `json:"video_id"`
-	VideoTitle       string             `json:"video_title"`
-	ReportedUsername *string            `json:"reported_username"`
-	RemoteVideoTitle *string            `json:"remote_video_title"`
-	MessageCount     int64              `json:"message_count"`
-	LastActivityAt   time.Time          `json:"last_activity_at"`
+	ID                uuid.UUID          `json:"id"`
+	TargetType        string             `json:"target_type"`
+	Status            string             `json:"status"`
+	Reason            string             `json:"reason"`
+	CreatedAt         time.Time          `json:"created_at"`
+	ResolvedAt        pgtype.Timestamptz `json:"resolved_at"`
+	PredefinedReasons []string           `json:"predefined_reasons"`
+	VideoStartSeconds *int32             `json:"video_start_seconds"`
+	VideoEndSeconds   *int32             `json:"video_end_seconds"`
+	VideoID           pgtype.UUID        `json:"video_id"`
+	VideoTitle        string             `json:"video_title"`
+	ReportedUsername  *string            `json:"reported_username"`
+	RemoteVideoTitle  *string            `json:"remote_video_title"`
+	MessageCount      int64              `json:"message_count"`
+	LastActivityAt    time.Time          `json:"last_activity_at"`
 }
 
 // A reporter's own reports, most recently active first (filing, resolution or
@@ -294,6 +320,9 @@ func (q *Queries) ListMyReports(ctx context.Context, arg ListMyReportsParams) ([
 			&i.Reason,
 			&i.CreatedAt,
 			&i.ResolvedAt,
+			&i.PredefinedReasons,
+			&i.VideoStartSeconds,
+			&i.VideoEndSeconds,
 			&i.VideoID,
 			&i.VideoTitle,
 			&i.ReportedUsername,
@@ -314,7 +343,7 @@ func (q *Queries) ListMyReports(ctx context.Context, arg ListMyReportsParams) ([
 const listReports = `-- name: ListReports :many
 SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reported_user_id, r.remote_video_id,
        r.message_id, r.message_body_snapshot,
-       r.reason, r.status,
+       r.reason, r.status, r.predefined_reasons, r.video_start_seconds, r.video_end_seconds,
        r.moderator_note, r.resolved_at, r.created_at,
        COALESCE(u.username, '')::text AS reporter_username,
        r.remote_reporter_actor_url, r.remote_reporter_domain,
@@ -335,14 +364,17 @@ WHERE ($1::text IS NULL
        -- is open/accepted/rejected, so "resolved" means "no longer open".
        OR ($1::text = 'resolved' AND r.status <> 'open')
        OR r.status = $1::text)
+  AND ($2::text IS NULL
+       OR r.predefined_reasons @> ARRAY[$2::text])
 ORDER BY r.created_at DESC, r.id DESC
-LIMIT $3 OFFSET $2
+LIMIT $4 OFFSET $3
 `
 
 type ListReportsParams struct {
-	Status       *string `json:"status"`
-	ResultOffset int32   `json:"result_offset"`
-	ResultLimit  int32   `json:"result_limit"`
+	Status           *string `json:"status"`
+	PredefinedReason *string `json:"predefined_reason"`
+	ResultOffset     int32   `json:"result_offset"`
+	ResultLimit      int32   `json:"result_limit"`
 }
 
 type ListReportsRow struct {
@@ -356,6 +388,9 @@ type ListReportsRow struct {
 	MessageBodySnapshot    string             `json:"message_body_snapshot"`
 	Reason                 string             `json:"reason"`
 	Status                 string             `json:"status"`
+	PredefinedReasons      []string           `json:"predefined_reasons"`
+	VideoStartSeconds      *int32             `json:"video_start_seconds"`
+	VideoEndSeconds        *int32             `json:"video_end_seconds"`
 	ModeratorNote          string             `json:"moderator_note"`
 	ResolvedAt             pgtype.Timestamptz `json:"resolved_at"`
 	CreatedAt              time.Time          `json:"created_at"`
@@ -377,7 +412,12 @@ type ListReportsRow struct {
 // BOOLEAN fed by `?status == "open"` in the handler, so ?status=resolved
 // silently returned the whole queue.
 func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]ListReportsRow, error) {
-	rows, err := q.db.Query(ctx, listReports, arg.Status, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listReports,
+		arg.Status,
+		arg.PredefinedReason,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -396,6 +436,9 @@ func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]Lis
 			&i.MessageBodySnapshot,
 			&i.Reason,
 			&i.Status,
+			&i.PredefinedReasons,
+			&i.VideoStartSeconds,
+			&i.VideoEndSeconds,
 			&i.ModeratorNote,
 			&i.ResolvedAt,
 			&i.CreatedAt,
