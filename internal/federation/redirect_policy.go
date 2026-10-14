@@ -5,11 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 
-	"golang.org/x/net/idna"
-
+	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 )
 
@@ -82,49 +80,19 @@ func (s *Service) redirectPolicy(next func(*http.Request, []*http.Request) error
 	}
 }
 
-// hostBlocked reports whether a URL's host is on the admin block list. The
-// list stores a lower-case host, or host:port, so the bare canonical host and
-// its host:port form (the scheme's default port when none is given) are asked. A host that does not
-// canonicalise is reported blocked: it could not be checked.
+// hostBlocked reports whether a URL's host is on the admin block list, under
+// the same canonicalisation (NormalizeFollowHost) and spelling-aware match
+// (instancemod.BlockMatchesPort) the follow path uses. A host that does not
+// canonicalise is reported blocked: it could not be checked. A lookup error is
+// returned with blocked=true: fail closed.
 func (s *Service) hostBlocked(ctx context.Context, u *url.URL) (bool, error) {
-	host, ok := canonicalBlockHost(u.Hostname())
+	host, ok := NormalizeFollowHost(u.Hostname())
 	if !ok {
 		return true, nil
 	}
-	keys := []string{host}
-	port := u.Port()
-	if port == "" {
-		// An entry may name the scheme's default port explicitly.
-		port = map[string]string{"https": "443", "http": "80"}[strings.ToLower(u.Scheme)]
+	blocked, err := instancemod.BlockMatchesPort(ctx, s.repo.IsInstanceBlocked, host, instancemod.EffectivePort(u.Scheme, u.Port()))
+	if err != nil {
+		return true, err
 	}
-	if port != "" {
-		keys = append(keys, host+":"+port)
-	}
-	if raw := strings.ToLower(u.Host); !slices.Contains(keys, raw) {
-		keys = append(keys, raw)
-	}
-	for _, k := range keys {
-		blocked, err := s.repo.IsInstanceBlocked(ctx, k)
-		if err != nil || blocked {
-			return true, err
-		}
-	}
-	return false, nil
-}
-
-// canonicalBlockHost reduces a hostname to the form the block list is keyed by:
-// lower-case, trailing dot removed, IDN in its ASCII form. It is the follow
-// path's normalisation.
-// TODO: replace with federation.NormalizeFollowHost / instancemod.BlockMatches
-// once those shared helpers are on main.
-func canonicalBlockHost(hostname string) (string, bool) {
-	h := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(hostname)), ".")
-	if h == "" {
-		return "", false
-	}
-	ascii, err := idna.Lookup.ToASCII(h)
-	if err != nil || ascii == "" {
-		return "", false
-	}
-	return ascii, true
+	return blocked, nil
 }
