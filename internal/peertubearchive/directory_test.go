@@ -6,6 +6,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"regexp"
+	"runtime"
+	"strconv"
 	"testing"
 )
 
@@ -128,7 +131,15 @@ func craftedDirectories(t testing.TB) map[string][]byte {
 			binary.LittleEndian.PutUint32(end[12:], 0xffff)
 			binary.LittleEndian.PutUint32(end[16:], uint32(binary.LittleEndian.Uint32(good[e+16:])))
 		}, func(r []byte) { binary.LittleEndian.PutUint64(r[32:], MaxEntries+1) }, nil),
+		// The shape go1.27's zip.Writer emits once any entry carries a zip64
+		// extra: a locator and zip64 record, 32-bit fields left at real values.
 		"zip64 locator without sentinels": withZip64(good, func(end []byte) { copy(end[8:20], good[e+8:e+20]) }, nil, nil),
+		"zip64 locator without sentinels, zip64 records disagree": withZip64(good, func(end []byte) { copy(end[8:20], good[e+8:e+20]) },
+			func(r []byte) { binary.LittleEndian.PutUint64(r[32:], 3) }, nil),
+		"zip64 size 0xffff only, zip64 size disagrees": withZip64(good, func(end []byte) {
+			copy(end[8:20], good[e+8:e+20])
+			binary.LittleEndian.PutUint32(end[12:], 0xffff)
+		}, nil, nil),
 		"zip64 size 0xffffffff only (not a sentinel for archive/zip)": withZip64(good, func(end []byte) {
 			copy(end[8:20], good[e+8:e+20])
 			binary.LittleEndian.PutUint32(end[12:], 0xffffffff)
@@ -181,7 +192,7 @@ func buildZipTB(t testing.TB, entries ...entry) []byte {
 
 func TestCheckDirectorySelectsTheRecordArchiveZipUses(t *testing.T) {
 	cases := craftedDirectories(t)
-	accept := map[string]bool{"good": true, "zip64 all sentinels": true}
+	accept := map[string]bool{"good": true, "zip64 all sentinels": true, "zip64 locator without sentinels": true}
 	for name, raw := range cases {
 		err := checkDirectory(bytes.NewReader(raw), int64(len(raw)))
 		if accept[name] {
@@ -235,4 +246,51 @@ func FuzzCheckDirectoryAgreesWithArchiveZip(f *testing.F) {
 		assertAgreesWithArchiveZip(t, raw, 1, 60)
 		assertAgreesWithArchiveZip(t, raw, 2, 120)
 	})
+}
+
+// The zip64 shapes the runtime's own zip.Writer produces must be accepted,
+// whatever toolchain builds this: an entry whose declared size needs a zip64
+// extra (go1.27 then writes a locator without end-record sentinels).
+func TestCheckDirectoryAcceptsRuntimeZip64Writer(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, _ := zw.Create("peertube/channels.json")
+	_, _ = w.Write([]byte(`{}`))
+	raw, err := zw.CreateRaw(&zip.FileHeader{Name: "files/b.mp4", Method: zip.Deflate, UncompressedSize64: 5 << 30, CompressedSize64: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = raw.Write(bytes.Repeat([]byte{0xFF}, 16))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b := buf.Bytes()
+	if err := checkDirectory(bytes.NewReader(b), int64(len(b))); err != nil {
+		t.Fatalf("%s: runtime-written zip64 archive refused: %v", runtime.Version(), err)
+	}
+	if n, _, ok := goDirectoryCost(b); !ok || n != 2 {
+		t.Fatalf("archive/zip read %d entries (ok=%v)", n, ok)
+	}
+}
+
+// verifiedZipGoMinor is the newest Go minor whose src/archive/zip reader and
+// writer checkDirectoryLimits was verified against (go1.26.2 and go1.27.2:
+// differential + fuzz tests run under both). A newer toolchain fails here
+// until someone diffs src/archive/zip/{reader,writer}.go against the last
+// verified release, re-runs FuzzCheckDirectoryAgreesWithArchiveZip on it, and
+// bumps this constant.
+const verifiedZipGoMinor = 27
+
+var goMinorRE = regexp.MustCompile(`go1\.(\d+)`)
+
+func TestToolchainZipReaderWasVerified(t *testing.T) {
+	v := runtime.Version()
+	m := goMinorRE.FindStringSubmatch(v)
+	if m == nil {
+		t.Fatalf("cannot parse Go version %q: re-verify checkDirectoryLimits against this toolchain's archive/zip", v)
+	}
+	minor, _ := strconv.Atoi(m[1])
+	if minor > verifiedZipGoMinor {
+		t.Fatalf("%s is newer than the newest Go minor checkDirectoryLimits was verified against (1.%d): diff src/archive/zip/{reader,writer}.go, re-run the fuzz target, then bump verifiedZipGoMinor", v, verifiedZipGoMinor)
+	}
 }

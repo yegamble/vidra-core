@@ -29,27 +29,43 @@ func checkDirectory(ra io.ReaderAt, size int64) error {
 	return checkDirectoryLimits(ra, size, MaxEntries, MaxDirectoryBytes)
 }
 
-// checkDirectoryLimits locates the end-of-central-directory record exactly as
+// checkDirectoryLimits locates the end-of-central-directory record the way
 // archive/zip does (readDirectoryEnd / findSignatureInBlock /
-// findDirectory64End in the toolchain's src/archive/zip/reader.go), so the
-// record checked here is the record zip.NewReader will use. Where archive/zip
-// is lenient this is stricter, never looser:
+// findDirectory64End in src/archive/zip/reader.go), so the record checked here
+// is the record zip.NewReader will use. It is written to be stricter than EVERY
+// archive/zip it may be built with, never looser, and was verified against the
+// readers and writers of go1.26.2 and go1.27.2 (see verifiedZipGoMinor). Those
+// two differ in ways that matter here:
+//
+//   - go1.26 follows a zip64 locator when records == 0xffff, size == 0xffff
+//     (sic, a 16-bit test) or offset == 0xffffffff; go1.27 when records ==
+//     0xffff, size == 0xffffffff or offset == 0xffffffff;
+//   - go1.26's writer saturates every 32-bit end-record field once zip64 is
+//     needed; go1.27's writer also emits the zip64 record and locator whenever
+//     any ENTRY needed a zip64 extra, leaving the 32-bit fields at their real
+//     values — so neither reader follows that locator.
+//
+// The rules, in terms that hold for both:
 //
 //   - the end record is the LAST signature in the search window with room for
 //     a whole record; its comment must end exactly at EOF, and no further end
 //     signature may follow it;
-//   - archive/zip consults a zip64 locator only when a 32-bit field holds its
-//     sentinel (records 0xffff, size 0xffff, offset 0xffffffff — sic, the size
-//     test is 16-bit there). A locator it would ignore, or one it would follow
-//     with invalid disk fields, is a second description of the directory and is
-//     refused; a followed locator is authoritative;
+//   - a locator with invalid disk fields (ignored by every reader) is refused;
+//   - with a valid locator, each 32-bit field must either equal its zip64
+//     value or be a sentinel, and unless records or offset is a sentinel (which
+//     every reader follows) all three must equal the zip64 values exactly. So
+//     a reader that follows the locator and one that does not read the same
+//     count, size and offset; the only difference is where the directory is
+//     taken to end, which a non-following reader resolves with its base-offset
+//     heuristic (directory at offset, or offset shifted by the zip64 record and
+//     locator). Both starting points are walked and bounded;
 //   - the directory must sit immediately before the (zip64) end record, so
-//     archive/zip's base offset is 0;
-//   - the directory headers are then WALKED with archive/zip's termination
-//     rule (stop at the first short read or non-header signature), counting
-//     records and bytes. The walk continues at least as far as archive/zip's
-//     own loop, so its count and size bound what zip.NewReader materialises,
-//     and both must equal what the end record declares.
+//     archive/zip's base offset is 0 whenever it follows the record it reads;
+//   - the directory headers are WALKED with archive/zip's termination rule
+//     (stop at the first short read or non-header signature), counting records
+//     and bytes. The walk continues at least as far as archive/zip's own loop,
+//     so its count and size bound what zip.NewReader materialises, and both
+//     must equal what the end record declares.
 func checkDirectoryLimits(ra io.ReaderAt, size, maxEntries, maxDirBytes int64) error {
 	if size < endLen {
 		return invalid("not a zip")
@@ -80,7 +96,8 @@ func checkDirectoryLimits(ra io.ReaderAt, size, maxEntries, maxDirBytes int64) e
 	records := uint64(binary.LittleEndian.Uint16(rec[10:]))
 	dirSize := uint64(binary.LittleEndian.Uint32(rec[12:]))
 	dirOff := uint64(binary.LittleEndian.Uint32(rec[16:]))
-	dirEnd := endAt // where the directory must stop
+	dirEnd := endAt  // where the directory must stop
+	var shift uint64 // non-zero: a second start some reader may use (see above)
 
 	if endAt >= locator64Len {
 		var loc [locator64Len]byte
@@ -88,9 +105,7 @@ func checkDirectoryLimits(ra io.ReaderAt, size, maxEntries, maxDirBytes int64) e
 			return invalid("not a zip")
 		}
 		if binary.LittleEndian.Uint32(loc[:]) == sigLocator64 {
-			follows := records == 0xffff || dirSize == 0xffff || dirOff == 0xffffffff
-			validDisks := binary.LittleEndian.Uint32(loc[4:]) == 0 && binary.LittleEndian.Uint32(loc[16:]) == 1
-			if !follows || !validDisks {
+			if binary.LittleEndian.Uint32(loc[4:]) != 0 || binary.LittleEndian.Uint32(loc[16:]) != 1 {
 				return invalid("inconsistent zip64 locator")
 			}
 			at := binary.LittleEndian.Uint64(loc[8:])
@@ -101,9 +116,25 @@ func checkDirectoryLimits(ra io.ReaderAt, size, maxEntries, maxDirBytes int64) e
 			if err := readFullAt(ra, z[:], int64(at)); err != nil || binary.LittleEndian.Uint32(z[:]) != sigEnd64 { //nolint:gosec // bounded above
 				return invalid("zip64 end record missing")
 			}
-			records = binary.LittleEndian.Uint64(z[32:])
-			dirSize = binary.LittleEndian.Uint64(z[40:])
-			dirOff = binary.LittleEndian.Uint64(z[48:])
+			records64 := binary.LittleEndian.Uint64(z[32:])
+			dirSize64 := binary.LittleEndian.Uint64(z[40:])
+			dirOff64 := binary.LittleEndian.Uint64(z[48:])
+			allFollow := records == 0xffff || dirOff == 0xffffffff
+			if allFollow {
+				if (dirSize != dirSize64 && dirSize != 0xffff && dirSize != 0xffffffff) ||
+					(records != records64 && records != 0xffff) || (dirOff != dirOff64 && dirOff != 0xffffffff) {
+					return invalid("inconsistent zip64 locator")
+				}
+			} else if records != records64 || dirSize != dirSize64 || dirOff != dirOff64 {
+				return invalid("inconsistent zip64 locator")
+			}
+			if !allFollow {
+				// A reader that ignores the locator sees the directory ending at
+				// the end record, computes a positive base offset and, if the first
+				// header at dirOff does not parse, reads from dirOff+shift.
+				shift = uint64(endAt) - at //nolint:gosec // endAt >= 0
+			}
+			records, dirSize, dirOff = records64, dirSize64, dirOff64
 			dirEnd = int64(at) //nolint:gosec // bounded above
 		}
 	}
@@ -114,27 +145,40 @@ func checkDirectoryLimits(ra io.ReaderAt, size, maxEntries, maxDirBytes int64) e
 		return invalid("unsupported zip directory")
 	}
 
-	br := bufio.NewReader(io.NewSectionReader(ra, int64(dirOff), size-int64(dirOff))) //nolint:gosec // dirOff <= dirEnd < size
-	var count, walked uint64
-	for {
-		var h [dirHeaderLen]byte
-		if _, err := io.ReadFull(br, h[:]); err != nil || binary.LittleEndian.Uint32(h[:]) != sigDirHeader {
-			break
-		}
-		v := uint64(binary.LittleEndian.Uint16(h[28:])) + uint64(binary.LittleEndian.Uint16(h[30:])) + uint64(binary.LittleEndian.Uint16(h[32:]))
-		count++
-		walked += dirHeaderLen + v
-		if count > uint64(maxEntries) || walked > uint64(maxDirBytes) { //nolint:gosec // as above
-			return invalid("zip directory too large")
-		}
-		if _, err := br.Discard(int(v)); err != nil {
-			break
-		}
+	count, walked, err := walkDirectory(ra, size, dirOff, maxEntries, maxDirBytes)
+	if err != nil {
+		return err
 	}
 	if count != records || walked != dirSize {
 		return invalid("zip directory does not match its end record")
 	}
+	if shift != 0 && dirOff+shift < uint64(size) { //nolint:gosec // size > 0
+		if _, _, err := walkDirectory(ra, size, dirOff+shift, maxEntries, maxDirBytes); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// walkDirectory walks central-directory headers from off with archive/zip's
+// termination rule and fails once the count or bytes exceed the limits.
+func walkDirectory(ra io.ReaderAt, size int64, off uint64, maxEntries, maxDirBytes int64) (count, walked uint64, err error) {
+	br := bufio.NewReader(io.NewSectionReader(ra, int64(off), size-int64(off))) //nolint:gosec // callers keep off < size
+	for {
+		var h [dirHeaderLen]byte
+		if _, err := io.ReadFull(br, h[:]); err != nil || binary.LittleEndian.Uint32(h[:]) != sigDirHeader {
+			return count, walked, nil
+		}
+		v := uint64(binary.LittleEndian.Uint16(h[28:])) + uint64(binary.LittleEndian.Uint16(h[30:])) + uint64(binary.LittleEndian.Uint16(h[32:]))
+		count++
+		walked += dirHeaderLen + v
+		if count > uint64(maxEntries) || walked > uint64(maxDirBytes) { //nolint:gosec // limits are positive constants
+			return count, walked, invalid("zip directory too large")
+		}
+		if _, err := br.Discard(int(v)); err != nil {
+			return count, walked, nil
+		}
+	}
 }
 
 // readFullAt is ReadAt that tolerates io.EOF only when the buffer was filled.
