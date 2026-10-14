@@ -1012,6 +1012,14 @@ type RemoteVideoRating struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+type RemoteVideoUserRating struct {
+	RemoteVideoID uuid.UUID `json:"remote_video_id"`
+	UserID        uuid.UUID `json:"user_id"`
+	Rating        string    `json:"rating"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type Report struct {
 	ID                     uuid.UUID          `json:"id"`
 	ReporterID             pgtype.UUID        `json:"reporter_id"`

@@ -116,6 +116,7 @@ func (s *Service) Delete(ctx context.Context, userID uuid.UUID) error {
 		fn   func(context.Context, uuid.UUID) error
 	}{
 		{"ratings", s.repo.DeleteVideoRatingsByUser},
+		{"remote video ratings", s.repo.DeleteRemoteVideoUserRatingsByUser},
 		{"saved videos", s.repo.DeleteSavedVideosByUser},
 		{"watch history", s.repo.ClearWatchHistory},
 		{"playlists", s.repo.DeletePlaylistsByOwner},

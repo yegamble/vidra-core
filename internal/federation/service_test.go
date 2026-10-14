@@ -88,6 +88,9 @@ type fakeRepo struct {
 	// remoteRatings are remote actors' votes on local videos (0178), keyed
 	// actorURL|videoID; nil = the fake refuses a write (seed it to use it).
 	remoteRatings map[string]*sqlcgen.UpsertRemoteVideoRatingParams
+	// userRemoteRatings are local users' votes on remote videos (0179), keyed
+	// userID|remoteVideoID.
+	userRemoteRatings map[string]string
 }
 
 func (f fakeRepo) ListChannelBackfillVideoIDs(_ context.Context, arg sqlcgen.ListChannelBackfillVideoIDsParams) ([]uuid.UUID, error) {
