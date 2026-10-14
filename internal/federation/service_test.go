@@ -85,6 +85,9 @@ type fakeRepo struct {
 	// never expires inside a test.
 	moveClaims map[string]string
 	moveStates map[string]string // origin → claimed | moving | done (absent = claimed)
+	// remoteRatings are remote actors' votes on local videos (0178), keyed
+	// actorURL|videoID; nil = the fake refuses a write (seed it to use it).
+	remoteRatings map[string]*sqlcgen.UpsertRemoteVideoRatingParams
 }
 
 func (f fakeRepo) ListChannelBackfillVideoIDs(_ context.Context, arg sqlcgen.ListChannelBackfillVideoIDsParams) ([]uuid.UUID, error) {
