@@ -325,16 +325,18 @@ func (f fakeBlocks) IsBlocked(_ context.Context, id uuid.UUID) (bool, error) { r
 
 func TestImportPlaylistItems(t *testing.T) {
 	pub, priv, blocked, imported := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	unl, draft := uuid.New(), uuid.New()
 	src := uuid.New() // the imported video's PeerTube source uuid
 	row := func(state, privacy string) sqlcgen.GetVideoByIDRow {
 		return sqlcgen.GetVideoByIDRow{State: state, Privacy: privacy}
 	}
 	vids := &fakeVideos{
-		byLegacy: map[uuid.UUID]uuid.UUID{pub: pub, priv: priv, blocked: blocked, src: imported},
+		byLegacy: map[uuid.UUID]uuid.UUID{pub: pub, priv: priv, blocked: blocked, src: imported, unl: unl, draft: draft},
 		byCode:   map[string]uuid.UUID{"ABCDEFGHJKL": pub},
 		rows: map[uuid.UUID]sqlcgen.GetVideoByIDRow{
 			pub: row("published", "public"), priv: row("published", "private"),
 			blocked: row("published", "public"), imported: row("published", "public"),
+			unl: row("published", "unlisted"), draft: row("processing", "public"),
 		},
 	}
 	pl := &fakePlaylists{}
@@ -345,6 +347,8 @@ func TestImportPlaylistItems(t *testing.T) {
 		"https://tube.example/videos/watch/" + pub.String(), // duplicate
 		"https://tube.example/v/ABCDEFGHJKL",                // short code, same video
 		"https://tube.example/videos/watch/" + priv.String(),
+		"https://tube.example/videos/watch/" + unl.String(),
+		"https://tube.example/videos/watch/" + draft.String(),
 		"https://tube.example/videos/watch/" + blocked.String(),
 		"https://tube.example/videos/watch/" + uuid.NewString(), // unknown
 		"https://tube.example/w/abcdefghijklmnopqrstuv",         // undecoded form
@@ -356,8 +360,8 @@ func TestImportPlaylistItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum.PlaylistItemsAdded != 2 || sum.PlaylistItemsSkipped != 6 ||
-		sum.SkippedSections[reasonUnavailable] != 2 || sum.SkippedSections[reasonUnresolved] != 4 {
+	if sum.PlaylistItemsAdded != 2 || sum.PlaylistItemsSkipped != 8 ||
+		sum.SkippedSections[reasonNotAddable] != 8 {
 		t.Fatalf("summary: %+v", sum)
 	}
 	// Two distinct videos reach AddItem, in export order; the URL repeat and the

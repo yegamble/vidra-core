@@ -30,9 +30,11 @@ type Blocks interface {
 
 // Reasons an element was not added; reported under skipped_sections.
 const (
-	reasonUnresolved  = "playlist_items_unresolved"  // names no video this instance holds
-	reasonUnavailable = "playlist_items_unavailable" // held, but not addable (not public+published, or blocked)
-	reasonOverCap     = "playlist_items_over_cap"
+	// reasonNotAddable is ONE reason for "no such video" and "held but not
+	// public+published, or blocked", so the summary cannot be used to probe
+	// whether a non-public video exists (POST /playlists/{id}/items answers one 404).
+	reasonNotAddable = "playlist_items_not_addable"
+	reasonOverCap    = "playlist_items_over_cap"
 )
 
 // parseVideoRef extracts the identifier a video URL carries: a uuid from
@@ -66,7 +68,7 @@ func parseVideoRef(raw string) (id uuid.UUID, code string, ok bool) {
 func (im *Importer) resolveItem(ctx context.Context, raw string) (uuid.UUID, string, error) {
 	id, code, ok := parseVideoRef(raw)
 	if !ok {
-		return uuid.Nil, reasonUnresolved, nil
+		return uuid.Nil, reasonNotAddable, nil
 	}
 	var vid uuid.UUID
 	var err error
@@ -78,11 +80,11 @@ func (im *Importer) resolveItem(ctx context.Context, raw string) (uuid.UUID, str
 	if err != nil || vid == uuid.Nil {
 		// A miss. A cached remote_videos row is deliberately not consulted:
 		// playlist_items.video_id references videos(id) only.
-		return uuid.Nil, reasonUnresolved, nil
+		return uuid.Nil, reasonNotAddable, nil
 	}
 	v, err := im.Videos.GetByID(ctx, vid)
 	if err != nil || v.State != "published" || v.Privacy != "public" {
-		return uuid.Nil, reasonUnavailable, nil
+		return uuid.Nil, reasonNotAddable, nil
 	}
 	if im.Blocks != nil {
 		blocked, err := im.Blocks.IsBlocked(ctx, vid)
@@ -90,7 +92,7 @@ func (im *Importer) resolveItem(ctx context.Context, raw string) (uuid.UUID, str
 			return uuid.Nil, "", err
 		}
 		if blocked {
-			return uuid.Nil, reasonUnavailable, nil
+			return uuid.Nil, reasonNotAddable, nil
 		}
 	}
 	return vid, "", nil
@@ -143,7 +145,7 @@ func (im *Importer) importItems(ctx context.Context, userID, playlistID uuid.UUI
 	}
 	if im.Videos == nil {
 		sum.PlaylistItemsSkipped += p.Elements
-		sum.SkippedSections[reasonUnresolved] += p.Elements
+		sum.SkippedSections[reasonNotAddable] += p.Elements
 		return nil
 	}
 	return im.addItems(ctx, userID, playlistID, p, budget, sum)

@@ -25645,7 +25645,7 @@ components:
         playlists_skipped: {type: integer}
         playlist_items_skipped:
           type: integer
-          description: "Items not added; skipped_sections.playlist_items_unresolved, _unavailable and _over_cap give the reasons."
+          description: "Items not added; skipped_sections.playlist_items_not_addable (no such video, or one that is not public and published, deliberately indistinguishable) and playlist_items_over_cap give the reasons."
         playlist_items_added:
           type: integer
           description: "Items resolved to a local video and present in the playlist (a re-import re-confirms them)."
