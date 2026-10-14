@@ -136,6 +136,14 @@ func (f *watchwordFakeRepo) GetComment(ctx context.Context, id uuid.UUID) (sqlcg
 	return f.comments.GetComment(ctx, id)
 }
 
+func (f *watchwordFakeRepo) ReplaceCommentAutomaticTags(_ context.Context, a sqlcgen.ReplaceCommentAutomaticTagsParams) error {
+	if f.comments.autoTags == nil {
+		f.comments.autoTags = map[uuid.UUID][]string{}
+	}
+	f.comments.autoTags[a.CommentID] = a.Tags
+	return nil
+}
+
 func (f *watchwordFakeRepo) RecordWatchedWordMatch(_ context.Context, a sqlcgen.RecordWatchedWordMatchParams) error {
 	for _, m := range f.matches {
 		if m.commentID == a.CommentID && m.watchedWordID == a.WatchedWordID {

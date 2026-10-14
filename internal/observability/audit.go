@@ -116,6 +116,16 @@ const (
 	ActionVideoReject            = "moderation.video.quarantine_reject"
 	ActionInstanceBlock          = "moderation.instance.block"
 	ActionInstanceUnblock        = "moderation.instance.unblock"
+	// ActionBlocklistSync records one blocklist-subscription sync (added/removed
+	// counts in metadata; never the list URL or the domains).
+	ActionBlocklistSync = "moderation.blocklist.sync"
+	// ActionBlocklistSubscriptionAdd/Remove record an admin adding/removing a
+	// subscription; ActionBlocklistAllow/Disallow the allowlist exemption.
+	ActionBlocklistSubscriptionAdd    = "moderation.blocklist.subscription_add"
+	ActionBlocklistSubscriptionUpdate = "moderation.blocklist.subscription_update"
+	ActionBlocklistSubscriptionRemove = "moderation.blocklist.subscription_remove"
+	ActionBlocklistAllow              = "moderation.blocklist.allow"
+	ActionBlocklistDisallow           = "moderation.blocklist.disallow"
 	// ActionRemoteActorBlock/Unblock record an admin blocking ONE remote
 	// account for every reader on this instance (A29 parity), rather than
 	// defederating that account's whole server. The blocked actor URL is the
@@ -230,6 +240,11 @@ const (
 	// eligible pre-existing public objects. Reason carries only safe counts
 	// (enqueued, classes, rearmed) — never a CID or object key.
 	ActionIPFSReconcile = "admin.ipfs.reconcile"
+	// ActionIPFSRepin records an admin starting the bulk re-pin of pinned HLS trees to
+	// the playback-only set. Reason carries only a safe count - never a CID or key.
+	ActionIPFSRepin = "admin.ipfs.repin"
+	// ActionIPFSRepinCancel records an admin cancelling that run.
+	ActionIPFSRepinCancel = "admin.ipfs.repin.cancel"
 	// ActionDonationVerify records a creator proving control of a donation
 	// address by signing the challenge (P14). Reason carries the safe address
 	// id + network only — never the signature, nonce, or any key material.

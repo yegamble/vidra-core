@@ -11480,6 +11480,14 @@ paths:
           description: Case-insensitive body substring filter.
           schema:
             type: string
+        - name: auto_tag
+          in: query
+          required: false
+          description: >-
+            Keep only comments carrying this automatic tag (`external-link`, or
+            an instance watched-word list name); case-insensitive exact match.
+          schema:
+            type: string
         - $ref: "#/components/parameters/PageLimit"
         - $ref: "#/components/parameters/PageOffset"
       responses:
@@ -12571,6 +12579,355 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Invalid instance domain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instances/blocklist-subscriptions:
+    get:
+      operationId: listBlocklistSubscriptions
+      summary: List blocklist subscriptions (admin)
+      description: >-
+        Shared fediverse denylists this instance syncs into its instance
+        blocklist. Admin only. Paginated via limit (1–100, default 20) and offset.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of subscriptions (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlocklistSubscriptionListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createBlocklistSubscription
+      summary: Subscribe to a blocklist (admin)
+      description: >-
+        Adds a list URL (Mastodon CSV, plain domain list, or JSON). The server
+        fetches it through the SSRF guard (public http/https only, redirects
+        re-checked, 8 MiB cap) on the periodic sync or "sync now". Entries with
+        severity suspend (or none) become instance blocks owned by this
+        subscription; silence/limit entries are ignored. Admin only. Audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBlocklistSubscriptionRequest"
+      responses:
+        "201":
+          description: The subscription (never synced yet).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlocklistSubscription"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Already subscribed to that URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid URL (not a public http/https URL) or format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instances/blocklist-subscriptions/{id}:
+    patch:
+      operationId: updateBlocklistSubscription
+      summary: Edit a blocklist subscription (admin)
+      description: >-
+        Changes the label and/or enabled flag. Disabling stops future syncs; the
+        blocks already applied stay until the subscription is deleted.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBlocklistSubscriptionRequest"
+      responses:
+        "200":
+          description: The updated subscription.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlocklistSubscription"
+        "400":
+          description: Malformed subscription id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such subscription.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteBlocklistSubscription
+      summary: Remove a blocklist subscription (admin)
+      description: >-
+        Removes the subscription AND exactly the instance blocks it created.
+        Manual blocks, and blocks owned by other subscriptions, are never
+        touched. Audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Subscription and the blocks it owned are removed.
+        "400":
+          description: Malformed subscription id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such subscription.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instances/blocklist-subscriptions/{id}/sync:
+    post:
+      operationId: syncBlocklistSubscription
+      summary: Sync a blocklist subscription now (admin)
+      description: >-
+        Fetches the list and applies it: adds blocks for new entries, removes
+        only blocks this subscription created that the list no longer names.
+        A fetch/parse failure is a 200 with status "error" (the last good state
+        is kept); a list with no usable entries removes nothing. A sync that
+        would remove more than 25 blocks and more than half of the ones the
+        subscription owns is held: status "needs_confirmation", nothing changed;
+        repeat with {"confirm": true} to apply it. Entries naming this instance
+        or a parent domain of it are skipped. Rate limited per admin (6 per
+        minute). Audited with added/removed counts.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm: {type: boolean}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The outcome of this sync.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlocklistSyncResult"
+        "400":
+          description: Malformed subscription id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such subscription.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Sync budget exhausted; Retry-After is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instances/blocklist-allowlist:
+    get:
+      operationId: listBlocklistAllowlist
+      summary: List domains exempt from blocklist subscriptions (admin)
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of allowlisted domains (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlocklistAllowlistResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: addBlocklistAllow
+      summary: Exempt a domain from blocklist subscriptions (admin)
+      description: >-
+        The allowlist wins over every subscription: the domain is not blocked by
+        a sync, and a block a subscription already created for it is lifted now.
+        A manual block is untouched. Idempotent. Audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlocklistAllowRequest"
+      responses:
+        "204":
+          description: The domain is exempt.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Missing or invalid domain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instances/blocklist-allowlist/{domain}:
+    delete:
+      operationId: removeBlocklistAllow
+      summary: Lift a blocklist-subscription exemption (admin)
+      description: Idempotent. The next sync re-applies lists to the domain. Audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: domain
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The domain is no longer exempt.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid domain.
           content:
             application/json:
               schema:
@@ -17155,6 +17512,149 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: Host manager integration is not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/ipfs/repin-playback-only:
+    post:
+      operationId: startIPFSRepin
+      summary: Start the bulk re-pin to the playback-only set (admin)
+      description: >-
+        Re-pins every already-pinned HLS tree whose pinned root still includes files
+        the HLS routes do not serve (download MP4s, vp9.webm), so it matches what a
+        new pin adds (Tier A F6). Runs in the leader's mirror worker through the
+        ordinary pin path - admission, reservation and the capacity ceilings all
+        apply - in small batches, and pauses while the node is at its budget. The
+        superseded root is unpinned only when no other row shares it; its blocks are
+        freed by the node's garbage collection. Resumable and safe to repeat. Returns
+        202 with the run status. Restricted to admins; audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "202":
+          description: The run was recorded; the worker advances it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSRepinStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A re-pin is already running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: This build or storage backend cannot recompute the playback-only set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: getIPFSRepin
+      summary: Progress of the bulk re-pin to the playback-only set (admin)
+      description: >-
+        The current or last run: phase (idle, running, paused, completed, cancelled), counts of
+        rows done, skipped (already playback-only), blocked (the admission policy
+        would not re-admit them), failed and in flight, the pinned HLS rows not yet
+        examined (an upper bound on the work left) and an estimate of the pinned
+        bytes saved. Bytes are returned to the disk only after the node's GC.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The run status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSRepinStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: This build or storage backend cannot recompute the playback-only set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: cancelIPFSRepin
+      summary: Cancel the bulk re-pin to the playback-only set (admin)
+      description: >-
+        Stops the run from arming further rows. Rows already re-armed finish through
+        the ordinary pin path; nothing is rolled back. Works while running or paused.
+        Returns the run status. Restricted to admins; audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The run was cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSRepinStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: No re-pin is running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: This build or storage backend cannot recompute the playback-only set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
           content:
             application/json:
               schema:
@@ -22057,7 +22557,7 @@ components:
           description: Recorded on the blocklist and in the audit trail. May be empty.
     BlockedInstance:
       type: object
-      required: [domain, reason, blocked_at]
+      required: [domain, reason, blocked_at, source]
       properties:
         domain:
           type: string
@@ -22070,6 +22570,11 @@ components:
         blocked_at:
           type: string
           format: date-time
+        source:
+          type: string
+          description: >-
+            Who owns the block: "manual", or "subscription:<id>" when a blocklist
+            subscription created it.
     BlockedInstanceListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -22080,6 +22585,84 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/BlockedInstance"
+    BlocklistSubscription:
+      type: object
+      required: [id, url, label, format, enabled, last_status, last_added, last_removed, entry_count, block_count, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        url: {type: string}
+        label: {type: string}
+        format: {type: string, enum: [mastodon_csv, domain_list, json]}
+        enabled: {type: boolean}
+        last_status:
+          type: string
+          enum: [never, ok, not_modified, error, needs_confirmation]
+          description: Outcome of the last attempt. A failed attempt keeps the last good counts.
+        last_error:
+          type: string
+          description: A short class message (e.g. "HTTP 500", "address not allowed"), never a raw error.
+        last_synced_at: {type: string, format: date-time}
+        last_attempt_at: {type: string, format: date-time}
+        last_added: {type: integer}
+        last_removed: {type: integer}
+        entry_count: {type: integer, description: Usable domains in the last applied list.}
+        block_count: {type: integer, format: int64, description: Instance blocks this subscription currently owns.}
+        created_at: {type: string, format: date-time}
+    BlocklistSubscriptionListResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [subscriptions]
+          properties:
+            subscriptions:
+              type: array
+              items:
+                $ref: "#/components/schemas/BlocklistSubscription"
+    CreateBlocklistSubscriptionRequest:
+      type: object
+      required: [url, format]
+      properties:
+        url: {type: string, maxLength: 2048}
+        format: {type: string, enum: [mastodon_csv, domain_list, json]}
+        label: {type: string, maxLength: 200}
+        enabled: {type: boolean, description: Defaults to true.}
+    UpdateBlocklistSubscriptionRequest:
+      type: object
+      properties:
+        label: {type: string, maxLength: 200}
+        enabled: {type: boolean}
+    BlocklistSyncResult:
+      type: object
+      required: [status, added, removed, entries, ignored_severity, invalid, protected]
+      properties:
+        status: {type: string, enum: [ok, not_modified, error, needs_confirmation]}
+        error: {type: string}
+        protected: {type: integer, description: Entries skipped because they name this instance or a parent domain.}
+        pending_removals: {type: integer, description: "With needs_confirmation, how many blocks a confirmed sync would remove."}
+        added: {type: integer}
+        removed: {type: integer}
+        entries: {type: integer}
+        ignored_severity: {type: integer, description: Rows skipped because vidra has no equivalent of silence/limit.}
+        invalid: {type: integer, description: "Rows skipped as malformed (wildcard, obfuscated, IP, ...)."}
+    BlocklistAllowRequest:
+      type: object
+      required: [domain]
+      properties:
+        domain: {type: string}
+    BlocklistAllowlistResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [domains]
+          properties:
+            domains:
+              type: array
+              items:
+                type: object
+                required: [domain, added_at]
+                properties:
+                  domain: {type: string}
+                  added_at: {type: string, format: date-time}
     RemoteVideo:
       type: object
       required: [id, remote, domain, title, description, object_url, watch_url, has_thumbnail, is_sensitive]
@@ -23802,7 +24385,7 @@ components:
     AdminComment:
       type: object
       description: A comment in the admin/moderator overview, with author + video context.
-      required: [id, video_id, video_title, body, author_username, author_display_name, remote, created_at, deleted]
+      required: [id, video_id, video_title, body, author_username, author_display_name, remote, created_at, deleted, automatic_tags]
       properties:
         id:
           type: string
@@ -23832,6 +24415,18 @@ components:
           description: >-
             True for a tombstoned comment (its author's account was permanently
             deleted); body renders as "[deleted]".
+        automatic_tags:
+          type: array
+          description: >-
+            Tags computed from the body when it was posted or last edited:
+            `external-link` (it contains a URL) and the NAME of each instance
+            watched-word list it matches. Never the matched words. Empty for an
+            untagged comment, and for one that predates the feature until it is
+            edited. Tags are a snapshot of list names at post/edit time:
+            renaming or deleting a list, or adding words, does not retag old
+            comments.
+          items:
+            type: string
     AdminCommentListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -27888,6 +28483,56 @@ components:
         unpinned:
           type: integer
           format: int64
+    IPFSRepinStatus:
+      type: object
+      description: >-
+        Progress of the bulk re-pin of pinned HLS trees to the playback-only set.
+      required: [phase, started_at, finished_at, pause_reason, scanned, queued, done, skipped, blocked, failed, in_flight, remaining, bytes_saved_estimate]
+      properties:
+        phase:
+          type: string
+          enum: [idle, running, paused, completed, cancelled]
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+        pause_reason:
+          type: string
+          description: Why the run is paused (e.g. budget_exhausted); empty otherwise.
+        scanned:
+          type: integer
+          format: int64
+        queued:
+          type: integer
+          format: int64
+          description: Rows moved back to pending for a playback-only re-add.
+        done:
+          type: integer
+          format: int64
+          description: Queued rows now pinned to a new root.
+        skipped:
+          type: integer
+          format: int64
+          description: Rows already playback-only, or that changed under the run.
+        blocked:
+          type: integer
+          format: int64
+          description: Rows the admission policy would not re-admit (e.g. backfill off).
+        failed:
+          type: integer
+          format: int64
+        in_flight:
+          type: integer
+        remaining:
+          type: integer
+          format: int64
+          description: Pinned HLS rows not examined yet; an upper bound on the work left.
+        bytes_saved_estimate:
+          type: integer
+          format: int64
+          description: Pinned bytes no longer held by the ledger; freed on disk only after GC.
     IPFSReconcileResult:
       type: object
       description: >-
