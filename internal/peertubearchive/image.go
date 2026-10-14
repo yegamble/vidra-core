@@ -70,8 +70,19 @@ func (a *Archive) ImageEntry(ref string) string {
 // the dimension bounds. It returns the entry's base name for the type gate.
 func (a *Archive) ReadImage(entry string, budget *int64) (name string, data []byte, err error) {
 	f, ok := a.files[entry]
-	if !ok || f.UncompressedSize64 > maxImageBytes || int64(f.UncompressedSize64) > *budget {
-		return "", nil, errors.New("image entry unavailable or too large")
+	if !ok || *budget <= 0 {
+		return "", nil, errors.New("image entry unavailable")
+	}
+	// Every outcome below is charged to the per-import budget BEFORE vetting, so
+	// a refused or oversize entry still consumes it and a hostile export cannot
+	// make the importer re-read big entries for free.
+	if f.UncompressedSize64 > maxImageBytes {
+		*budget -= maxImageBytes
+		return "", nil, errors.New("image entry too large")
+	}
+	if int64(f.UncompressedSize64) > *budget {
+		*budget = 0
+		return "", nil, errors.New("image budget exhausted")
 	}
 	rc, err := f.Open()
 	if err != nil {
@@ -79,10 +90,10 @@ func (a *Archive) ReadImage(entry string, budget *int64) (name string, data []by
 	}
 	defer func() { _ = rc.Close() }()
 	data, err = io.ReadAll(io.LimitReader(rc, maxImageBytes+1))
+	*budget -= int64(len(data))
 	if err != nil || len(data) > maxImageBytes {
 		return "", nil, errors.New("image entry unreadable or too large")
 	}
-	*budget -= int64(len(data))
 	name = path.Base(entry)
 	if err := vetImage(name, data); err != nil {
 		return "", nil, err
@@ -121,6 +132,18 @@ func vetImage(name string, data []byte) error {
 // image the channel already has is never replaced, so a re-import changes nothing.
 func (im *Importer) importChannelImages(ctx context.Context, userID uuid.UUID, a *Archive, ids map[string]uuid.UUID, sum *Summary) error {
 	if im.Images == nil {
+		return nil
+	}
+	if im.ScanImage == nil {
+		// Fail closed: stored bytes from a third-party archive are never
+		// persisted without a scan policy in place.
+		for _, c := range a.Channels {
+			for _, ref := range [...]string{c.ArchiveFiles.Avatar, c.ArchiveFiles.Banner} {
+				if strings.TrimSpace(ref) != "" {
+					sum.ChannelImagesSkipped++
+				}
+			}
+		}
 		return nil
 	}
 	budget := int64(maxImageTotal)

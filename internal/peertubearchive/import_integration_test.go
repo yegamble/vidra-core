@@ -160,7 +160,8 @@ func TestImportChannelImagesAgainstRealServices(t *testing.T) {
 	}
 	imgs := profileimage.NewService(st.Queries(), blobs)
 	chans := channel.NewService(st.Queries())
-	im := &Importer{Channels: chans, Playlists: playlist.NewService(st.Queries()), Images: imgs}
+	im := &Importer{Channels: chans, Playlists: playlist.NewService(st.Queries()), Images: imgs,
+		ScanImage: func(context.Context, string, []byte) error { return nil }}
 	handle := "ci" + n
 	raw := buildZip(t,
 		entry{name: "peertube/channels.json", body: `{"channels":[{"name":"` + handle + `","archiveFiles":{"avatar":"video-channels/1/avatar.png","banner":"banner.png"}}]}`},

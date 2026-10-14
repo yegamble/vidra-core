@@ -91,6 +91,8 @@ func imageImport(t *testing.T, imgs *fakeImages, scan func(context.Context, stri
 	return sum
 }
 
+func okScan(context.Context, string, []byte) error { return nil }
+
 func chanWith(avatar, banner string) Channel {
 	c := Channel{Name: "my_chan"}
 	c.ArchiveFiles.Avatar, c.ArchiveFiles.Banner = avatar, banner
@@ -99,7 +101,7 @@ func chanWith(avatar, banner string) Channel {
 
 func TestImportChannelImages(t *testing.T) {
 	imgs := &fakeImages{have: map[string]bool{}}
-	sum := imageImport(t, imgs, nil, chanWith("video-channels/1/avatar.png", "files/banner.jpg"),
+	sum := imageImport(t, imgs, okScan, chanWith("video-channels/1/avatar.png", "files/banner.jpg"),
 		entry{name: "files/video-channels/1/avatar.png", body: string(pngBytes(t, 8, 8))},
 		entry{name: "files/banner.jpg", body: string(jpegBytes(t))})
 	if sum.ChannelImagesSet != 2 || sum.ChannelImagesSkipped != 0 || len(imgs.set) != 2 {
@@ -109,7 +111,7 @@ func TestImportChannelImages(t *testing.T) {
 
 func TestImportChannelImagesAbsentIsSilentAndExistingKept(t *testing.T) {
 	imgs := &fakeImages{have: map[string]bool{}}
-	if sum := imageImport(t, imgs, nil, chanWith("", "")); sum.ChannelImagesSet+sum.ChannelImagesSkipped != 0 {
+	if sum := imageImport(t, imgs, okScan, chanWith("", "")); sum.ChannelImagesSet+sum.ChannelImagesSkipped != 0 {
 		t.Fatalf("absent must be silent: %+v", sum)
 	}
 	// A channel that already has an avatar keeps it: nothing is read or set.
@@ -118,7 +120,7 @@ func TestImportChannelImagesAbsentIsSilentAndExistingKept(t *testing.T) {
 		entry{name: "files/a.png", body: string(pngBytes(t, 4, 4))}))
 	a.Channels = []Channel{chanWith("a.png", "")}
 	ch := &fakeChannels{byHandle: map[string]sqlcgen.Channel{}}
-	im := &Importer{Channels: ch, Playlists: &fakePlaylists{}, Images: imgs}
+	im := &Importer{Channels: ch, Playlists: &fakePlaylists{}, Images: imgs, ScanImage: okScan}
 	if _, err := im.Import(context.Background(), uuid.New(), a); err != nil || len(imgs.set) != 1 {
 		t.Fatalf("first: %v %v", err, imgs.set)
 	}
@@ -149,7 +151,7 @@ func TestImportChannelImagesRefusesHostileEntries(t *testing.T) {
 			ref = "a.png"
 		}
 		imgs := &fakeImages{have: map[string]bool{}}
-		sum := imageImport(t, imgs, nil, chanWith(ref, ""), ents...)
+		sum := imageImport(t, imgs, okScan, chanWith(ref, ""), ents...)
 		if sum.ChannelImagesSet != 0 || sum.ChannelImagesSkipped != 1 || len(imgs.set) != 0 {
 			t.Errorf("%s: stored or uncounted: %+v", name, sum)
 		}
@@ -178,7 +180,7 @@ func TestImportChannelImagesScanAndTotalBudget(t *testing.T) {
 	}
 	// Storage trouble skips the image; a database error aborts.
 	imgs = &fakeImages{have: map[string]bool{}, err: profileimage.ErrStorageUnavailable}
-	sum = imageImport(t, imgs, nil, chanWith("a.png", ""), entry{name: "files/a.png", body: string(pngBytes(t, 4, 4))})
+	sum = imageImport(t, imgs, okScan, chanWith("a.png", ""), entry{name: "files/a.png", body: string(pngBytes(t, 4, 4))})
 	if sum.ChannelImagesSkipped != 1 {
 		t.Fatalf("%+v", sum)
 	}
@@ -190,5 +192,46 @@ func TestReadImageTotalBudgetIsEnforced(t *testing.T) {
 	budget := int64(10)
 	if _, _, err := a.ReadImage("files/a.png", &budget); err == nil {
 		t.Fatal("read past the total budget")
+	}
+}
+
+func TestImportChannelImagesFailClosedWithoutScanner(t *testing.T) {
+	imgs := &fakeImages{have: map[string]bool{}}
+	sum := imageImport(t, imgs, nil, chanWith("a.png", "b.png"), entry{name: "files/a.png", body: string(pngBytes(t, 4, 4))})
+	if sum.ChannelImagesSet != 0 || sum.ChannelImagesSkipped != 2 || len(imgs.set) != 0 {
+		t.Fatalf("stored without a scan policy: %+v", sum)
+	}
+}
+
+func TestReadImageChargesBudgetOnRefusal(t *testing.T) {
+	a, _ := Read(buildZip(t, entry{name: "peertube/channels.json", body: `{"channels":[]}`},
+		entry{name: "files/a.png", body: "<html>not an image</html>"},
+		entry{name: "files/big.png", body: strings.Repeat("A", maxImageBytes+10)}))
+	budget := int64(maxImageTotal)
+	_, _, _ = a.ReadImage("files/a.png", &budget) // refused by the vet step
+	if budget != maxImageTotal-int64(len("<html>not an image</html>")) {
+		t.Fatalf("refused read not charged: %d", budget)
+	}
+	before := budget
+	_, _, _ = a.ReadImage("files/big.png", &budget) // oversize
+	if budget >= before {
+		t.Fatal("oversize read not charged")
+	}
+}
+
+func TestImageEntryCaseAndDuplicateNames(t *testing.T) {
+	// Entry names are matched exactly: a differently-cased reference does not
+	// resolve, and a case-only duplicate makes the whole archive invalid.
+	a, err := Read(buildZip(t, entry{name: "peertube/channels.json", body: `{"channels":[]}`},
+		entry{name: "files/Avatar.PNG", body: string(pngBytes(t, 4, 4))}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ImageEntry("files/avatar.png") != "" || a.ImageEntry("files/Avatar.PNG") != "files/Avatar.PNG" {
+		t.Fatal("case handling")
+	}
+	if _, err := Read(buildZip(t, entry{name: "peertube/channels.json", body: `{"channels":[]}`},
+		entry{name: "files/a.png", body: "x"}, entry{name: "files/A.png", body: "y"})); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("case-only duplicate accepted: %v", err)
 	}
 }
