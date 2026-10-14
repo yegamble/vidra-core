@@ -25614,11 +25614,11 @@ components:
         id: {type: string, format: uuid}
         created_at: {type: string, format: date-time}
         total: {type: integer}
-        pending: {type: integer, description: Waiting or being retried with backoff.}
-        done: {type: integer, description: Follow requested (the remote may still accept or reject it).}
-        failed: {type: integer, description: Could not be resolved (unreachable after the retry limit, or not followable from this instance).}
+        pending: {type: integer, description: "Waiting or being retried with backoff."}
+        done: {type: integer, description: "Follow requested (the remote may still accept or reject it)."}
+        failed: {type: integer, description: "Could not be resolved (unreachable after the retry limit, or not followable from this instance)."}
         skipped_federation: {type: integer}
-        skipped_invalid: {type: integer, description: A local actor or a handle that cannot be followed.}
+        skipped_invalid: {type: integer, description: "A local actor or a handle that cannot be followed."}
     AccountImportSummary:
       type: object
       description: >-

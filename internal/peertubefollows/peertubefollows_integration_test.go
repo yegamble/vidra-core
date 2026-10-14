@@ -105,8 +105,20 @@ func TestQueueLifecycleOnPostgres(t *testing.T) {
 	if _, err := st.Pool.Exec(ctx, `UPDATE peertube_follow_imports SET created_at = now() - interval '40 days' WHERE user_id = $1`, me); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := svc.Prune(ctx); err != nil || n != 1 {
-		t.Fatalf("prune: %d %v", n, err)
+	// Scoped to this test's own rows: the shared database may hold other
+	// tests' imports, and a no-op re-import leaves an empty finished import.
+	if _, err := svc.Prune(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := st.Pool.QueryRow(ctx, `SELECT count(*) FROM peertube_follow_imports WHERE user_id = $1`, me).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 1 {
+		t.Fatalf("imports left for the user = %d, want only the one with a pending target", left)
+	}
+	if _, err := svc.Status(ctx, me, *q.JobID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the finished old import survived prune: %v", err)
 	}
 
 	// Federation off: nothing queued, everything counted.
