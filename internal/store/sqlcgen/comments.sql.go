@@ -57,15 +57,22 @@ SELECT count(*)::bigint
 FROM comments c
 JOIN videos v ON v.id = c.video_id
 WHERE ($1::text IS NULL OR c.body ILIKE '%' || $1 || '%')
+  AND ($2::text IS NULL OR EXISTS (
+        SELECT 1 FROM comment_automatic_tags t WHERE t.comment_id = c.id AND lower(t.tag) = lower($2::text)))
 `
+
+type CountAdminCommentsParams struct {
+	Query   *string `json:"query"`
+	AutoTag *string `json:"auto_tag"`
+}
 
 // How many rows ListAdminComments would return for the same ?q filter, ignoring
 // pagination. CountComments above answers a DIFFERENT question (local comments
 // for NodeInfo, remote-authored ones excluded) and must not be reused here: it
 // would under-report the admin queue by exactly the federated comments a
 // moderator most needs to see. The videos JOIN is part of the predicate.
-func (q *Queries) CountAdminComments(ctx context.Context, query *string) (int64, error) {
-	row := q.db.QueryRow(ctx, countAdminComments, query)
+func (q *Queries) CountAdminComments(ctx context.Context, arg CountAdminCommentsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAdminComments, arg.Query, arg.AutoTag)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -471,18 +478,22 @@ SELECT c.id, c.video_id, c.body, c.created_at, c.deleted_at,
        c.remote_actor_url,
        COALESCE(c.remote_author_name, '')::text AS remote_author_name,
        COALESCE(ra.domain, '')::text AS author_domain,
-       v.title AS video_title
+       v.title AS video_title,
+       COALESCE((SELECT array_agg(t.tag ORDER BY t.tag) FROM comment_automatic_tags t WHERE t.comment_id = c.id), '{}')::text[] AS automatic_tags
 FROM comments c
 LEFT JOIN users u ON u.id = c.user_id
 LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
 JOIN videos v ON v.id = c.video_id
 WHERE ($1::text IS NULL OR c.body ILIKE '%' || $1 || '%')
+  AND ($2::text IS NULL OR EXISTS (
+        SELECT 1 FROM comment_automatic_tags t WHERE t.comment_id = c.id AND lower(t.tag) = lower($2::text)))
 ORDER BY c.created_at DESC, c.id DESC
-LIMIT $3 OFFSET $2
+LIMIT $4 OFFSET $3
 `
 
 type ListAdminCommentsParams struct {
 	Query        *string `json:"query"`
+	AutoTag      *string `json:"auto_tag"`
 	ResultOffset int32   `json:"result_offset"`
 	ResultLimit  int32   `json:"result_limit"`
 }
@@ -499,13 +510,20 @@ type ListAdminCommentsRow struct {
 	RemoteAuthorName  string             `json:"remote_author_name"`
 	AuthorDomain      string             `json:"author_domain"`
 	VideoTitle        string             `json:"video_title"`
+	AutomaticTags     []string           `json:"automatic_tags"`
 }
 
 // The admin/moderator comments overview: ALL comments newest first, with the
 // author's identity (local user or remote actor + domain, §6) and the video
-// they're on. An optional case-insensitive body filter (NULL = no filter).
+// they're on. An optional case-insensitive body filter and an optional
+// automatic-tag filter (0177); NULL = no filter.
 func (q *Queries) ListAdminComments(ctx context.Context, arg ListAdminCommentsParams) ([]ListAdminCommentsRow, error) {
-	rows, err := q.db.Query(ctx, listAdminComments, arg.Query, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listAdminComments,
+		arg.Query,
+		arg.AutoTag,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -525,6 +543,7 @@ func (q *Queries) ListAdminComments(ctx context.Context, arg ListAdminCommentsPa
 			&i.RemoteAuthorName,
 			&i.AuthorDomain,
 			&i.VideoTitle,
+			&i.AutomaticTags,
 		); err != nil {
 			return nil, err
 		}
@@ -803,14 +822,20 @@ func (q *Queries) SetCommentHearted(ctx context.Context, arg SetCommentHeartedPa
 }
 
 const tombstoneUserComments = `-- name: TombstoneUserComments :exec
+WITH gone AS (
+    DELETE FROM comment_automatic_tags
+    WHERE comment_id IN (SELECT k.id FROM comments k WHERE k.user_id = $1 AND k.deleted_at IS NULL)
+)
 UPDATE comments
 SET body = '', deleted_at = now(), updated_at = now()
-WHERE user_id = $1 AND deleted_at IS NULL
+WHERE comments.user_id = $1 AND comments.deleted_at IS NULL
 `
 
 // §1 hard delete: a deleted account's comments become tombstones — the body is
 // emptied and deleted_at stamped, but the rows (and so the reply threads under
 // them) are preserved. Views render "[deleted]" for tombstoned comments.
+// Their automatic tags (0177) are derived from the erased body, so they go in
+// the same statement.
 func (q *Queries) TombstoneUserComments(ctx context.Context, userID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, tombstoneUserComments, userID)
 	return err
