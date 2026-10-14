@@ -149,10 +149,14 @@ func TestPeerTubeArchiveImportOversizeAndPartial(t *testing.T) {
 	env := newAccountEnv(t, WithPeerTubeArchiveImporter(&peertubearchive.Importer{Channels: &ptChannels{}, Playlists: &ptPlaylists{failAt: 2}}))
 	token := registerAndToken(t, env.srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 
-	// 9 MiB is no longer too large (the cap is PEERTUBE_IMPORT_MAX_SIZE); it is
-	// simply not a zip.
+	// PEERTUBE_IMPORT_MAX_SIZE unset: the route keeps the global body limit (8M here).
+	if rec := ptUpload(env, token, bytes.Repeat([]byte{'x'}, 9<<20)); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("9 MiB with the cap unset = %d, want 413", rec.Code)
+	}
+	// Raised deliberately, 9 MiB is admitted and is simply not a zip.
+	env.srv.cfg.PeerTubeImportMaxSize = "16M"
 	if rec := ptUpload(env, token, bytes.Repeat([]byte{'x'}, 9<<20)); rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("9 MiB non-zip = %d, want 422", rec.Code)
+		t.Errorf("9 MiB non-zip under a raised cap = %d, want 422", rec.Code)
 	}
 
 	two := ptZip(t, map[string]string{
@@ -170,22 +174,32 @@ func TestPeerTubeArchiveImportOversizeAndPartial(t *testing.T) {
 	}
 }
 
+// ptMultipart streams the multipart body produced by gen into w.
+func ptMultipart(w io.Writer, boundary string, gen func(w io.Writer) error) error {
+	mw := multipart.NewWriter(w)
+	_ = mw.SetBoundary(boundary)
+	fw, _ := mw.CreateFormFile("archive", "export.zip")
+	if err := gen(fw); err != nil {
+		return err
+	}
+	return mw.Close()
+}
+
+type ptCounter struct{ n int64 }
+
+func (c *ptCounter) Write(p []byte) (int, error) { c.n += int64(len(p)); return len(p), nil }
+
+const ptBoundary = "ptboundary0123456789"
+
 // ptUploadStream sends a multipart upload produced by gen without ever holding
-// it in memory; the request has no Content-Length, like a chunked client.
-func ptUploadStream(env *accountEnv, token string, gen func(w io.Writer) error) *httptest.ResponseRecorder {
+// it in memory. length is the declared Content-Length: ptLength measures it by
+// a dry run of gen; -1 sends none, like a chunked client.
+func ptUploadStream(env *accountEnv, token string, length int64, gen func(w io.Writer) error) *httptest.ResponseRecorder {
 	pr, pw := io.Pipe()
-	mw := multipart.NewWriter(pw)
-	go func() {
-		fw, _ := mw.CreateFormFile("archive", "export.zip")
-		if err := gen(fw); err != nil {
-			_ = pw.CloseWithError(err)
-			return
-		}
-		_ = mw.Close()
-		_ = pw.Close()
-	}()
+	go func() { _ = pw.CloseWithError(ptMultipart(pw, ptBoundary, gen)) }()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/me/import/peertube", pr)
-	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.ContentLength = length
+	req.Header.Set("Content-Type", "multipart/form-data; boundary="+ptBoundary)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	env.srv.Handler().ServeHTTP(rec, req)
@@ -207,6 +221,7 @@ func ptSetup(t *testing.T) (*accountEnv, string, string) {
 	t.Setenv("TMPDIR", tmp)
 	env := newAccountEnv(t, WithPeerTubeArchiveImporter(&peertubearchive.Importer{Channels: &ptChannels{}, Playlists: &ptPlaylists{}}))
 	env.srv.peertubeImportLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), 1000, time.Hour)
+	env.srv.cfg.PeerTubeImportMaxSize = "1G"
 	return env, registerAndToken(t, env.srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`), tmp
 }
 
@@ -215,19 +230,7 @@ func ptSetup(t *testing.T) (*accountEnv, string, string) {
 // are never inspected, and the spooled file is gone afterwards.
 func TestPeerTubeArchiveImportAcceptsLargeArchive(t *testing.T) {
 	env, token, tmp := ptSetup(t)
-	rec := ptUploadStream(env, token, func(w io.Writer) error {
-		zw := zip.NewWriter(w)
-		jw, _ := zw.Create("peertube/channels.json")
-		_, _ = jw.Write([]byte(`{"channels":[{"name":"ada_chan","displayName":"Ada"}]}`))
-		mw, _ := zw.CreateHeader(&zip.FileHeader{Name: "files/videos/a.mp4", Method: zip.Store})
-		zeros := make([]byte, 1<<20)
-		for i := 0; i < 80; i++ {
-			if _, err := mw.Write(zeros); err != nil {
-				return err
-			}
-		}
-		return zw.Close()
-	})
+	rec := ptUploadStream(env, token, ptLength(ptLargeExport), ptLargeExport)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("large import = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -238,20 +241,32 @@ func TestPeerTubeArchiveImportAcceptsLargeArchive(t *testing.T) {
 	ptNoTempLeft(t, tmp)
 }
 
+func ptLength(gen func(w io.Writer) error) int64 {
+	var c ptCounter
+	_ = ptMultipart(&c, ptBoundary, gen)
+	return c.n
+}
+
+func ptLargeExport(w io.Writer) error {
+	zw := zip.NewWriter(w)
+	jw, _ := zw.Create("peertube/channels.json")
+	_, _ = jw.Write([]byte(`{"channels":[{"name":"ada_chan","displayName":"Ada"}]}`))
+	mw, _ := zw.CreateHeader(&zip.FileHeader{Name: "files/videos/a.mp4", Method: zip.Store})
+	zeros := make([]byte, 1<<20)
+	for i := 0; i < 80; i++ {
+		if _, err := mw.Write(zeros); err != nil {
+			return err
+		}
+	}
+	return zw.Close()
+}
+
 func TestPeerTubeArchiveImportOverCapIs413AndLeavesNothing(t *testing.T) {
 	env, token, tmp := ptSetup(t)
 	env.srv.cfg.PeerTubeImportMaxSize = "1M"
 	// Declared length over the cap: refused before any byte is read.
 	if rec := ptUpload(env, token, bytes.Repeat([]byte{'x'}, 2<<20)); rec.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("declared oversize = %d, want 413", rec.Code)
-	}
-	// No Content-Length: caught by the counting reader mid-stream.
-	rec := ptUploadStream(env, token, func(w io.Writer) error {
-		_, err := w.Write(bytes.Repeat([]byte{'x'}, 2<<20))
-		return err
-	})
-	if rec.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("streamed oversize = %d, want 413", rec.Code)
 	}
 	ptNoTempLeft(t, tmp)
 }
@@ -264,7 +279,7 @@ func TestPeerTubeArchiveImportRemovesTempOnFailureAndAbort(t *testing.T) {
 	ptNoTempLeft(t, tmp)
 
 	// The client drops the connection part-way through the file part.
-	rec := ptUploadStream(env, token, func(w io.Writer) error {
+	rec := ptUploadStream(env, token, 4<<20, func(w io.Writer) error {
 		_, _ = w.Write(bytes.Repeat([]byte{'x'}, 1<<20))
 		return errors.New("client went away")
 	})

@@ -22,16 +22,15 @@ func (s *Server) dynamicBodyLimit() echo.MiddlewareFunc {
 	return limitBodyTo(s.uploadMaxSizeBytes)
 }
 
-// defaultPeerTubeImportMaxBytes is the cap used when PEERTUBE_IMPORT_MAX_SIZE is
-// unset or unparseable (config.Load validates it, so only hand-built test
-// configs fall back).
-const defaultPeerTubeImportMaxBytes int64 = 20 << 30
-
+// peertubeImportMaxBytes is PEERTUBE_IMPORT_MAX_SIZE when set above 0, else
+// the global HTTP_BODY_LIMIT: the large cap is opt-in, because every byte of it
+// is spooled to local disk.
 func (s *Server) peertubeImportMaxBytes() int64 {
 	if n, err := bytes.Parse(s.cfg.PeerTubeImportMaxSize); err == nil && n > 0 {
 		return n
 	}
-	return defaultPeerTubeImportMaxBytes
+	n, _ := bytes.Parse(s.cfg.HTTPBodyLimit) // validated at config load
+	return n
 }
 
 // peertubeImportBodyLimit caps POST /me/import/peertube at PEERTUBE_IMPORT_MAX_SIZE.
