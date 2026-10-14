@@ -587,9 +587,15 @@ SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.i
        -- be shown as one. EXISTS keeps the list one query: an admin console
        -- that asked per row would issue a query per account on every page.
        EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = u.id AND m.enabled) AS mfa_enabled,
-       b.reason AS ban_reason, b.banned_at AS banned_at, b.banned_by AS banned_by
+       b.reason AS ban_reason, b.banned_at AS banned_at, b.banned_by AS banned_by,
+       -- Per-user rolling-24h quota override (NULL = instance default) and the
+       -- bytes ledgered in the trailing window, for the admin quota column.
+       dq.daily_quota_bytes AS daily_quota_bytes,
+       (SELECT COALESCE(SUM(e.bytes), 0)::bigint FROM upload_usage_events e
+         WHERE e.user_id = u.id AND e.created_at > now() - interval '24 hours') AS daily_used_bytes
 FROM users u
 LEFT JOIN user_bans b ON b.user_id = u.id
+LEFT JOIN user_daily_quotas dq ON dq.user_id = u.id
 WHERE ($1::text = ''
        OR u.username ILIKE '%' || $1::text || '%'
        OR u.email ILIKE '%' || $1::text || '%')
@@ -628,6 +634,8 @@ type ListUsersRow struct {
 	BanReason                *string            `json:"ban_reason"`
 	BannedAt                 pgtype.Timestamptz `json:"banned_at"`
 	BannedBy                 pgtype.UUID        `json:"banned_by"`
+	DailyQuotaBytes          *int64             `json:"daily_quota_bytes"`
+	DailyUsedBytes           int64              `json:"daily_used_bytes"`
 }
 
 // Admin user list: newest first, optionally filtered by a username/email
@@ -668,6 +676,8 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 			&i.BanReason,
 			&i.BannedAt,
 			&i.BannedBy,
+			&i.DailyQuotaBytes,
+			&i.DailyUsedBytes,
 		); err != nil {
 			return nil, err
 		}

@@ -195,7 +195,7 @@ func (s *Service) mentionTags(ctx context.Context, body string) []map[string]any
 // remote follower inbox of the channel. The account keypair is minted up front
 // so the queued deliveries never sign with a missing key.
 func (s *Service) fanOutAsAccount(ctx context.Context, channelID, userID uuid.UUID, username string, payload []byte) error {
-	inboxes, err := s.repo.ListRemoteFollowerInboxes(ctx, channelID)
+	inboxes, err := s.videoAudience(ctx, channelID)
 	if err != nil {
 		return err
 	}

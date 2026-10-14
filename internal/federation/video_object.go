@@ -193,6 +193,17 @@ func (s *Service) peertubeFields(obj map[string]any, r sqlcgen.ListChannelOutbox
 		href := s.baseURL + "/api/v1/videos/" + r.ID.String() + "/captions/" + url.PathEscape(lang)
 		subs = append(subs, map[string]any{"identifier": key, "url": []map[string]any{{"type": "Link", "mediaType": "text/vtt", "href": href}}})
 	}
+	if r.IsSensitive {
+		// PeerTube 7.2 carries the flags as SensitiveTag entries in `tag`
+		// and the creator's text as `summary` (nsfwSummary); `sensitive` above
+		// stays the boolean Mastodon reads. "sex" is PeerTube's explicitSex.
+		for _, f := range r.SensitiveFlags {
+			tags = append(tags, map[string]any{"type": "SensitiveTag", "name": peertubeSensitiveName(f)})
+		}
+		if sum := strings.TrimSpace(r.SensitiveReason); sum != "" {
+			obj["summary"] = sum
+		}
+	}
 	if len(tags) > 0 {
 		obj["tag"] = tags
 	}
@@ -358,7 +369,7 @@ func (s *Service) videoObjectFromDetail(ctx context.Context, channelActor string
 		OriginallyPublishedAt: v.OriginallyPublishedAt, DurationSeconds: v.MetadataDurationSeconds,
 		HasThumbnail: v.HasThumbnail, ThumbnailContentType: v.ThumbnailContentType, HasHls: v.HasHls,
 		Category: v.Category, Language: v.Language, License: v.License, Support: v.Support,
-		IsSensitive: v.IsSensitive, CommentsPolicy: v.CommentsPolicy,
+		IsSensitive: v.IsSensitive, SensitiveFlags: v.SensitiveFlags, SensitiveReason: v.SensitiveReason, CommentsPolicy: v.CommentsPolicy,
 		DownloadEnabled: v.DownloadEnabled, PublishAfterTranscode: v.PublishAfterTranscode,
 		OwnerUsername: f.OwnerUsername, Views: f.Views, Tags: f.Tags, CaptionLanguages: f.CaptionLanguages,
 		ThumbnailFileID: f.ThumbnailFileID, ThumbnailStorageKey: f.ThumbnailStorageKey,
@@ -391,4 +402,14 @@ func (s *Service) videoObjectFromOutbox(ctx context.Context, channelActor string
 	obj := videoObject(in)
 	s.peertubeFields(obj, r)
 	return obj
+}
+
+// peertubeSensitiveName maps a vidra sensitive flag to PeerTube's SensitiveTag
+// name (nsfw-flag.enum.ts: violent, explicitSex). "shocking" has no PeerTube
+// counterpart; it travels under its own name, which PeerTube ignores.
+func peertubeSensitiveName(flag string) string {
+	if flag == "sex" {
+		return "explicitSex"
+	}
+	return flag
 }

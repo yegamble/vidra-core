@@ -2,7 +2,9 @@ package federation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -354,5 +356,16 @@ func TestHandleInboxFlagSameInstanceSameTargetWhileOpen(t *testing.T) {
 	if len(reports.filed) != 1 || len(notifier.notified) != 1 {
 		t.Errorf("two Flags from one instance on one open target filed %d / notified %d, want 1 / 1",
 			len(reports.filed), len(notifier.notified))
+	}
+}
+
+func TestFlagReasonReturnsKnownPredefinedReasons(t *testing.T) {
+	tags := json.RawMessage(`[{"name":"spamOrMisleading"},{"name":"mystery"},{"name":"spamOrMisleading"},{"name":"rights"}]`)
+	reason, reasons := flagReason(json.RawMessage(`"<p>bad</p>"`), tags)
+	if want := []string{"spamOrMisleading", "rights"}; !slices.Equal(reasons, want) {
+		t.Errorf("reasons = %v, want %v (unknown dropped, deduped)", reasons, want)
+	}
+	if reason != "[spamOrMisleading, rights] bad" {
+		t.Errorf("reason = %q", reason)
 	}
 }
