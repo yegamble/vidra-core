@@ -15,7 +15,6 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,8 +32,9 @@ const (
 	MaxEntries = 20000
 	// MaxDirectoryBytes bounds the zip central directory. archive/zip loads the
 	// whole directory into memory before we see one entry, so without this a
-	// hostile multi-GB file made of empty entries is a memory bomb.
-	MaxDirectoryBytes = 16 << 20
+	// hostile multi-GB file made of empty entries is a memory bomb. 4 MiB is
+	// MaxEntries at ~200 bytes a record (46-byte header + name + extra fields).
+	MaxDirectoryBytes = 4 << 20
 	// MaxDeclaredTotal bounds the sum of the declared uncompressed sizes of the
 	// peertube/ entries only (the ones that may be read).
 	MaxDeclaredTotal = 64 << 20
@@ -361,71 +361,4 @@ func countSection(f *zip.File, budget *int64) (int, error) {
 		return 0, ErrInvalid
 	}
 	return count, nil
-}
-
-// checkDirectory validates the zip's end-of-central-directory record BEFORE
-// archive/zip allocates a File per directory record. It rejects a directory
-// with more than MaxEntries records or more than MaxDirectoryBytes, and one
-// that is not contiguous with the end record (archive/zip reads from the
-// declared offset until the first non-record signature, so an offset pointing
-// earlier than offset+size would let the real directory exceed the checked
-// size). Zip64 end records are followed when the 32-bit fields are saturated.
-func checkDirectory(ra io.ReaderAt, size int64) error {
-	const eocdLen, maxComment = 22, 1 << 16
-	if size < eocdLen {
-		return invalid("not a zip")
-	}
-	tailLen := int64(eocdLen + maxComment)
-	if tailLen > size {
-		tailLen = size
-	}
-	tail := make([]byte, tailLen)
-	if _, err := ra.ReadAt(tail, size-tailLen); err != nil && err != io.EOF {
-		return invalid("not a zip")
-	}
-	pos := -1
-	for i := len(tail) - eocdLen; i >= 0; i-- {
-		if binary.LittleEndian.Uint32(tail[i:]) == 0x06054b50 &&
-			i+eocdLen+int(binary.LittleEndian.Uint16(tail[i+20:])) == len(tail) {
-			pos = i
-			break
-		}
-	}
-	if pos < 0 {
-		return invalid("not a zip")
-	}
-	eocdAt := size - tailLen + int64(pos)
-	rec := tail[pos:]
-	records := uint64(binary.LittleEndian.Uint16(rec[10:]))
-	dirSize := uint64(binary.LittleEndian.Uint32(rec[12:]))
-	dirOff := uint64(binary.LittleEndian.Uint32(rec[16:]))
-	end := uint64(eocdAt) // where the directory must stop
-	if records == 0xFFFF || dirSize == 0xFFFFFFFF || dirOff == 0xFFFFFFFF {
-		if eocdAt < 20 {
-			return invalid("not a zip")
-		}
-		var loc [20]byte
-		if _, err := ra.ReadAt(loc[:], eocdAt-20); err != nil || binary.LittleEndian.Uint32(loc[:]) != 0x07064b50 {
-			return invalid("not a zip")
-		}
-		z64 := binary.LittleEndian.Uint64(loc[8:])
-		var z [56]byte
-		if z64 > uint64(size) || z64+56 > uint64(size) {
-			return invalid("not a zip")
-		}
-		if _, err := ra.ReadAt(z[:], int64(z64)); err != nil || binary.LittleEndian.Uint32(z[:]) != 0x06064b50 {
-			return invalid("not a zip")
-		}
-		records = binary.LittleEndian.Uint64(z[32:])
-		dirSize = binary.LittleEndian.Uint64(z[40:])
-		dirOff = binary.LittleEndian.Uint64(z[48:])
-		end = z64
-	}
-	if records > MaxEntries {
-		return invalid("too many entries")
-	}
-	if dirSize > MaxDirectoryBytes || dirOff > end || dirOff+dirSize != end {
-		return invalid("unsupported zip directory")
-	}
-	return nil
 }
