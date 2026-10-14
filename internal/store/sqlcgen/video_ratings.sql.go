@@ -13,10 +13,13 @@ import (
 
 const countVideoRatings = `-- name: CountVideoRatings :one
 SELECT
-    COUNT(*) FILTER (WHERE rating = 'like')    AS likes,
-    COUNT(*) FILTER (WHERE rating = 'dislike') AS dislikes
-FROM video_ratings
-WHERE video_id = $1
+    COUNT(*) FILTER (WHERE r.rating = 'like')    AS likes,
+    COUNT(*) FILTER (WHERE r.rating = 'dislike') AS dislikes
+FROM (
+    SELECT vr.rating FROM video_ratings vr WHERE vr.video_id = $1::uuid
+    UNION ALL
+    SELECT rr.rating FROM remote_video_ratings rr WHERE rr.video_id = $1::uuid
+) r
 `
 
 type CountVideoRatingsRow struct {
@@ -24,11 +27,40 @@ type CountVideoRatingsRow struct {
 	Dislikes int64 `json:"dislikes"`
 }
 
+// Local users' votes plus remote actors' (0178): both are rows, so the total is
+// derived here and never taken from a remote-supplied count.
 func (q *Queries) CountVideoRatings(ctx context.Context, videoID uuid.UUID) (CountVideoRatingsRow, error) {
 	row := q.db.QueryRow(ctx, countVideoRatings, videoID)
 	var i CountVideoRatingsRow
 	err := row.Scan(&i.Likes, &i.Dislikes)
 	return i, err
+}
+
+const deleteRemoteVideoRating = `-- name: DeleteRemoteVideoRating :exec
+DELETE FROM remote_video_ratings
+WHERE remote_actor_url = $1
+  AND ((video_id = $2 AND rating = $3)
+       OR activity_url = $4)
+`
+
+type DeleteRemoteVideoRatingParams struct {
+	RemoteActorUrl string    `json:"remote_actor_url"`
+	VideoID        uuid.UUID `json:"video_id"`
+	Rating         string    `json:"rating"`
+	ActivityUrl    string    `json:"activity_url"`
+}
+
+// Undo{Like|Dislike}: removes the actor's vote only when it is still the kind
+// being undone (an Undo{Like} after a switch to dislike changes nothing), or
+// when the Undo names the rating's own activity id.
+func (q *Queries) DeleteRemoteVideoRating(ctx context.Context, arg DeleteRemoteVideoRatingParams) error {
+	_, err := q.db.Exec(ctx, deleteRemoteVideoRating,
+		arg.RemoteActorUrl,
+		arg.VideoID,
+		arg.Rating,
+		arg.ActivityUrl,
+	)
+	return err
 }
 
 const deleteVideoRating = `-- name: DeleteVideoRating :exec
@@ -62,6 +94,32 @@ func (q *Queries) GetVideoRating(ctx context.Context, arg GetVideoRatingParams) 
 	var rating string
 	err := row.Scan(&rating)
 	return rating, err
+}
+
+const upsertRemoteVideoRating = `-- name: UpsertRemoteVideoRating :exec
+INSERT INTO remote_video_ratings (video_id, remote_actor_url, rating, activity_url)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (remote_actor_url, video_id)
+DO UPDATE SET rating = EXCLUDED.rating, activity_url = EXCLUDED.activity_url, updated_at = now()
+`
+
+type UpsertRemoteVideoRatingParams struct {
+	VideoID        uuid.UUID `json:"video_id"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+	Rating         string    `json:"rating"`
+	ActivityUrl    string    `json:"activity_url"`
+}
+
+// A remote actor's Like/Dislike of a local video: one row per (actor, video),
+// so a repeat is a no-op and a switch changes the row in place.
+func (q *Queries) UpsertRemoteVideoRating(ctx context.Context, arg UpsertRemoteVideoRatingParams) error {
+	_, err := q.db.Exec(ctx, upsertRemoteVideoRating,
+		arg.VideoID,
+		arg.RemoteActorUrl,
+		arg.Rating,
+		arg.ActivityUrl,
+	)
+	return err
 }
 
 const upsertVideoRating = `-- name: UpsertVideoRating :exec

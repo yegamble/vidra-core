@@ -865,6 +865,15 @@ func (f fakeFedRepo) ClaimChannelFollowerBackfill(context.Context, sqlcgen.Claim
 	return 0, nil
 }
 
+// Remote votes (0178) are not exercised through the HTTP layer's fake.
+func (fakeFedRepo) UpsertRemoteVideoRating(context.Context, sqlcgen.UpsertRemoteVideoRatingParams) error {
+	return nil
+}
+
+func (fakeFedRepo) DeleteRemoteVideoRating(context.Context, sqlcgen.DeleteRemoteVideoRatingParams) error {
+	return nil
+}
+
 func (f fakeFedRepo) IsRemoteActorBlockedInstanceWide(_ context.Context, actorURL string) (bool, error) {
 	if _, ok := f.adminActorBlocks[actorURL]; ok {
 		return true, nil

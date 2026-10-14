@@ -124,14 +124,16 @@ func (s *Service) dispatchActivity(ctx context.Context, act inboxActivity, signe
 		return s.handleFlag(ctx, act, signerActorURL)
 	case "Move":
 		return s.handleMove(ctx, act, signerActorURL)
+	case "Like", "Dislike":
+		return s.handleRate(ctx, act, signerActorURL)
 	default:
 		return nil // unhandled activity types are accepted-and-ignored
 	}
 }
 
-// handleUndo reverses a previously-federated activity. Only Undo{Follow} (a remote
-// actor un-following a local channel) is handled today; other Undo objects are
-// accepted and ignored.
+// handleUndo reverses a previously-federated activity: Undo{Follow} (a remote
+// actor un-following a local channel) and Undo{Like|Dislike} (a remote vote on
+// a local video, ratings.go); other Undo objects are accepted and ignored.
 func (s *Service) handleUndo(ctx context.Context, act inboxActivity, signerActorURL string) error {
 	var inner struct {
 		Type   string          `json:"type"`
@@ -139,7 +141,9 @@ func (s *Service) handleUndo(ctx context.Context, act inboxActivity, signerActor
 		Object json.RawMessage `json:"object"`
 	}
 	if err := json.Unmarshal(act.Object, &inner); err != nil || inner.Type != "Follow" {
-		return nil // not an Undo{Follow} → ignore
+		// Undo{Like|Dislike}, or an Undo naming a rating by bare id: the
+		// rating path decides, and ignores anything else.
+		return s.handleUndoRate(ctx, act, signerActorURL)
 	}
 	// The undoer must be the request signer and (if named) the Follow's actor.
 	if act.Actor != signerActorURL || (inner.Actor != "" && inner.Actor != signerActorURL) {

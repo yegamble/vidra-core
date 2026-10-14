@@ -1003,6 +1003,15 @@ type RemoteVideoComment struct {
 	ParentObjectUrl  string             `json:"parent_object_url"`
 }
 
+type RemoteVideoRating struct {
+	VideoID        uuid.UUID `json:"video_id"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+	Rating         string    `json:"rating"`
+	ActivityUrl    string    `json:"activity_url"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
 type Report struct {
 	ID                     uuid.UUID          `json:"id"`
 	ReporterID             pgtype.UUID        `json:"reporter_id"`
