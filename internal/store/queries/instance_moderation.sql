@@ -57,4 +57,6 @@ SELECT count(*)::bigint FROM blocked_instances;
 
 -- name: IsInstanceBlocked :one
 -- The cheap inbox/drain check: is this (lowercased) domain on the blocklist?
-SELECT EXISTS (SELECT 1 FROM blocked_instances WHERE domain = $1);
+-- A stored host:port entry (dev origins) blocks the bare host too.
+SELECT EXISTS (SELECT 1 FROM blocked_instances
+               WHERE domain = $1 OR regexp_replace(domain, ':[0-9]+$', '') = $1);

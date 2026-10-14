@@ -49,6 +49,7 @@ import (
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/peertubearchive"
+	"github.com/vidra/vidra-core/internal/peertubefollows"
 	"github.com/vidra/vidra-core/internal/playback"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
@@ -156,6 +157,7 @@ type Server struct {
 	notifsvc          *notification.Service
 	playersettingssvc *playersettings.Service
 	peertubeArchive   *peertubearchive.Importer
+	peertubeFollows   *peertubefollows.Service
 	viewerprefssvc    *viewerprefs.Service
 	playlistsvc       *playlist.Service
 	moderationsvc     *moderation.Service
@@ -1759,6 +1761,9 @@ func (s *Server) routes() {
 		api.POST("/me/import", s.handleImportAccount, s.requireAuth, s.requireScannerGate)
 		if s.peertubeArchive != nil {
 			api.POST("/me/import/peertube", s.handlePeerTubeArchiveImport, s.requireAuth, s.peertubeImportRateLimit(), s.peertubeImportBodyLimit())
+		}
+		if s.peertubeFollows != nil {
+			api.GET("/me/import/peertube/follows/:id", s.handlePeerTubeFollowStatus, s.requireAuth)
 		}
 	}
 

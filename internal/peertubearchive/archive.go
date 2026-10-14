@@ -81,8 +81,14 @@ type Archive struct {
 	Channels  []Channel
 	Playlists []Playlist
 	Settings  *Settings
+	// Following holds the targetHandle (name@host) of each following.json
+	// entry, at most MaxFollowing; entries past that are counted in Skipped.
+	Following []string
 	Skipped   map[string]int
 }
+
+// MaxFollowing bounds how many following.json handles are retained.
+const MaxFollowing = 5000
 
 // skipSections maps a peertube/<file> to the section name it is reported under.
 var skipSections = map[string]string{
@@ -209,10 +215,32 @@ func ReadAt(ra io.ReaderAt, size int64) (*Archive, error) {
 		}
 		a.Settings = &Settings{AutoPlayNextVideo: s.AutoPlayNextVideo}
 	}
+	parsedFollowing := false
+	if f, ok := files["peertube/following.json"]; ok && f.UncompressedSize64 <= MaxJSONBytes {
+		b, err := readEntry(f, &budget)
+		if err != nil {
+			return nil, err
+		}
+		var doc struct {
+			Following []struct {
+				TargetHandle string `json:"targetHandle"`
+			} `json:"following"`
+		}
+		if json.Unmarshal(b, &doc) == nil {
+			parsedFollowing = true
+			for _, e := range doc.Following {
+				if h := strings.TrimSpace(e.TargetHandle); h != "" && len(a.Following) < MaxFollowing {
+					a.Following = append(a.Following, h)
+				} else {
+					a.Skipped["following"]++ // unusable entry or past the retention cap
+				}
+			}
+		}
+	}
 	var streamBudget int64 = MaxStreamBytes
 	for file, section := range skipSections {
 		f, ok := files["peertube/"+file]
-		if !ok {
+		if !ok || (parsedFollowing && section == "following") {
 			continue
 		}
 		n, err := countSection(f, &streamBudget)
@@ -221,7 +249,7 @@ func ReadAt(ra io.ReaderAt, size int64) (*Archive, error) {
 		}
 		a.Skipped[section] += n
 	}
-	if a.Channels == nil && a.Playlists == nil && a.Settings == nil && len(a.Skipped) == 0 {
+	if a.Channels == nil && a.Playlists == nil && a.Settings == nil && len(a.Following) == 0 && len(a.Skipped) == 0 {
 		return nil, invalid("no peertube export data found")
 	}
 	return a, nil

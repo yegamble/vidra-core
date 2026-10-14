@@ -81,7 +81,9 @@ func (s *Server) handleInstall(w http.ResponseWriter, _ *http.Request) {
 	// so it costs nothing but the bytes; touching the idle timer as it goes is
 	// belt to onIdle's braces.
 	stop := make(chan struct{})
+	beatDone := make(chan struct{})
 	go func() {
+		defer close(beatDone)
 		t := time.NewTicker(s.keepAlive())
 		defer t.Stop()
 		for {
@@ -96,6 +98,9 @@ func (s *Server) handleInstall(w http.ResponseWriter, _ *http.Request) {
 
 	code, err := s.opt.Install(context.Background(), stream)
 	close(stop)
+	// Wait the heartbeat out: it writes to w, which net/http recycles the moment
+	// this handler returns, and a tick that outlived us flushed a nil bufio.Writer.
+	<-beatDone
 	stream.close()
 
 	ev := InstallEvent{ExitCode: code}
@@ -144,6 +149,7 @@ type sseWriter struct {
 	mu    sync.Mutex
 	buf   bytes.Buffer
 	touch func()
+	ended bool // guarded by mu: set by the "done" event; nothing is written after it
 }
 
 func (s *sseWriter) Write(p []byte) (int, error) {
@@ -188,6 +194,10 @@ func (s *sseWriter) event(name string, payload any) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.ended {
+		return
+	}
+	s.ended = name == "done"
 	_, _ = fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", name, b)
 	flush(s.w)
 }
@@ -202,6 +212,9 @@ func (s *sseWriter) keepalive() {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.ended {
+		return
+	}
 	_, _ = fmt.Fprint(s.w, ": keepalive\n\n")
 	flush(s.w)
 }

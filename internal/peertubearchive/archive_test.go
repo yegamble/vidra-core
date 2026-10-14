@@ -69,6 +69,18 @@ func TestReadHappyPath(t *testing.T) {
 	}
 }
 
+func TestReadFollowingHandles(t *testing.T) {
+	raw := buildZip(t, entry{name: "peertube/following.json",
+		body: `{"following":[{"targetHandle":"a@x.example"},{"targetHandle":" "},{},{"targetHandle":"b@y.example"}]}`})
+	a, err := Read(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Following) != 2 || a.Following[1] != "b@y.example" || a.Skipped["following"] != 2 {
+		t.Fatalf("following: %+v skipped %+v", a.Following, a.Skipped)
+	}
+}
+
 func TestReadRejectsHostileArchives(t *testing.T) {
 	good := entry{name: "peertube/channels.json", body: `{"channels":[]}`}
 	many := []entry{good}
