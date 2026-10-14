@@ -366,7 +366,11 @@ func (s *Service) deliverActivity(ctx context.Context, signer httpsig.Signer, in
 		return fmt.Errorf("federation: unsafe inbox URL: %w", err)
 	}
 	client := s.remoteClient(guard)
-	req, err := http.NewRequestWithContext(withSameHostRedirects(ctx), http.MethodPost, target.String(), bytes.NewReader(payload))
+	// A delivery follows no redirect: re-sending a signed activity wherever the
+	// peer points is not something an inbox gets to ask for. The 3xx is the
+	// answer, and the status check below fails it.
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}

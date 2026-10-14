@@ -28,8 +28,7 @@ type sameHostRedirectsKey struct{}
 // withSameHostRedirects marks a request whose redirects must stay on the host
 // it was sent to. Actor and object documents carry an id whose host the caller
 // compares to the URL it ASKED for; a hop to another host would let that other
-// host answer for this one. An inbox POST gets the same rule, so a signed
-// activity is never re-sent somewhere the peer pointed us.
+// host answer for this one.
 func withSameHostRedirects(ctx context.Context) context.Context {
 	return context.WithValue(ctx, sameHostRedirectsKey{}, true)
 }
@@ -75,7 +74,7 @@ func (s *Service) redirectPolicy(next func(*http.Request, []*http.Request) error
 		if sameHostRedirects(req.Context()) {
 			return errCrossHostRedirect
 		}
-		blocked, err := s.redirectHostBlocked(req.Context(), req.URL)
+		blocked, err := s.hostBlocked(req.Context(), req.URL)
 		if err != nil || blocked {
 			return errRedirectToBlockedHost
 		}
@@ -83,17 +82,22 @@ func (s *Service) redirectPolicy(next func(*http.Request, []*http.Request) error
 	}
 }
 
-// redirectHostBlocked reports whether a redirect target's host is on the admin
-// block list. The list stores a lower-case host, or host:port for a dev origin,
-// so both forms of the canonical host are asked. A host that does not
+// hostBlocked reports whether a URL's host is on the admin block list. The
+// list stores a lower-case host, or host:port, so the bare canonical host and
+// its host:port form (the scheme's default port when none is given) are asked. A host that does not
 // canonicalise is reported blocked: it could not be checked.
-func (s *Service) redirectHostBlocked(ctx context.Context, u *url.URL) (bool, error) {
+func (s *Service) hostBlocked(ctx context.Context, u *url.URL) (bool, error) {
 	host, ok := canonicalBlockHost(u.Hostname())
 	if !ok {
 		return true, nil
 	}
 	keys := []string{host}
-	if port := u.Port(); port != "" {
+	port := u.Port()
+	if port == "" {
+		// An entry may name the scheme's default port explicitly.
+		port = map[string]string{"https": "443", "http": "80"}[strings.ToLower(u.Scheme)]
+	}
+	if port != "" {
 		keys = append(keys, host+":"+port)
 	}
 	if raw := strings.ToLower(u.Host); !slices.Contains(keys, raw) {
@@ -110,7 +114,9 @@ func (s *Service) redirectHostBlocked(ctx context.Context, u *url.URL) (bool, er
 
 // canonicalBlockHost reduces a hostname to the form the block list is keyed by:
 // lower-case, trailing dot removed, IDN in its ASCII form. It is the follow
-// path's normalisation; deduplicate with it once both are on main.
+// path's normalisation.
+// TODO: replace with federation.NormalizeFollowHost / instancemod.BlockMatches
+// once those shared helpers are on main.
 func canonicalBlockHost(hostname string) (string, bool) {
 	h := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(hostname)), ".")
 	if h == "" {

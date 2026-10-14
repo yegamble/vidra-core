@@ -2,6 +2,8 @@ package federation
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/httpsig"
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 )
 
@@ -193,12 +197,12 @@ func TestRedirectHostBlockedCanonicalisesAndFailsClosed(t *testing.T) {
 		"https://bücher.example/x",
 	} {
 		u, _ := url.Parse(raw)
-		if blocked, err := svc.redirectHostBlocked(context.Background(), u); err != nil || !blocked {
+		if blocked, err := svc.hostBlocked(context.Background(), u); err != nil || !blocked {
 			t.Errorf("%s: blocked=%v err=%v, want blocked", raw, blocked, err)
 		}
 	}
 	u, _ := url.Parse("https://fine.example/x")
-	if blocked, _ := svc.redirectHostBlocked(context.Background(), u); blocked {
+	if blocked, _ := svc.hostBlocked(context.Background(), u); blocked {
 		t.Error("fine.example reported blocked")
 	}
 
@@ -208,5 +212,67 @@ func TestRedirectHostBlockedCanonicalisesAndFailsClosed(t *testing.T) {
 	to, _ := http.NewRequest(http.MethodGet, "https://b.example/", nil)
 	if err := policy(to, []*http.Request{from}); !errors.Is(err, errRedirectToBlockedHost) {
 		t.Fatalf("lookup error: err = %v, want the hop refused", err)
+	}
+}
+
+// An inbox POST follows no redirect at all, not even on its own host: a 3xx is
+// the delivery's answer, and it is a failure.
+func TestDeliveryFollowsNoRedirect(t *testing.T) {
+	var posts atomic.Int32
+	inbox := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		posts.Add(1)
+		http.Redirect(rw, r, "/other-inbox", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(inbox.Close)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	repo := newFollowRepo(uuid.New())
+	repo.blockedDomains = map[string]bool{}
+	svc := NewService(repo, WithBaseURL("https://videos.example"), WithAllowPrivateFetch(true))
+	signer := httpsig.Signer{KeyID: "https://videos.example/accounts/ada#main-key", Priv: key}
+
+	if err := svc.deliverActivity(context.Background(), signer, inbox.URL+"/inbox", []byte(`{"type":"Create"}`)); err == nil {
+		t.Fatal("delivery answered 307 reported success")
+	}
+	if n := posts.Load(); n != 1 {
+		t.Fatalf("inbox received %d POSTs, want 1", n)
+	}
+}
+
+// A poster on a blocked host is not fetched even though posters may live on
+// another host than the video.
+func TestRemoteThumbnailOnBlockedHostIsNotFetched(t *testing.T) {
+	w := newRedirectWorld(t, true)
+	w.otherMux.Handle("/poster.jpg", http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		rw.Header().Set("Content-Type", "image/jpeg")
+		_, _ = rw.Write([]byte{0xff, 0xd8, 0xff})
+	}))
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	svc := NewService(w.repo, WithBaseURL("https://videos.example"), WithAllowPrivateFetch(true), WithMediaStorage(blobs))
+
+	svc.cacheRemoteThumbnail(context.Background(), uuid.New(), w.other.URL+"/poster.jpg")
+	if n := w.otherHits.Load(); n != 0 {
+		t.Fatalf("blocked host was contacted %d times", n)
+	}
+}
+
+// A block entry written host:port with the scheme's default port covers a URL
+// that leaves the port implicit.
+func TestRedirectIntoDefaultPortBlockEntryIsRefused(t *testing.T) {
+	repo := newFollowRepo(uuid.New())
+	repo.blockedDomains = map[string]bool{"blocked.example:443": true, "plain.example:80": true}
+	svc := NewService(repo)
+	policy := svc.redirectPolicy(nil)
+	from, _ := http.NewRequest(http.MethodGet, "https://a.example/", nil)
+	for _, target := range []string{"https://blocked.example/x", "http://plain.example/x"} {
+		to, _ := http.NewRequest(http.MethodGet, target, nil)
+		if err := policy(to, []*http.Request{from}); !errors.Is(err, errRedirectToBlockedHost) {
+			t.Errorf("%s: err = %v, want the hop refused", target, err)
+		}
 	}
 }
