@@ -24,12 +24,15 @@ func newFakeViews() *fakeViews {
 	return &fakeViews{seen: map[string]bool{}, counts: map[uuid.UUID]int{}}
 }
 
-func (f *fakeViews) record(_ context.Context, videoID uuid.UUID, viewerKey string) error {
+func (f *fakeViews) record(ctx context.Context, videoID uuid.UUID, viewerKey string, gate func(context.Context) (bool, error)) error {
 	key := videoID.String() + ":" + viewerKey
 	if f.seen[key] {
 		return nil
 	}
 	f.seen[key] = true
+	if ok, err := gate(ctx); err != nil || !ok {
+		return err
+	}
 	f.counts[videoID]++
 	return nil
 }
@@ -155,29 +158,39 @@ func TestInboundViewRefusals(t *testing.T) {
 	}
 }
 
-// One sending domain adds at most maxRemoteViewsPerDomainHour views per hour,
-// however many actors it mints.
+// One registrable domain adds at most maxRemoteViewsPerDomainHour views per
+// hour, however many actors or subdomains it mints.
 func TestInboundViewDomainCap(t *testing.T) {
 	ctx := context.Background()
 	repo := ratingRepo()
 	views := newFakeViews()
 	svc := viewSvc(repo, views)
+	// Repeats from one legitimate actor do not spend the domain's budget.
 	for i := 0; i < maxRemoteViewsPerDomainHour+5; i++ {
-		actor := fmt.Sprintf("https://peertube.example/accounts/sock%d", i)
+		if err := svc.HandleInbox(ctx, ctPTAccount, viewActivity(fmt.Sprintf("%s/views/r%d", ctPTAccount, i), ctPTAccount, nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := views.counts[ctVideoID]; got != 1 {
+		t.Fatalf("repeats: count = %d, want 1", got)
+	}
+	// Fresh subdomains of one registrable domain share ONE budget.
+	for i := 1; i <= 150; i++ {
+		actor := fmt.Sprintf("https://sub%d.evil.example/accounts/sock", i)
 		if err := svc.HandleInbox(ctx, actor, viewActivity(actor+"/views/1", actor, nil)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := views.counts[ctVideoID]; got != maxRemoteViewsPerDomainHour {
-		t.Fatalf("count = %d, want the domain cap %d", got, maxRemoteViewsPerDomainHour)
+	if got := views.counts[ctVideoID]; got != 1+maxRemoteViewsPerDomainHour {
+		t.Fatalf("count = %d, want 1 + the domain cap %d", got, maxRemoteViewsPerDomainHour)
 	}
 	// Another domain has its own budget.
 	actor := "https://tube.example/accounts/ana"
 	if err := svc.HandleInbox(ctx, actor, viewActivity(actor+"/views/1", actor, nil)); err != nil {
 		t.Fatal(err)
 	}
-	if got := views.counts[ctVideoID]; got != maxRemoteViewsPerDomainHour+1 {
-		t.Fatalf("other domain: count = %d, want %d", got, maxRemoteViewsPerDomainHour+1)
+	if got := views.counts[ctVideoID]; got != maxRemoteViewsPerDomainHour+2 {
+		t.Fatalf("other domain: count = %d, want %d", got, maxRemoteViewsPerDomainHour+2)
 	}
 }
 
@@ -187,5 +200,19 @@ func TestInboundViewWithoutSeamIsIgnored(t *testing.T) {
 	svc := NewService(ratingRepo(), WithBaseURL(contractBase))
 	if err := svc.HandleInbox(context.Background(), ctPTAccount, viewActivity(ctPTAccount+"/views/1", ctPTAccount, nil)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCapDomainIsRegistrableDomain(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://sub7.evil.example/accounts/x": "evil.example",
+		"https://Peer.Tube.co.uk:8443/a":       "tube.co.uk",
+		"https://evil.example./a":              "evil.example",
+		"https://10.0.0.5:9000/a":              "10.0.0.5",
+		"https://localhost/a":                  "localhost",
+	} {
+		if got := capDomain(in); got != want {
+			t.Errorf("capDomain(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

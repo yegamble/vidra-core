@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/net/publicsuffix"
 
 	"github.com/vidra/vidra-core/internal/ratelimit"
 )
@@ -18,9 +20,10 @@ import (
 const maxRemoteViewsPerDomainHour = 100
 
 // RemoteViewRecorder counts one view of a local video under viewerKey through
-// the local view-counting seam (video.Service.RecordView), which dedupes a
-// viewer per window and keeps the per-day rollup in step.
-type RemoteViewRecorder func(ctx context.Context, videoID uuid.UUID, viewerKey string) error
+// the local view-counting seam (video.Service.RecordViewGated), which dedupes a
+// viewer per window, consults gate only for a first view, and keeps the per-day
+// rollup in step.
+type RemoteViewRecorder func(ctx context.Context, videoID uuid.UUID, viewerKey string, gate func(context.Context) (bool, error)) error
 
 // WithViewCounting wires inbound ActivityPub View into the local view count.
 // domainCap backs the per-domain hourly cap; it must be shared across API
@@ -66,16 +69,35 @@ func (s *Service) handleView(ctx context.Context, act inboxActivity, signerActor
 	if blocked, err := s.videoOwnerBlocksRemoteActor(ctx, videoID, signerActorURL); err != nil || blocked {
 		return err
 	}
-	if s.viewDomainCap != nil {
-		n, _, err := s.viewDomainCap.Incr(ctx, "ap:view:domain:"+hostOf(signerActorURL), time.Hour)
-		if err != nil {
-			return err
+	// The domain budget is spent only on a first view (the seam's gate runs
+	// after its dedupe), keyed on the registrable domain so fresh subdomains
+	// share one budget.
+	gate := func(ctx context.Context) (bool, error) {
+		if s.viewDomainCap == nil {
+			return true, nil
 		}
-		if n > maxRemoteViewsPerDomainHour {
-			return nil
-		}
+		n, _, err := s.viewDomainCap.Incr(ctx, "ap:view:domain:"+capDomain(signerActorURL), time.Hour)
+		return err == nil && n <= maxRemoteViewsPerDomainHour, err
 	}
 	// Hashed like the local viewer key, so actor URLs never become Redis keys.
 	sum := sha256.Sum256([]byte("ap:" + signerActorURL))
-	return s.recordView(ctx, videoID, hex.EncodeToString(sum[:]))
+	return s.recordView(ctx, videoID, hex.EncodeToString(sum[:]), gate)
+}
+
+// capDomain is the key for a per-sender-domain budget: the registrable domain
+// (eTLD+1) of the URL's normalised host, so sub1.evil.example and
+// sub2.evil.example share one budget. An IP literal, or a host the public
+// suffix list cannot reduce, keys on the normalised host itself.
+func capDomain(rawURL string) string {
+	host := hostOf(rawURL)
+	if n, ok := NormalizeFollowHost(host); ok {
+		host = n
+	}
+	if net.ParseIP(host) != nil {
+		return host
+	}
+	if d, err := publicsuffix.EffectiveTLDPlusOne(host); err == nil {
+		return d
+	}
+	return host
 }
