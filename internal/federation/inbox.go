@@ -37,6 +37,8 @@ type inboxActivity struct {
 	Tag     json.RawMessage `json:"tag"`
 	// Read only by Move: the actor the mover now lives at.
 	Target json.RawMessage `json:"target"`
+	// Read only by View: set on PeerTube's live-viewer heartbeat (views.go).
+	Expires string `json:"expires"`
 }
 
 // HandleInbox dispatches a signature-verified inbound activity. signerActorURL is
@@ -126,6 +128,8 @@ func (s *Service) dispatchActivity(ctx context.Context, act inboxActivity, signe
 		return s.handleMove(ctx, act, signerActorURL)
 	case "Like", "Dislike":
 		return s.handleRate(ctx, act, signerActorURL)
+	case "View":
+		return s.handleView(ctx, act, signerActorURL)
 	default:
 		return nil // unhandled activity types are accepted-and-ignored
 	}

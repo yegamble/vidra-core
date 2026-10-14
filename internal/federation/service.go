@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/moderation"
+	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -243,6 +244,9 @@ type Service struct {
 	allowChannelFollowers func() bool
 	followerApproval      func() bool
 	autoFollowBack        func() bool
+	// recordView/viewDomainCap count inbound Views (views.go). Nil = ignored.
+	recordView    RemoteViewRecorder
+	viewDomainCap ratelimit.Counter
 	// logger, when set, records dropped/refused inbound activities (the
 	// federation_accept_remote_comments drop path). Nil = silent.
 	logger *slog.Logger
