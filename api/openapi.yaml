@@ -22411,12 +22411,12 @@ components:
         status: {type: string, enum: [ok, not_modified, error, needs_confirmation]}
         error: {type: string}
         protected: {type: integer, description: Entries skipped because they name this instance or a parent domain.}
-        pending_removals: {type: integer, description: With needs_confirmation, how many blocks a confirmed sync would remove.}
+        pending_removals: {type: integer, description: "With needs_confirmation, how many blocks a confirmed sync would remove."}
         added: {type: integer}
         removed: {type: integer}
         entries: {type: integer}
         ignored_severity: {type: integer, description: Rows skipped because vidra has no equivalent of silence/limit.}
-        invalid: {type: integer, description: Rows skipped as malformed (wildcard, obfuscated, IP, ...).}
+        invalid: {type: integer, description: "Rows skipped as malformed (wildcard, obfuscated, IP, ...)."}
     BlocklistAllowRequest:
       type: object
       required: [domain]
