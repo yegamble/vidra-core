@@ -13,7 +13,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/net/idna"
 
+	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 )
@@ -38,6 +40,10 @@ var (
 	// ErrRemoteUnresolvable means WebFinger or the actor fetch failed, so the
 	// target could not be resolved to a followable remote actor (422).
 	ErrRemoteUnresolvable = errors.New("federation: could not resolve the remote actor")
+	// ErrBlockedFollowTarget means the target's domain is on this instance's
+	// block list; nothing is fetched from it. Callers must present it exactly
+	// like ErrRemoteUnresolvable so block membership is not revealed.
+	ErrBlockedFollowTarget = errors.New("federation: follow target is on a blocked domain")
 	// ErrFollowNotFound means no such remote follow exists for this user (404).
 	ErrFollowNotFound = errors.New("federation: remote follow not found")
 )
@@ -74,11 +80,27 @@ func (s *Service) FollowRemoteChannel(ctx context.Context, userID uuid.UUID, tar
 		return RemoteFollow{}, err
 	}
 
+	// An admin-blocked domain is refused BEFORE the WebFinger fetch: a block
+	// means no outbound request is made toward the host.
+	host, ok := followTargetHost(target)
+	if !ok {
+		return RemoteFollow{}, ErrBadFollowTarget
+	}
+	if err := s.refuseBlockedFollowHost(ctx, host); err != nil {
+		return RemoteFollow{}, err
+	}
 	candidates, err := s.resolveFollowTarget(ctx, target)
 	if err != nil {
 		return RemoteFollow{}, err
 	}
 	for _, actorURL := range candidates {
+		ah, ok := followTargetHost(actorURL)
+		if !ok {
+			return RemoteFollow{}, ErrRemoteUnresolvable
+		}
+		if err := s.refuseBlockedFollowHost(ctx, ah); err != nil {
+			return RemoteFollow{}, err
+		}
 		if strings.EqualFold(hostOf(actorURL), s.domain()) {
 			return RemoteFollow{}, ErrLocalFollowTarget
 		}
@@ -88,6 +110,65 @@ func (s *Service) FollowRemoteChannel(ctx context.Context, userID uuid.UUID, tar
 		return RemoteFollow{}, fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 	}
 	return s.followResolvedActor(ctx, userID, u.Username, ra)
+}
+
+// NormalizeFollowHost reduces a host as written in a follow target to the key
+// the domain block list uses: lower-case, port and trailing dot removed, IDN in
+// its ASCII form. It refuses (ok=false) anything that is not a plain hostname:
+// empty labels, userinfo, path/query/fragment characters, backslashes,
+// whitespace, brackets. A refused host is never fetched.
+func NormalizeFollowHost(host string) (string, bool) {
+	host = strings.TrimSpace(host)
+	if host == "" || strings.ContainsAny(host, "?#/@\\[] \t\r\n") {
+		return "", false
+	}
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		port := host[i+1:]
+		if port == "" || strings.Trim(port, "0123456789") != "" || strings.Contains(host[:i], ":") {
+			return "", false
+		}
+		host = host[:i]
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "" || strings.Contains(host, "..") || strings.HasPrefix(host, ".") {
+		return "", false
+	}
+	ascii, err := idna.Lookup.ToASCII(host)
+	if err != nil || ascii == "" {
+		return "", false
+	}
+	return ascii, true
+}
+
+// followTargetHost is the normalised host a follow target names: an http(s)
+// URL's host, or the part after the first '@' of a name@domain handle (the cut
+// resolveFollowTarget makes, so both read the same host). ok=false means the
+// target cannot be fetched at all.
+func followTargetHost(target string) (string, bool) {
+	target = strings.TrimSpace(target)
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+		u, err := url.Parse(target)
+		if err != nil {
+			return "", false
+		}
+		return NormalizeFollowHost(u.Host)
+	}
+	_, host, found := strings.Cut(strings.TrimPrefix(target, "@"), "@")
+	if !found {
+		return "", false
+	}
+	return NormalizeFollowHost(host)
+}
+
+func (s *Service) refuseBlockedFollowHost(ctx context.Context, host string) error {
+	blocked, err := instancemod.BlockMatches(ctx, s.repo.IsInstanceBlocked, host)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return ErrBlockedFollowTarget
+	}
+	return nil
 }
 
 // followResolvedActor follows an already-resolved remote actor as a local user:

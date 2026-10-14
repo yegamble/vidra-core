@@ -766,6 +766,24 @@ type PasswordResetToken struct {
 	CreatedAt time.Time          `json:"created_at"`
 }
 
+type PeertubeFollowImport struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type PeertubeFollowImportTarget struct {
+	ID            uuid.UUID `json:"id"`
+	ImportID      uuid.UUID `json:"import_id"`
+	UserID        uuid.UUID `json:"user_id"`
+	Target        string    `json:"target"`
+	State         string    `json:"state"`
+	Attempts      int32     `json:"attempts"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	LastError     string    `json:"last_error"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type PeertubeImportLedger struct {
 	ID              uuid.UUID   `json:"id"`
 	EntityKind      string      `json:"entity_kind"`
