@@ -33,6 +33,9 @@ const (
 	MaxReadTotal     = 16 << 20 // across all entries actually read
 	maxNameLen       = 512
 
+	// MaxUploadBytes bounds the zip itself (the default HTTP body limit).
+	MaxUploadBytes = 8 << 20
+
 	// MaxStreamBytes bounds the decompressed bytes scanned for counted-only
 	// sections, per section and in total. They are scanned, never buffered.
 	MaxStreamBytes = 32 << 20

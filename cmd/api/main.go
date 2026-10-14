@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/gommon/bytes"
 
 	"github.com/vidra/vidra-core/internal/account"
@@ -66,6 +67,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/peertubearchive"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
 	"github.com/vidra/vidra-core/internal/playbackstats"
 	"github.com/vidra/vidra-core/internal/playersettings"
@@ -1703,6 +1705,12 @@ func run() error {
 
 	playlistsvc := playlist.NewService(db.Queries(), playlist.WithStorage(blobs), playlist.WithMirror(ipfsMirror))
 	opts = append(opts, httpapi.WithPlaylistService(playlistsvc))
+	opts = append(opts, httpapi.WithPeerTubeArchiveImporter(&peertubearchive.Importer{
+		Channels: channelsvc, Playlists: playlistsvc, PlayerSettings: playersettingssvc,
+		Lock: func(ctx context.Context, userID uuid.UUID) (func(), error) {
+			return lockUserImport(ctx, db.Pool, userID)
+		},
+	}))
 
 	// Media garbage collection: admin-triggered sweep + a daily scheduled sweep.
 	// The endpoint is mounted whatever MEDIA_GC_ENABLED says — the flag governs
@@ -4636,4 +4644,32 @@ func auditScanDisabled(ctx context.Context, auditsvc *audit.Service, logger *slo
 	}); err != nil {
 		logger.Warn("could not record the malware-scan opt-out in the audit log", "error", err)
 	}
+}
+
+// peertubeImportLockClass is the advisory-lock class for per-user archive
+// imports. The two-int form keeps it apart from golang-migrate's lock space.
+const peertubeImportLockClass int32 = 0x7074_6965 // "ptie"
+
+// lockUserImport takes a session-scoped advisory lock keyed by the user on a
+// dedicated connection and returns the release func, so two concurrent imports
+// for one user run one after the other.
+func lockUserImport(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID) (func(), error) {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1, hashtext($2))", peertubeImportLockClass, userID.String()); err != nil {
+		conn.Release()
+		return nil, err
+	}
+	return func() {
+		// Detached context: the request may already be cancelled, and the lock
+		// must still be released before the connection returns to the pool.
+		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if _, err := conn.Exec(uctx, "SELECT pg_advisory_unlock($1, hashtext($2))", peertubeImportLockClass, userID.String()); err != nil {
+			conn.Conn().Close(uctx) // dropping the session releases the lock
+		}
+		conn.Release()
+	}, nil
 }

@@ -48,6 +48,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/peertubearchive"
 	"github.com/vidra/vidra-core/internal/playback"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
@@ -99,6 +100,8 @@ type Server struct {
 	unlockLimit *ratelimit.Limiter
 	// bulkVideosLimit throttles POST /me/videos/bulk PER USER (see ratelimit.go).
 	bulkVideosLimit *ratelimit.Limiter
+	// peertubeImportLimit throttles POST /me/import/peertube PER USER.
+	peertubeImportLimit *ratelimit.Limiter
 	// playbackStats + playbackLimit back the watch-time beacon and its owner
 	// report (playback_stats.go). Nil playbackStats leaves both routes unmounted.
 	playbackStats playbackStatsService
@@ -148,6 +151,7 @@ type Server struct {
 	ratingsvc         *rating.Service
 	notifsvc          *notification.Service
 	playersettingssvc *playersettings.Service
+	peertubeArchive   *peertubearchive.Importer
 	viewerprefssvc    *viewerprefs.Service
 	playlistsvc       *playlist.Service
 	moderationsvc     *moderation.Service
@@ -1227,6 +1231,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// Bulk video actions each run the full delete/update pipeline up to 100
 	// times, so they always carry a per-user budget, wired in-process like unlock.
 	s.bulkVideosLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultBulkVideosRateLimit, defaultBulkVideosRateWindow)
+	s.peertubeImportLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPeerTubeImportRateLimit, defaultPeerTubeImportRateWindow)
 	s.playbackLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackRateLimit, defaultPlaybackRateWindow)
 	s.playbackStartLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackStartLimit, defaultPlaybackStartWindow)
 	// Remote-URI search resolution (config-parity W13) triggers outbound
@@ -1734,6 +1739,9 @@ func (s *Server) routes() {
 		api.GET("/me/export", s.handleGetAccountExport, s.requireAuth)
 		api.GET("/me/export/download", s.handleDownloadAccountExport, s.requireAuth)
 		api.POST("/me/import", s.handleImportAccount, s.requireAuth, s.requireScannerGate)
+		if s.peertubeArchive != nil {
+			api.POST("/me/import/peertube", s.handlePeerTubeArchiveImport, s.requireAuth, s.peertubeImportRateLimit())
+		}
 	}
 
 	// DEV-ONLY: expose captured account-security tokens so e2e tests can complete
