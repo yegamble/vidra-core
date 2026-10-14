@@ -311,6 +311,15 @@ func NewOAuthService(repo OAuthRepository, svc *Service, providers []OAuthProvid
 	s.guardedClient = urlsafety.Guard{AllowPrivate: s.allowPrivate, KeepMetadataBlocked: true}.
 		NewBudgetClient(urlsafety.Budget{Total: 15 * time.Second, Idle: 10 * time.Second})
 	s.guardedClient.Transport = cappedTransport{next: s.guardedClient.Transport}
+	// The guard re-validates each redirect hop but accepts http; a provider's
+	// https endpoint must not be able to redirect to http either.
+	guardCheck := s.guardedClient.CheckRedirect
+	s.guardedClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if req.URL.Scheme != "https" && !s.allowPrivate {
+			return errors.New("auth: oidc endpoint redirected to a non-https URL")
+		}
+		return guardCheck(req, via)
+	}
 	s.SetDatabaseProviders(nil)
 	return s
 }

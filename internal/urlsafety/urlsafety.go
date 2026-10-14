@@ -88,12 +88,19 @@ var metadataPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("fd00:ec2::/64"),
 }
 
+var nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
+
 func inMetadataPrefix(ip net.IP) bool {
 	addr, ok := netip.AddrFromSlice(ip)
 	if !ok {
 		return true
 	}
 	addr = addr.Unmap()
+	// NAT64 (64:ff9b::/96) carries an IPv4 address in its last four bytes.
+	if nat64Prefix.Contains(addr) {
+		b := addr.As16()
+		addr = netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
+	}
 	for _, p := range metadataPrefixes {
 		if p.Contains(addr) {
 			return true

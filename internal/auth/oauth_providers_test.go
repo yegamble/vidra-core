@@ -195,3 +195,24 @@ func TestGuardedDiscoveryBodyIsBounded(t *testing.T) {
 		t.Fatalf("normal discovery document refused: %v", err)
 	}
 }
+
+// TestGuardedRedirectsMustStayHTTPS: a redirect from an admin-managed
+// provider's endpoint to http is refused unless private issuers are allowed.
+func TestGuardedRedirectsMustStayHTTPS(t *testing.T) {
+	via := []*http.Request{httptest.NewRequest(http.MethodGet, "https://idp.example/token", nil)}
+	for _, tc := range []struct {
+		allow  bool
+		target string
+		ok     bool
+	}{
+		{false, "http://idp.example/token", false},
+		{false, "https://idp.example/token2", true},
+		{true, "http://idp.example/token", true},
+	} {
+		s := NewOAuthService(nil, nil, nil, WithOAuthAllowPrivateIssuers(tc.allow))
+		err := s.guardedClient.CheckRedirect(httptest.NewRequest(http.MethodGet, tc.target, nil), via)
+		if (err == nil) != tc.ok {
+			t.Errorf("allowPrivate=%v redirect to %s: err = %v, want ok=%v", tc.allow, tc.target, err, tc.ok)
+		}
+	}
+}
