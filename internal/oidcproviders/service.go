@@ -157,11 +157,17 @@ func (s *Service) Create(ctx context.Context, name string, in Input, actor uuid.
 	if _, err := s.repo.GetOIDCProvider(ctx, name); err == nil {
 		return Provider{}, ErrExists
 	}
+	// A row may override an environment provider's settings but never its
+	// issuer: provider names stay bound to the issuer their subjects come from.
+	if envIssuer, ok := s.envIssuers[name]; ok && envIssuer != in.IssuerURL {
+		ve.add("issuer_url", "must equal the issuer of the environment provider with this name")
+		return Provider{}, ve
+	}
 	linked, err := s.repo.OAuthIdentitiesExistForProvider(ctx, name)
 	if err != nil {
 		return Provider{}, err
 	}
-	if linked && s.envIssuers[name] != in.IssuerURL {
+	if _, env := s.envIssuers[name]; linked && !env {
 		ve.add("name", "accounts are already linked through this name from another issuer; choose a different name")
 		return Provider{}, ve
 	}
