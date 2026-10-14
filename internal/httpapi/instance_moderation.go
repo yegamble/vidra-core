@@ -104,6 +104,8 @@ type blockedInstanceView struct {
 	Reason    string    `json:"reason"`
 	BlockedBy string    `json:"blocked_by,omitempty"`
 	BlockedAt time.Time `json:"blocked_at"`
+	// Source is "manual" or "subscription:<id>" -- who owns the block.
+	Source string `json:"source"`
 }
 
 // blockedInstanceListResponse is the paginated admin instance blocklist.
@@ -222,7 +224,7 @@ func (s *Server) handleListBlockedInstances(c echo.Context) error {
 	}
 	views := make([]blockedInstanceView, 0, len(items))
 	for _, it := range items {
-		v := blockedInstanceView{Domain: it.Domain, Reason: it.Reason, BlockedAt: it.BlockedAt}
+		v := blockedInstanceView{Domain: it.Domain, Reason: it.Reason, BlockedAt: it.BlockedAt, Source: it.Source}
 		if it.BlockedBy != nil {
 			v.BlockedBy = it.BlockedBy.String()
 		}

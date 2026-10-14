@@ -27,6 +27,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/authoredremotecomment"
 	"github.com/vidra/vidra-core/internal/block"
+	"github.com/vidra/vidra-core/internal/blocklistsub"
 	"github.com/vidra/vidra-core/internal/cache"
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/cdn"
@@ -468,6 +469,14 @@ func run() error {
 		})
 	}
 	var authOpts []auth.Option
+	authOpts = append(authOpts, auth.WithLoginLockStore(db.Queries()), auth.WithDeviceStore(db.Queries()))
+	if len(cfg.TrustedProxyCIDRs) == 0 {
+		// Per-network lockout needs the real client address. Behind a CDN/proxy outside
+		// the built-in trusted ranges every visitor shares the edge's, so a prefix
+		// lock would lock an account for everyone: fall back to delay-only backoff.
+		authOpts = append(authOpts, auth.WithDelayOnlyPrefixBackoff())
+		logger.Warn("TRUSTED_PROXY_CIDRS is unset: failed-login backoff is delay-only (never hard-locks per network); set it to your CDN/proxy ranges to enable per-network lockout")
+	}
 	authOpts = append(authOpts, auth.WithRegistrationRequestHook(staffQueueHook("registration_request",
 		func(ctx context.Context, id uuid.UUID) (int64, error) {
 			return notifsvc.NotifyNewRegistrationRequest(ctx, id)
@@ -2439,6 +2448,22 @@ func run() error {
 	instancemodsvc := instancemod.NewService(db.Queries())
 	opts = append(opts, httpapi.WithInstanceModerationService(instancemodsvc))
 
+	// Blocklist subscriptions: shared denylists synced into the instance
+	// blocklist. The service is built in every role (the admin routes use it); the
+	// periodic sync is leader-gated below. Removing a list entry resumes the
+	// deliveries the block cancelled, exactly as a manual unblock does.
+	blocklistOpts := []blocklistsub.Option{blocklistsub.WithAuditor(auditsvc), blocklistsub.WithLogger(logger), blocklistsub.WithProtectedHost(cfg.PublicBaseURL)}
+	if cfg.FederationEnabled {
+		blocklistOpts = append(blocklistOpts, blocklistsub.WithOnUnblocked(func(ctx context.Context, domain string, blockedAt time.Time) {
+			if _, err := fedsvc.RedeliverAfterUnblock(ctx, domain, blockedAt); err != nil {
+				logger.Warn("resuming deliveries after a blocklist sync failed", "domain", domain, "error", err)
+			}
+		}))
+	}
+	blocklistFetcher := blocklistsub.NewHTTPFetcher(cfg.ImportAllowPrivateURLs)
+	blocklistsvc := blocklistsub.NewService(db.Queries(), blocklistFetcher, blocklistFetcher.ValidateURL, blocklistOpts...)
+	opts = append(opts, httpapi.WithBlocklistSubscriptionService(blocklistsvc))
+
 	// LEADER ELECTION for the singleton background sweeps. The workers that CLAIM
 	// from a durable queue run on every instance -- that is what the leases are
 	// for, and more instances mean more throughput. The workers that SWEEP must
@@ -2524,6 +2549,24 @@ func run() error {
 				Run: func(context.Context, time.Time) (int, error) { sweep(); return 0, nil },
 			}},
 		}.Run(sweepCtx, logger)
+	}
+
+	// Blocklist-subscription sync. LEADER-GATED: a sync is a set diff against the
+	// blocklist, so every instance running it would fetch the same lists and race
+	// the same rows for no gain. Subscriptions are refreshed at most every
+	// blocklistsub.SyncInterval; the ticker only finds the ones that are due.
+	if runWorkers {
+		blCtx, blCancel := context.WithCancel(context.Background())
+		defer blCancel()
+		go jobloop.Loop{
+			Interval: blocklistsub.DueTick,
+			Jitter:   true,
+			Leader:   cronLeader,
+			Passes: []jobloop.Pass{{
+				FailMsg: "blocklist subscription sync failed",
+				Run:     func(ctx context.Context, _ time.Time) (int, error) { return blocklistsvc.SyncDue(ctx) },
+			}},
+		}.Run(blCtx, logger)
 	}
 
 	// Drain the outbound federation delivery queue in the background (signed
@@ -3779,10 +3822,21 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 	}
 	reconcile := time.NewTicker(reconcileInterval)
 	defer reconcile.Stop()
+	// Bulk re-pin to the playback-only set (admin-started, Tier A F6 follow-up): one
+	// bounded step per tick, leader-only, a no-op unless a run is active.
+	repin := time.NewTicker(30 * time.Second)
+	defer repin.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-repin.C:
+			if !leader.IsLeader() {
+				continue
+			}
+			if err := svc.RepinTick(ctx); err != nil {
+				logger.Warn("ipfs mirror playback-only re-pin step failed", "error", err)
+			}
 		case <-drain.C:
 			total := 0
 			n, err := svc.DrainDue(ctx, batch)

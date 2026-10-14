@@ -3,7 +3,11 @@
 // is HTTP-agnostic and testable without a server.
 package auth
 
-import "golang.org/x/crypto/bcrypt"
+import (
+	"sync"
+
+	"golang.org/x/crypto/bcrypt"
+)
 
 // bcryptCost is the work factor for password hashing. 12 is a sensible 2020s
 // default: meaningfully slower than the library default (10) without making
@@ -35,4 +39,19 @@ func HashPassword(plain string) (string, error) {
 // "wrong password" from "user not found" to the client.
 func CheckPassword(hash, plain string) error {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain))
+}
+
+var (
+	dummyOnce sync.Once
+	dummyHash string
+)
+
+// dummyPasswordCompare spends one REAL bcrypt comparison at the current cost.
+// Login runs it for an unknown account and for a locked one so neither answers
+// measurably faster than a wrong password. (The former placeholder hash was one
+// character short, which bcrypt rejects instantly — a timing oracle for "this
+// account does not exist".) The hash is made lazily, once, at the live cost.
+func dummyPasswordCompare(plain string) {
+	dummyOnce.Do(func() { dummyHash, _ = HashPassword("vidra-dummy-password") })
+	_ = CheckPassword(dummyHash, plain)
 }

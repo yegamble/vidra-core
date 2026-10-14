@@ -41,6 +41,8 @@ type CaptureMailer struct {
 	// passwordChanged records the addresses that received a "your password was
 	// changed" notice. No token is involved, so the address is the whole record.
 	passwordChanged []string
+	// newDevice records the addresses that received a new-device sign-in notice.
+	newDevice []string
 	// emailChanged records the (old, new) pairs that received an "your address
 	// was changed" notice at the OLD address. No token is involved.
 	emailChanged []CapturedEmailChange
@@ -97,6 +99,21 @@ func (c *CaptureMailer) SendPasswordChanged(_ context.Context, email string) err
 	defer c.mu.Unlock()
 	c.passwordChanged = append(c.passwordChanged, email)
 	return nil
+}
+
+// SendNewDeviceSignIn records that a new-device notice was "sent" (recipient only).
+func (c *CaptureMailer) SendNewDeviceSignIn(_ context.Context, email string, _ mail.NewDeviceSignIn) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.newDevice = append(c.newDevice, email)
+	return nil
+}
+
+// NewDeviceNotices returns the addresses that received a new-device notice.
+func (c *CaptureMailer) NewDeviceNotices() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.newDevice...)
 }
 
 // PasswordChangedNotices returns the addresses that received a password-changed

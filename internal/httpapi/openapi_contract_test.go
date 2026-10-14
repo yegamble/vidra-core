@@ -16,6 +16,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/authoredremotecomment"
 	"github.com/vidra/vidra-core/internal/block"
+	"github.com/vidra/vidra-core/internal/blocklistsub"
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/channelsync"
@@ -97,6 +98,7 @@ func fullRouteOptions() []Option {
 		WithChannelSyncService(channelsync.NewService(nil, nil, nil)),
 		WithCaptionJobService(captionjob.NewService(nil, nil, nil)),
 		WithInstanceModerationService(instancemod.NewService(nil)),
+		WithBlocklistSubscriptionService(blocklistsub.NewService(nil, nil, nil)),
 		WithSettingsService(instancesettings.NewService(nil, instancesettings.Defaults{})),
 		// Admin-configurable outbound mail: always part of the contract. cmd/api
 		// wires it unconditionally (the document is what decides whether mail is

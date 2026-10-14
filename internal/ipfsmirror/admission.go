@@ -219,7 +219,7 @@ func (s *Service) drainManaged(ctx context.Context, nc netClient, batch int, doc
 		return done, err
 	}
 	for _, row := range rows {
-		if (row.PolicyReason == "new" && !doc.Config.AutoPinNew && !(row.DemandAt.Valid && doc.Config.DemandPin)) || (row.PolicyReason == "demand" && !doc.Config.DemandPin) || ((row.PolicyReason == "legacy" || row.PolicyReason == "backfill") && !doc.Config.BackfillEnabled) {
+		if !policyAdmits(doc.Config, row) {
 			continue
 		}
 		// Playback has one preferred encoded representation; source/WebM duplicates
@@ -282,6 +282,15 @@ func (s *Service) drainManaged(ctx context.Context, nc netClient, batch int, doc
 		done++
 	}
 	return done, nil
+}
+
+// policyAdmits is the publication policy's verdict on one pending row's reason. It
+// mirrors ListIPFSAdmissionCandidates' SQL predicate; the bulk re-pin asks it before
+// re-arming a row so it never parks a pinned row in a state admission will not pick up.
+func policyAdmits(cfg ipfscontrol.Config, row sqlcgen.MediaIpfsPin) bool {
+	return !((row.PolicyReason == "new" && !cfg.AutoPinNew && !(row.DemandAt.Valid && cfg.DemandPin)) ||
+		(row.PolicyReason == "demand" && !cfg.DemandPin) ||
+		((row.PolicyReason == "legacy" || row.PolicyReason == "backfill") && !cfg.BackfillEnabled))
 }
 
 func (s *Service) recoverClaims(ctx context.Context, r admissionRepo, doc ipfscontrol.Document, host ipfscontrol.HostStatus) (bool, error) {

@@ -108,6 +108,7 @@ type BlockedInstance struct {
 	Reason    string      `json:"reason"`
 	BlockedBy pgtype.UUID `json:"blocked_by"`
 	CreatedAt time.Time   `json:"created_at"`
+	Source    string      `json:"source"`
 }
 
 type BlockedRemoteActor struct {
@@ -115,6 +116,30 @@ type BlockedRemoteActor struct {
 	BlockedBy      pgtype.UUID `json:"blocked_by"`
 	Reason         string      `json:"reason"`
 	CreatedAt      time.Time   `json:"created_at"`
+}
+
+type BlocklistAllowlist struct {
+	Domain    string      `json:"domain"`
+	AddedBy   pgtype.UUID `json:"added_by"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
+type BlocklistSubscription struct {
+	ID            uuid.UUID          `json:"id"`
+	Url           string             `json:"url"`
+	Label         string             `json:"label"`
+	Format        string             `json:"format"`
+	Enabled       bool               `json:"enabled"`
+	Etag          string             `json:"etag"`
+	LastAttemptAt pgtype.Timestamptz `json:"last_attempt_at"`
+	LastSyncedAt  pgtype.Timestamptz `json:"last_synced_at"`
+	LastStatus    string             `json:"last_status"`
+	LastError     string             `json:"last_error"`
+	LastAdded     int32              `json:"last_added"`
+	LastRemoved   int32              `json:"last_removed"`
+	EntryCount    int32              `json:"entry_count"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     time.Time          `json:"created_at"`
 }
 
 type Caption struct {
@@ -578,6 +603,14 @@ type LiveStream struct {
 	TerminationReasonCode *string            `json:"termination_reason_code"`
 	TerminationReason     string             `json:"termination_reason"`
 	ScheduledStartAt      pgtype.Timestamptz `json:"scheduled_start_at"`
+}
+
+type LoginThrottle struct {
+	UserID      uuid.UUID          `json:"user_id"`
+	Scope       string             `json:"scope"`
+	FailCount   int32              `json:"fail_count"`
+	WindowStart time.Time          `json:"window_start"`
+	LockedUntil pgtype.Timestamptz `json:"locked_until"`
 }
 
 type MailConfig struct {
@@ -1240,6 +1273,15 @@ type UserImage struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type UserKnownDevice struct {
+	ID          uuid.UUID `json:"id"`
+	UserID      uuid.UUID `json:"user_id"`
+	DeviceHash  string    `json:"device_hash"`
+	Label       string    `json:"label"`
+	FirstSeenAt time.Time `json:"first_seen_at"`
+	LastSeenAt  time.Time `json:"last_seen_at"`
+}
+
 type UserMfa struct {
 	UserID           uuid.UUID `json:"user_id"`
 	TotpSecretSealed string    `json:"totp_secret_sealed"`
@@ -1257,6 +1299,12 @@ type UserPlayerSetting struct {
 	TheaterDefault           bool           `json:"theater_default"`
 	UpdatedAt                time.Time      `json:"updated_at"`
 	VideoCardPreviewsEnabled *bool          `json:"video_card_previews_enabled"`
+}
+
+type UserSecurityPref struct {
+	UserID               uuid.UUID          `json:"user_id"`
+	NewDeviceEmail       bool               `json:"new_device_email"`
+	LastNewDeviceEmailAt pgtype.Timestamptz `json:"last_new_device_email_at"`
 }
 
 type Video struct {
