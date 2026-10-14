@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -65,5 +66,14 @@ func TestCommentAutomaticTagsSQL(t *testing.T) {
 	set(c1, "external-link") // drop one, keep one
 	if rows, _ = q.ListAdminComments(ctx, sqlcgen.ListAdminCommentsParams{AutoTag: &tag, ResultLimit: 50}); len(rows) != 0 {
 		t.Errorf("dropped tag still matches %d rows", len(rows))
+	}
+
+	// §1 tombstoning erases the body, so its derived tags go with it.
+	set(c1, "external-link")
+	must(q.TombstoneUserComments(ctx, pgtype.UUID{Bytes: userID, Valid: true}), "tombstone")
+	var n int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM comment_automatic_tags WHERE comment_id = ANY($1)`, []uuid.UUID{c1, c2}).Scan(&n), "count tags")
+	if n != 0 {
+		t.Errorf("tombstoned comments keep %d tags", n)
 	}
 }

@@ -80,3 +80,18 @@ func TestCommentAutomaticTagsAreExposedToStaffAndFilterable(t *testing.T) {
 		t.Fatalf("after edit, external-link filter = %+v total=%d, want none", got, total)
 	}
 }
+
+// A list may not take the built-in tag's name, on create or rename.
+func TestWordListNameCannotBeTheBuiltInTag(t *testing.T) {
+	for _, n := range []string{"external-link", " External-Link "} {
+		if fe := (createWordListRequest{Name: n}).Validate(); len(fe) != 1 || fe[0].Field != "name" {
+			t.Errorf("create %q: %v, want one name error", n, fe)
+		}
+		if fe := (updateWordListRequest{Name: &n}).Validate(); len(fe) != 1 || fe[0].Field != "name" {
+			t.Errorf("rename %q: %v, want one name error", n, fe)
+		}
+	}
+	if fe := (createWordListRequest{Name: "external links"}).Validate(); len(fe) != 0 {
+		t.Errorf("a different name must pass: %v", fe)
+	}
+}

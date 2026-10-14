@@ -4,6 +4,9 @@
 -- watched-word list it matches (0172). Moderators read and filter by them; the
 -- matched WORDS are not stored here and never leave the staff surface.
 --
+-- Tags are a SNAPSHOT taken at post/edit time: renaming or deleting a list, or
+-- adding words to one, does not retag existing comments.
+--
 -- A tag is a derived label, recomputed on every edit (the set is replaced), so
 -- the table never needs a backfill: a comment predating this migration simply
 -- has no tags until it is edited. ON DELETE CASCADE: a tag has no meaning

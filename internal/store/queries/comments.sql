@@ -309,6 +309,12 @@ WHERE (sqlc.narg('query')::text IS NULL OR c.body ILIKE '%' || sqlc.narg('query'
 -- §1 hard delete: a deleted account's comments become tombstones — the body is
 -- emptied and deleted_at stamped, but the rows (and so the reply threads under
 -- them) are preserved. Views render "[deleted]" for tombstoned comments.
+-- Their automatic tags (0177) are derived from the erased body, so they go in
+-- the same statement.
+WITH gone AS (
+    DELETE FROM comment_automatic_tags
+    WHERE comment_id IN (SELECT k.id FROM comments k WHERE k.user_id = sqlc.arg('user_id') AND k.deleted_at IS NULL)
+)
 UPDATE comments
 SET body = '', deleted_at = now(), updated_at = now()
-WHERE user_id = sqlc.arg('user_id') AND deleted_at IS NULL;
+WHERE comments.user_id = sqlc.arg('user_id') AND comments.deleted_at IS NULL;

@@ -23633,7 +23633,9 @@ components:
             `external-link` (it contains a URL) and the NAME of each instance
             watched-word list it matches. Never the matched words. Empty for an
             untagged comment, and for one that predates the feature until it is
-            edited.
+            edited. Tags are a snapshot of list names at post/edit time:
+            renaming or deleting a list, or adding words, does not retag old
+            comments.
           items:
             type: string
     AdminCommentListResponse:

@@ -1,11 +1,15 @@
 package watchword
 
 import (
+	"context"
+	"errors"
 	"slices"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 func TestAutomaticTags(t *testing.T) {
@@ -28,5 +32,25 @@ func TestAutomaticTags(t *testing.T) {
 		if got := AutomaticTags(tc.text, tc.ms); !slices.Equal(got, tc.want) {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+type failingTagRepo struct{ *fakeRepo }
+
+func (failingTagRepo) ReplaceCommentAutomaticTags(context.Context, sqlcgen.ReplaceCommentAutomaticTagsParams) error {
+	return errors.New("tag table down")
+}
+
+// A tag-table failure must not suppress the match rows the review queue needs.
+func TestFlagCommentSurvivesATagWriteFailure(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := NewService(failingTagRepo{repo})
+	if _, err := svc.Add(ctx, "badword", uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	n, err := svc.FlagComment(ctx, uuid.New(), "a badword here")
+	if err != nil || n != 1 || len(repo.matches) != 1 {
+		t.Fatalf("n=%d err=%v matches=%d, want 1 match recorded and no error", n, err, len(repo.matches))
 	}
 }

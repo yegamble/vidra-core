@@ -822,14 +822,20 @@ func (q *Queries) SetCommentHearted(ctx context.Context, arg SetCommentHeartedPa
 }
 
 const tombstoneUserComments = `-- name: TombstoneUserComments :exec
+WITH gone AS (
+    DELETE FROM comment_automatic_tags
+    WHERE comment_id IN (SELECT k.id FROM comments k WHERE k.user_id = $1 AND k.deleted_at IS NULL)
+)
 UPDATE comments
 SET body = '', deleted_at = now(), updated_at = now()
-WHERE user_id = $1 AND deleted_at IS NULL
+WHERE comments.user_id = $1 AND comments.deleted_at IS NULL
 `
 
 // §1 hard delete: a deleted account's comments become tombstones — the body is
 // emptied and deleted_at stamped, but the rows (and so the reply threads under
 // them) are preserved. Views render "[deleted]" for tombstoned comments.
+// Their automatic tags (0177) are derived from the erased body, so they go in
+// the same statement.
 func (q *Queries) TombstoneUserComments(ctx context.Context, userID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, tombstoneUserComments, userID)
 	return err
