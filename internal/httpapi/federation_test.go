@@ -135,6 +135,24 @@ func (f fakeFedRepo) DeleteRemoteFollow(_ context.Context, arg sqlcgen.DeleteRem
 	return nil
 }
 
+// Inbound Move (0167): this world has no local follows of remote actors.
+func (f fakeFedRepo) ClaimRemoteActorMove(context.Context, sqlcgen.ClaimRemoteActorMoveParams) (int64, error) {
+	return 1, nil
+}
+func (f fakeFedRepo) ListRemoteChannelFollowsOfActor(context.Context, sqlcgen.ListRemoteChannelFollowsOfActorParams) ([]sqlcgen.ListRemoteChannelFollowsOfActorRow, error) {
+	return nil, nil
+}
+func (f fakeFedRepo) ReleaseRemoteActorMove(context.Context, string) error { return nil }
+func (f fakeFedRepo) SetRemoteActorMoveState(context.Context, sqlcgen.SetRemoteActorMoveStateParams) error {
+	return nil
+}
+func (f fakeFedRepo) NextMovingRemoteActorMove(context.Context) (sqlcgen.NextMovingRemoteActorMoveRow, error) {
+	return sqlcgen.NextMovingRemoteActorMoveRow{}, pgx.ErrNoRows
+}
+func (f fakeFedRepo) CarryRemoteActorBlocks(context.Context, sqlcgen.CarryRemoteActorBlocksParams) (int64, error) {
+	return 0, nil
+}
+
 func (f fakeFedRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	if v, ok := f.videosByID[id]; ok {
 		return v, nil
@@ -837,6 +855,14 @@ func (f fakeFedRepo) GetChannelActorAlias(_ context.Context, channelID uuid.UUID
 		return h, nil
 	}
 	return "", pgx.ErrNoRows
+}
+
+func (f fakeFedRepo) ListChannelBackfillVideoIDs(context.Context, sqlcgen.ListChannelBackfillVideoIDsParams) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
+func (f fakeFedRepo) ClaimChannelFollowerBackfill(context.Context, sqlcgen.ClaimChannelFollowerBackfillParams) (int64, error) {
+	return 0, nil
 }
 
 func (f fakeFedRepo) IsRemoteActorBlockedInstanceWide(_ context.Context, actorURL string) (bool, error) {

@@ -47,7 +47,7 @@ func (f *fakeRepo) CreateLiveStream(_ context.Context, a sqlcgen.CreateLiveStrea
 	f.rows[id] = sqlcgen.GetLiveStreamByIDRow{
 		ID: id, ChannelID: a.ChannelID, Title: a.Title, Description: a.Description,
 		Privacy: a.Privacy, State: "offline", Permanent: a.Permanent, ReplayEnabled: a.ReplayEnabled,
-		CreatedAt: now, UpdatedAt: now,
+		ScheduledStartAt: a.ScheduledStartAt, CreatedAt: now, UpdatedAt: now,
 		OwnerID: f.owner, ChannelHandle: "ch", ChannelDisplayName: "Ch",
 	}
 	f.hashes[id] = a.StreamKeyHash
@@ -64,6 +64,7 @@ func (f *fakeRepo) UpdateLiveStream(_ context.Context, a sqlcgen.UpdateLiveStrea
 		return sqlcgen.UpdateLiveStreamRow{}, errors.New("not found")
 	}
 	r.Title, r.Description, r.Privacy, r.Permanent, r.ReplayEnabled = a.Title, a.Description, a.Privacy, a.Permanent, a.ReplayEnabled
+	r.ScheduledStartAt = a.ScheduledStartAt
 	r.UpdatedAt = time.Now()
 	f.rows[a.ID] = r
 	return sqlcgen.UpdateLiveStreamRow{
@@ -157,6 +158,9 @@ func (f *fakeRepo) SetLiveStreamState(_ context.Context, a sqlcgen.SetLiveStream
 		case a.State != "live":
 			r.StartedAt = pgtype.Timestamptz{}
 		}
+		if a.State == "live" {
+			r.ScheduledStartAt = pgtype.Timestamptz{} // going live consumes the announcement (0168)
+		}
 		// Mirrors the CASE arms migration 0141 added to the query: going live
 		// CLEARS a previous termination, leaving live does not. A fake that
 		// skipped this would let a test pass while a permanent stream carried
@@ -191,6 +195,14 @@ func (f *fakeRepo) TerminateLiveStream(_ context.Context, a sqlcgen.TerminateLiv
 	r.TerminationReason = a.TerminationReason
 	f.rows[a.ID] = r
 	return nil
+}
+
+func (f *fakeRepo) ListUpcomingLiveStreams(context.Context, sqlcgen.ListUpcomingLiveStreamsParams) ([]sqlcgen.ListUpcomingLiveStreamsRow, error) {
+	return nil, nil
+}
+
+func (f *fakeRepo) CountUpcomingLiveStreams(context.Context, sqlcgen.CountUpcomingLiveStreamsParams) (int64, error) {
+	return 0, nil
 }
 
 func (f *fakeRepo) ListLivePublicStreams(_ context.Context, a sqlcgen.ListLivePublicStreamsParams) ([]sqlcgen.ListLivePublicStreamsRow, error) {

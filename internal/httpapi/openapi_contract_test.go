@@ -38,6 +38,7 @@ import (
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
+	"github.com/vidra/vidra-core/internal/playbackstats"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
@@ -50,6 +51,7 @@ import (
 	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
+	"github.com/vidra/vidra-core/internal/viewerprefs"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
@@ -77,6 +79,7 @@ func fullRouteOptions() []Option {
 		WithRatingService(rating.NewService(nil)),
 		WithNotificationService(notification.NewService(nil)),
 		WithPlayerSettingsService(playersettings.NewService(nil)),
+		WithViewerPrefsService(viewerprefs.NewService(nil)),
 		WithPlaylistService(playlist.NewService(nil)),
 		WithModerationService(moderation.NewService(nil)),
 		WithMuteService(mute.NewService(nil)),
@@ -120,6 +123,7 @@ func fullRouteOptions() []Option {
 		// qoe_collection_enabled setting gates collection at request time
 		// rather than making the route come and go.
 		WithQoEService(qoe.NewService(nil, nil), nil, nil),
+		WithPlaybackStats(playbackstats.NewService(nil)),
 		WithPeerTubeImportService(peertubeimport.NewService(nil)),
 		// Mounts the REST remote-follow routes. The AP root routes stay excluded
 		// from the drift guard: they additionally require cfg.FederationEnabled,

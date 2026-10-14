@@ -149,6 +149,7 @@ type Repository interface {
 	NotifyStaffOfNewRegistrationRequest(ctx context.Context, requestID uuid.UUID) (int64, error)
 	NotifyStaffOfQuarantinedUpload(ctx context.Context, videoID uuid.UUID) (int64, error)
 	NotifyStaffOfFederationFollowerRequest(ctx context.Context, remoteFollowID uuid.UUID) (int64, error)
+	NotifyStaffOfInstanceFollowerRequest(ctx context.Context) (int64, error)
 	NotifyManagersOfHeldComment(ctx context.Context, commentID uuid.UUID) (int64, error)
 	CommentReplyRecipient(ctx context.Context, commentID uuid.UUID) (sqlcgen.CommentReplyRecipientRow, error)
 	CommentVideoOwnerRecipient(ctx context.Context, commentID uuid.UUID) (sqlcgen.CommentVideoOwnerRecipientRow, error)
@@ -455,6 +456,13 @@ func (s *Service) NotifyUploadQuarantined(ctx context.Context, videoID uuid.UUID
 // as NotifyNewRegistrationRequest.
 func (s *Service) NotifyFederationFollowerRequest(ctx context.Context, remoteFollowID uuid.UUID) (int64, error) {
 	return s.repo.NotifyStaffOfFederationFollowerRequest(ctx, remoteFollowID)
+}
+
+// NotifyInstanceFollowerRequest is NotifyFederationFollowerRequest for a remote
+// INSTANCE asking to follow this one (migration 0166): the same type, with no
+// channel, and at most one unread notice per admin however many instances wait.
+func (s *Service) NotifyInstanceFollowerRequest(ctx context.Context) (int64, error) {
+	return s.repo.NotifyStaffOfInstanceFollowerRequest(ctx)
 }
 
 // NotifyCommentHeld tells the people who can approve a held comment (0161) —

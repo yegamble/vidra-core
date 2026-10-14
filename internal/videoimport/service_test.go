@@ -201,7 +201,7 @@ type fakeQuota struct {
 	limited   bool
 }
 
-func (q fakeQuota) Remaining(_ context.Context, _ uuid.UUID) (int64, bool, error) {
+func (q fakeQuota) IngestRemaining(_ context.Context, _ uuid.UUID) (int64, bool, error) {
 	return q.remaining, q.limited, nil
 }
 

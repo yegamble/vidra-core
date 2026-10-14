@@ -7,9 +7,9 @@
 -- (thumbnail_key is only written via SetRemoteVideoThumbnail).
 INSERT INTO remote_videos (
     object_url, remote_actor_url, title, description, duration_seconds,
-    published_at, watch_url, stream_url, is_sensitive
+    published_at, watch_url, stream_url, is_sensitive, sensitive_flags
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+VALUES (sqlc.arg('object_url'), sqlc.arg('remote_actor_url'), sqlc.arg('title'), sqlc.arg('description'), sqlc.arg('duration_seconds'), sqlc.arg('published_at'), sqlc.arg('watch_url'), sqlc.arg('stream_url'), sqlc.arg('is_sensitive'), COALESCE(sqlc.arg('sensitive_flags')::text[], '{}'))
 ON CONFLICT (object_url) DO UPDATE SET
     remote_actor_url = EXCLUDED.remote_actor_url,
     title            = EXCLUDED.title,
@@ -19,6 +19,7 @@ ON CONFLICT (object_url) DO UPDATE SET
     watch_url        = EXCLUDED.watch_url,
     stream_url       = EXCLUDED.stream_url,
     is_sensitive     = EXCLUDED.is_sensitive,
+    sensitive_flags  = EXCLUDED.sensitive_flags,
     updated_at       = now()
 RETURNING id, thumbnail_key;
 
@@ -41,7 +42,7 @@ UPDATE remote_videos SET thumbnail_key = $2, updated_at = now() WHERE id = $1;
 SELECT rv.id, rv.object_url, rv.remote_actor_url, ra.domain, rv.title,
        rv.description, rv.duration_seconds, rv.published_at, rv.watch_url,
        rv.stream_url, rv.thumbnail_key, rv.fetched_at, rv.updated_at,
-       ra.preferred_username, ra.attributed_to, rv.is_sensitive
+       ra.preferred_username, ra.attributed_to, rv.is_sensitive, rv.sensitive_flags
 FROM remote_videos rv
 JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
 WHERE rv.id = $1

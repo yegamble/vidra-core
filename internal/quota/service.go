@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -45,6 +46,8 @@ type Repository interface {
 	RecordUploadUsageEvent(ctx context.Context, arg sqlcgen.RecordUploadUsageEventParams) error
 	SumUploadUsageSince(ctx context.Context, arg sqlcgen.SumUploadUsageSinceParams) (int64, error)
 	PruneUploadUsageEvents(ctx context.Context, arg sqlcgen.PruneUploadUsageEventsParams) (int64, error)
+	// GetUserDailyQuota is the per-user daily override (pgx.ErrNoRows = none).
+	GetUserDailyQuota(ctx context.Context, userID uuid.UUID) (int64, error)
 }
 
 // Service resolves effective quotas and current usage.
@@ -58,10 +61,9 @@ type Service struct {
 	// to settingssvc.Int(default_user_quota_bytes); nil in the plain constructor.
 	defaultBytesFn func() int64
 	// dailyBytesFn resolves the instance's rolling-24h daily upload quota
-	// (default_user_daily_quota_bytes; 0/nil = unlimited). There is
-	// deliberately NO per-user daily override in v1 — the key is the single
-	// instance-wide control (documented deviation from PeerTube's per-user
-	// videoQuotaDaily).
+	// (default_user_daily_quota_bytes; 0/nil = unlimited). A per-user override
+	// (user_daily_quotas, PeerTube's videoQuotaDaily) supersedes it, exactly as
+	// users.storage_quota_bytes supersedes the total-quota default.
 	dailyBytesFn func() int64
 	// now is the injectable clock the rolling window is computed against.
 	now func() time.Time
@@ -181,6 +183,32 @@ func (s *Service) CheckFits(ctx context.Context, userID uuid.UUID, incoming int6
 	return nil
 }
 
+// IngestRemaining is the tightest headroom across the total and the daily
+// quota (limited=false: neither applies). Paths that stream bytes before a
+// size is known (URL import) cap the stream at this, so neither limit can be
+// overshot by more than the stream-cap granularity.
+func (s *Service) IngestRemaining(ctx context.Context, userID uuid.UUID) (remaining int64, limited bool, err error) {
+	remaining, limited, err = s.Remaining(ctx, userID)
+	if err != nil {
+		return 0, false, err
+	}
+	d, err := s.Daily(ctx, userID)
+	if err != nil {
+		return 0, false, err
+	}
+	if d.QuotaBytes != nil {
+		dr := *d.QuotaBytes - d.UsedBytes
+		if dr < 0 {
+			dr = 0
+		}
+		if !limited || dr < remaining {
+			remaining = dr
+		}
+		limited = true
+	}
+	return remaining, limited, nil
+}
+
 // --- rolling-24h daily upload quota (config-parity W7) ---
 //
 // ACCOUNTING DESIGN (documented choice): a dedicated append-only ledger
@@ -194,17 +222,32 @@ func (s *Service) CheckFits(ctx context.Context, userID uuid.UUID, incoming int6
 // pass the check and overshoot the cap by at most one file — acceptable per
 // the wave spec, and identical to the total-quota gate's posture.
 
-// dailyQuotaBytes resolves the effective instance daily quota (nil =
-// unlimited/not configured).
-func (s *Service) dailyQuotaBytes() *int64 {
-	if s.dailyBytesFn == nil {
-		return nil
+// dailyQuotaBytes resolves the effective daily quota for an account: the
+// per-user override when one exists (0 = unlimited for this account), else the
+// instance default; nil = unlimited. One primary-key read per check.
+func (s *Service) dailyQuotaBytes(ctx context.Context, userID uuid.UUID) (*int64, error) {
+	var def int64
+	if s.dailyBytesFn != nil {
+		def = s.dailyBytesFn()
 	}
-	v := s.dailyBytesFn()
-	if v <= 0 {
-		return nil
+	override, err := s.DailyOverride(ctx, userID)
+	if err != nil {
+		return nil, err
 	}
-	return &v
+	return Effective(override, def), nil
+}
+
+// DailyOverride returns the account's per-user daily quota override (nil = the
+// instance default applies).
+func (s *Service) DailyOverride(ctx context.Context, userID uuid.UUID) (*int64, error) {
+	v, err := s.repo.GetUserDailyQuota(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
 
 // DailyStatus is an account's rolling-24h upload picture: bytes stored in the
@@ -215,11 +258,14 @@ type DailyStatus struct {
 }
 
 // Daily returns the user's rolling-24h upload usage and the effective daily
-// quota. When no daily quota is configured the ledger is not queried
-// (UsedBytes 0, QuotaBytes nil) — the hot upload path pays nothing until an
-// admin turns the knob.
+// quota. When no daily quota applies the ledger is not queried (UsedBytes 0,
+// QuotaBytes nil) — the hot upload path pays nothing until an admin turns the
+// knob.
 func (s *Service) Daily(ctx context.Context, userID uuid.UUID) (DailyStatus, error) {
-	quota := s.dailyQuotaBytes()
+	quota, err := s.dailyQuotaBytes(ctx, userID)
+	if err != nil {
+		return DailyStatus{}, err
+	}
 	if quota == nil {
 		return DailyStatus{}, nil
 	}

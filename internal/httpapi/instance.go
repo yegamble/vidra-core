@@ -16,6 +16,7 @@ import (
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/version"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 // instanceSoftware describes the running software.
@@ -634,6 +635,38 @@ func (s *Server) sensitivePolicyForUser(ctx context.Context, userID uuid.UUID) s
 // browse/search surfaces (all optionalAuth).
 func (s *Server) effectiveHideSensitive(c echo.Context) bool {
 	return s.effectiveSensitivePolicy(c) == instancesettings.SensitiveContentPolicyHide
+}
+
+// viewerSensitivity is one viewer's resolved sensitive-content settings: the
+// base policy (per-user override, else instance) plus the per-flag overrides.
+// The SQL vidra_sensitive_hidden() enforces the same rule for the browse
+// queries; this is the Go form for surfaces that filter in memory.
+type viewerSensitivity struct {
+	base  string
+	flags map[string]string
+}
+
+func (v viewerSensitivity) hides(isSensitive bool, flags []string) bool {
+	return video.ResolveSensitivePolicy(v.base, v.flags, flags, isSensitive) == instancesettings.SensitiveContentPolicyHide
+}
+
+// viewerSensitivity resolves the settings for THIS request. If the viewer's
+// overrides cannot be read it fails CLOSED (every flag hides), like
+// sensitivePolicyForUser.
+func (s *Server) viewerSensitivity(c echo.Context) viewerSensitivity {
+	v := viewerSensitivity{base: s.effectiveSensitivePolicy(c)}
+	if userID, _, ok := principalFromContext(c); ok && s.viewerprefssvc != nil {
+		p, err := s.viewerprefssvc.Get(c.Request().Context(), userID)
+		if err != nil {
+			v.flags = map[string]string{}
+			for _, f := range video.SensitiveFlags {
+				v.flags[f] = instancesettings.SensitiveContentPolicyHide
+			}
+			return v
+		}
+		v.flags = p.SensitiveFlagPolicies
+	}
+	return v
 }
 
 // contactFormAvailable is the EFFECTIVE contact-form availability: a mailer is
