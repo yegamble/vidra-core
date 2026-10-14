@@ -150,24 +150,33 @@ func (s *Service) RateRemoteVideo(ctx context.Context, remoteVideoID, userID uui
 	if prev == rating {
 		return nil
 	}
-	if err := s.repo.UpsertRemoteVideoUserRating(ctx, sqlcgen.UpsertRemoteVideoUserRatingParams{
-		RemoteVideoID: remoteVideoID, UserID: userID, Rating: rating,
-	}); err != nil {
+	// Queue FIRST, write second: a failed enqueue leaves the stored vote as the
+	// origin last heard it, and the user's retry re-sends (an Undo of a vote the
+	// origin no longer holds is a no-op there, so a partial switch converges).
+	if err := s.federateRemoteVote(ctx, remoteVideoID, userID, prev, rating); err != nil {
 		return err
 	}
-	return s.federateRemoteVote(ctx, remoteVideoID, userID, prev, rating)
+	return s.repo.UpsertRemoteVideoUserRating(ctx, sqlcgen.UpsertRemoteVideoUserRatingParams{
+		RemoteVideoID: remoteVideoID, UserID: userID, Rating: rating,
+	})
 }
 
 // ClearRemoteVideoRating removes userID's vote (idempotent) and federates its
 // Undo to the origin.
 func (s *Service) ClearRemoteVideoRating(ctx context.Context, remoteVideoID, userID uuid.UUID) error {
-	prev, err := s.repo.DeleteRemoteVideoUserRating(ctx, sqlcgen.DeleteRemoteVideoUserRatingParams{UserID: userID, RemoteVideoID: remoteVideoID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	} else if err != nil {
+	prev, err := s.RemoteVideoRating(ctx, remoteVideoID, userID)
+	if err != nil || prev == "" {
 		return err
 	}
-	return s.federateRemoteVote(ctx, remoteVideoID, userID, prev, "")
+	// The Undo is queued before the row goes, for the same reason as above.
+	if err := s.federateRemoteVote(ctx, remoteVideoID, userID, prev, ""); err != nil {
+		return err
+	}
+	_, err = s.repo.DeleteRemoteVideoUserRating(ctx, sqlcgen.DeleteRemoteVideoUserRatingParams{UserID: userID, RemoteVideoID: remoteVideoID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // a concurrent clear got there first
+	}
+	return err
 }
 
 // federateRemoteVote queues, signed as the user's account actor, an Undo of
