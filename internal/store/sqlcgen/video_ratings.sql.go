@@ -149,15 +149,15 @@ func (q *Queries) GetVideoRating(ctx context.Context, arg GetVideoRatingParams) 
 }
 
 const upsertRemoteVideoRating = `-- name: UpsertRemoteVideoRating :execrows
-INSERT INTO remote_video_ratings (video_id, remote_actor_url, rating, activity_url, domain)
+INSERT INTO remote_video_ratings (video_id, remote_actor_url, rating, activity_url, domain, cap_domain)
 SELECT $1::uuid, $2::text, $3::text,
-       $4::text, $5::text
+       $4::text, $5::text, $6::text
 WHERE EXISTS (
         SELECT 1 FROM remote_video_ratings e
         WHERE e.remote_actor_url = $2::text AND e.video_id = $1::uuid)
    OR (SELECT count(*) FROM remote_video_ratings d
-       WHERE d.domain = $5::text AND d.created_at > now() - interval '1 hour')
-      < $6::bigint
+       WHERE d.cap_domain = $6::text AND d.created_at > now() - interval '1 hour')
+      < $7::bigint
 ON CONFLICT (remote_actor_url, video_id)
 DO UPDATE SET rating = EXCLUDED.rating, activity_url = EXCLUDED.activity_url, updated_at = now()
 `
@@ -168,12 +168,15 @@ type UpsertRemoteVideoRatingParams struct {
 	Rating         string    `json:"rating"`
 	ActivityUrl    string    `json:"activity_url"`
 	Domain         string    `json:"domain"`
+	CapDomain      string    `json:"cap_domain"`
 	DomainCap      int64     `json:"domain_cap"`
 }
 
 // A remote actor's Like/Dislike of a local video: one row per (actor, video),
 // so a repeat is a no-op and a switch changes the row in place. A NEW row is
-// written only while the signer's domain has fewer than domain_cap new votes in
+// written only while the signer's registrable domain (cap_domain, not the exact
+// host: subdomains share one budget; `domain` stays the exact host the
+// blocked_instances read filter matches) has fewer than domain_cap new votes in
 // the last hour (0 rows affected = capped); changing an existing vote is never
 // capped.
 func (q *Queries) UpsertRemoteVideoRating(ctx context.Context, arg UpsertRemoteVideoRatingParams) (int64, error) {
@@ -183,6 +186,7 @@ func (q *Queries) UpsertRemoteVideoRating(ctx context.Context, arg UpsertRemoteV
 		arg.Rating,
 		arg.ActivityUrl,
 		arg.Domain,
+		arg.CapDomain,
 		arg.DomainCap,
 	)
 	if err != nil {

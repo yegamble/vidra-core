@@ -58,6 +58,7 @@ func (s *Service) handleRate(ctx context.Context, act inboxActivity, signerActor
 		Rating:         strings.ToLower(act.Type),
 		ActivityUrl:    act.ID,
 		Domain:         hostOf(signerActorURL),
+		CapDomain:      capDomain(signerActorURL),
 		DomainCap:      maxNewRemoteRatingsPerDomainHour,
 	})
 	return err
