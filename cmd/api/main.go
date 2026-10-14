@@ -2349,6 +2349,17 @@ func run() error {
 			return settingssvc.Bool(instancesettings.KeyFederationAutoFollowBack)
 		}),
 		federation.WithLogger(logger),
+		// An inbound View (PeerTube parity) counts through the same seam as a
+		// local view — RecordView's per-viewer dedupe and per-day rollup — as
+		// an anonymous viewer keyed on the signing actor. A video that stopped
+		// being visible between the inbox gate and the count is not an error.
+		federation.WithViewCounting(func(ctx context.Context, videoID uuid.UUID, viewerKey string, gate func(context.Context) (bool, error)) error {
+			err := videosvc.RecordViewGated(ctx, videoID, uuid.Nil, false, viewerKey, gate)
+			if errors.Is(err, video.ErrNotFound) {
+				return nil
+			}
+			return err
+		}, ratelimit.NewRedisCounter(rdb.Client)),
 	}
 	if cfg.FederationKeyKEK != "" {
 		cipher, err := secretbox.NewCipherFromBase64(cfg.FederationKeyKEK)

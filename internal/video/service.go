@@ -1581,6 +1581,14 @@ func (s *Service) FileForView(ctx context.Context, videoID, viewerID uuid.UUID, 
 // owner previews do not inflate counts. The deduper is best-effort: an error is
 // treated as "count it".
 func (s *Service) RecordView(ctx context.Context, videoID, viewerID uuid.UUID, authed bool, viewerKey string) error {
+	return s.RecordViewGated(ctx, videoID, viewerID, authed, viewerKey, nil)
+}
+
+// RecordViewGated is RecordView with a gate consulted only for a view that
+// passed the per-viewer dedupe, just before it is counted: a closed gate (false)
+// drops the view. Federation uses it for a per-sender budget, so repeats from a
+// viewer already counted never spend that budget. A nil gate is always open.
+func (s *Service) RecordViewGated(ctx context.Context, videoID, viewerID uuid.UUID, authed bool, viewerKey string, gate func(context.Context) (bool, error)) error {
 	v, err := s.GetByID(ctx, videoID)
 	if err != nil {
 		return err // ErrNotFound
@@ -1595,6 +1603,11 @@ func (s *Service) RecordView(ctx context.Context, videoID, viewerID uuid.UUID, a
 		key := "view:" + videoID.String() + ":" + viewerKey
 		if first, derr := s.viewDeduper.First(ctx, key, viewDedupeWindow); derr == nil && !first {
 			return nil // already counted this viewer in the window
+		}
+	}
+	if gate != nil {
+		if open, err := gate(ctx); err != nil || !open {
+			return err
 		}
 	}
 	if _, err = s.repo.IncrementVideoViews(ctx, videoID); err != nil {
