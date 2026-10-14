@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,20 +29,32 @@ var ErrNotFound = errors.New("peertubefollows: import not found")
 
 // Target states (the CHECK constraint of migration 0180).
 const (
-	stateDone       = "done"
-	stateFailed     = "failed"
-	skippedFed      = "skipped_federation"
-	skippedBlocked  = "skipped_blocked"
-	skippedInvalid  = "skipped_invalid"
-	statePending    = "pending"
-	defaultBatch    = 10
+	stateDone      = "done"
+	stateFailed    = "failed"
+	skippedFed     = "skipped_federation"
+	skippedInvalid = "skipped_invalid"
+	statePending   = "pending"
+	// MaxPerHost bounds the targets one import may aim at a single host, so an
+	// archive cannot turn the worker into a fetch-flood against one server.
+	MaxPerHost = 20
+	// Claim shape: a batch of defaultBatch rows, at most perUserClaim per user,
+	// run on workers goroutines with a per-target budget. The lease must outlast
+	// the slowest batch: ceil(batch/workers) waves * perTargetBudget (= 90 s).
+	defaultBatch    = 8
+	perUserClaim    = 2
+	workers         = 4
 	defaultLease    = 5 * time.Minute
 	perTargetBudget = 45 * time.Second
+	// Retention for finished imports.
+	Retention = 30 * 24 * time.Hour
 )
 
 type Repo interface {
 	CreatePeerTubeFollowImport(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
-	AddPeerTubeFollowImportTargets(ctx context.Context, arg sqlcgen.AddPeerTubeFollowImportTargetsParams) error
+	AddPeerTubeFollowImportTargets(ctx context.Context, arg sqlcgen.AddPeerTubeFollowImportTargetsParams) (int64, error)
+	CountPendingPeerTubeFollowTargets(ctx context.Context, userID uuid.UUID) (int64, error)
+	ListFollowedRemoteHandles(ctx context.Context, userID uuid.UUID) ([]string, error)
+	PrunePeerTubeFollowImports(ctx context.Context, cutoff time.Time) (int64, error)
 	ClaimDuePeerTubeFollowTargets(ctx context.Context, arg sqlcgen.ClaimDuePeerTubeFollowTargetsParams) ([]sqlcgen.ClaimDuePeerTubeFollowTargetsRow, error)
 	FinishPeerTubeFollowTarget(ctx context.Context, arg sqlcgen.FinishPeerTubeFollowTargetParams) error
 	ReschedulePeerTubeFollowTarget(ctx context.Context, arg sqlcgen.ReschedulePeerTubeFollowTargetParams) error
@@ -80,22 +93,34 @@ type Queued struct {
 	SkippedFederation int
 }
 
-// Enqueue normalises (trim, strip a leading @, lower-case, de-duplicate) and
-// queues up to MaxTargets targets for userID. With federation disabled nothing
-// is queued and every target is counted skipped_federation: no outbound fetch
-// would be made anyway.
+// Enqueue accepts name@host targets only (a URL or anything else is skipped),
+// canonicalises them (lower-case, host normalised as the block list sees it),
+// and queues up to MaxTargets for userID: at most MaxPerHost per host, none the
+// user already follows or already has pending, and never more than MaxTargets
+// pending in total for the user. The caller counts whatever was not queued.
+// With federation disabled nothing is queued and every target is counted
+// skipped_federation: no outbound fetch would be made anyway.
 func (s *Service) Enqueue(ctx context.Context, userID uuid.UUID, targets []string) (Queued, error) {
 	seen := map[string]bool{}
+	perHost := map[string]int{}
 	var list []string
 	for _, t := range targets {
 		t = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(t), "@"))
-		if t == "" || len(t) > 512 || seen[t] {
+		name, host, ok := strings.Cut(t, "@")
+		if !ok || name == "" || len(t) > 512 || strings.ContainsAny(name, "/:?#\\ ") || strings.Contains(host, "@") {
+			continue
+		}
+		host, ok = federation.NormalizeFollowHost(host)
+		if !ok {
+			continue
+		}
+		t = name + "@" + host
+		if seen[t] || perHost[host] >= MaxPerHost || len(list) >= MaxTargets {
 			continue
 		}
 		seen[t] = true
-		if len(list) < MaxTargets {
-			list = append(list, t)
-		}
+		perHost[host]++
+		list = append(list, t)
 	}
 	if len(list) == 0 {
 		return Queued{}, nil
@@ -103,33 +128,81 @@ func (s *Service) Enqueue(ctx context.Context, userID uuid.UUID, targets []strin
 	if !s.enabled() {
 		return Queued{SkippedFederation: len(list)}, nil
 	}
+	followed, err := s.Repo.ListFollowedRemoteHandles(ctx, userID)
+	if err != nil {
+		return Queued{}, err
+	}
+	have := make(map[string]bool, len(followed))
+	for _, h := range followed {
+		have[h] = true
+	}
+	pending, err := s.Repo.CountPendingPeerTubeFollowTargets(ctx, userID)
+	if err != nil {
+		return Queued{}, err
+	}
+	room := int64(MaxTargets) - pending
+	fresh := list[:0:0]
+	for _, t := range list {
+		if !have[t] && int64(len(fresh)) < room {
+			fresh = append(fresh, t)
+		}
+	}
+	if len(fresh) == 0 {
+		return Queued{}, nil
+	}
 	id, err := s.Repo.CreatePeerTubeFollowImport(ctx, userID)
 	if err != nil {
 		return Queued{}, err
 	}
-	if err := s.Repo.AddPeerTubeFollowImportTargets(ctx, sqlcgen.AddPeerTubeFollowImportTargetsParams{
-		ImportID: id, UserID: userID, Column3: list,
-	}); err != nil {
+	n, err := s.Repo.AddPeerTubeFollowImportTargets(ctx, sqlcgen.AddPeerTubeFollowImportTargetsParams{
+		ImportID: id, UserID: userID, Column3: fresh,
+	})
+	if err != nil {
 		return Queued{}, err
 	}
-	return Queued{JobID: &id, Queued: len(list)}, nil
+	if n == 0 { // everything was already pending from an earlier import
+		return Queued{}, nil
+	}
+	return Queued{JobID: &id, Queued: int(n)}, nil
+}
+
+// Prune deletes finished imports older than Retention.
+func (s *Service) Prune(ctx context.Context) (int, error) {
+	n, err := s.Repo.PrunePeerTubeFollowImports(ctx, s.now().Add(-Retention))
+	return int(n), err
 }
 
 // Drain claims one batch of due targets and processes them. It returns how
 // many targets reached a final state or were rescheduled.
 func (s *Service) Drain(ctx context.Context) (int, error) {
 	rows, err := s.Repo.ClaimDuePeerTubeFollowTargets(ctx, sqlcgen.ClaimDuePeerTubeFollowTargetsParams{
-		LeaseSeconds: defaultLease.Seconds(), ClaimLimit: defaultBatch,
+		LeaseSeconds: defaultLease.Seconds(), PerUserLimit: perUserClaim, ClaimLimit: defaultBatch,
 	})
 	if err != nil {
 		return 0, err
 	}
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		firstErr error
+	)
+	sem := make(chan struct{}, workers)
 	for _, r := range rows {
-		if err := s.process(ctx, r); err != nil {
-			return 0, err
-		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			if err := s.process(ctx, r); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
+			}
+		}()
 	}
-	return len(rows), nil
+	wg.Wait()
+	return len(rows), firstErr
 }
 
 func (s *Service) process(ctx context.Context, r sqlcgen.ClaimDuePeerTubeFollowTargetsRow) error {
@@ -148,7 +221,9 @@ func (s *Service) process(ctx context.Context, r sqlcgen.ClaimDuePeerTubeFollowT
 	case errors.Is(err, federation.ErrBadFollowTarget), errors.Is(err, federation.ErrLocalFollowTarget):
 		return finish(skippedInvalid, "")
 	case errors.Is(err, federation.ErrBlockedFollowTarget):
-		return finish(skippedBlocked, "")
+		// Recorded exactly like an unresolvable target: the status must not
+		// reveal which domains this instance blocks.
+		return finish(stateFailed, "unresolvable")
 	case errors.Is(err, federation.ErrNotFound):
 		return finish(stateFailed, "user_missing")
 	case ctx.Err() != nil:
@@ -188,7 +263,6 @@ type Status struct {
 	Done              int       `json:"done"`
 	Failed            int       `json:"failed"`
 	SkippedFederation int       `json:"skipped_federation"`
-	SkippedBlocked    int       `json:"skipped_blocked"`
 	SkippedInvalid    int       `json:"skipped_invalid"`
 }
 
@@ -218,8 +292,6 @@ func (s *Service) Status(ctx context.Context, userID, id uuid.UUID) (Status, err
 			st.Failed += n
 		case skippedFed:
 			st.SkippedFederation += n
-		case skippedBlocked:
-			st.SkippedBlocked += n
 		case skippedInvalid:
 			st.SkippedInvalid += n
 		}

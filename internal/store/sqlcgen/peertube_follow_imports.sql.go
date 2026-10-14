@@ -12,10 +12,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const addPeerTubeFollowImportTargets = `-- name: AddPeerTubeFollowImportTargets :exec
+const addPeerTubeFollowImportTargets = `-- name: AddPeerTubeFollowImportTargets :execrows
 INSERT INTO peertube_follow_import_targets (import_id, user_id, target)
 SELECT $1, $2, t FROM unnest($3::text[]) AS t
-ON CONFLICT (import_id, target) DO NOTHING
+ON CONFLICT DO NOTHING
 `
 
 type AddPeerTubeFollowImportTargetsParams struct {
@@ -24,9 +24,14 @@ type AddPeerTubeFollowImportTargetsParams struct {
 	Column3  []string  `json:"column_3"`
 }
 
-func (q *Queries) AddPeerTubeFollowImportTargets(ctx context.Context, arg AddPeerTubeFollowImportTargetsParams) error {
-	_, err := q.db.Exec(ctx, addPeerTubeFollowImportTargets, arg.ImportID, arg.UserID, arg.Column3)
-	return err
+// DO NOTHING covers both unique indexes: a target already pending for this user
+// is not queued again.
+func (q *Queries) AddPeerTubeFollowImportTargets(ctx context.Context, arg AddPeerTubeFollowImportTargetsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, addPeerTubeFollowImportTargets, arg.ImportID, arg.UserID, arg.Column3)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const claimDuePeerTubeFollowTargets = `-- name: ClaimDuePeerTubeFollowTargets :many
@@ -34,17 +39,23 @@ UPDATE peertube_follow_import_targets
 SET next_attempt_at = now() + make_interval(secs => $1::double precision),
     updated_at = now()
 WHERE id IN (
-    SELECT id FROM peertube_follow_import_targets
-    WHERE state = 'pending' AND next_attempt_at <= now()
-    ORDER BY next_attempt_at, id
-    LIMIT $2
-    FOR UPDATE SKIP LOCKED
+    SELECT t.id FROM peertube_follow_import_targets t
+    JOIN (
+        SELECT id, row_number() OVER (PARTITION BY user_id ORDER BY next_attempt_at, id) AS rn
+        FROM peertube_follow_import_targets
+        WHERE state = 'pending' AND next_attempt_at <= now()
+    ) due ON due.id = t.id
+    WHERE due.rn <= $2::int
+    ORDER BY due.rn, t.next_attempt_at, t.id
+    LIMIT $3
+    FOR UPDATE OF t SKIP LOCKED
 )
 RETURNING id, user_id, target, attempts
 `
 
 type ClaimDuePeerTubeFollowTargetsParams struct {
 	LeaseSeconds float64 `json:"lease_seconds"`
+	PerUserLimit int32   `json:"per_user_limit"`
 	ClaimLimit   int32   `json:"claim_limit"`
 }
 
@@ -56,10 +67,12 @@ type ClaimDuePeerTubeFollowTargetsRow struct {
 }
 
 // Leases due targets by pushing next_attempt_at forward, so a worker killed
-// mid-target releases it when the lease passes. SKIP LOCKED: concurrent
-// claimers take disjoint rows.
+// mid-target releases it when the lease passes. Round-robin: each user
+// contributes at most per_user_limit rows, ranked by age, and rows are taken
+// rank by rank, so one user's backlog cannot starve another's. SKIP LOCKED:
+// concurrent claimers take disjoint rows.
 func (q *Queries) ClaimDuePeerTubeFollowTargets(ctx context.Context, arg ClaimDuePeerTubeFollowTargetsParams) ([]ClaimDuePeerTubeFollowTargetsRow, error) {
-	rows, err := q.db.Query(ctx, claimDuePeerTubeFollowTargets, arg.LeaseSeconds, arg.ClaimLimit)
+	rows, err := q.db.Query(ctx, claimDuePeerTubeFollowTargets, arg.LeaseSeconds, arg.PerUserLimit, arg.ClaimLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +136,17 @@ func (q *Queries) CountPeerTubeFollowImportTargets(ctx context.Context, arg Coun
 	return items, nil
 }
 
+const countPendingPeerTubeFollowTargets = `-- name: CountPendingPeerTubeFollowTargets :one
+SELECT count(*)::bigint FROM peertube_follow_import_targets WHERE user_id = $1 AND state = 'pending'
+`
+
+func (q *Queries) CountPendingPeerTubeFollowTargets(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countPendingPeerTubeFollowTargets, userID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createPeerTubeFollowImport = `-- name: CreatePeerTubeFollowImport :one
 
 INSERT INTO peertube_follow_imports (user_id) VALUES ($1) RETURNING id
@@ -172,6 +196,53 @@ func (q *Queries) GetPeerTubeFollowImport(ctx context.Context, arg GetPeerTubeFo
 	var i GetPeerTubeFollowImportRow
 	err := row.Scan(&i.ID, &i.CreatedAt)
 	return i, err
+}
+
+const listFollowedRemoteHandles = `-- name: ListFollowedRemoteHandles :many
+SELECT lower(ra.preferred_username || '@' || ra.domain)::text AS handle
+FROM remote_channel_follows f
+JOIN remote_actors ra ON ra.actor_url = f.remote_actor_url
+WHERE f.user_id = $1
+`
+
+// name@domain (lower-case) of every remote channel the user already follows.
+func (q *Queries) ListFollowedRemoteHandles(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, listFollowedRemoteHandles, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var handle string
+		if err := rows.Scan(&handle); err != nil {
+			return nil, err
+		}
+		items = append(items, handle)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const prunePeerTubeFollowImports = `-- name: PrunePeerTubeFollowImports :execrows
+DELETE FROM peertube_follow_imports
+WHERE id IN (
+    SELECT j.id FROM peertube_follow_imports j
+    WHERE j.created_at < $1
+      AND NOT EXISTS (SELECT 1 FROM peertube_follow_import_targets t WHERE t.import_id = j.id AND t.state = 'pending')
+    ORDER BY j.created_at LIMIT 500
+)
+`
+
+// Finished imports (no pending target) older than the cutoff; targets cascade.
+func (q *Queries) PrunePeerTubeFollowImports(ctx context.Context, createdAt time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, prunePeerTubeFollowImports, createdAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const reschedulePeerTubeFollowTarget = `-- name: ReschedulePeerTubeFollowTarget :exec

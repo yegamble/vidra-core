@@ -18,6 +18,7 @@ CREATE TABLE peertube_follow_imports (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX peertube_follow_imports_user_idx ON peertube_follow_imports (user_id, created_at DESC);
+CREATE INDEX peertube_follow_imports_created_idx ON peertube_follow_imports (created_at);
 
 CREATE TABLE peertube_follow_import_targets (
     id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -26,7 +27,7 @@ CREATE TABLE peertube_follow_import_targets (
     target          TEXT        NOT NULL CHECK (char_length(target) BETWEEN 1 AND 512),
     state           TEXT        NOT NULL DEFAULT 'pending'
                     CHECK (state IN ('pending', 'done', 'failed',
-                                     'skipped_federation', 'skipped_blocked', 'skipped_invalid')),
+                                     'skipped_federation', 'skipped_invalid')),
     attempts        INTEGER     NOT NULL DEFAULT 0,
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_error      TEXT        NOT NULL DEFAULT '',
@@ -35,3 +36,8 @@ CREATE TABLE peertube_follow_import_targets (
 );
 CREATE INDEX peertube_follow_import_targets_due_idx
     ON peertube_follow_import_targets (next_attempt_at) WHERE state = 'pending';
+
+-- A re-import of the same export must not stack a second copy of work already
+-- waiting: one pending row per (user, target), whichever import queued it.
+CREATE UNIQUE INDEX peertube_follow_import_targets_pending_uniq
+    ON peertube_follow_import_targets (user_id, target) WHERE state = 'pending';

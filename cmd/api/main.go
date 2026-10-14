@@ -2600,6 +2600,9 @@ func run() error {
 			Passes: []jobloop.Pass{{
 				FailMsg: "peertube follow import drain failed",
 				Run:     func(ctx context.Context, _ time.Time) (int, error) { return ptFollows.Drain(ctx) },
+			}, {
+				FailMsg: "peertube follow import prune failed",
+				Run:     func(ctx context.Context, _ time.Time) (int, error) { return ptFollows.Prune(ctx) },
 			}},
 		}.Run(workerCtx, logger)
 		logger.Info("federation delivery worker started")

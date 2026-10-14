@@ -13627,7 +13627,8 @@ paths:
             Invalid target (neither handle nor actor_url, or both), a target
             on this instance (follow local channels via
             POST /channels/{handle}/follow), or a handle/actor URL that could
-            not be resolved to a remote channel.
+            not be resolved to a remote channel. A target this instance does
+            not federate with gets the same answer as an unresolvable one.
           content:
             application/json:
               schema:
@@ -25566,7 +25567,7 @@ components:
           type: integer
           description: >-
             Accounts from following.json queued to be followed in the
-            background (at most 1000 per import). Handles not queued
+            background (name@host handles only; at most 1000 pending per user and 20 per host). Handles not queued
             (duplicate, malformed, over the cap) are counted in
             skipped_sections.following.
         follows_skipped_federation:
@@ -25608,17 +25609,16 @@ components:
       description: >-
         Progress of one background follow import. total is the sum of the
         other counts; the import is finished when pending is 0.
-      required: [id, created_at, total, pending, done, failed, skipped_federation, skipped_blocked, skipped_invalid]
+      required: [id, created_at, total, pending, done, failed, skipped_federation, skipped_invalid]
       properties:
         id: {type: string, format: uuid}
         created_at: {type: string, format: date-time}
         total: {type: integer}
         pending: {type: integer, description: Waiting or being retried with backoff.}
         done: {type: integer, description: Follow requested (the remote may still accept or reject it).}
-        failed: {type: integer, description: Unresolvable after the retry limit.}
+        failed: {type: integer, description: Could not be resolved (unreachable after the retry limit, or not followable from this instance).}
         skipped_federation: {type: integer}
-        skipped_blocked: {type: integer, description: The target's domain is blocked on this instance.}
-        skipped_invalid: {type: integer, description: Malformed handle or a local actor.}
+        skipped_invalid: {type: integer, description: A local actor or a handle that cannot be followed.}
     AccountImportSummary:
       type: object
       description: >-
