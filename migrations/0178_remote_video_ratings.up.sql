@@ -13,9 +13,15 @@ CREATE TABLE remote_video_ratings (
     -- The Like/Dislike activity id, so an Undo that names it by bare id (no
     -- embedded object) still finds the row.
     activity_url     TEXT        NOT NULL CHECK (char_length(activity_url) BETWEEN 1 AND 2048),
+    -- The signer's host, as the inbox's instance-block gate reads it: the key
+    -- for the per-domain cap on new votes and for the blocked-instance filter
+    -- on the count.
+    domain           TEXT        NOT NULL CHECK (char_length(domain) BETWEEN 1 AND 255),
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (remote_actor_url, video_id)
 );
 
 CREATE INDEX remote_video_ratings_video_id_idx ON remote_video_ratings (video_id);
+-- The per-domain cap counts a domain's recent new votes.
+CREATE INDEX remote_video_ratings_domain_created_idx ON remote_video_ratings (domain, created_at);

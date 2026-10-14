@@ -143,3 +143,34 @@ func TestRateRemoteVideoRefusals(t *testing.T) {
 		t.Fatalf("queued %d deliveries to an inbox-less origin", len(repo.deliveries))
 	}
 }
+
+// failingEnqueueRepo fails every delivery enqueue.
+type failingEnqueueRepo struct{ fakeRepo }
+
+func (failingEnqueueRepo) EnqueueDelivery(context.Context, sqlcgen.EnqueueDeliveryParams) error {
+	return errors.New("queue down")
+}
+
+// A vote whose delivery cannot be queued is not recorded either way: the
+// enqueue runs BEFORE the write, so a failure leaves the stored vote matching
+// what the origin was told, and the user's retry sends it again.
+func TestRateRemoteVideoFailedEnqueueStoresNothing(t *testing.T) {
+	ctx := context.Background()
+	repo, c, userID := newAuthoredRepo("https://peer.example/inbox")
+	repo.userRemoteRatings = map[string]string{}
+	svc := NewService(failingEnqueueRepo{repo}, WithBaseURL(noteBase))
+
+	if err := svc.RateRemoteVideo(ctx, c.RemoteVideoID, userID, "like"); err == nil {
+		t.Fatal("RateRemoteVideo succeeded with the queue down")
+	}
+	if len(repo.userRemoteRatings) != 0 {
+		t.Fatalf("vote stored without its delivery: %v", repo.userRemoteRatings)
+	}
+	repo.userRemoteRatings[userID.String()+"|"+c.RemoteVideoID.String()] = "like"
+	if err := svc.ClearRemoteVideoRating(ctx, c.RemoteVideoID, userID); err == nil {
+		t.Fatal("ClearRemoteVideoRating succeeded with the queue down")
+	}
+	if r := repo.userRemoteRatings[userID.String()+"|"+c.RemoteVideoID.String()]; r != "like" {
+		t.Fatalf("vote cleared without its Undo: %q", r)
+	}
+}

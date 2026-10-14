@@ -15,6 +15,14 @@ import (
 // maxRateIDLen bounds a Like/Dislike activity id (the column's CHECK, 0178).
 const maxRateIDLen = 2048
 
+// maxNewRemoteRatingsPerDomainHour caps the NEW votes one remote domain can add
+// across this instance per rolling hour. Past it, further new voters are
+// accepted and ignored (a voter already on file can still change their vote):
+// a domain minting accounts to stuff counts gets a bounded effect, and the
+// remedy for a hostile domain is the instance block, which also stops its
+// existing votes counting (CountVideoRatings).
+const maxNewRemoteRatingsPerDomainHour = 100
+
 // handleRate records a remote actor's Like or Dislike (PeerTube's two rating
 // activities) of one of OUR videos, as one row per (actor, video) in
 // remote_video_ratings: a repeat changes nothing, a switch flips the row. The
@@ -43,12 +51,16 @@ func (s *Service) handleRate(ctx context.Context, act inboxActivity, signerActor
 	if err != nil || !ok {
 		return err
 	}
-	return s.repo.UpsertRemoteVideoRating(ctx, sqlcgen.UpsertRemoteVideoRatingParams{
+	// 0 rows = the domain's hourly cap on new votes: accepted and ignored.
+	_, err = s.repo.UpsertRemoteVideoRating(ctx, sqlcgen.UpsertRemoteVideoRatingParams{
 		VideoID:        videoID,
 		RemoteActorUrl: signerActorURL,
 		Rating:         strings.ToLower(act.Type),
 		ActivityUrl:    act.ID,
+		Domain:         hostOf(signerActorURL),
+		DomainCap:      maxNewRemoteRatingsPerDomainHour,
 	})
+	return err
 }
 
 // rateTarget resolves a Like/Dislike object to a local video this actor may
@@ -138,24 +150,33 @@ func (s *Service) RateRemoteVideo(ctx context.Context, remoteVideoID, userID uui
 	if prev == rating {
 		return nil
 	}
-	if err := s.repo.UpsertRemoteVideoUserRating(ctx, sqlcgen.UpsertRemoteVideoUserRatingParams{
-		RemoteVideoID: remoteVideoID, UserID: userID, Rating: rating,
-	}); err != nil {
+	// Queue FIRST, write second: a failed enqueue leaves the stored vote as the
+	// origin last heard it, and the user's retry re-sends (an Undo of a vote the
+	// origin no longer holds is a no-op there, so a partial switch converges).
+	if err := s.federateRemoteVote(ctx, remoteVideoID, userID, prev, rating); err != nil {
 		return err
 	}
-	return s.federateRemoteVote(ctx, remoteVideoID, userID, prev, rating)
+	return s.repo.UpsertRemoteVideoUserRating(ctx, sqlcgen.UpsertRemoteVideoUserRatingParams{
+		RemoteVideoID: remoteVideoID, UserID: userID, Rating: rating,
+	})
 }
 
 // ClearRemoteVideoRating removes userID's vote (idempotent) and federates its
 // Undo to the origin.
 func (s *Service) ClearRemoteVideoRating(ctx context.Context, remoteVideoID, userID uuid.UUID) error {
-	prev, err := s.repo.DeleteRemoteVideoUserRating(ctx, sqlcgen.DeleteRemoteVideoUserRatingParams{UserID: userID, RemoteVideoID: remoteVideoID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	} else if err != nil {
+	prev, err := s.RemoteVideoRating(ctx, remoteVideoID, userID)
+	if err != nil || prev == "" {
 		return err
 	}
-	return s.federateRemoteVote(ctx, remoteVideoID, userID, prev, "")
+	// The Undo is queued before the row goes, for the same reason as above.
+	if err := s.federateRemoteVote(ctx, remoteVideoID, userID, prev, ""); err != nil {
+		return err
+	}
+	_, err = s.repo.DeleteRemoteVideoUserRating(ctx, sqlcgen.DeleteRemoteVideoUserRatingParams{UserID: userID, RemoteVideoID: remoteVideoID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // a concurrent clear got there first
+	}
+	return err
 }
 
 // federateRemoteVote queues, signed as the user's account actor, an Undo of
