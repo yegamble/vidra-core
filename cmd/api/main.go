@@ -468,7 +468,7 @@ func run() error {
 		})
 	}
 	var authOpts []auth.Option
-	authOpts = append(authOpts, auth.WithLoginLockStore(db.Queries()))
+	authOpts = append(authOpts, auth.WithLoginLockStore(db.Queries()), auth.WithDeviceStore(db.Queries()))
 	if len(cfg.TrustedProxyCIDRs) == 0 {
 		// Per-network lockout needs the real client address. Behind a CDN/proxy outside
 		// the built-in trusted ranges every visitor shares the edge's, so a prefix

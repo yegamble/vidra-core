@@ -220,7 +220,11 @@ func (s *Service) globalCapExempt(ctx context.Context, user sqlcgen.User, scope,
 	ok, err := s.lockStore.HasRecentLoginSuccess(ctx, sqlcgen.HasRecentLoginSuccessParams{
 		UserID: user.ID, Scope: okScope(scope), Since: s.now().Add(-knownPrefixFor),
 	})
-	return err == nil && ok
+	if err == nil && ok {
+		return true
+	}
+	// A request carrying a recognised device of this account is exempt too.
+	return s.knownDeviceFromContext(ctx, user.ID, userAgent)
 }
 
 func okScope(ipScope string) string { return "ok:" + ipScope }

@@ -66,6 +66,11 @@ const (
 	// is an ADMIN-domain action against a target account, distinct from
 	// auth.mfa.disable, which the account holder performs on themselves.
 	ActionAdminMFAReset = "admin.user.mfa_reset"
+	// ActionDeviceForget: an account holder removed a recognised device.
+	ActionDeviceForget = "auth.device.forget"
+	// ActionSecurityPrefsUpdate: an account holder changed the new-device email
+	// switch (a stolen session turning the alert off must leave a trace).
+	ActionSecurityPrefsUpdate = "auth.security_prefs.update"
 	// ActionAdminLoginLockoutClear: an administrator cleared an account's
 	// failed-login counters and locks. No credential or address is recorded.
 	ActionAdminLoginLockoutClear = "admin.user.login_lockout_clear"
