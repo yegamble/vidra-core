@@ -78,6 +78,26 @@ func (q *Queries) DeleteRemoteVideoRating(ctx context.Context, arg DeleteRemoteV
 	return err
 }
 
+const deleteRemoteVideoUserRating = `-- name: DeleteRemoteVideoUserRating :one
+DELETE FROM remote_video_user_ratings
+WHERE user_id = $1 AND remote_video_id = $2
+RETURNING rating
+`
+
+type DeleteRemoteVideoUserRatingParams struct {
+	UserID        uuid.UUID `json:"user_id"`
+	RemoteVideoID uuid.UUID `json:"remote_video_id"`
+}
+
+// Returns the vote that was removed, so the caller can federate its Undo;
+// no row (pgx.ErrNoRows) means there was nothing to undo.
+func (q *Queries) DeleteRemoteVideoUserRating(ctx context.Context, arg DeleteRemoteVideoUserRatingParams) (string, error) {
+	row := q.db.QueryRow(ctx, deleteRemoteVideoUserRating, arg.UserID, arg.RemoteVideoID)
+	var rating string
+	err := row.Scan(&rating)
+	return rating, err
+}
+
 const deleteVideoRating = `-- name: DeleteVideoRating :exec
 DELETE FROM video_ratings
 WHERE user_id = $1 AND video_id = $2
@@ -91,6 +111,23 @@ type DeleteVideoRatingParams struct {
 func (q *Queries) DeleteVideoRating(ctx context.Context, arg DeleteVideoRatingParams) error {
 	_, err := q.db.Exec(ctx, deleteVideoRating, arg.UserID, arg.VideoID)
 	return err
+}
+
+const getRemoteVideoUserRating = `-- name: GetRemoteVideoUserRating :one
+SELECT rating FROM remote_video_user_ratings
+WHERE user_id = $1 AND remote_video_id = $2
+`
+
+type GetRemoteVideoUserRatingParams struct {
+	UserID        uuid.UUID `json:"user_id"`
+	RemoteVideoID uuid.UUID `json:"remote_video_id"`
+}
+
+func (q *Queries) GetRemoteVideoUserRating(ctx context.Context, arg GetRemoteVideoUserRatingParams) (string, error) {
+	row := q.db.QueryRow(ctx, getRemoteVideoUserRating, arg.UserID, arg.RemoteVideoID)
+	var rating string
+	err := row.Scan(&rating)
+	return rating, err
 }
 
 const getVideoRating = `-- name: GetVideoRating :one
@@ -152,6 +189,25 @@ func (q *Queries) UpsertRemoteVideoRating(ctx context.Context, arg UpsertRemoteV
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const upsertRemoteVideoUserRating = `-- name: UpsertRemoteVideoUserRating :exec
+INSERT INTO remote_video_user_ratings (remote_video_id, user_id, rating)
+VALUES ($1, $2, $3)
+ON CONFLICT (user_id, remote_video_id)
+DO UPDATE SET rating = EXCLUDED.rating, updated_at = now()
+`
+
+type UpsertRemoteVideoUserRatingParams struct {
+	RemoteVideoID uuid.UUID `json:"remote_video_id"`
+	UserID        uuid.UUID `json:"user_id"`
+	Rating        string    `json:"rating"`
+}
+
+// A local user's vote on a remote video (0179); the origin holds the count.
+func (q *Queries) UpsertRemoteVideoUserRating(ctx context.Context, arg UpsertRemoteVideoUserRatingParams) error {
+	_, err := q.db.Exec(ctx, upsertRemoteVideoUserRating, arg.RemoteVideoID, arg.UserID, arg.Rating)
+	return err
 }
 
 const upsertVideoRating = `-- name: UpsertVideoRating :exec

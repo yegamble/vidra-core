@@ -62,6 +62,7 @@ type Repository interface {
 	DeletePlaylistsByOwner(ctx context.Context, ownerID uuid.UUID) error
 	DeleteChannelFollowsByFollower(ctx context.Context, followerID uuid.UUID) error
 	DeleteRemoteChannelFollowsByUser(ctx context.Context, userID uuid.UUID) error
+	DeleteRemoteVideoUserRatingsByUser(ctx context.Context, userID uuid.UUID) error
 	DeleteMutedAccountsByUser(ctx context.Context, muterID uuid.UUID) error
 	DeleteMutedInstancesByUser(ctx context.Context, muterID uuid.UUID) error
 	DeleteUserBlocksByUser(ctx context.Context, blockerID uuid.UUID) error

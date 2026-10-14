@@ -67,3 +67,21 @@ DELETE FROM remote_video_ratings
 WHERE remote_actor_url = sqlc.arg('remote_actor_url')
   AND ((video_id = sqlc.arg('video_id') AND rating = sqlc.arg('rating'))
        OR activity_url = sqlc.arg('activity_url'));
+
+-- name: GetRemoteVideoUserRating :one
+SELECT rating FROM remote_video_user_ratings
+WHERE user_id = $1 AND remote_video_id = $2;
+
+-- name: UpsertRemoteVideoUserRating :exec
+-- A local user's vote on a remote video (0179); the origin holds the count.
+INSERT INTO remote_video_user_ratings (remote_video_id, user_id, rating)
+VALUES ($1, $2, $3)
+ON CONFLICT (user_id, remote_video_id)
+DO UPDATE SET rating = EXCLUDED.rating, updated_at = now();
+
+-- name: DeleteRemoteVideoUserRating :one
+-- Returns the vote that was removed, so the caller can federate its Undo;
+-- no row (pgx.ErrNoRows) means there was nothing to undo.
+DELETE FROM remote_video_user_ratings
+WHERE user_id = $1 AND remote_video_id = $2
+RETURNING rating;

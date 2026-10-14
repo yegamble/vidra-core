@@ -6,10 +6,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -218,5 +220,58 @@ func TestRemoteVideoRatingDomainCapOnRealPG(t *testing.T) {
 	c, _ := q.CountVideoRatings(ctx, videoID)
 	if c.Likes != 1 || c.Dislikes != 1 {
 		t.Fatalf("counts = %d/%d, want 1/1", c.Likes, c.Dislikes)
+	}
+}
+
+// TestRemoteVideoUserRatingsOnRealPG proves a local user's vote on a remote
+// video (0179): one row per (user, video), a switch flips it, the delete hands
+// back the removed vote for the Undo, a second delete finds nothing, and the
+// remote video's removal cascades the vote.
+func TestRemoteVideoUserRatingsOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	user, _ := seedOwnerChannel(ctx, t, st, "rvrate")
+	actor := "https://peertube.example/video-channels/c-" + uuid.NewString()
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO remote_actors (actor_url, actor_type, public_key_pem) VALUES ($1, 'Group', 'pem')`, actor); err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
+	var rv uuid.UUID
+	if err := st.Pool.QueryRow(ctx, `INSERT INTO remote_videos (object_url, remote_actor_url) VALUES ($1, $2) RETURNING id`,
+		actor+"/v/1", actor).Scan(&rv); err != nil {
+		t.Fatalf("seed remote video: %v", err)
+	}
+	set := func(r string) {
+		t.Helper()
+		if err := q.UpsertRemoteVideoUserRating(ctx, sqlcgen.UpsertRemoteVideoUserRatingParams{RemoteVideoID: rv, UserID: user, Rating: r}); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+	}
+	get := sqlcgen.GetRemoteVideoUserRatingParams{UserID: user, RemoteVideoID: rv}
+	del := sqlcgen.DeleteRemoteVideoUserRatingParams{UserID: user, RemoteVideoID: rv}
+	set("like")
+	set("dislike")
+	if r, err := q.GetRemoteVideoUserRating(ctx, get); err != nil || r != "dislike" {
+		t.Fatalf("get = %q, %v; want dislike", r, err)
+	}
+	if r, err := q.DeleteRemoteVideoUserRating(ctx, del); err != nil || r != "dislike" {
+		t.Fatalf("delete = %q, %v; want the removed dislike", r, err)
+	}
+	if _, err := q.DeleteRemoteVideoUserRating(ctx, del); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("second delete err = %v, want pgx.ErrNoRows", err)
+	}
+	set("like")
+	if _, err := st.Pool.Exec(ctx, `DELETE FROM remote_videos WHERE id = $1`, rv); err != nil {
+		t.Fatalf("delete remote video: %v", err)
+	}
+	if _, err := q.GetRemoteVideoUserRating(ctx, get); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("vote survived its remote video: %v", err)
 	}
 }

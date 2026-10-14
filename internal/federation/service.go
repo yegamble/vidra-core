@@ -144,6 +144,10 @@ type Repository interface {
 	// Remote actors' Like/Dislike votes on local videos (0178).
 	UpsertRemoteVideoRating(ctx context.Context, arg sqlcgen.UpsertRemoteVideoRatingParams) (int64, error)
 	DeleteRemoteVideoRating(ctx context.Context, arg sqlcgen.DeleteRemoteVideoRatingParams) error
+	// A local user's vote on a remote video (0179).
+	GetRemoteVideoUserRating(ctx context.Context, arg sqlcgen.GetRemoteVideoUserRatingParams) (string, error)
+	UpsertRemoteVideoUserRating(ctx context.Context, arg sqlcgen.UpsertRemoteVideoUserRatingParams) error
+	DeleteRemoteVideoUserRating(ctx context.Context, arg sqlcgen.DeleteRemoteVideoUserRatingParams) (string, error)
 	BlockRemoteActorInstanceWide(ctx context.Context, arg sqlcgen.BlockRemoteActorInstanceWideParams) error
 	UnblockRemoteActorInstanceWide(ctx context.Context, remoteActorURL string) (int64, error)
 	ListBlockedRemoteActors(ctx context.Context, arg sqlcgen.ListBlockedRemoteActorsParams) ([]sqlcgen.ListBlockedRemoteActorsRow, error)

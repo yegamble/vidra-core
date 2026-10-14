@@ -116,3 +116,123 @@ func (s *Service) handleUndoRate(ctx context.Context, act inboxActivity, signerA
 		ActivityUrl:    inner.ID,
 	})
 }
+
+// ErrInvalidRating means a vote is neither "like" nor "dislike".
+var ErrInvalidRating = errors.New("federation: rating must be like or dislike")
+
+// RemoteVideoRating returns userID's own vote on a remote video ("" = none).
+func (s *Service) RemoteVideoRating(ctx context.Context, remoteVideoID, userID uuid.UUID) (string, error) {
+	r, err := s.repo.GetRemoteVideoUserRating(ctx, sqlcgen.GetRemoteVideoUserRatingParams{UserID: userID, RemoteVideoID: remoteVideoID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return r, err
+}
+
+// RateRemoteVideo records userID's Like/Dislike of a remote video and federates
+// it to the origin, which owns the count (PeerTube's sendVideoRateChange): a new
+// vote is a Like or Dislike, a switch is Undo of the old one plus the new one,
+// and a repeat sends nothing. An unknown video — or one whose origin or self is
+// admin-blocked, which GetRemoteVideoByID excludes — is ErrNotFound.
+func (s *Service) RateRemoteVideo(ctx context.Context, remoteVideoID, userID uuid.UUID, rating string) error {
+	if rating != "like" && rating != "dislike" {
+		return ErrInvalidRating
+	}
+	prev, err := s.RemoteVideoRating(ctx, remoteVideoID, userID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.repo.GetRemoteVideoByID(ctx, remoteVideoID); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if prev == rating {
+		return nil
+	}
+	// Queue FIRST, write second: a failed enqueue leaves the stored vote as the
+	// origin last heard it, and the user's retry re-sends (an Undo of a vote the
+	// origin no longer holds is a no-op there, so a partial switch converges).
+	if err := s.federateRemoteVote(ctx, remoteVideoID, userID, prev, rating); err != nil {
+		return err
+	}
+	return s.repo.UpsertRemoteVideoUserRating(ctx, sqlcgen.UpsertRemoteVideoUserRatingParams{
+		RemoteVideoID: remoteVideoID, UserID: userID, Rating: rating,
+	})
+}
+
+// ClearRemoteVideoRating removes userID's vote (idempotent) and federates its
+// Undo to the origin.
+func (s *Service) ClearRemoteVideoRating(ctx context.Context, remoteVideoID, userID uuid.UUID) error {
+	prev, err := s.RemoteVideoRating(ctx, remoteVideoID, userID)
+	if err != nil || prev == "" {
+		return err
+	}
+	// The Undo is queued before the row goes, for the same reason as above.
+	if err := s.federateRemoteVote(ctx, remoteVideoID, userID, prev, ""); err != nil {
+		return err
+	}
+	_, err = s.repo.DeleteRemoteVideoUserRating(ctx, sqlcgen.DeleteRemoteVideoUserRatingParams{UserID: userID, RemoteVideoID: remoteVideoID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // a concurrent clear got there first
+	}
+	return err
+}
+
+// federateRemoteVote queues, signed as the user's account actor, an Undo of
+// `undo` and/or a fresh `vote` to the remote video's origin inbox. The vote is
+// kept locally whether or not the origin is reachable. Every activity gets a
+// fresh id: a receiver's processed-id dedupe would otherwise drop a re-like
+// after an Undo. The Undo embeds the vote's kind, actor and video, which is what
+// PeerTube, Mastodon and this inbox match an Undo on.
+func (s *Service) federateRemoteVote(ctx context.Context, remoteVideoID, userID uuid.UUID, undo, vote string) error {
+	rv, err := s.repo.GetRemoteVideoByID(ctx, remoteVideoID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	_, inbox, ok, err := s.resolveAuthoredCommentOrigin(ctx, remoteVideoID)
+	if err != nil || !ok {
+		return err
+	}
+	u, err := s.repo.GetUserActorByID(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if _, err := s.ensureAccountKey(ctx, userID); err != nil {
+		return err
+	}
+	actor := s.baseURL + "/accounts/" + u.Username
+	voteActivity := func(kind string) map[string]any {
+		return map[string]any{
+			"id":     actor + "/" + kind + "s/" + remoteVideoID.String() + "/" + uuid.NewString(),
+			"type":   map[string]string{"like": "Like", "dislike": "Dislike"}[kind],
+			"actor":  actor,
+			"object": rv.ObjectUrl,
+		}
+	}
+	var out []map[string]any
+	if undo != "" {
+		inner := voteActivity(undo)
+		out = append(out, map[string]any{
+			"id": actor + "/undo/" + uuid.NewString(), "type": "Undo", "actor": actor, "object": inner,
+		})
+	}
+	if vote != "" {
+		out = append(out, voteActivity(vote))
+	}
+	for _, a := range out {
+		a["@context"] = "https://www.w3.org/ns/activitystreams"
+		payload, err := json.Marshal(a)
+		if err != nil {
+			return err
+		}
+		if err := s.enqueueAccountDelivery(ctx, userID, u.Username, inbox, payload); err != nil {
+			return err
+		}
+	}
+	return nil
+}

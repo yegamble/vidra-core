@@ -870,6 +870,18 @@ func (fakeFedRepo) UpsertRemoteVideoRating(context.Context, sqlcgen.UpsertRemote
 	return 0, nil
 }
 
+func (fakeFedRepo) GetRemoteVideoUserRating(context.Context, sqlcgen.GetRemoteVideoUserRatingParams) (string, error) {
+	return "", pgx.ErrNoRows
+}
+
+func (fakeFedRepo) UpsertRemoteVideoUserRating(context.Context, sqlcgen.UpsertRemoteVideoUserRatingParams) error {
+	return nil
+}
+
+func (fakeFedRepo) DeleteRemoteVideoUserRating(context.Context, sqlcgen.DeleteRemoteVideoUserRatingParams) (string, error) {
+	return "", pgx.ErrNoRows
+}
+
 func (fakeFedRepo) DeleteRemoteVideoRating(context.Context, sqlcgen.DeleteRemoteVideoRatingParams) error {
 	return nil
 }

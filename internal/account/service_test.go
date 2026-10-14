@@ -234,6 +234,9 @@ func (f *fakeRepo) DeletePlaylistsByOwner(context.Context, uuid.UUID) error {
 func (f *fakeRepo) DeleteChannelFollowsByFollower(context.Context, uuid.UUID) error {
 	return f.purge("follows")
 }
+func (f *fakeRepo) DeleteRemoteVideoUserRatingsByUser(context.Context, uuid.UUID) error {
+	return f.purge("remote_ratings")
+}
 func (f *fakeRepo) DeleteRemoteChannelFollowsByUser(context.Context, uuid.UUID) error {
 	return f.purge("remote_follows")
 }
@@ -578,7 +581,7 @@ func TestDeleteRunsFullChecklist(t *testing.T) {
 	}
 	// Every per-user purge ran.
 	want := []string{
-		"ratings", "saved", "history", "playlists", "follows", "remote_follows",
+		"ratings", "remote_ratings", "saved", "history", "playlists", "follows", "remote_follows",
 		"mutes", "instance_mutes", "blocks", "oauth", "recovery_codes",
 		"notifications", "notification_prefs", "reset_tokens", "verify_tokens",
 		"actor_key", "mfa", "e2ee_devices", "user_ban",

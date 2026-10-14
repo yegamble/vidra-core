@@ -130,6 +130,9 @@ func (f *accountFakeRepo) DeletePlaylistsByOwner(context.Context, uuid.UUID) err
 func (f *accountFakeRepo) DeleteChannelFollowsByFollower(context.Context, uuid.UUID) error {
 	return nil
 }
+func (f *accountFakeRepo) DeleteRemoteVideoUserRatingsByUser(context.Context, uuid.UUID) error {
+	return nil
+}
 func (f *accountFakeRepo) DeleteRemoteChannelFollowsByUser(context.Context, uuid.UUID) error {
 	return nil
 }

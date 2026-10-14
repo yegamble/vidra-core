@@ -9,6 +9,10 @@
 -- name: DeleteVideoRatingsByUser :exec
 DELETE FROM video_ratings WHERE user_id = $1;
 
+-- name: DeleteRemoteVideoUserRatingsByUser :exec
+-- The user's votes on remote videos (0179).
+DELETE FROM remote_video_user_ratings WHERE user_id = $1;
+
 -- name: DeleteSavedVideosByUser :exec
 DELETE FROM saved_videos WHERE user_id = $1;
 
