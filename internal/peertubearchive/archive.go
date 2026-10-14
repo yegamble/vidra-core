@@ -66,6 +66,8 @@ type Playlist struct {
 	Privacy     int
 	Type        int
 	Elements    int
+	// ChannelName is the exported owning channel's PeerTube name ("" if none).
+	ChannelName string
 }
 
 // Settings holds the user-settings fields that map 1:1 onto vidra settings.
@@ -180,13 +182,20 @@ func ReadAt(ra io.ReaderAt, size int64) (*Archive, error) {
 				Privacy     int        `json:"privacy"`
 				Type        int        `json:"type"`
 				Elements    []struct{} `json:"elements"`
+				Channel     *struct {
+					Name string `json:"name"`
+				} `json:"channel"`
 			} `json:"videoPlaylists"`
 		}
 		if err := json.Unmarshal(b, &doc); err != nil {
 			return nil, invalid("video-playlists.json is not valid")
 		}
 		for _, p := range doc.Playlists {
-			a.Playlists = append(a.Playlists, Playlist{p.DisplayName, p.Description, p.Privacy, p.Type, len(p.Elements)})
+			pl := Playlist{DisplayName: p.DisplayName, Description: p.Description, Privacy: p.Privacy, Type: p.Type, Elements: len(p.Elements)}
+			if p.Channel != nil {
+				pl.ChannelName = strings.TrimSpace(p.Channel.Name)
+			}
+			a.Playlists = append(a.Playlists, pl)
 		}
 	}
 	if b, err := read("user-settings.json"); err != nil {

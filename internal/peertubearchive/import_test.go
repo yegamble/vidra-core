@@ -100,7 +100,6 @@ func TestImportMapsAndIsIdempotent(t *testing.T) {
 	a := &Archive{
 		Channels: []Channel{
 			{Name: "good_one", DisplayName: "Good", Description: "d"},
-			{Name: "bad-dash", DisplayName: "x"},       // handle alphabet
 			{Name: "taken_by_other", DisplayName: "x"}, // never touch another owner's
 			{Name: "admin_acct", DisplayName: "x"},     // reserved by an account
 			{Name: "nodisplay", DisplayName: ""},       // falls back to the handle
@@ -119,7 +118,7 @@ func TestImportMapsAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum.ChannelsCreated != 3 || sum.ChannelsSkipped != 3 {
+	if sum.ChannelsCreated != 3 || sum.ChannelsSkipped != 2 {
 		t.Fatalf("channels: %+v", sum)
 	}
 	if got := ch.byHandle["nodisplay"].DisplayName; got != "nodisplay" {
@@ -205,5 +204,52 @@ func TestImportHoldsTheLockAndReturnsPartialSummary(t *testing.T) {
 	im.Lock = func(context.Context, uuid.UUID) (func(), error) { return nil, errors.New("busy") }
 	if _, err := im.Import(context.Background(), uuid.New(), &Archive{}); err == nil {
 		t.Fatal("lock failure must abort the import")
+	}
+}
+
+func TestMapHandle(t *testing.T) {
+	cases := map[string]string{
+		"my-channel": "my_channel", "a.b.c": "a_b_c", "ok_name": "ok_name",
+		"é-x": "__x", "a-": "a__", "日本語": "___",
+		strings.Repeat("a-", 30): strings.Repeat("a_", 15),
+	}
+	for in, want := range cases {
+		got, ok := MapHandle(in)
+		if !ok || got != want || !channel.ValidateChannelHandle(got) {
+			t.Errorf("MapHandle(%q) = %q,%v want %q", in, got, ok, want)
+		}
+	}
+	if _, ok := MapHandle("  "); ok {
+		t.Error("empty name must not map")
+	}
+}
+
+func TestImportMapsHandlesCollisionsAndPlaylistChannel(t *testing.T) {
+	me, other := uuid.New(), uuid.New()
+	ch := &fakeChannels{byHandle: map[string]sqlcgen.Channel{"my_chan": {OwnerID: other}}}
+	pl := &fakePlaylists{}
+	im := &Importer{Channels: ch, Playlists: pl}
+	a := &Archive{
+		Channels:  []Channel{{Name: "my-chan"}, {Name: "my.chan"}, {Name: "plain_one"}},
+		Playlists: []Playlist{{DisplayName: "P", Type: 1, ChannelName: "my-chan"}, {DisplayName: "Q", Type: 1, ChannelName: "unknown"}},
+	}
+	sum, err := im.Import(context.Background(), me, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.ChannelsCreated != 3 || len(sum.ChannelsMapped) != 2 ||
+		sum.ChannelsMapped[0] != (ChannelMapping{"my-chan", "my_chan_2"}) ||
+		sum.ChannelsMapped[1] != (ChannelMapping{"my.chan", "my_chan_3"}) {
+		t.Fatalf("mapping: %+v", sum)
+	}
+	if pl.made[0].ChannelID == nil || *pl.made[0].ChannelID != ch.byHandle["my_chan_2"].ID || pl.made[1].ChannelID != nil {
+		t.Fatalf("playlist channel: %+v", pl.made)
+	}
+	again, err := im.Import(context.Background(), me, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ChannelsCreated != 0 || again.ChannelsExisting != 3 || len(ch.byHandle) != 4 {
+		t.Fatalf("re-import: %+v", again)
 	}
 }

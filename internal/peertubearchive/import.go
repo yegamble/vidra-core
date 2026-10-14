@@ -3,6 +3,7 @@ package peertubearchive
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -61,12 +62,68 @@ type Summary struct {
 	PlaylistItemsSkipped int            `json:"playlist_items_skipped"`
 	SettingsApplied      int            `json:"settings_applied"`
 	SkippedSections      map[string]int `json:"skipped_sections"`
+	// ChannelsMapped lists every channel whose PeerTube name was rewritten into
+	// vidra's handle alphabet (original -> handle actually used).
+	ChannelsMapped []ChannelMapping `json:"channels_mapped"`
+}
+
+// ChannelMapping records one PeerTube channel name and the vidra handle it became.
+type ChannelMapping struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+const (
+	maxHandleLen    = 30 // mirrors channel.handleRe {3,30}
+	minHandleLen    = 3
+	maxHandleSuffix = 20 // collision attempts: _2 ... _21
+)
+
+// MapHandle is the deterministic PeerTube-name -> vidra-handle mapping: every
+// rune outside [A-Za-z0-9_] (so '-', '.', and any non-ASCII rune) becomes one
+// '_', the result is cut to 30 characters, and anything shorter than 3 is padded
+// with '_'. A name that is already valid is returned unchanged. ok is false only
+// for an empty name. The result is always re-checked with
+// channel.ValidateChannelHandle; creation still goes through channel.Service.
+func MapHandle(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", false
+	}
+	if channel.ValidateChannelHandle(name) {
+		return name, true
+	}
+	var b strings.Builder
+	for _, r := range name {
+		if r < utf8.RuneSelf && (r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	h := b.String()
+	if len(h) > maxHandleLen {
+		h = h[:maxHandleLen]
+	}
+	for len(h) < minHandleLen {
+		h += "_"
+	}
+	return h, channel.ValidateChannelHandle(h)
+}
+
+// suffixed returns base with "_<n>" appended, cutting base to keep 30 chars.
+func suffixed(base string, n int) string {
+	suf := "_" + strconv.Itoa(n)
+	if len(base)+len(suf) > maxHandleLen {
+		base = base[:maxHandleLen-len(suf)]
+	}
+	return base + suf
 }
 
 // Import is additive and idempotent: a channel handle you already own and a
 // playlist title you already have are counted "existing", never duplicated.
 func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (Summary, error) {
-	sum := Summary{SkippedSections: map[string]int{}}
+	sum := Summary{SkippedSections: map[string]int{}, ChannelsMapped: []ChannelMapping{}}
 	if im.Lock != nil {
 		unlock, err := im.Lock(ctx, userID)
 		if err != nil {
@@ -79,6 +136,8 @@ func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (S
 	}
 
 	owned := map[string]bool{}
+	claimed := map[string]string{} // lower(handle) -> the archive name that took it
+	ids := map[string]uuid.UUID{}  // lower(PeerTube name) -> the channel it resolved to
 	if len(a.Channels) > 0 {
 		mine, err := im.Channels.ListOwn(ctx, userID)
 		if err != nil {
@@ -86,45 +145,84 @@ func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (S
 		}
 		for _, ch := range mine {
 			owned[strings.ToLower(ch.Handle)] = true
+			ids[strings.ToLower(ch.Handle)] = ch.ID
 		}
 	}
 	for _, c := range a.Channels {
-		handle := strings.TrimSpace(c.Name)
-		if !channel.ValidateChannelHandle(handle) {
+		name := strings.TrimSpace(c.Name)
+		handle, ok := MapHandle(name)
+		if !ok {
 			sum.ChannelsSkipped++
 			continue
 		}
-		if owned[strings.ToLower(handle)] {
-			sum.ChannelsExisting++
-			continue
-		}
-		// The ceiling holds even when the instance sets no per-user cap.
-		if len(owned) >= maxChannels {
-			sum.ChannelsSkipped++
-			continue
-		}
+		mapped := handle != name
 		display := truncate(strings.TrimSpace(c.DisplayName), 50)
 		if display == "" {
-			display = handle
+			display = name
 		}
-		_, err := im.Channels.Create(ctx, userID, channel.CreateInput{
-			Handle: handle, DisplayName: display, Description: truncate(c.Description, 1000),
-		})
-		switch {
-		case err == nil:
-			owned[strings.ToLower(handle)] = true
-			sum.ChannelsCreated++
-		case errors.Is(err, channel.ErrConflict):
-			// Taken: ours (a re-import) or someone else's (never touched).
-			if ex, gerr := im.Channels.GetByHandle(ctx, handle); gerr == nil && ex.OwnerID == userID {
-				sum.ChannelsExisting++
-			} else {
-				sum.ChannelsSkipped++
+		base := handle
+	attempt:
+		for n := 1; ; n++ {
+			if n > 1 {
+				handle = suffixed(base, n)
 			}
-		case errors.Is(err, channel.ErrHandleReserved), errors.Is(err, channel.ErrMaxReached):
-			sum.ChannelsSkipped++
-		default:
-			return sum, err
+			if lh := strings.ToLower(handle); owned[lh] {
+				// Ours already. Another name of THIS archive may have claimed it
+				// (two names mapping to one handle): then try the next suffix.
+				if claimed[lh] == "" {
+					claimed[lh] = name
+					ids[strings.ToLower(name)] = ids[lh]
+					sum.ChannelsExisting++
+					break attempt
+				}
+				if !mapped || n > maxHandleSuffix {
+					sum.ChannelsSkipped++
+					break attempt
+				}
+				continue
+			}
+			// The ceiling holds even when the instance sets no per-user cap.
+			if len(owned) >= maxChannels {
+				sum.ChannelsSkipped++
+				break attempt
+			}
+			created, err := im.Channels.Create(ctx, userID, channel.CreateInput{
+				Handle: handle, DisplayName: display, Description: truncate(c.Description, 1000),
+			})
+			switch {
+			case err == nil:
+				owned[strings.ToLower(handle)] = true
+				ids[strings.ToLower(handle)] = created.ID
+				claimed[strings.ToLower(handle)] = name
+				ids[strings.ToLower(name)] = created.ID
+				sum.ChannelsCreated++
+				if mapped || n > 1 {
+					sum.ChannelsMapped = append(sum.ChannelsMapped, ChannelMapping{From: name, To: handle})
+				}
+				break attempt
+			case errors.Is(err, channel.ErrConflict):
+				// Taken: ours (a re-import) or someone else's (never touched).
+				ex, gerr := im.Channels.GetByHandle(ctx, handle)
+				if gerr == nil && ex.OwnerID == userID {
+					owned[strings.ToLower(handle)] = true
+					ids[strings.ToLower(handle)] = ex.ID
+					claimed[strings.ToLower(handle)] = name
+					ids[strings.ToLower(name)] = ex.ID
+					sum.ChannelsExisting++
+					break attempt
+				}
+				// A rewritten name may take the next free suffix; an exact valid
+				// handle held by someone else is never renamed around.
+				if !mapped || n > maxHandleSuffix {
+					sum.ChannelsSkipped++
+					break attempt
+				}
+			case errors.Is(err, channel.ErrHandleReserved), errors.Is(err, channel.ErrMaxReached):
+				sum.ChannelsSkipped++
+				break attempt
+			default:
+				return sum, err
+			}
 		}
 	}
 
@@ -157,9 +255,14 @@ func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (S
 				sum.PlaylistsExisting++
 				continue
 			}
-			if _, err := im.Playlists.Create(ctx, userID, playlist.CreateInput{
+			in := playlist.CreateInput{
 				Title: title, Description: truncate(p.Description, 5000), Visibility: visibility(p.Privacy),
-			}); err != nil {
+			}
+			// A playlist follows its channel to the mapped handle's row.
+			if id, ok := ids[strings.ToLower(p.ChannelName)]; ok && id != uuid.Nil {
+				in.ChannelID = &id
+			}
+			if _, err := im.Playlists.Create(ctx, userID, in); err != nil {
 				return sum, err
 			}
 			have[strings.ToLower(title)] = true
