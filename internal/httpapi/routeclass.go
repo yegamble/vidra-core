@@ -80,6 +80,7 @@ var uploadRouteTemplates = map[string]struct{}{
 	uploadRoutePath:           {}, // POST /api/v1/videos/:id/file
 	replaceRoutePath:          {}, // POST /api/v1/videos/:id/replace
 	attachmentUploadRoutePath: {}, // POST /api/v1/conversations/:id/attachments
+	peertubeImportRoutePath:   {}, // POST /api/v1/me/import/peertube
 }
 
 // isMediaRoute reports whether the matched route is a media GET. The method

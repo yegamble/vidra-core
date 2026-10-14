@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/gommon/bytes"
 )
 
 // dynamicBodyLimit enforces the EFFECTIVE upload_max_size_bytes overlay on the
@@ -18,9 +19,31 @@ import (
 // is caught by a reader that fails once the cap is exceeded. A limit <= 0 means
 // no cap (pass through unchanged).
 func (s *Server) dynamicBodyLimit() echo.MiddlewareFunc {
+	return limitBodyTo(s.uploadMaxSizeBytes)
+}
+
+// defaultPeerTubeImportMaxBytes is the cap used when PEERTUBE_IMPORT_MAX_SIZE is
+// unset or unparseable (config.Load validates it, so only hand-built test
+// configs fall back).
+const defaultPeerTubeImportMaxBytes int64 = 20 << 30
+
+func (s *Server) peertubeImportMaxBytes() int64 {
+	if n, err := bytes.Parse(s.cfg.PeerTubeImportMaxSize); err == nil && n > 0 {
+		return n
+	}
+	return defaultPeerTubeImportMaxBytes
+}
+
+// peertubeImportBodyLimit caps POST /me/import/peertube at PEERTUBE_IMPORT_MAX_SIZE.
+func (s *Server) peertubeImportBodyLimit() echo.MiddlewareFunc {
+	return limitBodyTo(s.peertubeImportMaxBytes)
+}
+
+// limitBodyTo is the shared body-limit seam; limit is resolved per request.
+func limitBodyTo(limitFn func() int64) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			limit := s.uploadMaxSizeBytes()
+			limit := limitFn()
 			if limit <= 0 {
 				return next(c)
 			}

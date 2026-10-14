@@ -15,6 +15,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,18 +24,23 @@ import (
 	"strings"
 )
 
-// Limits. A metadata-only archive is a few KiB; real exports that bundle video
-// files are far larger and are refused by the caller's body limit before they
-// reach this package.
+// Limits. A metadata-only archive is a few KiB; a real export bundles the video
+// files (multi-GB). The caller streams the upload to a file and hands it to
+// ReadAt, which only ever opens the peertube/*.json entries: the media entries
+// are validated by NAME and TYPE and then left alone, so their size is bounded
+// only by the caller's upload cap, never read or decompressed here.
 const (
-	MaxEntries       = 2000
-	MaxDeclaredTotal = 64 << 20 // sum of every entry's declared uncompressed size
+	MaxEntries = 20000
+	// MaxDirectoryBytes bounds the zip central directory. archive/zip loads the
+	// whole directory into memory before we see one entry, so without this a
+	// hostile multi-GB file made of empty entries is a memory bomb.
+	MaxDirectoryBytes = 16 << 20
+	// MaxDeclaredTotal bounds the sum of the declared uncompressed sizes of the
+	// peertube/ entries only (the ones that may be read).
+	MaxDeclaredTotal = 64 << 20
 	MaxJSONBytes     = 8 << 20  // per entry actually read
 	MaxReadTotal     = 16 << 20 // across all entries actually read
 	maxNameLen       = 512
-
-	// MaxUploadBytes bounds the zip itself (the default HTTP body limit).
-	MaxUploadBytes = 8 << 20
 
 	// MaxStreamBytes bounds the decompressed bytes scanned for counted-only
 	// sections, per section and in total. They are scanned, never buffered.
@@ -93,12 +99,23 @@ func invalid(format string, a ...any) error {
 // CPU spent on uploads stays flat however many users upload together.
 var parseSlots = make(chan struct{}, 2)
 
-// Read parses a zip held in memory. It returns ErrInvalid for anything
-// hostile or malformed, and an archive with no recognised JSON as invalid too.
+// Read parses a zip held in memory (see ReadAt).
 func Read(raw []byte) (*Archive, error) {
+	return ReadAt(bytes.NewReader(raw), int64(len(raw)))
+}
+
+// ReadAt parses a zip through random access (an *os.File), so a multi-GB export
+// costs only its central directory and the few JSON entries. It returns
+// ErrInvalid for anything hostile or malformed, and an archive with no
+// recognised JSON as invalid too. The parse slot is held only here, never while
+// the caller is receiving the upload.
+func ReadAt(ra io.ReaderAt, size int64) (*Archive, error) {
 	parseSlots <- struct{}{}
 	defer func() { <-parseSlots }()
-	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err := checkDirectory(ra, size); err != nil {
+		return nil, err
+	}
+	zr, err := zip.NewReader(ra, size)
 	if err != nil {
 		return nil, invalid("not a zip")
 	}
@@ -117,9 +134,13 @@ func Read(raw []byte) (*Archive, error) {
 			return nil, invalid("duplicate entry")
 		}
 		seen[key] = true
-		declared += f.UncompressedSize64
-		if declared > MaxDeclaredTotal {
-			return nil, invalid("declared size too large")
+		// Only the entries we may read count toward the declared total; a media
+		// entry's declared size is never acted on.
+		if strings.HasPrefix(f.Name, "peertube/") {
+			declared += f.UncompressedSize64
+			if declared > MaxDeclaredTotal {
+				return nil, invalid("declared size too large")
+			}
 		}
 		files[f.Name] = f
 	}
@@ -340,4 +361,71 @@ func countSection(f *zip.File, budget *int64) (int, error) {
 		return 0, ErrInvalid
 	}
 	return count, nil
+}
+
+// checkDirectory validates the zip's end-of-central-directory record BEFORE
+// archive/zip allocates a File per directory record. It rejects a directory
+// with more than MaxEntries records or more than MaxDirectoryBytes, and one
+// that is not contiguous with the end record (archive/zip reads from the
+// declared offset until the first non-record signature, so an offset pointing
+// earlier than offset+size would let the real directory exceed the checked
+// size). Zip64 end records are followed when the 32-bit fields are saturated.
+func checkDirectory(ra io.ReaderAt, size int64) error {
+	const eocdLen, maxComment = 22, 1 << 16
+	if size < eocdLen {
+		return invalid("not a zip")
+	}
+	tailLen := int64(eocdLen + maxComment)
+	if tailLen > size {
+		tailLen = size
+	}
+	tail := make([]byte, tailLen)
+	if _, err := ra.ReadAt(tail, size-tailLen); err != nil && err != io.EOF {
+		return invalid("not a zip")
+	}
+	pos := -1
+	for i := len(tail) - eocdLen; i >= 0; i-- {
+		if binary.LittleEndian.Uint32(tail[i:]) == 0x06054b50 &&
+			i+eocdLen+int(binary.LittleEndian.Uint16(tail[i+20:])) == len(tail) {
+			pos = i
+			break
+		}
+	}
+	if pos < 0 {
+		return invalid("not a zip")
+	}
+	eocdAt := size - tailLen + int64(pos)
+	rec := tail[pos:]
+	records := uint64(binary.LittleEndian.Uint16(rec[10:]))
+	dirSize := uint64(binary.LittleEndian.Uint32(rec[12:]))
+	dirOff := uint64(binary.LittleEndian.Uint32(rec[16:]))
+	end := uint64(eocdAt) // where the directory must stop
+	if records == 0xFFFF || dirSize == 0xFFFFFFFF || dirOff == 0xFFFFFFFF {
+		if eocdAt < 20 {
+			return invalid("not a zip")
+		}
+		var loc [20]byte
+		if _, err := ra.ReadAt(loc[:], eocdAt-20); err != nil || binary.LittleEndian.Uint32(loc[:]) != 0x07064b50 {
+			return invalid("not a zip")
+		}
+		z64 := binary.LittleEndian.Uint64(loc[8:])
+		var z [56]byte
+		if z64 > uint64(size) || z64+56 > uint64(size) {
+			return invalid("not a zip")
+		}
+		if _, err := ra.ReadAt(z[:], int64(z64)); err != nil || binary.LittleEndian.Uint32(z[:]) != 0x06064b50 {
+			return invalid("not a zip")
+		}
+		records = binary.LittleEndian.Uint64(z[32:])
+		dirSize = binary.LittleEndian.Uint64(z[40:])
+		dirOff = binary.LittleEndian.Uint64(z[48:])
+		end = z64
+	}
+	if records > MaxEntries {
+		return invalid("too many entries")
+	}
+	if dirSize > MaxDirectoryBytes || dirOff > end || dirOff+dirSize != end {
+		return invalid("unsupported zip directory")
+	}
+	return nil
 }

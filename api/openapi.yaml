@@ -3377,11 +3377,14 @@ paths:
         the autoplay-next setting. Videos, likes, dislikes, comments, watch
         history, blocklists, followers and following are NOT imported yet and
         are counted under skipped_sections. Synchronous: the work is bounded
-        and touches no network or media. The zip is parsed in memory, never
-        extracted, and refused whole on traversal, symlink, encrypted,
-        duplicate or oversize entries; the body is bounded by the HTTP body
-        limit (default 8 MB), so an export that bundles video files must be
-        trimmed to its peertube/*.json entries first. 403 feature_disabled
+        and touches no network or media. The zip may be the full export
+        including its video files: the body cap for this route alone is
+        PEERTUBE_IMPORT_MAX_SIZE (default 20 GiB, not the 8 MB global limit),
+        the upload is streamed to a temporary file that is always removed, and
+        only the peertube/*.json entries are ever read; media entries are never
+        opened. The archive is refused whole on traversal, symlink, encrypted,
+        duplicate or oversize JSON entries, or an oversized central directory
+        (more than 20000 entries). 403 feature_disabled
         when user_import_enabled is off. At most 3 imports per user per hour.
         At most 50 channels may be owned after an import, existing ones
         included. If the import stops part-way on a server error, the answer is
@@ -3422,7 +3425,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "413":
-          description: The archive exceeds the request body limit.
+          description: >-
+            The request body exceeds PEERTUBE_IMPORT_MAX_SIZE (default 20 GiB),
+            declared or actually streamed.
           content:
             application/json:
               schema:
@@ -3435,6 +3440,14 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "429":
           description: Too many imports in the window (3 per user per hour).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            The server has too little free temporary space to receive the
+            archive right now; retry later.
           content:
             application/json:
               schema:

@@ -724,6 +724,9 @@ x-api-env: &api-env
   # scratch space needs roughly 4x this value per concurrent transcode job, so
   # raising it without growing the scratch volume fills the disk.
   UPLOAD_MAX_SIZE: ${UPLOAD_MAX_SIZE:-2G}
+  # Max body of POST /me/import/peertube only. The zip is spooled to a temp file
+  # under TMPDIR (so size the temp volume for it); only its JSON is read.
+  PEERTUBE_IMPORT_MAX_SIZE: ${PEERTUBE_IMPORT_MAX_SIZE:-20G}
   # Most ACTIVE (unfinished, unexpired) resumable upload sessions one user may
   # hold at once; 0 disables the cap. Opening one past the cap is a 429 with
   # the stable code too_many_active_uploads, which batch-upload clients queue on.

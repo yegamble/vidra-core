@@ -4,9 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/flate"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -132,7 +134,7 @@ func TestReadEnforcesDeclaredTotal(t *testing.T) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	for i := 0; i < 9; i++ {
-		h := &zip.FileHeader{Name: fmt.Sprintf("files/%d", i), Method: zip.Store, UncompressedSize64: 8 << 20, CompressedSize64: 0}
+		h := &zip.FileHeader{Name: fmt.Sprintf("peertube/%d", i), Method: zip.Store, UncompressedSize64: 8 << 20, CompressedSize64: 0}
 		_, _ = zw.CreateRaw(h)
 	}
 	_ = zw.Close()
@@ -178,5 +180,69 @@ func TestReadCountsNestedAndEscapedContent(t *testing.T) {
 func TestReadBoundsConcurrentParses(t *testing.T) {
 	if cap(parseSlots) != 2 {
 		t.Fatalf("parse slots = %d, want 2", cap(parseSlots))
+	}
+}
+
+// countingReaderAt records how many bytes a parse actually pulled, so a test
+// can assert the media region of a large archive was never read.
+type countingReaderAt struct {
+	r io.ReaderAt
+	n int64
+}
+
+func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	n, err := c.r.ReadAt(p, off)
+	c.n += int64(n)
+	return n, err
+}
+
+func TestReadAtNeverTouchesMediaEntries(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, _ := zw.Create("peertube/channels.json")
+	_, _ = w.Write([]byte(`{"channels":[{"name":"ok_chan"}]}`))
+	// A stored 80 MiB media entry: far over MaxDeclaredTotal and MaxReadTotal.
+	mw, _ := zw.CreateHeader(&zip.FileHeader{Name: "files/videos/a.mp4", Method: zip.Store})
+	_, _ = mw.Write(make([]byte, 80<<20))
+	// A media entry whose header lies (5 GiB declared, undecodable bytes): any
+	// attempt to open it would fail or blow a cap.
+	raw, _ := zw.CreateRaw(&zip.FileHeader{Name: "files/videos/b.mp4", Method: zip.Deflate, UncompressedSize64: 5 << 30, CompressedSize64: 16})
+	_, _ = raw.Write(bytes.Repeat([]byte{0xFF}, 16))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	c := &countingReaderAt{r: bytes.NewReader(buf.Bytes())}
+	a, err := ReadAt(c, int64(buf.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Channels) != 1 {
+		t.Fatalf("channels: %+v", a.Channels)
+	}
+	if c.n > 1<<20 {
+		t.Fatalf("read %d bytes of a %d-byte archive; media must be left alone", c.n, buf.Len())
+	}
+}
+
+func TestReadAtRefusesHostileDirectories(t *testing.T) {
+	good := buildZip(t, entry{name: "peertube/channels.json", body: `{"channels":[]}`})
+	eocd := len(good) - 22
+	mut := func(f func(b []byte)) []byte { b := append([]byte(nil), good...); f(b); return b }
+	for name, raw := range map[string][]byte{
+		"records over cap": mut(func(b []byte) { binary.LittleEndian.PutUint16(b[eocd+10:], 0xFFFE) }),
+		"offset points earlier than size allows": mut(func(b []byte) {
+			binary.LittleEndian.PutUint32(b[eocd+16:], 0)
+		}),
+		"directory size lies": mut(func(b []byte) {
+			binary.LittleEndian.PutUint32(b[eocd+12:], binary.LittleEndian.Uint32(b[eocd+12:])-1)
+		}),
+		"saturated sizes without zip64 record": mut(func(b []byte) { binary.LittleEndian.PutUint32(b[eocd+12:], 0xFFFFFFFF) }),
+	} {
+		if _, err := Read(raw); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+	if _, err := Read(good); err != nil {
+		t.Fatalf("control archive refused: %v", err)
 	}
 }

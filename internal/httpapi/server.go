@@ -398,6 +398,11 @@ const uploadChunkRoutePath = "/api/v1/uploads/:upload_id/chunks/:n"
 // each attachment at 100 MiB itself (messaging-v2.md D6).
 const attachmentUploadRoutePath = "/api/v1/conversations/:id/attachments"
 
+// peertubeImportRoutePath is the Echo route template for the PeerTube archive
+// import. It is exempt from the global body limit and gets its own
+// PEERTUBE_IMPORT_MAX_SIZE cap (a real export bundles the video files).
+const peertubeImportRoutePath = "/api/v1/me/import/peertube"
+
 // adminJobEventsPath is the admin job-events SSE stream. It is the one route
 // that gets neither a request context deadline nor a socket write deadline — it
 // owns a bounded, token-expiry-capped lifetime inside its own handler.
@@ -1307,6 +1312,9 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 			if r.Method == http.MethodPost && c.Path() == attachmentUploadRoutePath {
 				return true
 			}
+			if r.Method == http.MethodPost && c.Path() == peertubeImportRoutePath {
+				return true
+			}
 			// Resumable chunk PUTs carry raw media bytes (up to the chunk size);
 			// the upload service bounds each chunk itself.
 			return r.Method == http.MethodPut && c.Path() == uploadChunkRoutePath
@@ -1734,7 +1742,7 @@ func (s *Server) routes() {
 		api.GET("/me/export/download", s.handleDownloadAccountExport, s.requireAuth)
 		api.POST("/me/import", s.handleImportAccount, s.requireAuth, s.requireScannerGate)
 		if s.peertubeArchive != nil {
-			api.POST("/me/import/peertube", s.handlePeerTubeArchiveImport, s.requireAuth, s.peertubeImportRateLimit())
+			api.POST("/me/import/peertube", s.handlePeerTubeArchiveImport, s.requireAuth, s.peertubeImportRateLimit(), s.peertubeImportBodyLimit())
 		}
 	}
 

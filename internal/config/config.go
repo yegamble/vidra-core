@@ -1004,6 +1004,12 @@ type Config struct {
 	// uploads are rejected with 413.
 	UploadMaxSize string
 
+	// PeerTubeImportMaxSize caps the request body of POST /me/import/peertube
+	// only (Echo size string). A real PeerTube export bundles the video files,
+	// so it is far over HTTP_BODY_LIMIT; the upload is spooled to a temp file
+	// and only its peertube/*.json entries are read. Default "20G".
+	PeerTubeImportMaxSize string
+
 	// UploadMaxActiveSessionsPerUser caps how many ACTIVE (unfinished, unexpired)
 	// resumable upload sessions one user may hold at once — the batch-upload guard
 	// (UPLOAD-10). A create past the cap is refused 429 with the stable code
@@ -1371,6 +1377,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		IPFSPrivateClusterAPIURL:               strings.TrimRight(getEnv("IPFS_PRIVATE_CLUSTER_API_URL", ""), "/"),
 		IPFSPrivateClusterToken:                getEnv("IPFS_PRIVATE_CLUSTER_TOKEN", ""),
 		UploadMaxSize:                          getEnv("UPLOAD_MAX_SIZE", "2G"),
+		PeerTubeImportMaxSize:                  getEnv("PEERTUBE_IMPORT_MAX_SIZE", "20G"),
 		YtdlpImportEnabled:                     p.Bool("YTDLP_IMPORT_ENABLED", false),
 		YtdlpPath:                              getEnv("YTDLP_PATH", "yt-dlp"),
 		YtdlpTimeout:                           p.Duration("YTDLP_TIMEOUT", 15*time.Minute),
@@ -1757,6 +1764,9 @@ func (c *Config) validate() error {
 	}
 	if _, err := bytes.Parse(c.UploadMaxSize); err != nil {
 		add(varErrorf("UPLOAD_MAX_SIZE", "config: invalid UPLOAD_MAX_SIZE %q: %w", c.UploadMaxSize, err))
+	}
+	if _, err := bytes.Parse(c.PeerTubeImportMaxSize); err != nil && c.PeerTubeImportMaxSize != "" { // "" = default
+		add(varErrorf("PEERTUBE_IMPORT_MAX_SIZE", "config: invalid PEERTUBE_IMPORT_MAX_SIZE %q: %w", c.PeerTubeImportMaxSize, err))
 	}
 	if c.UploadMaxActiveSessionsPerUser < 0 {
 		add(varErrorf("UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER", "config: UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER must be >= 0 (0 = unlimited), got %d", c.UploadMaxActiveSessionsPerUser))

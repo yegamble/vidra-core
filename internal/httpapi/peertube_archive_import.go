@@ -4,7 +4,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
+	"os"
 
 	"github.com/labstack/echo/v4"
 
@@ -21,15 +23,24 @@ func WithPeerTubeArchiveImporter(im *peertubearchive.Importer) Option {
 // playlists and the settings that map 1:1. It runs synchronously because the
 // work is bounded — a capped number of rows through the existing services, no
 // network and no media — and answers with what was created, what already
-// existed, and what was skipped. The zip is parsed in memory and never
-// extracted; the body is bounded by the global HTTP body limit (default 8 MB),
-// so an export that bundles video files must be trimmed to its peertube/*.json
-// entries first.
+// existed, and what was skipped.
 //
-// The malware scan is intentionally NOT applied here: the zip's bytes are
-// parsed in memory and discarded, never stored or served. Any change that
-// persists the archive (or any file inside it) must add requireScannerGate and
-// scanBeforeStore, as POST /me/import does.
+// A real export bundles the video files (multi-GB), so the body cap is
+// PEERTUBE_IMPORT_MAX_SIZE (default 20G), not the global 8M limit. The file part
+// is STREAMED to a temp file (never held in memory), the zip is opened on that
+// file with random access, and only the peertube/*.json entries are ever
+// opened; media entries are validated by name and left unread. The temp file is
+// removed on every path (success, refusal, client abort, panic).
+//
+// MALWARE SCAN: deliberately NOT applied, decision recorded here so a later
+// change revisits it knowingly. The archive's bytes touch local disk, but only
+// transiently and only under the process temp dir: nothing is put in object
+// storage, served, transcoded or executed, and the only bytes ever decoded are
+// the capped JSON entries, parsed by Go's own decoder. Scanning would mean
+// streaming up to the whole cap through the scanner (clamd rejects streams of
+// that size), for no reachable victim. Any change that persists the archive or a
+// file inside it (e.g. importing the bundled videos) must add requireScannerGate
+// and scanBeforeStore, as POST /me/import does.
 func (s *Server) handlePeerTubeArchiveImport(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
@@ -38,31 +49,20 @@ func (s *Server) handlePeerTubeArchiveImport(c echo.Context) error {
 	if !s.userImportEnabled() {
 		return &FeatureDisabledError{Feature: "user_import"}
 	}
-	fh, err := c.FormFile("archive")
-	if err != nil {
-		var he *echo.HTTPError
-		if errors.As(err, &he) && he.Code == http.StatusRequestEntityTooLarge {
-			return he
-		}
-		return &ValidationError{Fields: []FieldError{{Field: "archive", Message: "a zip file is required (multipart field \"archive\")"}}}
-	}
-	f, err := fh.Open()
+	tmp, size, err := s.spoolPeerTubeArchive(c)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(f, peertubearchive.MaxUploadBytes+1))
-	if err != nil {
-		return err
+	// A panic below unwinds through this defer too; the file never outlives the request.
+	defer func() { _ = os.Remove(tmp.Name()); _ = tmp.Close() }()
+	if size == 0 {
+		return peertubeArchiveInvalid()
 	}
-	if int64(len(raw)) > peertubearchive.MaxUploadBytes {
-		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "the archive is too large")
-	}
-	archive, err := peertubearchive.Read(raw)
+	archive, err := peertubearchive.ReadAt(tmp, size)
 	if err != nil {
 		if errors.Is(err, peertubearchive.ErrInvalid) {
 			// The reason is deliberately not echoed: it names attacker-chosen content.
-			return &ValidationError{Fields: []FieldError{{Field: "archive", Message: "not a valid PeerTube user-export archive"}}}
+			return peertubeArchiveInvalid()
 		}
 		return err
 	}
@@ -77,4 +77,78 @@ func (s *Server) handlePeerTubeArchiveImport(c echo.Context) error {
 		})
 	}
 	return c.JSON(http.StatusOK, summary)
+}
+
+func peertubeArchiveInvalid() error {
+	return &ValidationError{Fields: []FieldError{{Field: "archive", Message: "not a valid PeerTube user-export archive"}}}
+}
+
+// spoolPeerTubeArchive streams the "archive" file part of the multipart body to
+// a temp file and returns it positioned for ReadAt, with its size. On any error
+// the file is already removed. Nothing is read into memory beyond the copy
+// buffer. The parse semaphore is NOT held here: a slow upload must not occupy a
+// parse slot.
+func (s *Server) spoolPeerTubeArchive(c echo.Context) (_ *os.File, _ int64, err error) {
+	req := c.Request()
+	mr, err := req.MultipartReader()
+	if err != nil {
+		return nil, 0, &ValidationError{Fields: []FieldError{{Field: "archive", Message: "a zip file is required (multipart field \"archive\")"}}}
+	}
+	// Disk admission, the same measure the transcode scratch guard uses: refuse
+	// before writing when the declared body (or the configured floor) cannot fit.
+	dir := os.TempDir()
+	if s.measureDisk != nil {
+		if u, merr := s.measureDisk(dir); merr == nil {
+			need := uint64(s.cfg.TranscodingMinFreeScratchMB) << 20 //nolint:gosec // validated >= 0 at config load.
+			if req.ContentLength > 0 {
+				need += uint64(req.ContentLength)
+			}
+			if u.FreeBytes < need {
+				return nil, 0, echo.NewHTTPError(http.StatusServiceUnavailable, "not enough free space to receive the archive; try again later")
+			}
+		}
+	}
+	part, err := nextArchivePart(mr)
+	if err != nil {
+		return nil, 0, err
+	}
+	f, err := os.CreateTemp(dir, "vidra-peertube-import-*.zip")
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = os.Remove(f.Name())
+			_ = f.Close()
+		}
+	}()
+	n, err := io.Copy(f, part)
+	if err != nil {
+		var he *echo.HTTPError
+		if errors.As(err, &he) {
+			return nil, 0, he // the body-limit reader's 413
+		}
+		return nil, 0, err // client abort / disk error
+	}
+	return f, n, nil
+}
+
+// nextArchivePart advances to the file part named "archive", discarding a
+// bounded number of small preceding form fields.
+func nextArchivePart(mr *multipart.Reader) (*multipart.Part, error) {
+	for i := 0; i < 8; i++ {
+		p, err := mr.NextPart()
+		if err != nil {
+			var he *echo.HTTPError
+			if errors.As(err, &he) {
+				return nil, he
+			}
+			break
+		}
+		if p.FormName() == "archive" && p.FileName() != "" {
+			return p, nil
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(p, 1<<20))
+	}
+	return nil, &ValidationError{Fields: []FieldError{{Field: "archive", Message: "a zip file is required (multipart field \"archive\")"}}}
 }
