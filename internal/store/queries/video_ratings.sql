@@ -44,17 +44,19 @@ FROM (
 -- name: UpsertRemoteVideoRating :execrows
 -- A remote actor's Like/Dislike of a local video: one row per (actor, video),
 -- so a repeat is a no-op and a switch changes the row in place. A NEW row is
--- written only while the signer's domain has fewer than domain_cap new votes in
+-- written only while the signer's registrable domain (cap_domain, not the exact
+-- host: subdomains share one budget; `domain` stays the exact host the
+-- blocked_instances read filter matches) has fewer than domain_cap new votes in
 -- the last hour (0 rows affected = capped); changing an existing vote is never
 -- capped.
-INSERT INTO remote_video_ratings (video_id, remote_actor_url, rating, activity_url, domain)
+INSERT INTO remote_video_ratings (video_id, remote_actor_url, rating, activity_url, domain, cap_domain)
 SELECT sqlc.arg('video_id')::uuid, sqlc.arg('remote_actor_url')::text, sqlc.arg('rating')::text,
-       sqlc.arg('activity_url')::text, sqlc.arg('domain')::text
+       sqlc.arg('activity_url')::text, sqlc.arg('domain')::text, sqlc.arg('cap_domain')::text
 WHERE EXISTS (
         SELECT 1 FROM remote_video_ratings e
         WHERE e.remote_actor_url = sqlc.arg('remote_actor_url')::text AND e.video_id = sqlc.arg('video_id')::uuid)
    OR (SELECT count(*) FROM remote_video_ratings d
-       WHERE d.domain = sqlc.arg('domain')::text AND d.created_at > now() - interval '1 hour')
+       WHERE d.cap_domain = sqlc.arg('cap_domain')::text AND d.created_at > now() - interval '1 hour')
       < sqlc.arg('domain_cap')::bigint
 ON CONFLICT (remote_actor_url, video_id)
 DO UPDATE SET rating = EXCLUDED.rating, activity_url = EXCLUDED.activity_url, updated_at = now();

@@ -25,7 +25,7 @@ func (f fakeRepo) UpsertRemoteVideoRating(_ context.Context, arg sqlcgen.UpsertR
 	if _, exists := f.remoteRatings[key]; !exists {
 		var n int64
 		for _, r := range f.remoteRatings {
-			if r.Domain == arg.Domain {
+			if r.CapDomain == arg.CapDomain {
 				n++
 			}
 		}
@@ -259,7 +259,7 @@ func TestInboundRatingDomainCap(t *testing.T) {
 	for i := 0; i < maxNewRemoteRatingsPerDomainHour; i++ {
 		repo.remoteRatings[fmt.Sprintf("seed%d", i)] = &sqlcgen.UpsertRemoteVideoRatingParams{
 			RemoteActorUrl: fmt.Sprintf("https://peertube.example/accounts/s%d", i), VideoID: uuid.New(),
-			Rating: "like", Domain: "peertube.example",
+			Rating: "like", Domain: "peertube.example", CapDomain: "peertube.example",
 		}
 	}
 	svc := NewService(repo, WithBaseURL(contractBase))
@@ -278,5 +278,26 @@ func TestInboundRatingDomainCap(t *testing.T) {
 	}
 	if got := ratingOf(repo, ctPTAccount); got != "dislike" {
 		t.Fatalf("existing voter's switch = %q, want dislike", got)
+	}
+}
+
+// The cap keys on the registrable domain, so one operator cannot mint a fresh
+// budget per subdomain; Domain stays the exact host for the block filter.
+func TestInboundRatingCapSharedAcrossSubdomains(t *testing.T) {
+	ctx := context.Background()
+	repo := ratingRepo()
+	svc := NewService(repo, WithBaseURL(contractBase))
+	for i := 1; i <= 150; i++ {
+		actor := fmt.Sprintf("https://sub%d.evil.example/accounts/u", i)
+		cacheContractActor(repo, actor, "Person", "u", fmt.Sprintf("sub%d.evil.example", i))
+		_ = svc.HandleInbox(ctx, actor, rateActivity(actor+"/likes/1", "Like", actor, rtVideoURL))
+	}
+	if n := len(repo.remoteRatings); n != maxNewRemoteRatingsPerDomainHour {
+		t.Fatalf("recorded %d votes from one registrable domain, want %d", n, maxNewRemoteRatingsPerDomainHour)
+	}
+	for _, r := range repo.remoteRatings {
+		if r.CapDomain != "evil.example" || r.Domain == "evil.example" {
+			t.Fatalf("row domain=%q cap_domain=%q, want exact host + evil.example", r.Domain, r.CapDomain)
+		}
 	}
 }
