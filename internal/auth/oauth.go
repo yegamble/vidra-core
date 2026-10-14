@@ -45,7 +45,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -172,7 +174,7 @@ type oidcClient struct {
 	provider *oidc.Provider
 }
 
-func (c *oidcClient) get(ctx context.Context, hc *http.Client, issuer string) (*oidc.Provider, error) {
+func (c *oidcClient) get(ctx context.Context, hc *http.Client, issuer string, check ...func(*oidc.Provider) error) (*oidc.Provider, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.provider != nil {
@@ -182,8 +184,73 @@ func (c *oidcClient) get(ctx context.Context, hc *http.Client, issuer string) (*
 	if err != nil {
 		return nil, fmt.Errorf("auth: oidc discovery for issuer failed: %w", err)
 	}
+	for _, f := range check {
+		if err := f(p); err != nil {
+			return nil, err // not cached: a corrected document is picked up next time
+		}
+	}
 	c.provider = p
 	return p, nil
+}
+
+// maxOIDCResponseBytes caps every discovery/JWKS/token response body an
+// admin-managed provider returns. Real documents are a few KiB.
+const maxOIDCResponseBytes = 1 << 20
+
+// checkDiscoveredEndpoints requires https on every endpoint an admin-managed
+// provider's discovery document names (http only when private issuers are
+// allowed, for labs). The issuer was checked at save time; these URLs were not.
+func checkDiscoveredEndpoints(op *oidc.Provider, allowHTTP bool) error {
+	var doc struct {
+		JWKS string `json:"jwks_uri"`
+	}
+	_ = op.Claims(&doc)
+	ep := op.Endpoint()
+	for _, raw := range []string{ep.AuthURL, ep.TokenURL, doc.JWKS, op.UserInfoEndpoint()} {
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		httpsOK := err == nil && u.Scheme == "https"
+		labOK := err == nil && allowHTTP && u.Scheme == "http"
+		if !httpsOK && !labOK {
+			return fmt.Errorf("auth: oidc discovery names a non-https endpoint")
+		}
+	}
+	return nil
+}
+
+// cappedTransport bounds each response body at maxOIDCResponseBytes.
+type cappedTransport struct{ next http.RoundTripper }
+
+func (t cappedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := t.next.RoundTrip(r)
+	if err == nil {
+		resp.Body = &cappedBody{ReadCloser: resp.Body, left: maxOIDCResponseBytes}
+	}
+	return resp, err
+}
+
+type cappedBody struct {
+	io.ReadCloser
+	left int64
+}
+
+func (b *cappedBody) Read(p []byte) (int, error) {
+	if b.left <= 0 {
+		var one [1]byte
+		n, err := b.ReadCloser.Read(one[:])
+		if n > 0 {
+			return 0, errors.New("auth: oidc response exceeds the size limit")
+		}
+		return 0, err
+	}
+	if int64(len(p)) > b.left {
+		p = p[:b.left]
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.left -= int64(n)
+	return n, err
 }
 
 // OAuthService implements OIDC login/link on top of the core auth service
@@ -239,7 +306,11 @@ func NewOAuthService(repo OAuthRepository, svc *Service, providers []OAuthProvid
 	for _, opt := range opts {
 		opt(s)
 	}
-	s.guardedClient = urlsafety.Guard{AllowPrivate: s.allowPrivate}.NewClient(15 * time.Second)
+	// Bounded in time (whole request and per-read silence) and in body size;
+	// the metadata ranges stay blocked even when private issuers are allowed.
+	s.guardedClient = urlsafety.Guard{AllowPrivate: s.allowPrivate, KeepMetadataBlocked: true}.
+		NewBudgetClient(urlsafety.Budget{Total: 15 * time.Second, Idle: 10 * time.Second})
+	s.guardedClient.Transport = cappedTransport{next: s.guardedClient.Transport}
 	s.SetDatabaseProviders(nil)
 	return s
 }
@@ -284,6 +355,16 @@ func (s *OAuthService) SetDatabaseProviders(db []OAuthProvider) {
 		}
 	}
 	s.set.Store(next)
+}
+
+// endpointCheck returns the discovery checks a provider's document must pass.
+func (s *OAuthService) endpointCheck(p OAuthProvider) []func(*oidc.Provider) error {
+	if !p.Guarded {
+		return nil
+	}
+	return []func(*oidc.Provider) error{func(op *oidc.Provider) error {
+		return checkDiscoveredEndpoints(op, s.allowPrivate)
+	}}
 }
 
 // clientFor picks the outbound client for a provider.
@@ -389,7 +470,7 @@ func (s *OAuthService) BeginAuth(ctx context.Context, provider, redirectURI stri
 	if err != nil {
 		return "", OAuthState{}, err
 	}
-	op, err := cl.get(ctx, s.clientFor(p), p.IssuerURL)
+	op, err := cl.get(ctx, s.clientFor(p), p.IssuerURL, s.endpointCheck(p)...)
 	if err != nil {
 		return "", OAuthState{}, err
 	}
@@ -491,7 +572,7 @@ func (s *OAuthService) verifyAssertion(ctx context.Context, provider, redirectUR
 	if err != nil {
 		return "", "", claims, err
 	}
-	op, err := cl.get(ctx, s.clientFor(p), p.IssuerURL)
+	op, err := cl.get(ctx, s.clientFor(p), p.IssuerURL, s.endpointCheck(p)...)
 	if err != nil {
 		return "", "", claims, err
 	}

@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func TestRemoteVideoRatingsOnRealPG(t *testing.T) {
 		t.Helper()
 		if _, err := q.UpsertRemoteVideoRating(ctx, sqlcgen.UpsertRemoteVideoRatingParams{
 			VideoID: videoID, RemoteActorUrl: actor, Rating: rating, ActivityUrl: id,
-			Domain: "peertube.example", DomainCap: 100,
+			Domain: "peertube.example", CapDomain: "peertube.example", DomainCap: 100,
 		}); err != nil {
 			t.Fatalf("UpsertRemoteVideoRating: %v", err)
 		}
@@ -131,7 +132,7 @@ func TestRemoteVideoRatingsFilteredByBlocksOnRealPG(t *testing.T) {
 	for _, v := range []uuid.UUID{videoID, otherVideo} {
 		if _, err := q.UpsertRemoteVideoRating(ctx, sqlcgen.UpsertRemoteVideoRatingParams{
 			VideoID: v, RemoteActorUrl: actor, Rating: "like", ActivityUrl: actor + "/likes/" + v.String(),
-			Domain: domain, DomainCap: 100,
+			Domain: domain, CapDomain: domain, DomainCap: 100,
 		}); err != nil {
 			t.Fatalf("vote: %v", err)
 		}
@@ -201,7 +202,7 @@ func TestRemoteVideoRatingDomainCapOnRealPG(t *testing.T) {
 		}
 		rows, err := q.UpsertRemoteVideoRating(ctx, sqlcgen.UpsertRemoteVideoRatingParams{
 			VideoID: videoID, RemoteActorUrl: actor, Rating: rating, ActivityUrl: actor + "/" + rating,
-			Domain: domain, DomainCap: 2,
+			Domain: domain, CapDomain: domain, DomainCap: 2,
 		})
 		if err != nil {
 			t.Fatalf("vote: %v", err)
@@ -273,5 +274,60 @@ func TestRemoteVideoUserRatingsOnRealPG(t *testing.T) {
 	}
 	if _, err := q.GetRemoteVideoUserRating(ctx, get); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("vote survived its remote video: %v", err)
+	}
+}
+
+// TestRemoteVideoRatingCapKeyedOnRegistrableDomainOnRealPG proves 150 actors on
+// sub1..sub150 of one registrable domain share ONE budget (cap_domain), while
+// `domain` keeps the exact host: blocking one subdomain hides only its votes.
+func TestRemoteVideoRatingCapKeyedOnRegistrableDomainOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	_, channelID := seedOwnerChannel(ctx, t, st, "rrcapsub")
+	videoID := seedPublishedVideo(ctx, t, st, channelID, "subdomain votes")
+	reg := "capsub-" + uuid.NewString()[:8] + ".example"
+	var recorded int64
+	for i := 1; i <= 150; i++ {
+		host := fmt.Sprintf("sub%d.%s", i, reg)
+		actor := "https://" + host + "/accounts/a"
+		if _, err := st.Pool.Exec(ctx, `INSERT INTO remote_actors (actor_url, actor_type, public_key_pem) VALUES ($1, 'Person', 'pem')`, actor); err != nil {
+			t.Fatalf("seed actor: %v", err)
+		}
+		rows, err := q.UpsertRemoteVideoRating(ctx, sqlcgen.UpsertRemoteVideoRatingParams{
+			VideoID: videoID, RemoteActorUrl: actor, Rating: "like", ActivityUrl: actor + "/likes/1",
+			Domain: host, CapDomain: reg, DomainCap: 100,
+		})
+		if err != nil {
+			t.Fatalf("vote: %v", err)
+		}
+		recorded += rows
+	}
+	if recorded != 100 {
+		t.Fatalf("recorded %d new votes across subdomains of one registrable domain, want 100", recorded)
+	}
+	likes := func() int64 {
+		c, err := q.CountVideoRatings(ctx, videoID)
+		if err != nil {
+			t.Fatalf("CountVideoRatings: %v", err)
+		}
+		return c.Likes
+	}
+	if n := likes(); n != 100 {
+		t.Fatalf("likes = %d, want 100", n)
+	}
+	// The block filter still reads the exact host: one subdomain's block drops
+	// only its own vote, the registrable domain is not blocked wholesale.
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO blocked_instances (domain) VALUES ($1)`, "sub1."+reg); err != nil {
+		t.Fatalf("block: %v", err)
+	}
+	if n := likes(); n != 99 {
+		t.Fatalf("likes after blocking sub1 = %d, want 99", n)
 	}
 }

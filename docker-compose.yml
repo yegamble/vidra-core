@@ -312,6 +312,9 @@ x-api-env: &api-env
   # addresses so backed e2e can import from a loopback/compose-network origin (a
   # public origin isn't reachable in CI). NEVER enable in production. Default off.
   HTTP_IMPORT_ALLOW_PRIVATE_URLS: ${HTTP_IMPORT_ALLOW_PRIVATE_URLS:-false}
+  # Admin-managed OIDC providers may use http/private-network issuers (internal
+  # IdP or lab). Metadata ranges stay blocked. Default off.
+  OIDC_ALLOW_PRIVATE_ISSUERS: ${OIDC_ALLOW_PRIVATE_ISSUERS:-false}
   # DEV/TEST-ONLY: pins the first-run owner-claim mint to a fixed value so a
   # test harness can redeem POST /api/v1/setup/claim-owner deterministically
   # instead of scraping the boot log (config enforces >=16 chars and refuses

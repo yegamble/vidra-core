@@ -74,6 +74,8 @@ func oidcProvidersServer(t *testing.T, buf *bytes.Buffer, svc *fakeOIDCProviders
 	), repo
 }
 
+const oidcDeleteProof = `{"current_password":"supersecret"}`
+
 const oidcCreateBody = `{"name":"corp","issuer_url":"https://sso.example","client_id":"vidra","client_secret":"top-secret-value"}`
 
 func TestOIDCProvidersAdminOnly(t *testing.T) {
@@ -88,7 +90,7 @@ func TestOIDCProvidersAdminOnly(t *testing.T) {
 		{http.MethodGet, oidcProvidersPath, ""},
 		{http.MethodPost, oidcProvidersPath, withCurrentPassword(oidcCreateBody)},
 		{http.MethodPut, oidcProvidersPath + "/corp", withCurrentPassword(`{"client_id":"x"}`)},
-		{http.MethodDelete, oidcProvidersPath + "/corp", ""},
+		{http.MethodDelete, oidcProvidersPath + "/keycloak", oidcDeleteProof},
 	} {
 		if rec := doJSON(srv, v.method, v.path, "", v.body); rec.Code != http.StatusUnauthorized {
 			t.Errorf("anonymous %s = %d, want 401", v.method, rec.Code)
@@ -189,14 +191,25 @@ func TestOIDCProvidersListAndDelete(t *testing.T) {
 		t.Error("an environment client secret appeared in the list")
 	}
 
-	if rec := doJSON(srv, http.MethodDelete, oidcProvidersPath+"/corp", tok, ""); rec.Code != http.StatusNoContent {
+	// A row that overrides an environment provider is disabled or edited, not
+	// deleted: deleting it would silently restore the environment settings.
+	if rec := doJSON(srv, http.MethodDelete, oidcProvidersPath+"/corp", tok, oidcDeleteProof); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("delete of an environment override = %d, want 422", rec.Code)
+	}
+	if rec := doJSON(srv, http.MethodDelete, oidcProvidersPath+"/keycloak", tok, ""); rec.Code != http.StatusForbidden || errorCode(t, rec) != "step_up_required" {
+		t.Errorf("delete without a fresh credential = %d, want 403 step_up_required", rec.Code)
+	}
+	if len(svc.deleted) != 0 {
+		t.Fatalf("refused deletes reached the service: %v", svc.deleted)
+	}
+	if rec := doJSON(srv, http.MethodDelete, oidcProvidersPath+"/keycloak", tok, oidcDeleteProof); rec.Code != http.StatusNoContent {
 		t.Errorf("delete = %d, want 204", rec.Code)
 	}
 	if findAudit(auditEvents(t, &buf), observability.ActionAdminOIDCProviderDelete, observability.ResultSuccess) == nil {
 		t.Error("delete was not audited")
 	}
 	svc.existed = false
-	if rec := doJSON(srv, http.MethodDelete, oidcProvidersPath+"/nope", tok, ""); rec.Code != http.StatusNotFound {
+	if rec := doJSON(srv, http.MethodDelete, oidcProvidersPath+"/nope", tok, oidcDeleteProof); rec.Code != http.StatusNotFound {
 		t.Errorf("delete missing = %d, want 404", rec.Code)
 	}
 }

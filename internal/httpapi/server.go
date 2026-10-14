@@ -103,6 +103,8 @@ type Server struct {
 	bulkVideosLimit *ratelimit.Limiter
 	// remoteRatingLimit throttles remote-video vote changes PER USER.
 	remoteRatingLimit *ratelimit.Limiter
+	// remoteViewLimit throttles remote-video view pings PER CLIENT IP.
+	remoteViewLimit *ratelimit.Limiter
 	// peertubeImportLimit throttles POST /me/import/peertube PER USER.
 	peertubeImportLimit *ratelimit.Limiter
 	// ptSpool admits PeerTube archive uploads to local disk (process-wide).
@@ -1245,6 +1247,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// times, so they always carry a per-user budget, wired in-process like unlock.
 	s.bulkVideosLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultBulkVideosRateLimit, defaultBulkVideosRateWindow)
 	s.remoteRatingLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultRemoteRatingRateLimit, defaultRemoteRatingRateWindow)
+	s.remoteViewLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultRemoteViewRateLimit, defaultRemoteViewRateWindow)
 	s.peertubeImportLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPeerTubeImportRateLimit, defaultPeerTubeImportRateWindow)
 	s.ptSpool = newPeerTubeSpool()
 	if s.peertubeArchive != nil {
@@ -2253,6 +2256,9 @@ func (s *Server) routes() {
 			api.GET("/remote-videos/:id/rating", s.handleGetRemoteVideoRating, s.requireAuth)
 			api.PUT("/remote-videos/:id/rating", s.handlePutRemoteVideoRating, s.requireAuth, s.remoteRatingRateLimit())
 			api.DELETE("/remote-videos/:id/rating", s.handleDeleteRemoteVideoRating, s.requireAuth, s.remoteRatingRateLimit())
+			// A view of a remote video, federated to the origin as a View from
+			// the instance actor (remote_video_views.go).
+			api.POST("/remote-videos/:id/view", s.handleRecordRemoteVideoView, s.optionalAuth, s.remoteViewRateLimit())
 		}
 		// The WRITE side (migration 0147, the home-instance-hosts-and-federates
 		// ruling): a signed-in local user authors a comment ON a remote video, and
@@ -2447,7 +2453,7 @@ func (s *Server) routes() {
 		api.GET("/admin/oidc-providers", s.handleListOIDCProviders, adminOnly...)
 		api.POST("/admin/oidc-providers", s.handleCreateOIDCProvider, s.adminPasswordStepUpMW()...)
 		api.PUT("/admin/oidc-providers/:name", s.handleUpdateOIDCProvider, s.adminPasswordStepUpMW()...)
-		api.DELETE("/admin/oidc-providers/:name", s.handleDeleteOIDCProvider, adminOnly...)
+		api.DELETE("/admin/oidc-providers/:name", s.handleDeleteOIDCProvider, s.adminPasswordStepUpMW()...)
 	}
 
 	// Admin operations: durable-queue depth snapshot + recent failures (P17.4).

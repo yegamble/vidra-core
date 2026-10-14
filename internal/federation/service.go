@@ -225,6 +225,11 @@ type Service struct {
 	onInstanceFollowerRequest func(context.Context, uuid.UUID)
 	// onHeldComment: see WithHeldCommentHook (nil = none).
 	onHeldComment func(context.Context, uuid.UUID)
+	// remoteViewDeduper gates federated views of remote videos and
+	// remoteViewOriginCap bounds them per origin (views_outbound.go).
+	// Nil deduper = not federated; nil cap = uncapped.
+	remoteViewDeduper   ViewDeduper
+	remoteViewOriginCap ratelimit.Counter
 
 	// allowPrivateFetch relaxes the SSRF guard for remote-actor fetches so backed
 	// e2e / dev can reach a loopback origin. Never true in production.

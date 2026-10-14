@@ -684,6 +684,14 @@ type Config struct {
 	// loudly when on. See internal/urlsafety.Guard.AllowPrivate.
 	ImportAllowPrivateURLs bool
 
+	// OIDCAllowPrivateIssuers lets ADMIN-MANAGED OIDC providers (migration
+	// 0182) use http and private-network issuers and endpoints — an internal
+	// IdP or a lab. Separate from the import switch on purpose. The cloud
+	// metadata ranges stay blocked either way. Environment providers
+	// (OAUTH_PROVIDERS) are operator configuration and are not guarded.
+	// Default false.
+	OIDCAllowPrivateIssuers bool
+
 	// ImportFetchTimeout is the TOTAL wall clock one direct URL import download
 	// may spend, however steadily it is progressing. It bounds how long a single
 	// import can hold a worker slot; it does NOT police speed — that is
@@ -1309,6 +1317,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		SMTPFrom:                               getEnv("SMTP_FROM", ""),
 		DevMailCaptureEnabled:                  p.Bool("DEV_MAIL_CAPTURE_ENABLED", false),
 		ImportAllowPrivateURLs:                 p.Bool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
+		OIDCAllowPrivateIssuers:                p.Bool("OIDC_ALLOW_PRIVATE_ISSUERS", false),
 		ImportFetchTimeout:                     p.Duration("IMPORT_FETCH_TIMEOUT", 6*time.Hour),
 		ImportFetchIdleTimeout:                 p.Duration("IMPORT_FETCH_IDLE_TIMEOUT", 60*time.Second),
 		OwnerClaimToken:                        getEnv("OWNER_CLAIM_TOKEN", ""),
