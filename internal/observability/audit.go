@@ -116,6 +116,15 @@ const (
 	ActionVideoReject            = "moderation.video.quarantine_reject"
 	ActionInstanceBlock          = "moderation.instance.block"
 	ActionInstanceUnblock        = "moderation.instance.unblock"
+	// ActionBlocklistSync records one blocklist-subscription sync (added/removed
+	// counts in metadata; never the list URL or the domains).
+	ActionBlocklistSync = "moderation.blocklist.sync"
+	// ActionBlocklistSubscriptionAdd/Remove record an admin adding/removing a
+	// subscription; ActionBlocklistAllow/Disallow the allowlist exemption.
+	ActionBlocklistSubscriptionAdd    = "moderation.blocklist.subscription_add"
+	ActionBlocklistSubscriptionRemove = "moderation.blocklist.subscription_remove"
+	ActionBlocklistAllow              = "moderation.blocklist.allow"
+	ActionBlocklistDisallow           = "moderation.blocklist.disallow"
 	// ActionRemoteActorBlock/Unblock record an admin blocking ONE remote
 	// account for every reader on this instance (A29 parity), rather than
 	// defederating that account's whole server. The blocked actor URL is the
