@@ -4,11 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"net"
 	"time"
 
 	"github.com/google/uuid"
-	"golang.org/x/net/publicsuffix"
 
 	"github.com/vidra/vidra-core/internal/ratelimit"
 )
@@ -82,22 +80,4 @@ func (s *Service) handleView(ctx context.Context, act inboxActivity, signerActor
 	// Hashed like the local viewer key, so actor URLs never become Redis keys.
 	sum := sha256.Sum256([]byte("ap:" + signerActorURL))
 	return s.recordView(ctx, videoID, hex.EncodeToString(sum[:]), gate)
-}
-
-// capDomain is the key for a per-sender-domain budget: the registrable domain
-// (eTLD+1) of the URL's normalised host, so sub1.evil.example and
-// sub2.evil.example share one budget. An IP literal, or a host the public
-// suffix list cannot reduce, keys on the normalised host itself.
-func capDomain(rawURL string) string {
-	host := hostOf(rawURL)
-	if n, ok := NormalizeFollowHost(host); ok {
-		host = n
-	}
-	if net.ParseIP(host) != nil {
-		return host
-	}
-	if d, err := publicsuffix.EffectiveTLDPlusOne(host); err == nil {
-		return d
-	}
-	return host
 }
