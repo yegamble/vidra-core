@@ -17083,6 +17083,149 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/ipfs/repin-playback-only:
+    post:
+      operationId: startIPFSRepin
+      summary: Start the bulk re-pin to the playback-only set (admin)
+      description: >-
+        Re-pins every already-pinned HLS tree whose pinned root still includes files
+        the HLS routes do not serve (download MP4s, vp9.webm), so it matches what a
+        new pin adds (Tier A F6). Runs in the leader's mirror worker through the
+        ordinary pin path - admission, reservation and the capacity ceilings all
+        apply - in small batches, and pauses while the node is at its budget. The
+        superseded root is unpinned only when no other row shares it; its blocks are
+        freed by the node's garbage collection. Resumable and safe to repeat. Returns
+        202 with the run status. Restricted to admins; audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "202":
+          description: The run was recorded; the worker advances it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSRepinStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A re-pin is already running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: This build or storage backend cannot recompute the playback-only set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: getIPFSRepin
+      summary: Progress of the bulk re-pin to the playback-only set (admin)
+      description: >-
+        The current or last run: phase (idle, running, paused, completed, cancelled), counts of
+        rows done, skipped (already playback-only), blocked (the admission policy
+        would not re-admit them), failed and in flight, the pinned HLS rows not yet
+        examined (an upper bound on the work left) and an estimate of the pinned
+        bytes saved. Bytes are returned to the disk only after the node's GC.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The run status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSRepinStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: This build or storage backend cannot recompute the playback-only set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: cancelIPFSRepin
+      summary: Cancel the bulk re-pin to the playback-only set (admin)
+      description: >-
+        Stops the run from arming further rows. Rows already re-armed finish through
+        the ordinary pin path; nothing is rolled back. Works while running or paused.
+        Returns the run status. Restricted to admins; audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The run was cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSRepinStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: No re-pin is running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: This build or storage backend cannot recompute the playback-only set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/ipfs/reconcile:
     post:
       operationId: reconcileIPFS
@@ -27785,6 +27928,56 @@ components:
         unpinned:
           type: integer
           format: int64
+    IPFSRepinStatus:
+      type: object
+      description: >-
+        Progress of the bulk re-pin of pinned HLS trees to the playback-only set.
+      required: [phase, started_at, finished_at, pause_reason, scanned, queued, done, skipped, blocked, failed, in_flight, remaining, bytes_saved_estimate]
+      properties:
+        phase:
+          type: string
+          enum: [idle, running, paused, completed, cancelled]
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+        pause_reason:
+          type: string
+          description: Why the run is paused (e.g. budget_exhausted); empty otherwise.
+        scanned:
+          type: integer
+          format: int64
+        queued:
+          type: integer
+          format: int64
+          description: Rows moved back to pending for a playback-only re-add.
+        done:
+          type: integer
+          format: int64
+          description: Queued rows now pinned to a new root.
+        skipped:
+          type: integer
+          format: int64
+          description: Rows already playback-only, or that changed under the run.
+        blocked:
+          type: integer
+          format: int64
+          description: Rows the admission policy would not re-admit (e.g. backfill off).
+        failed:
+          type: integer
+          format: int64
+        in_flight:
+          type: integer
+        remaining:
+          type: integer
+          format: int64
+          description: Pinned HLS rows not examined yet; an upper bound on the work left.
+        bytes_saved_estimate:
+          type: integer
+          format: int64
+          description: Pinned bytes no longer held by the ledger; freed on disk only after GC.
     IPFSReconcileResult:
       type: object
       description: >-

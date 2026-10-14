@@ -239,6 +239,11 @@ const (
 	// eligible pre-existing public objects. Reason carries only safe counts
 	// (enqueued, classes, rearmed) — never a CID or object key.
 	ActionIPFSReconcile = "admin.ipfs.reconcile"
+	// ActionIPFSRepin records an admin starting the bulk re-pin of pinned HLS trees to
+	// the playback-only set. Reason carries only a safe count - never a CID or key.
+	ActionIPFSRepin = "admin.ipfs.repin"
+	// ActionIPFSRepinCancel records an admin cancelling that run.
+	ActionIPFSRepinCancel = "admin.ipfs.repin.cancel"
 	// ActionDonationVerify records a creator proving control of a donation
 	// address by signing the challenge (P14). Reason carries the safe address
 	// id + network only — never the signature, nonce, or any key material.
