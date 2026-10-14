@@ -11,6 +11,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/peertubearchive"
+	"github.com/vidra/vidra-core/internal/peertubefollows"
 )
 
 // WithPeerTubeArchiveImporter mounts POST /api/v1/me/import/peertube.
@@ -79,6 +80,32 @@ func (s *Server) handlePeerTubeArchiveImport(c echo.Context) error {
 		})
 	}
 	return c.JSON(http.StatusOK, summary)
+}
+
+// WithPeerTubeFollowStatus mounts GET /api/v1/me/import/peertube/follows/{id}.
+func WithPeerTubeFollowStatus(svc *peertubefollows.Service) Option {
+	return func(s *Server) { s.peertubeFollows = svc }
+}
+
+// handlePeerTubeFollowStatus reports on a background follow import the caller
+// started. Another user's id and an unknown id are the same 404.
+func (s *Server) handlePeerTubeFollowStatus(c echo.Context) error {
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
+	}
+	id, err := pathUUID(c, "id", "follow import not found")
+	if err != nil {
+		return err
+	}
+	st, err := s.peertubeFollows.Status(c.Request().Context(), userID, id)
+	if errors.Is(err, peertubefollows.ErrNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound, "follow import not found")
+	}
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, st)
 }
 
 func peertubeArchiveInvalid() error {

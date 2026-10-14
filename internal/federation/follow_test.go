@@ -463,3 +463,21 @@ func TestFollowRemoteChannelKeepsTheSingleSelfLink(t *testing.T) {
 		t.Fatalf("followed %q, want %q", follow.ActorURL, want)
 	}
 }
+
+// A blocked domain is refused before any WebFinger fetch: the service has no
+// HTTP client wired here, so reaching the fetch would fail as unresolvable
+// rather than as blocked.
+func TestFollowRemoteChannelRefusesBlockedDomain(t *testing.T) {
+	userID := uuid.New()
+	repo := newFollowRepo(userID)
+	repo.blockedDomains = map[string]bool{"bad.example": true}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	for _, target := range []string{"movies@bad.example", "@Movies@BAD.example", "https://bad.example/video-channels/movies"} {
+		if _, err := svc.FollowRemoteChannel(context.Background(), userID, target); !errors.Is(err, ErrBlockedFollowTarget) {
+			t.Errorf("%q err = %v, want ErrBlockedFollowTarget", target, err)
+		}
+	}
+	if len(repo.deliveries) != 0 || len(repo.rcFollows) != 0 {
+		t.Error("a blocked target must not enqueue or store anything")
+	}
+}

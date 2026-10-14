@@ -107,6 +107,8 @@ func (s *Server) handleCreateRemoteFollow(c echo.Context) error {
 		case errors.Is(err, federation.ErrRemoteUnresolvable):
 			// The target is not echoed back (attacker-controlled input).
 			return &ValidationError{Fields: []FieldError{{Field: "handle", Message: "could not be resolved to a remote channel"}}}
+		case errors.Is(err, federation.ErrBlockedFollowTarget):
+			return &ValidationError{Fields: []FieldError{{Field: "handle", Message: "is on a blocked domain"}}}
 		case errors.Is(err, federation.ErrNotFound):
 			return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 		}
