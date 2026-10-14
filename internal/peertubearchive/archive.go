@@ -13,6 +13,7 @@ package peertubearchive
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -34,6 +35,10 @@ const (
 
 	// MaxUploadBytes bounds the zip itself (the default HTTP body limit).
 	MaxUploadBytes = 8 << 20
+
+	// MaxStreamBytes bounds the decompressed bytes scanned for counted-only
+	// sections, per section and in total. They are scanned, never buffered.
+	MaxStreamBytes = 32 << 20
 )
 
 // ErrInvalid wraps every reason an archive is refused.
@@ -84,9 +89,15 @@ func invalid(format string, a ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalid, fmt.Sprintf(format, a...))
 }
 
+// parseSlots bounds how many archives are parsed at once process-wide, so the
+// CPU spent on uploads stays flat however many users upload together.
+var parseSlots = make(chan struct{}, 2)
+
 // Read parses a zip held in memory. It returns ErrInvalid for anything
 // hostile or malformed, and an archive with no recognised JSON as invalid too.
 func Read(raw []byte) (*Archive, error) {
+	parseSlots <- struct{}{}
+	defer func() { <-parseSlots }()
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
 		return nil, invalid("not a zip")
@@ -143,11 +154,11 @@ func Read(raw []byte) (*Archive, error) {
 	} else if b != nil {
 		var doc struct {
 			Playlists []struct {
-				DisplayName string            `json:"displayName"`
-				Description string            `json:"description"`
-				Privacy     int               `json:"privacy"`
-				Type        int               `json:"type"`
-				Elements    []json.RawMessage `json:"elements"`
+				DisplayName string     `json:"displayName"`
+				Description string     `json:"description"`
+				Privacy     int        `json:"privacy"`
+				Type        int        `json:"type"`
+				Elements    []struct{} `json:"elements"`
 			} `json:"videoPlaylists"`
 		}
 		if err := json.Unmarshal(b, &doc); err != nil {
@@ -168,24 +179,17 @@ func Read(raw []byte) (*Archive, error) {
 		}
 		a.Settings = &Settings{AutoPlayNextVideo: s.AutoPlayNextVideo}
 	}
+	var streamBudget int64 = MaxStreamBytes
 	for file, section := range skipSections {
-		b, err := read(file)
-		if err != nil {
-			return nil, err
-		}
-		if b == nil {
+		f, ok := files["peertube/"+file]
+		if !ok {
 			continue
 		}
-		var doc map[string]json.RawMessage
-		if json.Unmarshal(b, &doc) != nil {
+		n, err := countSection(f, &streamBudget)
+		if err != nil {
 			return nil, invalid("%s is not valid", file)
 		}
-		for _, v := range doc {
-			var items []json.RawMessage
-			if json.Unmarshal(v, &items) == nil {
-				a.Skipped[section] += len(items)
-			}
-		}
+		a.Skipped[section] += n
 	}
 	if a.Channels == nil && a.Playlists == nil && a.Settings == nil && len(a.Skipped) == 0 {
 		return nil, invalid("no peertube export data found")
@@ -235,4 +239,105 @@ func readEntry(f *zip.File, budget *int64) ([]byte, error) {
 		return nil, invalid("archive expands too far")
 	}
 	return b, nil
+}
+
+// countSection counts the elements of every array that is a direct value of
+// the entry's top-level object, by scanning bytes. Nothing is retained, so
+// memory is constant however large the section is. The scan is capped by
+// MaxStreamBytes and refuses input that is not a well-formed object.
+func countSection(f *zip.File, budget *int64) (int, error) {
+	if f.UncompressedSize64 > MaxStreamBytes {
+		return 0, ErrInvalid
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return 0, ErrInvalid
+	}
+	defer func() { _ = rc.Close() }()
+	br := bufio.NewReaderSize(io.LimitReader(rc, MaxStreamBytes+1), 32<<10)
+
+	var (
+		depth, count int
+		inStr, esc   bool
+		inArr        bool // directly inside an array that is a top-level value
+		sawElem      bool
+		started      bool
+		read         int64
+	)
+	for {
+		c, err := br.ReadByte()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, ErrInvalid
+		}
+		if read++; read > MaxStreamBytes {
+			return 0, ErrInvalid
+		}
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		if !started {
+			if c == ' ' || c == '\n' || c == '\r' || c == '\t' {
+				continue
+			}
+			if c != '{' {
+				return 0, ErrInvalid
+			}
+			started = true
+		}
+		switch c {
+		case '"':
+			inStr = true
+			if inArr && depth == 2 {
+				sawElem = true
+			}
+		case '{', '[':
+			depth++
+			if depth == 2 && c == '[' {
+				inArr, sawElem = true, false
+			} else if inArr && depth == 3 {
+				sawElem = true
+			}
+		case '}', ']':
+			if depth--; depth < 0 {
+				return 0, ErrInvalid
+			}
+			if depth == 1 && inArr {
+				if sawElem {
+					count++
+				}
+				inArr = false
+			}
+		case ',':
+			if inArr && depth == 2 {
+				count++
+				sawElem = false
+			}
+		case ' ', '\n', '\r', '\t', ':':
+		default:
+			if inArr && depth == 2 {
+				sawElem = true
+			}
+		}
+		if depth == 0 && started && c == '}' {
+			break
+		}
+	}
+	if !started || depth != 0 || inStr {
+		return 0, ErrInvalid
+	}
+	if *budget -= read; *budget < 0 {
+		return 0, ErrInvalid
+	}
+	return count, nil
 }

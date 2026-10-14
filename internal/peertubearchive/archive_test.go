@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -137,5 +138,45 @@ func TestReadEnforcesDeclaredTotal(t *testing.T) {
 	_ = zw.Close()
 	if _, err := Read(buf.Bytes()); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("want ErrInvalid, got %v", err)
+	}
+}
+
+// A large counted-only section is tallied by a streaming scan that retains
+// nothing: total allocation stays far below the section's size.
+func TestReadCountsLargeSectionWithoutRetainingIt(t *testing.T) {
+	const n = 8 << 20
+	body := `{"likes":[` + strings.Repeat("0,", n-1) + `0],"note":"[1,2]"}`
+	raw := buildZip(t, entry{name: "peertube/likes.json", body: body})
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	a, err := Read(raw)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Skipped["likes"] != n {
+		t.Fatalf("counted %d, want %d", a.Skipped["likes"], n)
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 4<<20 {
+		t.Fatalf("allocated %d bytes for a %d byte section", grew, len(body))
+	}
+}
+
+func TestReadCountsNestedAndEscapedContent(t *testing.T) {
+	raw := buildZip(t, entry{name: "peertube/videos.json", body: `{"videos":[{"a":[1,2,3],"s":"x]\",y"},[4,5],"z"],"other":[],"n":7}`})
+	a, err := Read(raw)
+	if err != nil || a.Skipped["videos"] != 3 {
+		t.Fatalf("%v %+v", err, a)
+	}
+	if _, err := Read(buildZip(t, entry{name: "peertube/videos.json", body: `{"videos":[1,2`})); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("truncated json accepted: %v", err)
+	}
+}
+
+func TestReadBoundsConcurrentParses(t *testing.T) {
+	if cap(parseSlots) != 2 {
+		t.Fatalf("parse slots = %d, want 2", cap(parseSlots))
 	}
 }

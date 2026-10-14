@@ -343,6 +343,29 @@ func TestClearLockoutUnknownUserIs404EvenWithoutAStore(t *testing.T) {
 	}
 }
 
+func TestGlobalCapExemptsAKnownDevice(t *testing.T) {
+	e := newLockEnv(t)
+	ds := newFakeDeviceStore()
+	WithDeviceStore(ds)(e.svc)
+	e.svc.async = func(f func()) { f() }
+	const ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130.0 Safari/537.36"
+	ctx := WithDeviceToken(context.Background(), "owner-device")
+	if _, err := e.svc.Login(ctx, LoginInput{Identifier: "alice", Password: "supersecret", ClientIP: "192.0.2.1"}, ua); err != nil {
+		t.Fatal(err)
+	}
+	// Forget the prefix memory so only the device cookie can exempt.
+	_, _ = e.store.ClearLoginThrottles(context.Background(), e.user.ID)
+	for i := 0; i < globalThreshold; i++ {
+		_ = e.login("10.9."+itoa(i)+".1", "wrong")
+	}
+	if _, err := e.svc.Login(context.Background(), LoginInput{Identifier: "alice", Password: "supersecret", ClientIP: "198.51.100.5"}, ua); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("no device cookie, new network: held by the cap, got %v", err)
+	}
+	if _, err := e.svc.Login(ctx, LoginInput{Identifier: "alice", Password: "supersecret", ClientIP: "198.51.100.6"}, ua); err != nil {
+		t.Fatalf("a recognised device must not be locked out by the account-wide cap: %v", err)
+	}
+}
+
 func TestPasswordResetClearsLoginLockout(t *testing.T) {
 	e := newLockEnv(t)
 	mailer := &captureMailer{}

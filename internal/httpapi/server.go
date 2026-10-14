@@ -1671,6 +1671,9 @@ func (s *Server) routes() {
 		// the authenticated account; the challenge is the second half of an MFA
 		// login — public, and behind the strict auth limiter like login itself
 		// (it is a code-guessing surface).
+		authGroup.GET("/devices", s.handleListDevices, s.requireAuth)
+		authGroup.DELETE("/devices/:id", s.handleForgetDevice, s.requireAuth)
+		authGroup.PATCH("/security-prefs", s.handleUpdateSecurityPrefs, s.requireAuth)
 		authGroup.GET("/mfa", s.handleGetMFAStatus, s.requireAuth)
 		authGroup.POST("/mfa/totp", s.handleBeginTOTPEnrollment, s.requireAuth)
 		authGroup.POST("/mfa/totp/verify", s.handleVerifyTOTPEnrollment, s.requireAuth)
