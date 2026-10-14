@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/peertubearchive"
 	"github.com/vidra/vidra-core/internal/playlist"
+	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -29,10 +32,17 @@ func (f *ptChannels) GetByHandle(context.Context, string) (sqlcgen.Channel, erro
 	return sqlcgen.Channel{}, channel.ErrNotFound
 }
 
-type ptPlaylists struct{ made int }
+func (f *ptChannels) ListOwn(context.Context, uuid.UUID) ([]sqlcgen.Channel, error) { return nil, nil }
+
+type ptPlaylists struct {
+	made   int
+	failAt int
+}
 
 func (f *ptPlaylists) Create(context.Context, uuid.UUID, playlist.CreateInput) (sqlcgen.Playlist, error) {
-	f.made++
+	if f.made++; f.made == f.failAt {
+		return sqlcgen.Playlist{}, errors.New("db down")
+	}
 	return sqlcgen.Playlist{}, nil
 }
 func (f *ptPlaylists) ListOwn(context.Context, uuid.UUID, int32, int32) ([]sqlcgen.ListPlaylistsByOwnerRow, int64, error) {
@@ -75,6 +85,8 @@ func ptUpload(env *accountEnv, token string, raw []byte) *httptest.ResponseRecor
 func TestPeerTubeArchiveImport(t *testing.T) {
 	chans, pls := &ptChannels{}, &ptPlaylists{}
 	env := newAccountEnv(t, WithPeerTubeArchiveImporter(&peertubearchive.Importer{Channels: chans, Playlists: pls}))
+	// This test exercises many requests; the rate limit has its own test.
+	env.srv.peertubeImportLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), 1000, time.Hour)
 	token := registerAndToken(t, env.srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 	good := ptZip(t, map[string]string{
 		"peertube/channels.json":        `{"channels":[{"name":"ada_chan","displayName":"Ada"}]}`,
@@ -113,5 +125,42 @@ func TestPeerTubeArchiveImport(t *testing.T) {
 	env.setSetting(t, instancesettings.KeyUserImportEnabled, "false")
 	if rec := ptUpload(env, token, good); rec.Code != http.StatusForbidden || errorCode(t, rec) != "feature_disabled" {
 		t.Errorf("disabled = %d code=%q, want 403 feature_disabled", rec.Code, errorCode(t, rec))
+	}
+}
+
+func TestPeerTubeArchiveImportRateLimit(t *testing.T) {
+	env := newAccountEnv(t, WithPeerTubeArchiveImporter(&peertubearchive.Importer{Channels: &ptChannels{}, Playlists: &ptPlaylists{}}))
+	token := registerAndToken(t, env.srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	good := ptZip(t, map[string]string{"peertube/channels.json": `{"channels":[]}`})
+	for i := 0; i < defaultPeerTubeImportRateLimit; i++ {
+		if rec := ptUpload(env, token, good); rec.Code != http.StatusOK {
+			t.Fatalf("import %d = %d", i, rec.Code)
+		}
+	}
+	if rec := ptUpload(env, token, good); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("over budget = %d, want 429", rec.Code)
+	}
+}
+
+func TestPeerTubeArchiveImportOversizeAndPartial(t *testing.T) {
+	env := newAccountEnv(t, WithPeerTubeArchiveImporter(&peertubearchive.Importer{Channels: &ptChannels{}, Playlists: &ptPlaylists{failAt: 2}}))
+	token := registerAndToken(t, env.srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	if rec := ptUpload(env, token, bytes.Repeat([]byte{'x'}, 9<<20)); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversize = %d, want 413", rec.Code)
+	}
+
+	two := ptZip(t, map[string]string{
+		"peertube/video-playlists.json": `{"videoPlaylists":[{"displayName":"one","privacy":3,"type":1},{"displayName":"two","privacy":3,"type":1}]}`,
+	})
+	rec := ptUpload(env, token, two)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("mid-run failure = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Summary peertubearchive.Summary `json:"summary"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Summary.PlaylistsCreated != 1 {
+		t.Fatalf("partial summary missing: %v %s", err, rec.Body.String())
 	}
 }

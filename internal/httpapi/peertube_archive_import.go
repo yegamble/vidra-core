@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -24,6 +25,11 @@ func WithPeerTubeArchiveImporter(im *peertubearchive.Importer) Option {
 // extracted; the body is bounded by the global HTTP body limit (default 8 MB),
 // so an export that bundles video files must be trimmed to its peertube/*.json
 // entries first.
+//
+// The malware scan is intentionally NOT applied here: the zip's bytes are
+// parsed in memory and discarded, never stored or served. Any change that
+// persists the archive (or any file inside it) must add requireScannerGate and
+// scanBeforeStore, as POST /me/import does.
 func (s *Server) handlePeerTubeArchiveImport(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
@@ -34,6 +40,10 @@ func (s *Server) handlePeerTubeArchiveImport(c echo.Context) error {
 	}
 	fh, err := c.FormFile("archive")
 	if err != nil {
+		var he *echo.HTTPError
+		if errors.As(err, &he) && he.Code == http.StatusRequestEntityTooLarge {
+			return he
+		}
 		return &ValidationError{Fields: []FieldError{{Field: "archive", Message: "a zip file is required (multipart field \"archive\")"}}}
 	}
 	f, err := fh.Open()
@@ -58,7 +68,13 @@ func (s *Server) handlePeerTubeArchiveImport(c echo.Context) error {
 	}
 	summary, err := s.peertubeArchive.Import(c.Request().Context(), userID, archive)
 	if err != nil {
-		return err
+		// Rows created before the failure stay (the import is additive), so the
+		// caller is told what was done rather than left to guess.
+		slog.ErrorContext(c.Request().Context(), "peertube archive import failed part-way", "error", err.Error())
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   map[string]string{"code": "internal_error", "message": "the import stopped part-way"},
+			"summary": summary,
+		})
 	}
 	return c.JSON(http.StatusOK, summary)
 }

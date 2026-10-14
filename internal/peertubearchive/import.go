@@ -16,9 +16,9 @@ import (
 
 // Per-import volume caps; over-cap entries count as skipped.
 const (
-	maxChannels  = 50
+	maxChannels  = 50 // owned channels after the import, existing ones included
 	maxPlaylists = 100
-	maxOwnLookup = 1000 // own playlists scanned for the already-imported check
+	ownPageSize  = 200 // page size when listing the caller's own playlists
 )
 
 // Channels, Playlists and PlayerSettings are the EXISTING services, taken as
@@ -28,6 +28,7 @@ const (
 type Channels interface {
 	Create(ctx context.Context, ownerID uuid.UUID, in channel.CreateInput) (sqlcgen.Channel, error)
 	GetByHandle(ctx context.Context, handle string) (sqlcgen.Channel, error)
+	ListOwn(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.Channel, error)
 }
 type Playlists interface {
 	Create(ctx context.Context, ownerID uuid.UUID, in playlist.CreateInput) (sqlcgen.Playlist, error)
@@ -42,6 +43,10 @@ type Importer struct {
 	Channels       Channels
 	Playlists      Playlists
 	PlayerSettings PlayerSettings // optional
+	// Lock, when set, serialises imports for one user (e.g. a Postgres advisory
+	// lock) so two concurrent identical imports cannot both pass the
+	// already-exists checks. It returns the release func.
+	Lock func(ctx context.Context, userID uuid.UUID) (func(), error)
 }
 
 // Summary is what an import did. SkippedSections counts archive entries of
@@ -62,13 +67,39 @@ type Summary struct {
 // playlist title you already have are counted "existing", never duplicated.
 func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (Summary, error) {
 	sum := Summary{SkippedSections: map[string]int{}}
+	if im.Lock != nil {
+		unlock, err := im.Lock(ctx, userID)
+		if err != nil {
+			return sum, err
+		}
+		defer unlock()
+	}
 	for k, v := range a.Skipped {
 		sum.SkippedSections[k] = v
 	}
 
-	for i, c := range a.Channels {
+	owned := map[string]bool{}
+	if len(a.Channels) > 0 {
+		mine, err := im.Channels.ListOwn(ctx, userID)
+		if err != nil {
+			return sum, err
+		}
+		for _, ch := range mine {
+			owned[strings.ToLower(ch.Handle)] = true
+		}
+	}
+	for _, c := range a.Channels {
 		handle := strings.TrimSpace(c.Name)
-		if i >= maxChannels || !channel.ValidateChannelHandle(handle) {
+		if !channel.ValidateChannelHandle(handle) {
+			sum.ChannelsSkipped++
+			continue
+		}
+		if owned[strings.ToLower(handle)] {
+			sum.ChannelsExisting++
+			continue
+		}
+		// The ceiling holds even when the instance sets no per-user cap.
+		if len(owned) >= maxChannels {
 			sum.ChannelsSkipped++
 			continue
 		}
@@ -81,6 +112,7 @@ func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (S
 		})
 		switch {
 		case err == nil:
+			owned[strings.ToLower(handle)] = true
 			sum.ChannelsCreated++
 		case errors.Is(err, channel.ErrConflict):
 			// Taken: ours (a re-import) or someone else's (never touched).
@@ -98,12 +130,18 @@ func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (S
 
 	if len(a.Playlists) > 0 {
 		have := map[string]bool{}
-		rows, _, err := im.Playlists.ListOwn(ctx, userID, maxOwnLookup, 0)
-		if err != nil {
-			return sum, err
-		}
-		for _, r := range rows {
-			have[strings.ToLower(r.Title)] = true
+		// Every page, so a title past the first page is still recognised.
+		for offset := int32(0); ; offset += ownPageSize {
+			rows, _, err := im.Playlists.ListOwn(ctx, userID, ownPageSize, offset)
+			if err != nil {
+				return sum, err
+			}
+			for _, r := range rows {
+				have[strings.ToLower(r.Title)] = true
+			}
+			if len(rows) < ownPageSize {
+				break
+			}
 		}
 		for i, p := range a.Playlists {
 			title := strings.TrimSpace(truncate(p.DisplayName, 200))

@@ -2,6 +2,8 @@ package peertubearchive
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -40,18 +42,43 @@ func (f *fakeChannels) GetByHandle(_ context.Context, h string) (sqlcgen.Channel
 	return sqlcgen.Channel{}, channel.ErrNotFound
 }
 
-type fakePlaylists struct{ made []playlist.CreateInput }
+func (f *fakeChannels) ListOwn(_ context.Context, owner uuid.UUID) ([]sqlcgen.Channel, error) {
+	var out []sqlcgen.Channel
+	for _, c := range f.byHandle {
+		if c.OwnerID == owner {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+type fakePlaylists struct {
+	made    []playlist.CreateInput
+	failAt  int // 1-based Create call that fails; 0 = never
+	calls   int
+	preload []string
+}
 
 func (f *fakePlaylists) Create(_ context.Context, _ uuid.UUID, in playlist.CreateInput) (sqlcgen.Playlist, error) {
+	if f.calls++; f.calls == f.failAt {
+		return sqlcgen.Playlist{}, errors.New("db down")
+	}
 	f.made = append(f.made, in)
 	return sqlcgen.Playlist{}, nil
 }
-func (f *fakePlaylists) ListOwn(context.Context, uuid.UUID, int32, int32) ([]sqlcgen.ListPlaylistsByOwnerRow, int64, error) {
-	var rows []sqlcgen.ListPlaylistsByOwnerRow
-	for _, m := range f.made {
-		rows = append(rows, sqlcgen.ListPlaylistsByOwnerRow{Title: m.Title})
+func (f *fakePlaylists) ListOwn(_ context.Context, _ uuid.UUID, limit, offset int32) ([]sqlcgen.ListPlaylistsByOwnerRow, int64, error) {
+	var all []sqlcgen.ListPlaylistsByOwnerRow
+	for _, t := range f.preload {
+		all = append(all, sqlcgen.ListPlaylistsByOwnerRow{Title: t})
 	}
-	return rows, int64(len(rows)), nil
+	for _, m := range f.made {
+		all = append(all, sqlcgen.ListPlaylistsByOwnerRow{Title: m.Title})
+	}
+	if int(offset) >= len(all) {
+		return nil, int64(len(all)), nil
+	}
+	end := min(int(offset+limit), len(all))
+	return all[offset:end], int64(len(all)), nil
 }
 
 type fakeSettings struct{ got *bool }
@@ -128,5 +155,55 @@ func TestImportChannelCapStopsCreation(t *testing.T) {
 	})
 	if err != nil || sum.ChannelsCreated != 1 || sum.ChannelsSkipped != 1 {
 		t.Fatalf("%+v %v", sum, err)
+	}
+}
+
+func TestImportChannelCeilingCountsOwnedChannels(t *testing.T) {
+	me := uuid.New()
+	ch := &fakeChannels{byHandle: map[string]sqlcgen.Channel{}}
+	for i := 0; i < 49; i++ {
+		h := fmt.Sprintf("own_%02d", i)
+		ch.byHandle[h] = sqlcgen.Channel{OwnerID: me, Handle: h}
+	}
+	im := &Importer{Channels: ch, Playlists: &fakePlaylists{}}
+	sum, err := im.Import(context.Background(), me, &Archive{Channels: []Channel{
+		{Name: "own_00", DisplayName: "a"}, {Name: "new_one", DisplayName: "b"}, {Name: "new_two", DisplayName: "c"},
+	}})
+	if err != nil || sum.ChannelsExisting != 1 || sum.ChannelsCreated != 1 || sum.ChannelsSkipped != 1 {
+		t.Fatalf("%+v %v", sum, err)
+	}
+}
+
+func TestImportRecognisesPlaylistsPastTheFirstPage(t *testing.T) {
+	pl := &fakePlaylists{}
+	for i := 0; i < 450; i++ {
+		pl.preload = append(pl.preload, fmt.Sprintf("list %d", i))
+	}
+	im := &Importer{Channels: &fakeChannels{byHandle: map[string]sqlcgen.Channel{}}, Playlists: pl}
+	sum, err := im.Import(context.Background(), uuid.New(), &Archive{Playlists: []Playlist{{DisplayName: "List 440", Type: 1}}})
+	if err != nil || sum.PlaylistsExisting != 1 || sum.PlaylistsCreated != 0 {
+		t.Fatalf("%+v %v", sum, err)
+	}
+}
+
+func TestImportHoldsTheLockAndReturnsPartialSummary(t *testing.T) {
+	var locked, unlocked int
+	pl := &fakePlaylists{failAt: 2}
+	im := &Importer{
+		Channels: &fakeChannels{byHandle: map[string]sqlcgen.Channel{}}, Playlists: pl,
+		Lock: func(context.Context, uuid.UUID) (func(), error) { locked++; return func() { unlocked++ }, nil },
+	}
+	sum, err := im.Import(context.Background(), uuid.New(), &Archive{Playlists: []Playlist{
+		{DisplayName: "one", Type: 1}, {DisplayName: "two", Type: 1},
+	}})
+	if err == nil || sum.PlaylistsCreated != 1 {
+		t.Fatalf("want error and partial summary, got %+v %v", sum, err)
+	}
+	if locked != 1 || unlocked != 1 {
+		t.Fatalf("lock %d unlock %d", locked, unlocked)
+	}
+	im.Lock = func(context.Context, uuid.UUID) (func(), error) { return nil, errors.New("busy") }
+	if _, err := im.Import(context.Background(), uuid.New(), &Archive{}); err == nil {
+		t.Fatal("lock failure must abort the import")
 	}
 }

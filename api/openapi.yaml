@@ -3382,7 +3382,12 @@ paths:
         duplicate or oversize entries; the body is bounded by the HTTP body
         limit (default 8 MB), so an export that bundles video files must be
         trimmed to its peertube/*.json entries first. 403 feature_disabled
-        when user_import_enabled is off.
+        when user_import_enabled is off. At most 3 imports per user per hour.
+        At most 50 channels may be owned after an import, existing ones
+        included. If the import stops part-way on a server error, the answer is
+        the standard error envelope with an added `summary`
+        (PeerTubeImportSummary) of what was done first; rows already created
+        are kept and re-uploading the same archive is safe.
       tags: [auth]
       security:
         - bearerAuth: []
@@ -3424,6 +3429,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Missing, not a zip, or not a valid PeerTube export.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many imports in the window (3 per user per hour).
           content:
             application/json:
               schema:
