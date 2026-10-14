@@ -102,6 +102,7 @@ func newContractRepo() fakeRepo {
 		blockedDomains:  map[string]bool{},
 		rcFollows:       map[uuid.UUID]*sqlcgen.RemoteChannelFollow{},
 		commentsByID:    map[uuid.UUID]sqlcgen.Comment{},
+		remoteRatings:   map[string]*sqlcgen.UpsertRemoteVideoRatingParams{},
 	}
 	r.usersByName["ada"] = sqlcgen.GetUserActorByUsernameRow{ID: ctUserID, Username: "ada", DisplayName: "Ada", Bio: "Field recordings."}
 	r.usersByID[ctUserID] = sqlcgen.GetUserActorByIDRow{ID: ctUserID, Username: "ada", DisplayName: "Ada", Bio: "Field recordings."}
@@ -475,12 +476,16 @@ func TestContractFixturesDispatch(t *testing.T) {
 			},
 		},
 		{
-			name:    "peertube Like is accepted-and-ignored",
+			name:    "peertube Like records the remote actor's vote",
 			fixture: "inbound/peertube_like.json",
 			signer:  ctPTAccount,
+			seed:    func(r fakeRepo) { cacheContractActor(r, ctPTAccount, "Person", "marta", "peertube.example") },
 			check: func(t *testing.T, r fakeRepo) {
 				if !r.processed["https://peertube.example/accounts/marta/likes/77"] {
-					t.Error("ignored activity should still be marked processed")
+					t.Error("the Like should be marked processed")
+				}
+				if row := r.remoteRatings[ctPTAccount+"|"+ctVideoID.String()]; row == nil || row.Rating != "like" {
+					t.Errorf("Like not recorded: %+v", r.remoteRatings)
 				}
 			},
 		},
