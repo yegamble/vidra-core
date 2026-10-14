@@ -272,6 +272,30 @@ func (s *Server) bulkVideosRateLimit() echo.MiddlewareFunc {
 	})
 }
 
+// PeerTube archive import: 3 requests per user per hour. Each request parses a
+// zip and runs the create path for up to 150 rows, so a per-user budget sits
+// under the general per-IP one.
+const (
+	defaultPeerTubeImportRateLimit  = 3
+	defaultPeerTubeImportRateWindow = time.Hour
+)
+
+// peertubeImportRateLimit throttles POST /me/import/peertube PER USER. It runs
+// after requireAuth.
+func (s *Server) peertubeImportRateLimit() echo.MiddlewareFunc {
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+			userID, _, ok := principalFromContext(c)
+			if !ok || s.peertubeImportLimit == nil {
+				return nil, "", false
+			}
+			return s.peertubeImportLimit, "peertube-import:" + userID.String(), true
+		},
+		unavailable: "peertube import rate limiter unavailable, failing open",
+		denied:      "too many imports; try again later",
+	})
+}
+
 // limiterIPKey collapses an IPv6 address to its /64 for rate-limit keying: a
 // single IPv6 host controls a /64 (or far more) of source addresses, so keying
 // on the full address gives an attacker an effectively unlimited budget. IPv4

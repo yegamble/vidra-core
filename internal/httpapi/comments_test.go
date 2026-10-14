@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -29,6 +30,8 @@ type commentFakeRepo struct {
 	comments   map[uuid.UUID]sqlcgen.Comment
 	// pinned mirrors videos.pinned_comment_id (0099): video_id -> pinned comment_id.
 	pinned map[uuid.UUID]uuid.UUID
+	// autoTags mirrors comment_automatic_tags (0177): comment_id -> tags.
+	autoTags map[uuid.UUID][]string
 }
 
 // isPinned reports whether commentID is videoID's current pinned comment.
@@ -155,6 +158,9 @@ func (f *commentFakeRepo) ListAdminComments(_ context.Context, a sqlcgen.ListAdm
 		if a.Query != nil && !strings.Contains(strings.ToLower(c.Body), strings.ToLower(*a.Query)) {
 			continue
 		}
+		if a.AutoTag != nil && !slices.ContainsFunc(f.autoTags[c.ID], func(t string) bool { return strings.EqualFold(t, *a.AutoTag) }) {
+			continue
+		}
 		username, display := f.author(uuid.UUID(c.UserID.Bytes))
 		title := ""
 		if f.videos != nil {
@@ -163,6 +169,7 @@ func (f *commentFakeRepo) ListAdminComments(_ context.Context, a sqlcgen.ListAdm
 		rows = append(rows, sqlcgen.ListAdminCommentsRow{
 			ID: c.ID, VideoID: c.VideoID, Body: c.Body, CreatedAt: c.CreatedAt,
 			AuthorUsername: username, AuthorDisplayName: display, VideoTitle: title,
+			AutomaticTags: f.autoTags[c.ID],
 		})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
@@ -615,8 +622,8 @@ func (f *commentFakeRepo) CountCommentsByVideo(ctx context.Context, a sqlcgen.Co
 	return int64(len(rows)), err
 }
 
-func (f *commentFakeRepo) CountAdminComments(ctx context.Context, query *string) (int64, error) {
-	rows, err := f.ListAdminComments(ctx, sqlcgen.ListAdminCommentsParams{Query: query, ResultLimit: 1 << 30})
+func (f *commentFakeRepo) CountAdminComments(ctx context.Context, a sqlcgen.CountAdminCommentsParams) (int64, error) {
+	rows, err := f.ListAdminComments(ctx, sqlcgen.ListAdminCommentsParams{Query: a.Query, AutoTag: a.AutoTag, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
 }
 
