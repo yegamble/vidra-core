@@ -131,3 +131,67 @@ func TestOAuthProviderSignupPolicy(t *testing.T) {
 		t.Errorf("verified allowed domain: outcome=%v err=%v; want created", sess.Outcome, err)
 	}
 }
+
+// discoveryServer serves a discovery document whose endpoints share base.
+func discoveryServer(t *testing.T, tls bool, pad int) *httptest.Server {
+	t.Helper()
+	var base string
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer": base, "authorization_endpoint": base + "/authorize",
+			"token_endpoint": base + "/token", "jwks_uri": base + "/jwks",
+			"userinfo_endpoint": base + "/userinfo", "padding": strings.Repeat("x", pad),
+		})
+	})
+	var srv *httptest.Server
+	if tls {
+		srv = httptest.NewTLSServer(h)
+	} else {
+		srv = httptest.NewServer(h)
+	}
+	base = srv.URL
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestGuardedDiscoveryEndpointsMustBeHTTPS: an admin-managed provider's
+// discovered endpoints must be https unless private issuers are allowed.
+func TestGuardedDiscoveryEndpointsMustBeHTTPS(t *testing.T) {
+	ctx := context.Background()
+	plain := discoveryServer(t, false, 0)
+	op, err := (&oidcClient{}).get(ctx, plain.Client(), plain.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkDiscoveredEndpoints(op, false); err == nil {
+		t.Error("http endpoints accepted without the private-issuer switch")
+	}
+	if err := checkDiscoveredEndpoints(op, true); err != nil {
+		t.Errorf("http endpoints refused with the private-issuer switch: %v", err)
+	}
+	secure := discoveryServer(t, true, 0)
+	op, err = (&oidcClient{}).get(ctx, secure.Client(), secure.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkDiscoveredEndpoints(op, false); err != nil {
+		t.Errorf("https endpoints refused: %v", err)
+	}
+}
+
+// TestGuardedDiscoveryBodyIsBounded: an oversized discovery document fails
+// instead of being read whole.
+func TestGuardedDiscoveryBodyIsBounded(t *testing.T) {
+	big := discoveryServer(t, false, maxOIDCResponseBytes+1)
+	s := NewOAuthService(nil, nil, nil, WithOAuthAllowPrivateIssuers(true))
+	s.SetDatabaseProviders([]OAuthProvider{{Name: "big", IssuerURL: big.URL, ClientID: "c", Guarded: true}})
+	if _, _, err := s.BeginAuth(context.Background(), "big", "https://vidra.example/cb"); err == nil {
+		t.Fatal("oversized discovery document accepted")
+	}
+	small := discoveryServer(t, false, 1000)
+	s.SetDatabaseProviders([]OAuthProvider{{Name: "small", IssuerURL: small.URL, ClientID: "c", Guarded: true}})
+	if _, _, err := s.BeginAuth(context.Background(), "small", "https://vidra.example/cb"); err != nil {
+		t.Fatalf("normal discovery document refused: %v", err)
+	}
+}

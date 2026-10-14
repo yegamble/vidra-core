@@ -256,6 +256,29 @@ func (s *Server) remoteRatingRateLimit() echo.MiddlewareFunc {
 	})
 }
 
+// A remote-video view ping can queue a signed delivery to another instance, so
+// it carries a per-IP budget on top of the API-wide one (the federation service
+// also caps Views per origin per hour).
+const (
+	defaultRemoteViewRateLimit  = 60
+	defaultRemoteViewRateWindow = time.Minute
+)
+
+// remoteViewRateLimit throttles POST /remote-videos/{id}/view PER CLIENT IP
+// (an IPv6 client by its /64), signed in or not.
+func (s *Server) remoteViewRateLimit() echo.MiddlewareFunc {
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+			if s.remoteViewLimit == nil {
+				return nil, "", false
+			}
+			return s.remoteViewLimit, "remote-view:" + limiterIPKey(c.RealIP()), true
+		},
+		unavailable: "remote view rate limiter unavailable, failing open",
+		denied:      "too many view pings; wait a minute and try again",
+	})
+}
+
 // bulkVideosRateLimit throttles POST /me/videos/bulk PER USER, in the style of
 // mailTestRateLimit. It runs after requireAuth.
 func (s *Server) bulkVideosRateLimit() echo.MiddlewareFunc {
