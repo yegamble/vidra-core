@@ -112,25 +112,34 @@ func TestLoginWrongPasswordOnUsernameMatchDoesNotFallThrough(t *testing.T) {
 }
 
 // TestLoginUnknownIdentifierStillDummyCompares keeps the anti-enumeration
-// dummy bcrypt compare on the total-miss path. Test hashes run at
-// bcrypt.MinCost while the dummy hash literal is cost 12, so a real compare is
-// hundreds of milliseconds and a skipped one is microseconds — the floor below
-// is a structural assertion, not a benchmark.
+// dummy bcrypt compare on the total-miss path. It counts compares instead of
+// timing them: test hashes run at bcrypt.MinCost, so a real compare is about
+// a millisecond and any wall-clock floor flakes under scheduling noise.
 func TestLoginUnknownIdentifierStillDummyCompares(t *testing.T) {
 	repo := newFakeRepo()
 	svc := newTestService(repo)
 	register(t, svc, "ada", "ada@example.test")
 
 	repo.reset()
-	start := time.Now()
+	before := dummyCompares.Load()
 	if _, err := svc.Login(context.Background(), LoginInput{Identifier: "nobody", Password: "whatever"}, "a"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
 	}
-	if elapsed := time.Since(start); elapsed < 2*time.Millisecond {
-		t.Errorf("miss returned in %v — the dummy bcrypt compare was skipped, re-opening the timing oracle", elapsed)
+	if got := dummyCompares.Load() - before; got != 1 {
+		t.Errorf("dummy compares on a miss = %d, want exactly 1 — the compare was skipped, re-opening the timing oracle", got)
 	}
 	if repo.loginLookups != 1 {
 		t.Errorf("account lookups = %d, want exactly 1", repo.loginLookups)
+	}
+
+	// A known account with a wrong password does its own real compare and
+	// must not also run the dummy one.
+	before = dummyCompares.Load()
+	if _, err := svc.Login(context.Background(), LoginInput{Identifier: "ada", Password: "nope"}, "a"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
+	}
+	if got := dummyCompares.Load() - before; got != 0 {
+		t.Errorf("dummy compares on a known wrong password = %d, want 0", got)
 	}
 }
 
