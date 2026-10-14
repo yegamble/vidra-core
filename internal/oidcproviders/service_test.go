@@ -190,8 +190,15 @@ func TestNameRebindingGuard(t *testing.T) {
 	repo2 := newFakeRepo()
 	repo2.identities["corp"] = true
 	other := NewService(repo2, testCipher(t), &fakeSink{}, WithEnvironmentIssuers(map[string]string{"corp": "https://other.example"}))
-	if _, err := other.Create(ctx, "corp", validInput(), uuid.New()); !errors.As(err, &ve) || !ve.Has("name") {
+	if _, err := other.Create(ctx, "corp", validInput(), uuid.New()); !errors.As(err, &ve) || !ve.Has("issuer_url") {
 		t.Errorf("overriding the environment provider with a different issuer: err = %v", err)
+	}
+
+	// A row may override an environment provider's settings, never its issuer
+	// — even before any account is linked through that name.
+	fresh := NewService(newFakeRepo(), testCipher(t), &fakeSink{}, WithEnvironmentIssuers(map[string]string{"corp": "https://other.example"}))
+	if _, err := fresh.Create(ctx, "corp", validInput(), uuid.New()); !errors.As(err, &ve) || !ve.Has("issuer_url") {
+		t.Errorf("environment override with a different issuer and no linked accounts: err = %v", err)
 	}
 }
 

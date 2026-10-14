@@ -760,21 +760,24 @@ func run() error {
 	// provider), which is what it answered before.
 	oauthsvc := auth.NewOAuthService(db.Queries(), authsvc, providers,
 		// Admin-managed providers fetch discovery/JWKS through the SSRF guard;
-		// a lab or an internal IdP needs the same escape hatch imports use.
-		auth.WithOAuthAllowPrivateIssuers(cfg.ImportAllowPrivateURLs))
+		// OIDC_ALLOW_PRIVATE_ISSUERS admits an internal IdP or a lab.
+		auth.WithOAuthAllowPrivateIssuers(cfg.OIDCAllowPrivateIssuers))
 	opts = append(opts, httpapi.WithOAuthService(oauthsvc))
 
 	// Admin-managed OIDC providers (migration 0182) override the environment
 	// providers of the same name. The client secret is sealed with the same KEK
 	// chain as the mail credential; without one, reads work and a save that
 	// would store a secret is refused.
+	if cfg.OIDCAllowPrivateIssuers {
+		logger.Warn("OIDC_ALLOW_PRIVATE_ISSUERS is on: admin-managed OIDC providers may reach http and private-network addresses (metadata ranges stay blocked)")
+	}
 	envIssuers := make(map[string]string, len(cfg.OAuthProviders))
 	for _, p := range cfg.OAuthProviders {
 		envIssuers[p.Name] = p.IssuerURL
 	}
 	oidcprovsvc := oidcproviders.NewService(db.Queries(), mailCipher, oauthsvc,
 		oidcproviders.WithVersionBump(bumpSettingsVersion),
-		oidcproviders.WithAllowPrivate(cfg.ImportAllowPrivateURLs),
+		oidcproviders.WithAllowPrivate(cfg.OIDCAllowPrivateIssuers),
 		oidcproviders.WithEnvironmentIssuers(envIssuers))
 	if err := oidcprovsvc.Load(startCtx); err != nil {
 		return fmt.Errorf("load oidc providers: %w", err)
@@ -2322,6 +2325,11 @@ func run() error {
 		// repository's accepted remote_channel_follows edges by default (§2) —
 		// no extra wiring needed.
 		federation.WithMediaStorage(blobs),
+		// A local view of a remote video is federated to its origin once per
+		// viewer per window (deduped in Redis like a local view), and at most
+		// maxRemoteViewsPerOriginHour per origin domain across replicas.
+		federation.WithRemoteViewDeduper(cache.NewDeduper(rdb.Client)),
+		federation.WithRemoteViewOriginCap(ratelimit.NewRedisCounter(rdb.Client)),
 		// Inbound federated comments run the same watched-words flagging as
 		// local ones (remote-content §6).
 		federation.WithCommentFlagger(watchwordsvc),

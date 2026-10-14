@@ -1049,6 +1049,7 @@ type RemoteVideoRating struct {
 	Domain         string    `json:"domain"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	CapDomain      *string   `json:"cap_domain"`
 }
 
 type RemoteVideoUserRating struct {
