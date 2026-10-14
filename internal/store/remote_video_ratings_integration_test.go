@@ -44,8 +44,9 @@ func TestRemoteVideoRatingsOnRealPG(t *testing.T) {
 	}
 	upsert := func(actor, rating, id string) {
 		t.Helper()
-		if err := q.UpsertRemoteVideoRating(ctx, sqlcgen.UpsertRemoteVideoRatingParams{
+		if _, err := q.UpsertRemoteVideoRating(ctx, sqlcgen.UpsertRemoteVideoRatingParams{
 			VideoID: videoID, RemoteActorUrl: actor, Rating: rating, ActivityUrl: id,
+			Domain: "peertube.example", DomainCap: 100,
 		}); err != nil {
 			t.Fatalf("UpsertRemoteVideoRating: %v", err)
 		}
@@ -100,6 +101,126 @@ func TestRemoteVideoRatingsOnRealPG(t *testing.T) {
 		t.Fatalf("delete actor: %v", err)
 	}
 	counts(1, 0)
+}
+
+// TestRemoteVideoRatingsFilteredByBlocksOnRealPG proves a block taken AFTER a
+// vote stops it counting and an unblock restores it, for each of the three
+// scopes: the instance blocklist, the admin's instance-wide actor block, and
+// the video owner's own block. Votes on another owner's video are untouched by
+// the owner's block.
+func TestRemoteVideoRatingsFilteredByBlocksOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	owner, channelID := seedOwnerChannel(ctx, t, st, "rrblk")
+	videoID := seedPublishedVideo(ctx, t, st, channelID, "blocked votes")
+	other, otherChannel := seedOwnerChannel(ctx, t, st, "rrblk2")
+	_ = other
+	otherVideo := seedPublishedVideo(ctx, t, st, otherChannel, "other votes")
+	domain := "blk-" + uuid.NewString()[:8] + ".example"
+	actor := "https://" + domain + "/accounts/a"
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO remote_actors (actor_url, actor_type, domain, public_key_pem) VALUES ($1, 'Person', $2, 'pem')`, actor, domain); err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
+	for _, v := range []uuid.UUID{videoID, otherVideo} {
+		if _, err := q.UpsertRemoteVideoRating(ctx, sqlcgen.UpsertRemoteVideoRatingParams{
+			VideoID: v, RemoteActorUrl: actor, Rating: "like", ActivityUrl: actor + "/likes/" + v.String(),
+			Domain: domain, DomainCap: 100,
+		}); err != nil {
+			t.Fatalf("vote: %v", err)
+		}
+	}
+	likes := func(v uuid.UUID) int64 {
+		t.Helper()
+		c, err := q.CountVideoRatings(ctx, v)
+		if err != nil {
+			t.Fatalf("CountVideoRatings: %v", err)
+		}
+		return c.Likes
+	}
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := st.Pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	scopes := []struct {
+		name, block, unblock string
+		args                 []any
+		otherCounts          bool
+	}{
+		{"instance blocklist", `INSERT INTO blocked_instances (domain) VALUES ($1)`, `DELETE FROM blocked_instances WHERE domain = $1`, []any{domain}, false},
+		{"instance-wide actor block", `INSERT INTO blocked_remote_actors (remote_actor_url) VALUES ($1)`, `DELETE FROM blocked_remote_actors WHERE remote_actor_url = $1`, []any{actor}, false},
+		{"video owner's block", `INSERT INTO remote_actor_blocks (blocker_id, remote_actor_url) VALUES ($1, $2)`, `DELETE FROM remote_actor_blocks WHERE blocker_id = $1 AND remote_actor_url = $2`, []any{owner, actor}, true},
+	}
+	for _, sc := range scopes {
+		if likes(videoID) != 1 {
+			t.Fatalf("%s: precondition likes = %d", sc.name, likes(videoID))
+		}
+		exec(sc.block, sc.args...)
+		if n := likes(videoID); n != 0 {
+			t.Errorf("%s: blocked vote still counts (%d)", sc.name, n)
+		}
+		if n := likes(otherVideo); (n == 1) != sc.otherCounts {
+			t.Errorf("%s: other owner's video likes = %d", sc.name, n)
+		}
+		exec(sc.unblock, sc.args...)
+		if n := likes(videoID); n != 1 {
+			t.Errorf("%s: unblock did not restore the vote (%d)", sc.name, n)
+		}
+	}
+}
+
+// TestRemoteVideoRatingDomainCapOnRealPG proves the per-domain cap on NEW votes:
+// at the cap a new (actor, video) row is refused (0 rows), while an existing
+// voter can still change their vote.
+func TestRemoteVideoRatingDomainCapOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	_, channelID := seedOwnerChannel(ctx, t, st, "rrcap")
+	videoID := seedPublishedVideo(ctx, t, st, channelID, "capped votes")
+	domain := "cap-" + uuid.NewString()[:8] + ".example"
+	vote := func(n int, rating string) int64 {
+		t.Helper()
+		actor := "https://" + domain + "/accounts/" + string(rune('a'+n))
+		if _, err := st.Pool.Exec(ctx, `INSERT INTO remote_actors (actor_url, actor_type, public_key_pem) VALUES ($1, 'Person', 'pem') ON CONFLICT DO NOTHING`, actor); err != nil {
+			t.Fatalf("seed actor: %v", err)
+		}
+		rows, err := q.UpsertRemoteVideoRating(ctx, sqlcgen.UpsertRemoteVideoRatingParams{
+			VideoID: videoID, RemoteActorUrl: actor, Rating: rating, ActivityUrl: actor + "/" + rating,
+			Domain: domain, DomainCap: 2,
+		})
+		if err != nil {
+			t.Fatalf("vote: %v", err)
+		}
+		return rows
+	}
+	if vote(0, "like") != 1 || vote(1, "like") != 1 {
+		t.Fatal("votes under the cap were refused")
+	}
+	if rows := vote(2, "like"); rows != 0 {
+		t.Fatalf("a new vote past the cap wrote %d rows", rows)
+	}
+	if rows := vote(0, "dislike"); rows != 1 {
+		t.Fatalf("an existing voter's switch past the cap wrote %d rows", rows)
+	}
+	c, _ := q.CountVideoRatings(ctx, videoID)
+	if c.Likes != 1 || c.Dislikes != 1 {
+		t.Fatalf("counts = %d/%d, want 1/1", c.Likes, c.Dislikes)
+	}
 }
 
 // TestRemoteVideoUserRatingsOnRealPG proves a local user's vote on a remote

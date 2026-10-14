@@ -18,7 +18,16 @@ SELECT
 FROM (
     SELECT vr.rating FROM video_ratings vr WHERE vr.video_id = $1::uuid
     UNION ALL
-    SELECT rr.rating FROM remote_video_ratings rr WHERE rr.video_id = $1::uuid
+    SELECT rr.rating FROM remote_video_ratings rr
+    WHERE rr.video_id = $1::uuid
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = rr.domain)
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_block_reach rab
+          WHERE rab.actor_url = rr.remote_actor_url
+            AND (rab.blocker_id IS NULL OR rab.blocker_id = (
+                SELECT ch.owner_id FROM videos v JOIN channels ch ON ch.id = v.channel_id
+                WHERE v.id = $1::uuid))
+      )
 ) r
 `
 
@@ -29,6 +38,12 @@ type CountVideoRatingsRow struct {
 
 // Local users' votes plus remote actors' (0178): both are rows, so the total is
 // derived here and never taken from a remote-supplied count.
+//
+// A remote vote whose instance is blocked, whose actor (or owning account) is
+// blocked instance-wide, or whose actor the video's OWNER blocks is filtered
+// here, at read time, rather than purged on block: a block taken after the vote
+// stops it counting, and an unblock restores it exactly — the same READ-filter
+// choice the comment thread makes (comments.sql, remote_actor_block_reach).
 func (q *Queries) CountVideoRatings(ctx context.Context, videoID uuid.UUID) (CountVideoRatingsRow, error) {
 	row := q.db.QueryRow(ctx, countVideoRatings, videoID)
 	var i CountVideoRatingsRow
@@ -133,9 +148,16 @@ func (q *Queries) GetVideoRating(ctx context.Context, arg GetVideoRatingParams) 
 	return rating, err
 }
 
-const upsertRemoteVideoRating = `-- name: UpsertRemoteVideoRating :exec
-INSERT INTO remote_video_ratings (video_id, remote_actor_url, rating, activity_url)
-VALUES ($1, $2, $3, $4)
+const upsertRemoteVideoRating = `-- name: UpsertRemoteVideoRating :execrows
+INSERT INTO remote_video_ratings (video_id, remote_actor_url, rating, activity_url, domain)
+SELECT $1::uuid, $2::text, $3::text,
+       $4::text, $5::text
+WHERE EXISTS (
+        SELECT 1 FROM remote_video_ratings e
+        WHERE e.remote_actor_url = $2::text AND e.video_id = $1::uuid)
+   OR (SELECT count(*) FROM remote_video_ratings d
+       WHERE d.domain = $5::text AND d.created_at > now() - interval '1 hour')
+      < $6::bigint
 ON CONFLICT (remote_actor_url, video_id)
 DO UPDATE SET rating = EXCLUDED.rating, activity_url = EXCLUDED.activity_url, updated_at = now()
 `
@@ -145,18 +167,28 @@ type UpsertRemoteVideoRatingParams struct {
 	RemoteActorUrl string    `json:"remote_actor_url"`
 	Rating         string    `json:"rating"`
 	ActivityUrl    string    `json:"activity_url"`
+	Domain         string    `json:"domain"`
+	DomainCap      int64     `json:"domain_cap"`
 }
 
 // A remote actor's Like/Dislike of a local video: one row per (actor, video),
-// so a repeat is a no-op and a switch changes the row in place.
-func (q *Queries) UpsertRemoteVideoRating(ctx context.Context, arg UpsertRemoteVideoRatingParams) error {
-	_, err := q.db.Exec(ctx, upsertRemoteVideoRating,
+// so a repeat is a no-op and a switch changes the row in place. A NEW row is
+// written only while the signer's domain has fewer than domain_cap new votes in
+// the last hour (0 rows affected = capped); changing an existing vote is never
+// capped.
+func (q *Queries) UpsertRemoteVideoRating(ctx context.Context, arg UpsertRemoteVideoRatingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upsertRemoteVideoRating,
 		arg.VideoID,
 		arg.RemoteActorUrl,
 		arg.Rating,
 		arg.ActivityUrl,
+		arg.Domain,
+		arg.DomainCap,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertRemoteVideoUserRating = `-- name: UpsertRemoteVideoUserRating :exec
