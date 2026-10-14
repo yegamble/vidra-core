@@ -25520,12 +25520,25 @@ components:
         - playlist_items_skipped
         - settings_applied
         - skipped_sections
+        - channels_mapped
       properties:
         channels_created: {type: integer}
         channels_existing: {type: integer}
+        channels_mapped:
+          type: array
+          description: >-
+            Channels whose PeerTube name was rewritten into the handle alphabet
+            ([A-Za-z0-9_], 3-30 characters; other characters become "_", with a
+            numeric "_N" suffix on a collision). Playlists follow their channel.
+          items:
+            type: object
+            required: [from, to]
+            properties:
+              from: {type: string}
+              to: {type: string}
         channels_skipped:
           type: integer
-          description: Invalid handle, reserved, owned by someone else, or over the channel limit.
+          description: Empty name, reserved, owned by someone else, or over the channel limit.
         playlists_created: {type: integer}
         playlists_existing: {type: integer}
         playlists_skipped: {type: integer}
