@@ -5,6 +5,7 @@ package auth
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -43,7 +44,10 @@ func CheckPassword(hash, plain string) error {
 
 var (
 	dummyOnce sync.Once
-	dummyHash string
+	// dummyCompares counts dummy compares so a test can assert the work was
+	// done without measuring wall-clock time.
+	dummyCompares atomic.Int64
+	dummyHash     string
 )
 
 // dummyPasswordCompare spends one REAL bcrypt comparison at the current cost.
@@ -52,6 +56,7 @@ var (
 // character short, which bcrypt rejects instantly — a timing oracle for "this
 // account does not exist".) The hash is made lazily, once, at the live cost.
 func dummyPasswordCompare(plain string) {
+	dummyCompares.Add(1)
 	dummyOnce.Do(func() { dummyHash, _ = HashPassword("vidra-dummy-password") })
 	_ = CheckPassword(dummyHash, plain)
 }
