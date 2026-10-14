@@ -25,3 +25,18 @@ func TestRecordRemoteVideoViewEndpoint(t *testing.T) {
 		}
 	}
 }
+
+// Each accepted ping can queue a delivery to another instance, so the route
+// carries its own per-IP budget on top of the API-wide one.
+func TestRecordRemoteVideoViewPerIPLimit(t *testing.T) {
+	srv, _, ratingPath := rvRatingServer(t, true)
+	path := strings.TrimSuffix(ratingPath, "/rating") + "/view"
+	for i := 0; i < defaultRemoteViewRateLimit; i++ {
+		if rec := sendJSONAuth(srv, http.MethodPost, path, "", ""); rec.Code != http.StatusNoContent {
+			t.Fatalf("ping %d = %d, want 204", i, rec.Code)
+		}
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, path, "", ""); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("ping past the budget = %d, want 429", rec.Code)
+	}
+}

@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/vidra/vidra-core/internal/ratelimit"
 )
 
 // remoteViewWindow is how long one local viewer's repeated views of a remote
@@ -17,6 +19,18 @@ const remoteViewWindow = time.Hour
 // ViewDeduper is first-occurrence-within-a-window (cache.Deduper, Redis SETNX).
 type ViewDeduper interface {
 	First(ctx context.Context, key string, window time.Duration) (bool, error)
+}
+
+// maxRemoteViewsPerOriginHour bounds the Views this instance sends to one
+// origin (registrable domain) per hour, whatever the local audience: past it a
+// view is dropped silently. It caps what a burst of local pings — or many
+// IPs — can make this instance push at another server.
+const maxRemoteViewsPerOriginHour = 50
+
+// WithRemoteViewOriginCap wires the per-origin hourly cap; in production it must
+// be shared across replicas (ratelimit.NewRedisCounter). Unset = uncapped.
+func WithRemoteViewOriginCap(c ratelimit.Counter) Option {
+	return func(s *Service) { s.remoteViewOriginCap = c }
 }
 
 // WithRemoteViewDeduper wires the per-viewer dedupe RecordRemoteVideoView needs.
@@ -47,14 +61,22 @@ func (s *Service) RecordRemoteVideoView(ctx context.Context, remoteVideoID uuid.
 	if !ok {
 		return nil
 	}
-	// A dedupe error is treated as "already sent": unlike a local count, an
-	// over-send here inflates another instance's numbers.
-	if first, err := s.remoteViewDeduper.First(ctx, "ap:remote-view:"+remoteVideoID.String()+":"+viewerKey, remoteViewWindow); err != nil || !first {
-		return nil
-	}
 	_, inbox, ok, err := s.resolveAuthoredCommentOrigin(ctx, remoteVideoID)
 	if err != nil || !ok {
 		return err
+	}
+	// The viewer's dedupe key is consumed only once the send is possible, and
+	// the origin's budget only for a first view. A dedupe or cap error counts
+	// as "do not send": unlike a local count, an over-send inflates another
+	// instance's numbers.
+	if first, err := s.remoteViewDeduper.First(ctx, "ap:remote-view:"+remoteVideoID.String()+":"+viewerKey, remoteViewWindow); err != nil || !first {
+		return nil
+	}
+	if s.remoteViewOriginCap != nil {
+		n, _, err := s.remoteViewOriginCap.Incr(ctx, "ap:remote-view:origin:"+capDomain(inbox), time.Hour)
+		if err != nil || n > maxRemoteViewsPerOriginHour {
+			return nil
+		}
 	}
 	// PeerTube's buildViewActivity without viewersCount: no expires, no result.
 	payload, err := json.Marshal(map[string]any{

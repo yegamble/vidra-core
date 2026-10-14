@@ -3,11 +3,15 @@ package federation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/ratelimit"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // memDeduper mirrors cache.Deduper's SETNX within one window.
@@ -102,5 +106,44 @@ func TestRecordRemoteVideoViewRefusals(t *testing.T) {
 				t.Fatalf("queued %d deliveries, want none", len(repo.deliveries))
 			}
 		})
+	}
+}
+
+// A send that cannot be resolved does not consume the viewer's dedupe key: once
+// the origin's inbox is known, the same viewer's next view is sent.
+func TestRecordRemoteVideoViewDedupeAfterResolve(t *testing.T) {
+	ctx := context.Background()
+	repo, c, _ := newAuthoredRepo("https://peer.example/inbox")
+	repo.inst = &fakeInstance{reserved: true}
+	actors := repo.remoteActors
+	repo.remoteActors = map[string]sqlcgen.RemoteActor{}
+	svc := NewService(repo, WithBaseURL(noteBase), WithRemoteViewDeduper(memDeduper{}))
+	if err := svc.RecordRemoteVideoView(ctx, c.RemoteVideoID, "v"); err != nil || len(repo.deliveries) != 0 {
+		t.Fatalf("unresolvable: err = %v, deliveries = %d", err, len(repo.deliveries))
+	}
+	for k, v := range actors {
+		repo.remoteActors[k] = v
+	}
+	if err := svc.RecordRemoteVideoView(ctx, c.RemoteVideoID, "v"); err != nil || len(repo.deliveries) != 1 {
+		t.Fatalf("after resolve: err = %v, deliveries = %d, want 1", err, len(repo.deliveries))
+	}
+}
+
+// One origin (registrable domain) receives at most maxRemoteViewsPerOriginHour
+// Views per hour from this instance, however many local viewers there are;
+// the excess is a silent no-op.
+func TestRecordRemoteVideoViewOriginCap(t *testing.T) {
+	ctx := context.Background()
+	repo, c, _ := newAuthoredRepo("https://peer.example/inbox")
+	repo.inst = &fakeInstance{reserved: true}
+	svc := NewService(repo, WithBaseURL(noteBase), WithRemoteViewDeduper(memDeduper{}),
+		WithRemoteViewOriginCap(ratelimit.NewMemoryCounter()))
+	for i := 0; i < maxRemoteViewsPerOriginHour+10; i++ {
+		if err := svc.RecordRemoteVideoView(ctx, c.RemoteVideoID, fmt.Sprintf("viewer-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(repo.deliveries) != maxRemoteViewsPerOriginHour {
+		t.Fatalf("deliveries = %d, want the origin cap %d", len(repo.deliveries), maxRemoteViewsPerOriginHour)
 	}
 }

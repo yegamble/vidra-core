@@ -13193,8 +13193,9 @@ paths:
         count, so nothing is counted here: when federation is enabled the view
         is sent to the origin as an ActivityPub View signed by this instance's
         actor (never the viewer's account), at most once per viewer per window
-        (the user id when authenticated, else the client IP, hashed). Always
-        returns 204 for a visible remote video, whether or not a View was sent.
+        (the user id when authenticated, else the client IP, hashed), and at
+        most a fixed number of Views per origin domain per hour. Always returns
+        204 for a visible remote video, whether or not a View was sent.
       tags: [federation]
       security:
         - bearerAuth: []
@@ -13211,6 +13212,12 @@ paths:
           description: The view ping was accepted.
         "404":
           description: No such remote video, or it (or its origin) is blocked here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Per-IP view-ping budget exhausted (60 per minute); Retry-After is set.
           content:
             application/json:
               schema:

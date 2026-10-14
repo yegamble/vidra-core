@@ -2297,6 +2297,11 @@ func run() error {
 		// repository's accepted remote_channel_follows edges by default (§2) —
 		// no extra wiring needed.
 		federation.WithMediaStorage(blobs),
+		// A local view of a remote video is federated to its origin once per
+		// viewer per window (deduped in Redis like a local view), and at most
+		// maxRemoteViewsPerOriginHour per origin domain across replicas.
+		federation.WithRemoteViewDeduper(cache.NewDeduper(rdb.Client)),
+		federation.WithRemoteViewOriginCap(ratelimit.NewRedisCounter(rdb.Client)),
 		// Inbound federated comments run the same watched-words flagging as
 		// local ones (remote-content §6).
 		federation.WithCommentFlagger(watchwordsvc),
@@ -2344,9 +2349,6 @@ func run() error {
 			return settingssvc.Bool(instancesettings.KeyFederationAutoFollowBack)
 		}),
 		federation.WithLogger(logger),
-		// A local view of a remote video is federated to its origin once per
-		// viewer per window, deduped in Redis like a local view.
-		federation.WithRemoteViewDeduper(cache.NewDeduper(rdb.Client)),
 	}
 	if cfg.FederationKeyKEK != "" {
 		cipher, err := secretbox.NewCipherFromBase64(cfg.FederationKeyKEK)
