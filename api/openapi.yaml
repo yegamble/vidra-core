@@ -3363,6 +3363,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/import/peertube/follows/{id}:
+    get:
+      operationId: getPeerTubeFollowImport
+      summary: Status of a background follow import
+      description: >-
+        Counts per outcome for the follow import started by
+        POST /api/v1/me/import/peertube (its follows_job_id). Only the caller's
+        own import is visible; any other id is 404.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Current counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeerTubeFollowImportStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such import for this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/import/peertube:
     post:
       operationId: importPeerTubeArchive
@@ -3375,8 +3410,10 @@ paths:
         regular playlists (matched by title, so a re-import never duplicates;
         items are not resolved and are counted in playlist_items_skipped), and
         the autoplay-next setting. Videos, likes, dislikes, comments, watch
-        history, blocklists, followers and following are NOT imported yet and
-        are counted under skipped_sections. Synchronous: the work is bounded
+        history, blocklists and followers are NOT imported yet and are counted
+        under skipped_sections. The accounts in following.json (up to 1000) are
+        queued and followed in the background through the same path as
+        POST /me/remote-follows; the response carries follows_job_id. Synchronous: the work is bounded
         and touches no network or media. The body cap for this route is
         PEERTUBE_IMPORT_MAX_SIZE, which defaults to the global HTTP body limit
         (8 MB), enough for an export trimmed to its peertube/*.json entries; an
@@ -13590,7 +13627,8 @@ paths:
             Invalid target (neither handle nor actor_url, or both), a target
             on this instance (follow local channels via
             POST /channels/{handle}/follow), or a handle/actor URL that could
-            not be resolved to a remote channel.
+            not be resolved to a remote channel. A target this instance does
+            not federate with gets the same answer as an unresolvable one.
           content:
             application/json:
               schema:
@@ -25521,7 +25559,26 @@ components:
         - settings_applied
         - skipped_sections
         - channels_mapped
+        - follows_queued
+        - follows_skipped_federation
+        - follows_job_id
       properties:
+        follows_queued:
+          type: integer
+          description: >-
+            Accounts from following.json queued to be followed in the
+            background (name@host handles only; at most 1000 pending per user and 20 per host). Handles not queued
+            (duplicate, malformed, over the cap) are counted in
+            skipped_sections.following.
+        follows_skipped_federation:
+          type: integer
+          description: Handles held back because federation is disabled on this instance.
+        follows_job_id:
+          type: [string, "null"]
+          format: uuid
+          description: >-
+            Poll GET /api/v1/me/import/peertube/follows/{id}; null when nothing
+            was queued.
         channels_created: {type: integer}
         channels_existing: {type: integer}
         channels_mapped:
@@ -25547,6 +25604,21 @@ components:
         skipped_sections:
           type: object
           additionalProperties: {type: integer}
+    PeerTubeFollowImportStatus:
+      type: object
+      description: >-
+        Progress of one background follow import. total is the sum of the
+        other counts; the import is finished when pending is 0.
+      required: [id, created_at, total, pending, done, failed, skipped_federation, skipped_invalid]
+      properties:
+        id: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+        total: {type: integer}
+        pending: {type: integer, description: "Waiting or being retried with backoff."}
+        done: {type: integer, description: "Follow requested (the remote may still accept or reject it)."}
+        failed: {type: integer, description: "Could not be resolved (unreachable after the retry limit, or not followable from this instance)."}
+        skipped_federation: {type: integer}
+        skipped_invalid: {type: integer, description: "A local actor or a handle that cannot be followed."}
     AccountImportSummary:
       type: object
       description: >-

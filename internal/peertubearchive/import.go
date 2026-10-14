@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/peertubefollows"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -39,11 +40,19 @@ type PlayerSettings interface {
 	Update(ctx context.Context, userID uuid.UUID, patch playersettings.Patch) (playersettings.Settings, error)
 }
 
+// FollowQueue queues remote-follow targets for one user.
+type FollowQueue interface {
+	Enqueue(ctx context.Context, userID uuid.UUID, targets []string) (peertubefollows.Queued, error)
+}
+
 // Importer applies an Archive to one user's own account.
 type Importer struct {
 	Channels       Channels
 	Playlists      Playlists
 	PlayerSettings PlayerSettings // optional
+	// Follows, when set, queues the export's following.json handles for a
+	// background follow (see the peertubefollows package).
+	Follows FollowQueue
 	// Lock, when set, serialises imports for one user (e.g. a Postgres advisory
 	// lock) so two concurrent identical imports cannot both pass the
 	// already-exists checks. It returns the release func.
@@ -65,6 +74,14 @@ type Summary struct {
 	// ChannelsMapped lists every channel whose PeerTube name was rewritten into
 	// vidra's handle alphabet (original -> handle actually used).
 	ChannelsMapped []ChannelMapping `json:"channels_mapped"`
+	// FollowsQueued targets will be followed in the background; poll
+	// GET /me/import/peertube/follows/{follows_job_id}. Handles not queued
+	// (duplicate, over the cap, malformed) are counted in
+	// skipped_sections.following; follows_skipped_federation counts those held
+	// back because federation is disabled.
+	FollowsQueued            int     `json:"follows_queued"`
+	FollowsSkippedFederation int     `json:"follows_skipped_federation"`
+	FollowsJobID             *string `json:"follows_job_id"`
 }
 
 // ChannelMapping records one PeerTube channel name and the vidra handle it became.
@@ -270,6 +287,23 @@ func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (S
 			// Items reference videos by URL; resolving them is slice 2.
 			sum.PlaylistItemsSkipped += p.Elements
 		}
+	}
+
+	if len(a.Following) > 0 && im.Follows != nil {
+		q, err := im.Follows.Enqueue(ctx, userID, a.Following)
+		if err != nil {
+			return sum, err
+		}
+		sum.FollowsQueued, sum.FollowsSkippedFederation = q.Queued, q.SkippedFederation
+		if q.JobID != nil {
+			id := q.JobID.String()
+			sum.FollowsJobID = &id
+		}
+		if rest := len(a.Following) - q.Queued - q.SkippedFederation; rest > 0 {
+			sum.SkippedSections["following"] += rest
+		}
+	} else if len(a.Following) > 0 {
+		sum.SkippedSections["following"] += len(a.Following)
 	}
 
 	if s := a.Settings; s != nil && s.AutoPlayNextVideo != nil && im.PlayerSettings != nil {

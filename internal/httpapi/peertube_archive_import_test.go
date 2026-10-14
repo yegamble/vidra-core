@@ -15,11 +15,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/diskspace"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/peertubearchive"
+	"github.com/vidra/vidra-core/internal/peertubefollows"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -300,4 +302,61 @@ func TestPeerTubeArchiveImportRefusesWhenDiskIsShort(t *testing.T) {
 		t.Errorf("short disk = %d, want 503", rec.Code)
 	}
 	ptNoTempLeft(t, tmp)
+}
+
+type ptFollowRepo struct {
+	peertubefollows.Repo
+	owner uuid.UUID
+	id    uuid.UUID
+}
+
+// GetPeerTubeFollowImport binds the import to the first user who asks, which in
+// the test below is its creator; anyone else then sees it as absent.
+func (r *ptFollowRepo) GetPeerTubeFollowImport(_ context.Context, a sqlcgen.GetPeerTubeFollowImportParams) (sqlcgen.GetPeerTubeFollowImportRow, error) {
+	if a.ID == r.id && r.owner == uuid.Nil {
+		r.owner = a.UserID
+	}
+	if a.ID != r.id || a.UserID != r.owner {
+		return sqlcgen.GetPeerTubeFollowImportRow{}, pgx.ErrNoRows
+	}
+	return sqlcgen.GetPeerTubeFollowImportRow{ID: r.id}, nil
+}
+
+func (r *ptFollowRepo) CountPeerTubeFollowImportTargets(context.Context, sqlcgen.CountPeerTubeFollowImportTargetsParams) ([]sqlcgen.CountPeerTubeFollowImportTargetsRow, error) {
+	return []sqlcgen.CountPeerTubeFollowImportTargetsRow{{State: "done", N: 2}, {State: "pending", N: 1}}, nil
+}
+
+func TestPeerTubeFollowStatusIsOwnerScoped(t *testing.T) {
+	id := uuid.New()
+	repo := &ptFollowRepo{id: id}
+	env := newAccountEnv(t, WithPeerTubeFollowStatus(&peertubefollows.Service{Repo: repo}))
+	tok := registerAndToken(t, env.srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	other := registerAndToken(t, env.srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	get := func(token, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rec := httptest.NewRecorder()
+		env.srv.Handler().ServeHTTP(rec, req)
+		return rec
+	}
+	path := "/api/v1/me/import/peertube/follows/" + id.String()
+	if rec := get("", path); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anon = %d", rec.Code)
+	}
+	rec := get(tok, path)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("owner = %d %s", rec.Code, rec.Body.String())
+	}
+	var st peertubefollows.Status
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil || st.Total != 3 || st.Done != 2 || st.Pending != 1 {
+		t.Fatalf("status %+v %v", st, err)
+	}
+	if rec := get(other, path); rec.Code != http.StatusNotFound {
+		t.Fatalf("other user = %d, want 404", rec.Code)
+	}
+	if rec := get(tok, "/api/v1/me/import/peertube/follows/"+uuid.NewString()); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown = %d, want 404", rec.Code)
+	}
 }

@@ -61,10 +61,12 @@ func (q *Queries) CountMutedInstances(ctx context.Context, muterID uuid.UUID) (i
 }
 
 const isInstanceBlocked = `-- name: IsInstanceBlocked :one
-SELECT EXISTS (SELECT 1 FROM blocked_instances WHERE domain = $1)
+SELECT EXISTS (SELECT 1 FROM blocked_instances
+               WHERE domain = $1 OR regexp_replace(domain, ':[0-9]+$', '') = $1)
 `
 
 // The cheap inbox/drain check: is this (lowercased) domain on the blocklist?
+// A stored host:port entry (dev origins) blocks the bare host too.
 func (q *Queries) IsInstanceBlocked(ctx context.Context, domain string) (bool, error) {
 	row := q.db.QueryRow(ctx, isInstanceBlocked, domain)
 	var exists bool
