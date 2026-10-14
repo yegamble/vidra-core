@@ -50,6 +50,9 @@ func validateWordListFields(name *string, action *string, words []string) []Fiel
 			out = append(out, FieldError{Field: "name", Message: "is required"})
 		} else if utf8.RuneCountInString(n) > 100 {
 			out = append(out, FieldError{Field: "name", Message: "must be at most 100 characters"})
+		} else if strings.EqualFold(n, watchword.TagExternalLink) {
+			// The built-in automatic tag's name: a list so named would be indistinguishable from it.
+			out = append(out, FieldError{Field: "name", Message: "is reserved"})
 		}
 	}
 	if action != nil && *action != watchword.ActionFlag && *action != watchword.ActionHold {

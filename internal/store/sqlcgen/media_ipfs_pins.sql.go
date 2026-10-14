@@ -240,6 +240,21 @@ func (q *Queries) CountIPFSPinsByNetworkStateClass(ctx context.Context) ([]Count
 	return items, nil
 }
 
+const countIPFSPinsForRepinAfter = `-- name: CountIPFSPinsForRepinAfter :one
+SELECT count(*)::bigint FROM media_ipfs_pins
+WHERE media_class = 'hls' AND state = 'pinned' AND car_root <> ''
+  AND object_key LIKE '%/' AND object_key > $1::text
+`
+
+// How many rows the re-pin has not examined yet (an upper bound on its remaining work:
+// most will turn out to be playback-only already).
+func (q *Queries) CountIPFSPinsForRepinAfter(ctx context.Context, afterKey string) (int64, error) {
+	row := q.db.QueryRow(ctx, countIPFSPinsForRepinAfter, afterKey)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countIPFSPinsSharingCID = `-- name: CountIPFSPinsSharingCID :one
 SELECT count(*)::bigint
 FROM media_ipfs_pins
@@ -467,6 +482,71 @@ func (q *Queries) ListIPFSPinsByVideo(ctx context.Context, videoID pgtype.UUID) 
 	return items, nil
 }
 
+const listIPFSPinsForRepin = `-- name: ListIPFSPinsForRepin :many
+SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network, claim_token, lease_until, reservation_bytes, copied_bytes, source_generation, committed_generation, admitted_host_sequence, admitted_config_revision, policy_reason, demand_at, capacity_reason FROM media_ipfs_pins
+WHERE media_class = 'hls' AND state = 'pinned' AND car_root <> ''
+  AND object_key LIKE '%/' AND claim_token IS NULL
+  AND object_key > $1::text
+ORDER BY object_key
+LIMIT $2
+`
+
+type ListIPFSPinsForRepinParams struct {
+	AfterKey  string `json:"after_key"`
+	BatchSize int32  `json:"batch_size"`
+}
+
+// One keyset page of the pinned HLS directory rows the playback-only re-pin
+// (Tier A F6 follow-up) examines, in object_key order so a cursor resumes it. The
+// trailing-slash filter is the directory intent; car_root <> ” skips a row that
+// never recorded a root. A row mid-admission (claim_token set) is left to finish.
+func (q *Queries) ListIPFSPinsForRepin(ctx context.Context, arg ListIPFSPinsForRepinParams) ([]MediaIpfsPin, error) {
+	rows, err := q.db.Query(ctx, listIPFSPinsForRepin, arg.AfterKey, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaIpfsPin
+	for rows.Next() {
+		var i MediaIpfsPin
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.MediaClass,
+			&i.Cid,
+			&i.CarRoot,
+			&i.ByteSize,
+			&i.State,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LastError,
+			&i.VideoID,
+			&i.OwnerUserID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Network,
+			&i.TargetNetwork,
+			&i.ClaimToken,
+			&i.LeaseUntil,
+			&i.ReservationBytes,
+			&i.CopiedBytes,
+			&i.SourceGeneration,
+			&i.CommittedGeneration,
+			&i.AdmittedHostSequence,
+			&i.AdmittedConfigRevision,
+			&i.PolicyReason,
+			&i.DemandAt,
+			&i.CapacityReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listIPFSPinsForVerify = `-- name: ListIPFSPinsForVerify :many
 SELECT object_key, media_class, cid, network, video_id
 FROM media_ipfs_pins
@@ -620,14 +700,15 @@ func (q *Queries) ListPinnedVideoIDs(ctx context.Context, videoIds []uuid.UUID) 
 
 const markIPFSPinFailed = `-- name: MarkIPFSPinFailed :exec
 UPDATE media_ipfs_pins
-SET state = 'failed', attempts = attempts + 1, last_error = $2, updated_at = now()
+SET state = CASE WHEN $3 = 'pending' AND cid <> '' AND car_root <> '' THEN 'pinned' ELSE 'failed' END,
+    attempts = attempts + 1, last_error = $2, updated_at = now()
 WHERE object_key = $1 AND state = $3
 `
 
 type MarkIPFSPinFailedParams struct {
-	ObjectKey     string `json:"object_key"`
-	LastError     string `json:"last_error"`
-	ExpectedState string `json:"expected_state"`
+	ObjectKey     string      `json:"object_key"`
+	LastError     string      `json:"last_error"`
+	ExpectedState interface{} `json:"expected_state"`
 }
 
 // Dead-letter a pin/unpin after max attempts: no further automatic retries (the
@@ -639,6 +720,11 @@ type MarkIPFSPinFailedParams struct {
 // newer intent is preserved rather than clobbered to 'failed' — which the reconcile
 // scan would otherwise re-arm in the WRONG direction (a failed-pin cid=” re-pins,
 // so a clobbered unpin would re-pin a now-non-public object: a privacy regression).
+//
+// A FAILED RE-ADD OF A ROW THAT ALREADY HOLDS A GOOD ROOT (a re-transcode or the bulk
+// re-pin re-arms a pinned directory row; cid and car_root are kept) returns to
+// 'pinned' on that old root, last_error kept. Dead-lettering it would let
+// RearmFailedIPFSPins read cid <> ” as a failed UNPIN and unpin the good root.
 func (q *Queries) MarkIPFSPinFailed(ctx context.Context, arg MarkIPFSPinFailedParams) error {
 	_, err := q.db.Exec(ctx, markIPFSPinFailed, arg.ObjectKey, arg.LastError, arg.ExpectedState)
 	return err
@@ -758,6 +844,34 @@ WHERE object_key IN (
 // regression). next_attempt_at = now() makes them immediately claimable.
 func (q *Queries) RearmFailedIPFSPins(ctx context.Context, batchSize int32) (int64, error) {
 	result, err := q.db.Exec(ctx, rearmFailedIPFSPins, batchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const rearmIPFSPinForRepin = `-- name: RearmIPFSPinForRepin :execrows
+UPDATE media_ipfs_pins
+SET state = 'pending', capacity_reason = '', attempts = 0, next_attempt_at = now(),
+    last_error = '', updated_at = now()
+WHERE object_key = $1
+  AND state = 'pinned' AND cid = $2
+  AND claim_token IS NULL AND target_network IS NULL
+`
+
+type RearmIPFSPinForRepinParams struct {
+	ObjectKey string `json:"object_key"`
+	Cid       string `json:"cid"`
+}
+
+// Move ONE pinned HLS row back to 'pending' so the ordinary pin path (admission,
+// reservation, F2 trailer check, F3 budget) re-adds the playback-only tree and
+// swapUnpin releases the superseded root. cid/car_root are PRESERVED (that is what
+// swapUnpin compares) and so is policy_reason, unlike RepinIPFSObject which resets it
+// to 'new'. Guarded on the CID the caller inspected: a privacy flip, a delete or a
+// re-transcode that moved the row in between wins by making this match nothing.
+func (q *Queries) RearmIPFSPinForRepin(ctx context.Context, arg RearmIPFSPinForRepinParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rearmIPFSPinForRepin, arg.ObjectKey, arg.Cid)
 	if err != nil {
 		return 0, err
 	}
@@ -985,6 +1099,51 @@ func (q *Queries) RouteIPFSPinIntent(ctx context.Context, arg RouteIPFSPinIntent
 		&i.CapacityReason,
 	)
 	return i, err
+}
+
+const saveIPFSRepinRun = `-- name: SaveIPFSRepinRun :execrows
+UPDATE instance_settings
+SET value = $1, updated_at = now()
+WHERE key = $2 AND value LIKE '%"phase":"' || $3::text || '"%'
+`
+
+type SaveIPFSRepinRunParams struct {
+	Value         string `json:"value"`
+	Key           string `json:"key"`
+	ExpectedPhase string `json:"expected_phase"`
+}
+
+// Compare-and-set save of the run state: only while the stored phase is still the one
+// the writer loaded, so a cancel or a restart between its load and save wins (0 rows).
+func (q *Queries) SaveIPFSRepinRun(ctx context.Context, arg SaveIPFSRepinRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, saveIPFSRepinRun, arg.Value, arg.Key, arg.ExpectedPhase)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const startIPFSRepinRun = `-- name: StartIPFSRepinRun :execrows
+INSERT INTO instance_settings (key, value, updated_at)
+VALUES ($1, $2, now())
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+WHERE instance_settings.value !~ '"phase":"(running|paused)"'
+`
+
+type StartIPFSRepinRunParams struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// Compare-and-set start of the bulk re-pin run: writes the fresh run state unless the
+// stored one is running or paused (0 rows = another start won). The state is JSON in
+// instance_settings.value; json.Marshal emits "phase":"x" without spaces.
+func (q *Queries) StartIPFSRepinRun(ctx context.Context, arg StartIPFSRepinRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, startIPFSRepinRun, arg.Key, arg.Value)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const sweepIneligibleIPFSPins = `-- name: SweepIneligibleIPFSPins :execrows

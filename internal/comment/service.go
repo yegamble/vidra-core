@@ -54,7 +54,7 @@ type Repository interface {
 	ListCommentsByVideo(ctx context.Context, arg sqlcgen.ListCommentsByVideoParams) ([]sqlcgen.ListCommentsByVideoRow, error)
 	CountCommentsByVideo(ctx context.Context, arg sqlcgen.CountCommentsByVideoParams) (int64, error)
 	ListAdminComments(ctx context.Context, arg sqlcgen.ListAdminCommentsParams) ([]sqlcgen.ListAdminCommentsRow, error)
-	CountAdminComments(ctx context.Context, query *string) (int64, error)
+	CountAdminComments(ctx context.Context, arg sqlcgen.CountAdminCommentsParams) (int64, error)
 	GetComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)
 	UpdateComment(ctx context.Context, arg sqlcgen.UpdateCommentParams) (sqlcgen.Comment, error)
 	DeleteComment(ctx context.Context, id uuid.UUID) error
@@ -555,25 +555,34 @@ type AdminComment struct {
 	// Deleted marks a §1 tombstone (the author's account was hard-deleted):
 	// the body is empty in storage and views render "[deleted]".
 	Deleted bool
+	// AutomaticTags (0177): 'external-link' and the names of the instance
+	// watched-word lists the body matched. Never the matched words.
+	AutomaticTags []string
 }
 
 // ListForAdmin returns all comments newest first for the admin/moderator
-// overview. A non-empty query filters by body substring. The caller clamps
+// overview. A non-empty query filters by body substring; a non-empty autoTag
+// keeps only comments carrying that automatic tag. The caller clamps
 // limit/offset.
-func (s *Service) ListForAdmin(ctx context.Context, query string, limit, offset int32) ([]AdminComment, int64, error) {
+func (s *Service) ListForAdmin(ctx context.Context, query, autoTag string, limit, offset int32) ([]AdminComment, int64, error) {
 	var q *string
 	if trimmed := strings.TrimSpace(query); trimmed != "" {
 		q = &trimmed
 	}
+	var tag *string
+	if t := strings.TrimSpace(autoTag); t != "" {
+		tag = &t
+	}
 	rows, err := s.repo.ListAdminComments(ctx, sqlcgen.ListAdminCommentsParams{
 		Query:        q,
+		AutoTag:      tag,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := s.repo.CountAdminComments(ctx, q)
+	total, err := s.repo.CountAdminComments(ctx, sqlcgen.CountAdminCommentsParams{Query: q, AutoTag: tag})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -588,6 +597,7 @@ func (s *Service) ListForAdmin(ctx context.Context, query string, limit, offset 
 			AuthorDisplayName: r.AuthorDisplayName,
 			CreatedAt:         r.CreatedAt,
 			Deleted:           r.DeletedAt.Valid,
+			AutomaticTags:     r.AutomaticTags,
 		}
 		if r.RemoteActorUrl != nil {
 			ac.Remote = true
