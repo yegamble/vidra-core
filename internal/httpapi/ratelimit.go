@@ -233,6 +233,29 @@ const (
 	defaultBulkVideosRateWindow = time.Minute
 )
 
+// A remote-video vote change queues one or two signed deliveries to another
+// instance, so writes carry a per-user budget on top of the API-wide one.
+const (
+	defaultRemoteRatingRateLimit  = 30
+	defaultRemoteRatingRateWindow = time.Minute
+)
+
+// remoteRatingRateLimit throttles PUT/DELETE /remote-videos/{id}/rating PER
+// USER. It runs after requireAuth.
+func (s *Server) remoteRatingRateLimit() echo.MiddlewareFunc {
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+			userID, _, ok := principalFromContext(c)
+			if !ok || s.remoteRatingLimit == nil {
+				return nil, "", false
+			}
+			return s.remoteRatingLimit, "remote-rating:" + userID.String(), true
+		},
+		unavailable: "remote rating rate limiter unavailable, failing open",
+		denied:      "too many rating changes; wait a minute and try again",
+	})
+}
+
 // bulkVideosRateLimit throttles POST /me/videos/bulk PER USER, in the style of
 // mailTestRateLimit. It runs after requireAuth.
 func (s *Server) bulkVideosRateLimit() echo.MiddlewareFunc {

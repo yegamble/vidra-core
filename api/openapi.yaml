@@ -12963,6 +12963,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "400":
+          description: Malformed JSON body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The rating is not `like` or `dislike`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many rating changes by this user; retry after a minute.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Federation is disabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: deleteRemoteVideoRating
       summary: Clear your rating of a federated video
@@ -12994,6 +13018,18 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such remote video, or it (or its origin) is blocked here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many rating changes by this user; retry after a minute.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Federation is disabled on this instance.
           content:
             application/json:
               schema:

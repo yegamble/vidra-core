@@ -52,10 +52,23 @@ func (s *Server) handleGetRemoteVideoRating(c echo.Context) error {
 	return c.JSON(http.StatusOK, newRemoteVideoRatingView(r))
 }
 
+// remoteVideoRatingWrite is remoteVideoForRating for a vote change, which must
+// be deliverable: with federation disabled on this instance it is 503, as for
+// remote follows (remote_follows.go).
+func (s *Server) remoteVideoRatingWrite(c echo.Context) (userID, videoID uuid.UUID, err error) {
+	if userID, videoID, err = s.remoteVideoForRating(c); err != nil {
+		return
+	}
+	if !s.cfg.FederationEnabled {
+		err = echo.NewHTTPError(http.StatusServiceUnavailable, "federation is disabled on this instance")
+	}
+	return
+}
+
 // handlePutRemoteVideoRating sets the caller's vote and federates it to the
 // origin as a Like/Dislike (with an Undo of a previous vote). Behind requireAuth.
 func (s *Server) handlePutRemoteVideoRating(c echo.Context) error {
-	userID, videoID, err := s.remoteVideoForRating(c)
+	userID, videoID, err := s.remoteVideoRatingWrite(c)
 	if err != nil {
 		return err
 	}
@@ -75,7 +88,7 @@ func (s *Server) handlePutRemoteVideoRating(c echo.Context) error {
 // handleDeleteRemoteVideoRating clears the caller's vote (idempotent) and
 // federates its Undo. Behind requireAuth.
 func (s *Server) handleDeleteRemoteVideoRating(c echo.Context) error {
-	userID, videoID, err := s.remoteVideoForRating(c)
+	userID, videoID, err := s.remoteVideoRatingWrite(c)
 	if err != nil {
 		return err
 	}

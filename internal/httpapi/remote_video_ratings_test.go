@@ -49,8 +49,10 @@ func (r rvRatingRepo) DeleteRemoteVideoUserRating(_ context.Context, a sqlcgen.D
 	return v, nil
 }
 
-func TestRemoteVideoRatingEndpoints(t *testing.T) {
+func rvRatingServer(t *testing.T, federationOn bool) (*Server, string, string) {
+	t.Helper()
 	cfg := fedTestConfig()
+	cfg.FederationEnabled = federationOn
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	authsvc := auth.NewService(newAuthFakeRepo(), issuer, 720*time.Hour)
 	id := uuid.New()
@@ -62,7 +64,11 @@ func TestRemoteVideoRatingEndpoints(t *testing.T) {
 		WithRemoteVideoService(remotevideo.NewService(videos, nil)),
 	)
 	tok, _ := registerAndUser(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
-	path := "/api/v1/remote-videos/" + id.String() + "/rating"
+	return srv, tok, "/api/v1/remote-videos/" + id.String() + "/rating"
+}
+
+func TestRemoteVideoRatingEndpoints(t *testing.T) {
+	srv, tok, path := rvRatingServer(t, true)
 	mine := func(t *testing.T, method, body string, want *string) {
 		t.Helper()
 		rec := sendJSONAuth(srv, method, path, body, tok)
@@ -83,12 +89,40 @@ func TestRemoteVideoRatingEndpoints(t *testing.T) {
 	if rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/remote-videos/"+uuid.NewString()+"/rating", `{"rating":"like"}`, tok); rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown video PUT = %d, want 404", rec.Code)
 	}
-	if rec := sendJSONAuth(srv, http.MethodPut, path, `{"rating":"love"}`, tok); rec.Code < 400 || rec.Code >= 500 {
-		t.Fatalf("invalid rating PUT = %d, want 4xx", rec.Code)
+	if rec := sendJSONAuth(srv, http.MethodPut, path, `{"rating":"love"}`, tok); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid rating PUT = %d, want 422", rec.Code)
 	}
 	mine(t, http.MethodGet, "", nil)
 	mine(t, http.MethodPut, `{"rating":"like"}`, &like)
 	mine(t, http.MethodGet, "", &like)
 	mine(t, http.MethodDelete, "", nil)
 	mine(t, http.MethodGet, "", nil)
+}
+
+// With federation off, setting or clearing a vote is 503 (nothing could be
+// delivered), as for remote follows; reading the stored vote stays available.
+func TestRemoteVideoRatingFederationDisabled(t *testing.T) {
+	srv, tok, path := rvRatingServer(t, false)
+	for _, m := range []string{http.MethodPut, http.MethodDelete} {
+		if rec := sendJSONAuth(srv, m, path, `{"rating":"like"}`, tok); rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s with federation disabled = %d, want 503", m, rec.Code)
+		}
+	}
+	if rec := sendJSONAuth(srv, http.MethodGet, path, "", tok); rec.Code != http.StatusOK {
+		t.Errorf("GET with federation disabled = %d, want 200", rec.Code)
+	}
+}
+
+// Each vote change queues deliveries, so writes carry a per-user budget.
+func TestRemoteVideoRatingPerUserLimit(t *testing.T) {
+	srv, tok, path := rvRatingServer(t, true)
+	ratings := []string{"like", "dislike"}
+	for i := 0; i < defaultRemoteRatingRateLimit; i++ {
+		if rec := sendJSONAuth(srv, http.MethodPut, path, `{"rating":"`+ratings[i%2]+`"}`, tok); rec.Code != http.StatusOK {
+			t.Fatalf("write %d = %d, want 200", i, rec.Code)
+		}
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, path, "", tok); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("write past the budget = %d, want 429", rec.Code)
+	}
 }

@@ -99,6 +99,8 @@ type Server struct {
 	unlockLimit *ratelimit.Limiter
 	// bulkVideosLimit throttles POST /me/videos/bulk PER USER (see ratelimit.go).
 	bulkVideosLimit *ratelimit.Limiter
+	// remoteRatingLimit throttles remote-video vote changes PER USER.
+	remoteRatingLimit *ratelimit.Limiter
 	// playbackStats + playbackLimit back the watch-time beacon and its owner
 	// report (playback_stats.go). Nil playbackStats leaves both routes unmounted.
 	playbackStats playbackStatsService
@@ -1227,6 +1229,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// Bulk video actions each run the full delete/update pipeline up to 100
 	// times, so they always carry a per-user budget, wired in-process like unlock.
 	s.bulkVideosLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultBulkVideosRateLimit, defaultBulkVideosRateWindow)
+	s.remoteRatingLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultRemoteRatingRateLimit, defaultRemoteRatingRateWindow)
 	s.playbackLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackRateLimit, defaultPlaybackRateWindow)
 	s.playbackStartLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackStartLimit, defaultPlaybackStartWindow)
 	// Remote-URI search resolution (config-parity W13) triggers outbound
@@ -2218,8 +2221,8 @@ func (s *Server) routes() {
 			// A local user's vote on a remote video (0179), federated to the
 			// origin as Like/Dislike/Undo; the origin owns the counts.
 			api.GET("/remote-videos/:id/rating", s.handleGetRemoteVideoRating, s.requireAuth)
-			api.PUT("/remote-videos/:id/rating", s.handlePutRemoteVideoRating, s.requireAuth)
-			api.DELETE("/remote-videos/:id/rating", s.handleDeleteRemoteVideoRating, s.requireAuth)
+			api.PUT("/remote-videos/:id/rating", s.handlePutRemoteVideoRating, s.requireAuth, s.remoteRatingRateLimit())
+			api.DELETE("/remote-videos/:id/rating", s.handleDeleteRemoteVideoRating, s.requireAuth, s.remoteRatingRateLimit())
 		}
 		// The WRITE side (migration 0147, the home-instance-hosts-and-federates
 		// ruling): a signed-in local user authors a comment ON a remote video, and
