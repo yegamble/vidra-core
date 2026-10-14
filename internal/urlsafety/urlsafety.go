@@ -75,6 +75,38 @@ func SetTransportWrapper(w func(http.RoundTripper) http.RoundTripper) { transpor
 // unparseable IP still apply even when AllowPrivate is set.
 type Guard struct {
 	AllowPrivate bool
+	// KeepMetadataBlocked keeps the cloud instance-metadata ranges (IPv4
+	// link-local 169.254.0.0/16 and AWS's fd00:ec2::/64) blocked even when
+	// AllowPrivate is set: a lab that reaches a private service never needs
+	// the host's metadata endpoint.
+	KeepMetadataBlocked bool
+}
+
+// metadataPrefixes are the instance-metadata ranges KeepMetadataBlocked covers.
+var metadataPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("fd00:ec2::/64"),
+}
+
+var nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
+
+func inMetadataPrefix(ip net.IP) bool {
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return true
+	}
+	addr = addr.Unmap()
+	// NAT64 (64:ff9b::/96) carries an IPv4 address in its last four bytes.
+	if nat64Prefix.Contains(addr) {
+		b := addr.As16()
+		addr = netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
+	}
+	for _, p := range metadataPrefixes {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 // blockedIP applies the guard's policy to a single IP.
@@ -83,7 +115,7 @@ func (g Guard) blockedIP(ip net.IP) bool {
 		return true // unparseable → fail closed regardless of AllowPrivate
 	}
 	if g.AllowPrivate {
-		return false
+		return g.KeepMetadataBlocked && inMetadataPrefix(ip)
 	}
 	return IsBlockedIP(ip)
 }

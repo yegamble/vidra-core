@@ -263,12 +263,13 @@ func (f *oauthHTTPFakeRepo) UsernameExists(_ context.Context, name string) (bool
 
 // oauthEnv is a fully wired OAuth test harness.
 type oauthEnv struct {
-	srv     *Server
-	fake    *fakeOIDC
-	repo    *oauthHTTPFakeRepo
-	cfg     *config.Config
-	buf     *bytes.Buffer
-	authsvc *auth.Service
+	srv      *Server
+	fake     *fakeOIDC
+	repo     *oauthHTTPFakeRepo
+	cfg      *config.Config
+	buf      *bytes.Buffer
+	authsvc  *auth.Service
+	oauthsvc *auth.OAuthService
 }
 
 // newOAuthEnv wires one configured provider ("fake"). Extra auth options let a
@@ -294,7 +295,7 @@ func newOAuthEnv(t *testing.T, authOpts ...auth.Option) *oauthEnv {
 		WithOAuthService(oauthsvc),
 		WithLogger(slog.New(slog.NewJSONHandler(buf, nil))),
 	)
-	return &oauthEnv{srv: srv, fake: fake, repo: repo, cfg: cfg, buf: buf, authsvc: authsvc}
+	return &oauthEnv{srv: srv, fake: fake, repo: repo, cfg: cfg, buf: buf, authsvc: authsvc, oauthsvc: oauthsvc}
 }
 
 // begin performs GET /auth/oauth/fake and returns the parsed authorization
