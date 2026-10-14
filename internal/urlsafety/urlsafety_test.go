@@ -426,6 +426,10 @@ func TestGuardKeepMetadataBlocked(t *testing.T) {
 		"10.0.0.5":        false,
 		"127.0.0.1":       false,
 		"fd00:1::1":       false,
+		// The same metadata address in IPv4-mapped and NAT64 form.
+		"::ffff:169.254.169.254": true,
+		"64:ff9b::a9fe:a9fe":     true,
+		"64:ff9b::a00:5":         false,
 	} {
 		if got := g.blockedIP(net.ParseIP(ip)); got != want {
 			t.Errorf("blockedIP(%s) = %v, want %v", ip, got, want)
