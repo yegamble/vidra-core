@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -438,5 +439,22 @@ func TestInstallStreamNeverEchoesASecret(t *testing.T) {
 	_, events := w.readSSE(t, "/api/install")
 	for _, e := range events {
 		assertNoSentinel(t, "install stream", []byte(e.payload.Text))
+	}
+}
+
+// The heartbeat goroutine writes to a ResponseWriter that net/http recycles the
+// moment the handler returns. A tick that lost the race with the end of the
+// stream used to write into the recycled buffer — a nil bufio.Writer in Flush,
+// seen as a SIGSEGV under CPU load. Once the stream is finished, a late
+// heartbeat must be a no-op.
+func TestHeartbeatAfterTheStreamEndsWritesNothing(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	stream := &sseWriter{w: rec}
+	stream.event("done", InstallEvent{})
+	before := rec.Body.Len()
+	stream.keepalive()
+	if got := rec.Body.Len(); got != before {
+		t.Errorf("heartbeat wrote %d bytes after the done event: %q", got-before, rec.Body.String())
 	}
 }
