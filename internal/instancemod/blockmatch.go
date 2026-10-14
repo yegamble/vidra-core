@@ -30,11 +30,41 @@ func BlockProbeForms(host string) []string {
 // spelling, probing with the supplied lookup (the repository's
 // IsInstanceBlocked, which also treats a stored host:port entry as the host).
 func BlockMatches(ctx context.Context, isBlocked func(ctx context.Context, domain string) (bool, error), host string) (bool, error) {
+	return BlockMatchesPort(ctx, isBlocked, host, "")
+}
+
+// BlockMatchesPort is BlockMatches for a host reached on a known port: each
+// spelling is also probed as host:port, so an entry stored with its port (dev
+// origins, or the scheme's default written out) is found even by a lookup that
+// matches exactly. An empty port probes the bare host only.
+func BlockMatchesPort(ctx context.Context, isBlocked func(ctx context.Context, domain string) (bool, error), host, port string) (bool, error) {
 	for _, f := range BlockProbeForms(host) {
-		blocked, err := isBlocked(ctx, f)
-		if err != nil || blocked {
-			return blocked, err
+		keys := []string{f}
+		if port != "" {
+			keys = append(keys, f+":"+port)
+		}
+		for _, k := range keys {
+			blocked, err := isBlocked(ctx, k)
+			if err != nil || blocked {
+				return blocked, err
+			}
 		}
 	}
 	return false, nil
+}
+
+// EffectivePort is the port a URL actually connects to: the explicit one, else
+// the scheme's default ("" for a scheme with none), so an entry written
+// "host:443" covers an https URL that leaves the port implicit.
+func EffectivePort(scheme, explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	switch strings.ToLower(scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	}
+	return ""
 }
