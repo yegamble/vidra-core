@@ -29,6 +29,9 @@ type adminCommentView struct {
 	CreatedAt         time.Time `json:"created_at"`
 	// Deleted marks a §1 tombstone; the body renders as "[deleted]".
 	Deleted bool `json:"deleted"`
+	// AutomaticTags: "external-link" and the names of the instance watched-word
+	// lists the body matched (0177). Never the matched words.
+	AutomaticTags []string `json:"automatic_tags"`
 }
 
 // adminCommentListResponse is the paginated admin comments overview.
@@ -39,11 +42,11 @@ type adminCommentListResponse struct {
 
 // handleListAdminComments returns all comments newest first for moderators/admins,
 // each with its author + video context. Behind requireRole(admin, moderator).
-// Optional ?q filters by body; pagination via ?limit (1–100, default 20)/?offset.
+// Optional ?q filters by body; ?auto_tag keeps comments carrying one automatic tag; pagination via ?limit (1–100, default 20)/?offset.
 func (s *Server) handleListAdminComments(c echo.Context) error {
 	q := c.QueryParam("q")
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	items, total, err := s.commentsvc.ListForAdmin(c.Request().Context(), q, page.Limit32(), page.Offset32())
+	items, total, err := s.commentsvc.ListForAdmin(c.Request().Context(), q, c.QueryParam("auto_tag"), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -60,6 +63,7 @@ func (s *Server) handleListAdminComments(c echo.Context) error {
 			AuthorDomain:      it.AuthorDomain,
 			CreatedAt:         it.CreatedAt,
 			Deleted:           it.Deleted,
+			AutomaticTags:     nonNilTags(it.AutomaticTags),
 		}
 		if it.Deleted {
 			v.Body = tombstoneBody
@@ -122,4 +126,12 @@ func (s *Server) handleBulkRemoveComments(c echo.Context) error {
 		Metadata: []audit.MetadataField{{Key: "count", Value: strconv.Itoa(n)}},
 	})
 	return c.JSON(http.StatusOK, bulkRemoveCommentsResponse{Removed: n})
+}
+
+// nonNilTags keeps the JSON a [] rather than null for an untagged comment.
+func nonNilTags(t []string) []string {
+	if t == nil {
+		return []string{}
+	}
+	return t
 }
