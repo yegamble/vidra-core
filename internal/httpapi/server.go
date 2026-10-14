@@ -100,6 +100,8 @@ type Server struct {
 	unlockLimit *ratelimit.Limiter
 	// bulkVideosLimit throttles POST /me/videos/bulk PER USER (see ratelimit.go).
 	bulkVideosLimit *ratelimit.Limiter
+	// remoteRatingLimit throttles remote-video vote changes PER USER.
+	remoteRatingLimit *ratelimit.Limiter
 	// peertubeImportLimit throttles POST /me/import/peertube PER USER.
 	peertubeImportLimit *ratelimit.Limiter
 	// ptSpool admits PeerTube archive uploads to local disk (process-wide).
@@ -1238,6 +1240,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// Bulk video actions each run the full delete/update pipeline up to 100
 	// times, so they always carry a per-user budget, wired in-process like unlock.
 	s.bulkVideosLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultBulkVideosRateLimit, defaultBulkVideosRateWindow)
+	s.remoteRatingLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultRemoteRatingRateLimit, defaultRemoteRatingRateWindow)
 	s.peertubeImportLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPeerTubeImportRateLimit, defaultPeerTubeImportRateWindow)
 	s.ptSpool = newPeerTubeSpool()
 	if s.peertubeArchive != nil {
@@ -2238,6 +2241,11 @@ func (s *Server) routes() {
 		// instance mutes and remote-account blocks filter the thread.
 		if s.fedsvc != nil {
 			api.GET("/remote-videos/:id/comments", s.handleListRemoteVideoComments, s.optionalAuth)
+			// A local user's vote on a remote video (0179), federated to the
+			// origin as Like/Dislike/Undo; the origin owns the counts.
+			api.GET("/remote-videos/:id/rating", s.handleGetRemoteVideoRating, s.requireAuth)
+			api.PUT("/remote-videos/:id/rating", s.handlePutRemoteVideoRating, s.requireAuth, s.remoteRatingRateLimit())
+			api.DELETE("/remote-videos/:id/rating", s.handleDeleteRemoteVideoRating, s.requireAuth, s.remoteRatingRateLimit())
 		}
 		// The WRITE side (migration 0147, the home-instance-hosts-and-federates
 		// ruling): a signed-in local user authors a comment ON a remote video, and
