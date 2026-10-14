@@ -517,7 +517,11 @@ paths:
         wins — the owner of an address is the only account that string can reach,
         so a lookalike username can never shadow someone else's sign-in.
         Unknown account and wrong password are reported identically (401) to
-        prevent account enumeration. Browser cookie mode also sets `vidra_video_access`,
+        prevent account enumeration. So is a temporarily LOCKED account: after
+        repeated failures from one network prefix (IPv4 /24, IPv6 /48), or a
+        larger number across all networks, sign-in is refused with the same 401
+        body, the same status and no Retry-After — even with the right password
+        — until the backoff expires or an administrator clears it. Browser cookie mode also sets `vidra_video_access`,
         an HttpOnly, SameSite=Lax access-token cookie scoped to `/api/v1/videos/`,
         Secure on HTTPS, with the access-token TTL. It authorizes only private or
         unpublished video GET/HEAD reads, never mutations; public playback ignores
@@ -1490,6 +1494,101 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/devices:
+    get:
+      operationId: listRecognisedDevices
+      summary: List recognised devices
+      description: >-
+        The browsers and devices the account has signed in from, most recent
+        first, and whether the new-device sign-in email is on. A device is a
+        long-lived random `vidra_device` cookie (httpOnly, Path=/api/v1/auth)
+        bound to the browser family and OS; only a hash and a coarse label such
+        as "Chrome on macOS" are stored, never an IP address. `current` marks the
+        device making this request.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The account's recognised devices.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecognisedDevicesResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/devices/{id}:
+    delete:
+      operationId: forgetRecognisedDevice
+      summary: Forget a recognised device
+      description: >-
+        Removes the record, so the next sign-in from that device is treated as
+        new (and mails the account, unless that is turned off). It does NOT end
+        sessions: sessions carry no device link, so use sign out of all devices
+        for that. Audited as `auth.device.forget`.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: The device was forgotten.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such device on this account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/security-prefs:
+    patch:
+      operationId: updateSecurityPrefs
+      summary: Turn the new-device sign-in email on or off
+      description: >-
+        The email is on by default. At most one such email is sent to an account
+        per hour, and an account with no recognised device yet never gets one
+        (its first sign-in just records).
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecurityPrefsRequest"
+      responses:
+        "200":
+          description: The stored preference.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityPrefsRequest"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (new_device_email is required).
           content:
             application/json:
               schema:
@@ -4258,8 +4357,10 @@ paths:
           in: query
           required: false
           description: >-
-            Only videos with this content-language code (see GET /videos/config).
-            Unknown value -> 422.
+            Only videos in this content language (see GET /videos/config), or
+            in ANY of a comma-separated list of up to 10 (`en,fr`; a viewer's
+            preferred_languages from GET /me/content-preferences). Unknown
+            value -> 422.
           schema:
             type: string
         - $ref: "#/components/parameters/PageLimit"
@@ -4998,6 +5099,88 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/playback:
+    post:
+      operationId: recordVideoPlayback
+      summary: Anonymous watch-time beacon
+      description: >-
+        One periodic playback sample (about every 10 s while playing). Folded
+        into the video's daily aggregates; no IP address, User-Agent, session or
+        viewer id is stored. Device class and OS family are bucketed from the
+        User-Agent server-side and the raw value is discarded. Rate limited per
+        client and video; the owner's own plays are ignored; a play may be marked started once per client per 10 minutes. 204 on success, 404 for a video that is not published or visible.
+      tags: [videos]
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaybackBeaconRequest"
+      responses:
+        "204":
+          description: Sample accepted (or ignored).
+        "400":
+          description: Malformed body or out-of-range value.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: No such video, or not visible to the caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429":
+          description: Beacon budget exceeded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /api/v1/videos/{id}/playback-stats:
+    get:
+      operationId: getVideoPlaybackStats
+      summary: Watch-time, retention and device analytics for a video (owner or channel editor)
+      description: >-
+        Last 30 days of playback aggregates: plays, watch seconds, average view
+        duration, a 20-bucket audience retention curve (omitted when the video
+        duration is unknown or nothing was watched), a device-class and OS split
+        and a daily series. Country is not available (no GeoIP in core). A
+        non-owner/non-editor or unknown id is reported as 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The video's playback statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackStatsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: No such video, or the caller may not manage it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /api/v1/channels/{handle}/stats:
     get:
       operationId: getChannelStats
@@ -9316,6 +9499,68 @@ paths:
           description: >-
             Empty update, unknown notification type, or an email switch for a
             type without email delivery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/content-preferences:
+    get:
+      operationId: getContentPreferences
+      summary: Get the caller's content preferences
+      description: >-
+        The signed-in viewer's per-flag sensitive-content policy overrides,
+        layered on their own sensitive_content_policy (else the instance
+        policy) and their preferred feed languages. A flag with no entry
+        inherits that base policy. Always 200.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's content preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentPreferences"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateContentPreferences
+      summary: Update the caller's content preferences
+      description: >-
+        Merge-update: sensitive_flag_policies replaces the overrides wholesale
+        (a flag set to an empty string, or omitted, inherits the base policy)
+        and preferred_languages replaces the language list; an omitted field
+        is kept. Unknown flag, policy or language, or more than 10 languages
+        -> 400.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateContentPreferencesRequest"
+      responses:
+        "200":
+          description: The saved content preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentPreferences"
+        "400":
+          description: Malformed body, unknown flag, or invalid policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
           content:
             application/json:
               schema:
@@ -18602,6 +18847,45 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/users/{id}/login-lockout:
+    delete:
+      operationId: adminClearLoginLockout
+      summary: Clear an account's failed-login lockout (admin)
+      description: >-
+        Drops every failed-login counter and lock for the account, so the holder
+        can sign in again immediately. Admin-only; audited as
+        `admin.user.login_lockout_clear` with the target named. Idempotent: 204
+        whether or not a lockout existed. No password step-up — it only removes a
+        brake.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: Any lockout on the account was cleared.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/users/{id}/mfa:
     delete:
       operationId: adminRemoveUserMFA
@@ -20492,6 +20776,18 @@ components:
             When the instance sensitive_content_policy is "hide", flagged
             videos are excluded from the public feed and search server-side;
             under warn/blur the frontend applies the matching presentation.
+        sensitive_flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveFlag"
+          description: >-
+            The kinds of sensitive content (PeerTube 7.2 nsfwFlags), always present
+            ([] when none; a flag implies is_sensitive). The viewer's per-flag
+            policy (GET /me/content-preferences) overrides their base policy for
+            that flag; with several flags the most restrictive applies. "hide" is
+            enforced server-side in browse and search; blur and warn are
+            presentation.
+
         sensitive_reason:
           type: string
           description: >-
@@ -21165,6 +21461,76 @@ components:
           description: Dense 30-day series, oldest first, zero-filled.
           items:
             $ref: "#/components/schemas/DailyViews"
+    PlaybackBeaconRequest:
+      type: object
+      required: [position_seconds, watched_seconds]
+      properties:
+        position_seconds:
+          type: integer
+          minimum: 0
+          description: Playhead position at sample time.
+        watched_seconds:
+          type: integer
+          minimum: 0
+          maximum: 12
+          description: Seconds actually played since the previous sample (heartbeat is 10 s).
+        started:
+          type: boolean
+          description: True on the first sample of a play.
+    PlaybackShare:
+      type: object
+      required: [key, watch_seconds, share]
+      properties:
+        key:
+          type: string
+        watch_seconds:
+          type: integer
+          format: int64
+        share:
+          type: number
+          description: Fraction of total watch seconds, 0..1.
+    PlaybackDay:
+      type: object
+      required: [day, plays, watch_seconds]
+      properties:
+        day:
+          type: string
+          format: date
+        plays:
+          type: integer
+          format: int64
+        watch_seconds:
+          type: integer
+          format: int64
+    PlaybackStatsResponse:
+      type: object
+      required: [plays, watch_seconds, avg_view_duration_seconds, duration_seconds, devices, os, daily]
+      properties:
+        plays:
+          type: integer
+          format: int64
+        watch_seconds:
+          type: integer
+          format: int64
+        avg_view_duration_seconds:
+          type: number
+        duration_seconds:
+          type: integer
+          description: Probed video duration; 0 when unknown.
+        retention:
+          type: [array, "null"]
+          description: 20 buckets of the video's length, each 0..1.
+          items:
+            type: number
+        devices:
+          type: array
+          items: { $ref: "#/components/schemas/PlaybackShare" }
+        os:
+          type: array
+          items: { $ref: "#/components/schemas/PlaybackShare" }
+        daily:
+          type: array
+          items: { $ref: "#/components/schemas/PlaybackDay" }
     ChannelStatsResponse:
       type: object
       required: [views, likes, dislikes, comments, followers, videos, daily_views]
@@ -21374,6 +21740,14 @@ components:
           description: >-
             Mark the video as sensitive content (defaults to false). See the
             Video schema for how the instance policy treats flagged videos.
+        sensitive_flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveFlag"
+          description: >-
+            The kinds of sensitive content. Any flag also marks the video sensitive.
+            An unknown flag -> 422.
+
         sensitive_reason:
           type: string
           maxLength: 280
@@ -21459,6 +21833,14 @@ components:
         is_sensitive:
           type: boolean
           description: Set or clear the sensitive-content flag (omit to leave unchanged).
+        sensitive_flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveFlag"
+          description: >-
+            Replace the sensitive-content kinds (omit to leave unchanged; [] clears).
+            A non-empty set also marks the video sensitive. An unknown flag -> 422.
+
         sensitive_reason:
           type: string
           maxLength: 280
@@ -21829,6 +22211,13 @@ components:
             The origin flagged this video sensitive (ActivityStreams
             `sensitive`). The viewer's sensitive-content policy applies as to a
             local video's is_sensitive: under "hide" it is excluded from search.
+        sensitive_flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveFlag"
+          description: >-
+            The origin's PeerTube SensitiveTag flags (explicitSex maps to sex);
+            unknown names are dropped.
     ATProtoLinkRequest:
       type: object
       required: [handle, app_password]
@@ -22672,6 +23061,54 @@ components:
           additionalProperties:
             type: boolean
           example: { new_video: true }
+    SensitiveFlag:
+      type: string
+      enum: [violent, shocking, sex]
+      description: >-
+        A kind of sensitive content. On the wire to PeerTube these are
+        SensitiveTag entries (sex is explicitSex); `sensitive` stays the boolean
+        Mastodon reads.
+    ContentPreferences:
+      type: object
+      required: [sensitive_flag_policies, preferred_languages]
+      properties:
+        sensitive_flag_policies:
+          type: object
+          description: >-
+            Per-flag viewer policy overrides. Keys are SensitiveFlag values;
+            each value is hide, warn, blur or display. A flag with no entry
+            inherits the viewer's base policy.
+          additionalProperties:
+            type: string
+            enum: [hide, warn, blur, display]
+        preferred_languages:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+          description: >-
+            Language ids (GET /videos/config) the viewer wants in browse feeds;
+            [] = no filter. The client passes them as the feed's comma-separated
+            ?language.
+    UpdateContentPreferencesRequest:
+      type: object
+      description: >-
+        A merge: an omitted field keeps its stored value.
+      properties:
+        sensitive_flag_policies:
+          type: object
+          description: >-
+            REPLACES the per-flag overrides. An empty string value (or an
+            omitted flag) inherits the base policy.
+          additionalProperties:
+            type: string
+            enum: [hide, warn, blur, display, ""]
+        preferred_languages:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+          description: REPLACES the language list ([] clears). Unknown id -> 400.
     PlayerSettings:
       type: object
       description: >-
@@ -28423,6 +28860,33 @@ components:
           description: >-
             Short-lived (5 min) single-purpose token. Not an access token — it
             is only accepted by the MFA challenge endpoint.
+    RecognisedDevice:
+      type: object
+      required: [id, label, first_seen_at, last_seen_at, current]
+      properties:
+        id: {type: string, format: uuid}
+        label: {type: string, example: Chrome on macOS}
+        first_seen_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        current:
+          type: boolean
+          description: True for the device making this request.
+    RecognisedDevicesResponse:
+      type: object
+      required: [devices, new_device_email]
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecognisedDevice"
+        new_device_email:
+          type: boolean
+          description: Whether the new-device sign-in email is on (default true).
+    SecurityPrefsRequest:
+      type: object
+      required: [new_device_email]
+      properties:
+        new_device_email: {type: boolean}
     MFAStatusResponse:
       type: object
       required: [enabled, recovery_codes_remaining]

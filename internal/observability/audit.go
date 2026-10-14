@@ -66,6 +66,14 @@ const (
 	// is an ADMIN-domain action against a target account, distinct from
 	// auth.mfa.disable, which the account holder performs on themselves.
 	ActionAdminMFAReset = "admin.user.mfa_reset"
+	// ActionDeviceForget: an account holder removed a recognised device.
+	ActionDeviceForget = "auth.device.forget"
+	// ActionSecurityPrefsUpdate: an account holder changed the new-device email
+	// switch (a stolen session turning the alert off must leave a trace).
+	ActionSecurityPrefsUpdate = "auth.security_prefs.update"
+	// ActionAdminLoginLockoutClear: an administrator cleared an account's
+	// failed-login counters and locks. No credential or address is recorded.
+	ActionAdminLoginLockoutClear = "admin.user.login_lockout_clear"
 	// ActionAdminPasswordResetLink: an administrator minted a one-time reset link
 	// for a locked-out ordinary user. The token and link are never recorded.
 	ActionAdminPasswordResetLink = "admin.user.password_reset_link"
@@ -108,6 +116,15 @@ const (
 	ActionVideoReject            = "moderation.video.quarantine_reject"
 	ActionInstanceBlock          = "moderation.instance.block"
 	ActionInstanceUnblock        = "moderation.instance.unblock"
+	// ActionBlocklistSync records one blocklist-subscription sync (added/removed
+	// counts in metadata; never the list URL or the domains).
+	ActionBlocklistSync = "moderation.blocklist.sync"
+	// ActionBlocklistSubscriptionAdd/Remove record an admin adding/removing a
+	// subscription; ActionBlocklistAllow/Disallow the allowlist exemption.
+	ActionBlocklistSubscriptionAdd    = "moderation.blocklist.subscription_add"
+	ActionBlocklistSubscriptionRemove = "moderation.blocklist.subscription_remove"
+	ActionBlocklistAllow              = "moderation.blocklist.allow"
+	ActionBlocklistDisallow           = "moderation.blocklist.disallow"
 	// ActionRemoteActorBlock/Unblock record an admin blocking ONE remote
 	// account for every reader on this instance (A29 parity), rather than
 	// defederating that account's whole server. The blocked actor URL is the

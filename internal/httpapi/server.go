@@ -65,6 +65,7 @@ import (
 	"github.com/vidra/vidra-core/internal/uploadfinalize"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
+	"github.com/vidra/vidra-core/internal/viewerprefs"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
@@ -97,7 +98,13 @@ type Server struct {
 	unlockLimit *ratelimit.Limiter
 	// bulkVideosLimit throttles POST /me/videos/bulk PER USER (see ratelimit.go).
 	bulkVideosLimit *ratelimit.Limiter
-	attachmentLimit *ratelimit.Limiter
+	// playbackStats + playbackLimit back the watch-time beacon and its owner
+	// report (playback_stats.go). Nil playbackStats leaves both routes unmounted.
+	playbackStats playbackStatsService
+	playbackLimit *ratelimit.Limiter
+	// playbackStartLimit bounds how often one client can count a new play.
+	playbackStartLimit *ratelimit.Limiter
+	attachmentLimit    *ratelimit.Limiter
 	// contactLimit throttles the public contact form (POST /instance/contact) —
 	// its own fixed-window budget, 1 request/IP/hour in production (wired in
 	// cmd/api via WithContactRateLimiter). Nil (e.g. unit tests) mounts the
@@ -140,6 +147,7 @@ type Server struct {
 	ratingsvc         *rating.Service
 	notifsvc          *notification.Service
 	playersettingssvc *playersettings.Service
+	viewerprefssvc    *viewerprefs.Service
 	playlistsvc       *playlist.Service
 	moderationsvc     *moderation.Service
 	mutesvc           *mute.Service
@@ -551,6 +559,12 @@ func WithRatingService(svc *rating.Service) Option {
 // registered and no notifications are created.
 func WithNotificationService(svc *notification.Service) Option {
 	return func(s *Server) { s.notifsvc = svc }
+}
+
+// WithViewerPrefsService mounts GET/PUT /me/content-preferences and makes the
+// sensitive-content resolution honour the viewer's per-flag overrides.
+func WithViewerPrefsService(svc *viewerprefs.Service) Option {
+	return func(s *Server) { s.viewerprefssvc = svc }
 }
 
 // WithPlayerSettingsService mounts the per-user player-settings endpoints
@@ -1208,6 +1222,8 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// Bulk video actions each run the full delete/update pipeline up to 100
 	// times, so they always carry a per-user budget, wired in-process like unlock.
 	s.bulkVideosLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultBulkVideosRateLimit, defaultBulkVideosRateWindow)
+	s.playbackLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackRateLimit, defaultPlaybackRateWindow)
+	s.playbackStartLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackStartLimit, defaultPlaybackStartWindow)
 	// Remote-URI search resolution (config-parity W13) triggers outbound
 	// fetches, so it always carries a per-caller budget: the wired limiter
 	// (Redis-backed in cmd/api) when present, else an in-memory default.
@@ -1653,6 +1669,9 @@ func (s *Server) routes() {
 		// the authenticated account; the challenge is the second half of an MFA
 		// login — public, and behind the strict auth limiter like login itself
 		// (it is a code-guessing surface).
+		authGroup.GET("/devices", s.handleListDevices, s.requireAuth)
+		authGroup.DELETE("/devices/:id", s.handleForgetDevice, s.requireAuth)
+		authGroup.PATCH("/security-prefs", s.handleUpdateSecurityPrefs, s.requireAuth)
 		authGroup.GET("/mfa", s.handleGetMFAStatus, s.requireAuth)
 		authGroup.POST("/mfa/totp", s.handleBeginTOTPEnrollment, s.requireAuth)
 		authGroup.POST("/mfa/totp/verify", s.handleVerifyTOTPEnrollment, s.requireAuth)
@@ -1919,6 +1938,10 @@ func (s *Server) routes() {
 		// Creator statistics (owner-only; non-owners get 404).
 		api.GET("/videos/:id/stats", s.handleGetVideoStats, s.requireAuth)
 		api.GET("/channels/:handle/stats", s.handleGetChannelStats, s.requireAuth)
+		if s.playbackStats != nil {
+			api.POST("/videos/:id/playback", s.handlePlaybackBeacon, s.optionalAuth, s.playbackRateLimit())
+			api.GET("/videos/:id/playback-stats", s.handleGetPlaybackStats, s.requireAuth)
+		}
 		// Account-level rollup across all channels the caller owns (studio
 		// "All channels" analytics scope). Owner-scoped by construction.
 		api.GET("/me/stats", s.handleGetAccountStats, s.requireAuth)
@@ -2025,6 +2048,10 @@ func (s *Server) routes() {
 	// Per-user player settings (PLAY-07): the signed-in user's playback defaults
 	// (speed, autoplay-next, quality, captions/theater). GET always returns the
 	// full effective object (defaults for a fresh user); PUT is a merge.
+	if s.viewerprefssvc != nil {
+		api.GET("/me/content-preferences", s.handleGetContentPrefs, s.requireAuth)
+		api.PUT("/me/content-preferences", s.handleUpdateContentPrefs, s.requireAuth)
+	}
 	if s.playersettingssvc != nil {
 		api.GET("/me/player-settings", s.handleGetPlayerSettings, s.requireAuth)
 		api.PUT("/me/player-settings", s.handleUpdatePlayerSettings, s.requireAuth)
@@ -2273,6 +2300,9 @@ func (s *Server) routes() {
 		// exactly like login.
 		adminMFAMW := s.adminPasswordStepUpMW()
 		api.DELETE("/admin/users/:id/mfa", s.handleAdminRemoveUserMFA, adminMFAMW...)
+		// Clear a failed-login lockout (admin-only, audited). It only removes a
+		// brake, so no password step-up.
+		api.DELETE("/admin/users/:id/login-lockout", s.handleAdminClearLoginLockout, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		// One-time reset link for a locked-out ordinary user on an instance with
 		// no working mail. Same step-up (caller's own password) and strict limiter.
 		api.POST("/admin/users/:id/password-reset-link", s.handleAdminPasswordResetLink, adminMFAMW...)

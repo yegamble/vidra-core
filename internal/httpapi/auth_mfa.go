@@ -238,6 +238,7 @@ func (s *Server) handleMFAChallenge(c echo.Context) error {
 	if token == "" {
 		return &ValidationError{Fields: []FieldError{{Field: "mfa_token", Message: "is required"}}}
 	}
+	deviceTok := s.withDevice(c)
 	user, tokens, method, err := s.authsvc.CompleteMFAChallenge(c.Request().Context(), token, in.Code, c.Request().UserAgent())
 	if err != nil {
 		switch {
@@ -280,6 +281,7 @@ func (s *Server) handleMFAChallenge(c echo.Context) error {
 	// A challenge that came from a provider redirect is always cookie-mode: the
 	// browser has no session to hold a bearer token, and the flow it is finishing
 	// is the cookie-mode one the callback would have completed itself.
+	s.setDeviceCookie(c, deviceTok)
 	cookieMode := in.CookieMode || fromCookie || refreshCookieToken(c) != ""
 	return s.authResponse(http.StatusOK, c, user, tokens, cookieMode)
 }
