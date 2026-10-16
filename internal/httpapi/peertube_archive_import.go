@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -16,7 +17,21 @@ import (
 
 // WithPeerTubeArchiveImporter mounts POST /api/v1/me/import/peertube.
 func WithPeerTubeArchiveImporter(im *peertubearchive.Importer) Option {
-	return func(s *Server) { s.peertubeArchive = im }
+	return func(s *Server) {
+		s.peertubeArchive = im
+		if im.ScanImage == nil {
+			// The scan policy of the avatar/banner routes, applied lazily so the
+			// scanner option may be given in any order. Stored bytes are the one
+			// thing this import persists from the archive, so they are scanned
+			// exactly as an upload would be; no ready scanner, no stored image.
+			im.ScanImage = func(ctx context.Context, kind string, data []byte) error {
+				if !s.scannerReadyForIngestion() {
+					return errors.New("scanner not ready")
+				}
+				return s.scanBeforeStore(ctx, kind, data)
+			}
+		}
+	}
 }
 
 // handlePeerTubeArchiveImport imports the METADATA of a PeerTube user-export
@@ -35,15 +50,17 @@ func WithPeerTubeArchiveImporter(im *peertubearchive.Importer) Option {
 // are ever opened; media entries are validated by name and left unread. The
 // temp file is removed on every path (success, refusal, client abort, panic).
 //
-// MALWARE SCAN: deliberately NOT applied, decision recorded here so a later
-// change revisits it knowingly. The archive's bytes touch local disk, but only
-// transiently and only under the spool dir: nothing is put in object
-// storage, served, transcoded or executed, and the only bytes ever decoded are
-// the capped JSON entries, parsed by Go's own decoder. Scanning would mean
-// streaming up to the whole cap through the scanner (clamd rejects streams of
-// that size), for no reachable victim. Any change that persists the archive or a
-// file inside it (e.g. importing the bundled videos) must add requireScannerGate
-// and scanBeforeStore, as POST /me/import does.
+// MALWARE SCAN: the archive as a whole is deliberately NOT scanned. Its bytes
+// touch local disk only transiently under the spool dir, and the only bytes
+// decoded are the capped JSON entries, parsed by Go's own decoder; scanning the
+// whole cap would mean streaming it through the scanner (clamd rejects streams
+// of that size), for no reachable victim. The exception is the channel
+// avatar/banner images, the one thing persisted from inside it: each is read
+// through an 8 MiB cap, sniffed and bounds-checked, and passed through the same
+// scan policy as POST /channels/{handle}/avatar (ScanImage); with no ready
+// scanner it is not stored. Any change that persists anything else from the
+// archive (e.g. the bundled videos) must add requireScannerGate and
+// scanBeforeStore, as POST /me/import does.
 func (s *Server) handlePeerTubeArchiveImport(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
