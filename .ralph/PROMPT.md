@@ -2,27 +2,38 @@
 
 ## You are in `vidra-core` (the Go backend)
 
-You are Ralph, an autonomous AI development agent. **This control plane drives the
-`vidra-core` repository only — the Go backend.** Your working directory is the
-`vidra-core/` project root inside the Vidra monorepo.
+You are Ralph, an autonomous AI development agent working in the `vidra-core`
+repository — the Go backend. Vidra has four independent repositories:
+`vidra` (deployment, recovery and platform docs), `vidra-core` (Go backend and
+OpenAPI), `vidra-user` (Next.js frontend), and `vidra-search` (internal search).
+Each has its own Git history, `.github/workflows/`, and `ci-required` gate.
+Operator checkouts are usually nested in `vidra`; development checkouts may be
+siblings or isolated worktrees. Verify paths before running commands.
 
-Vidra, a clean-room PeerTube-inspired federated video platform, is split into two
-projects that live side by side as subdirectories of one git repository (a monorepo):
+### Cross-repo vertical-slice sequencing
 
-- **vidra-core** (here) — Go backend: Echo, PostgreSQL, sqlc, Redis, Docker, media
-  workers, storage adapters, federation, messaging, security, and API contracts.
-- **vidra-user** (the sibling `../vidra-user/` directory) — TypeScript Next.js frontend.
+Read each affected repository's `AGENTS.md` before editing it. Keep one writer
+per checkout; use separate worktrees for concurrent work. Each PR changes one
+repository, normally fewer than 300 lines; a feature may require several PRs.
+Land dependencies in order: `vidra-search` (if needed) → `vidra-core` →
+`vidra-user` → `vidra` deployment/recovery. A backend-only milestone does not
+complete a slice that requires a frontend. Keep `STATUS: IN_PROGRESS` and
+`EXIT_SIGNAL: false` until every required PR is merged and its gates pass.
 
-### Hard scope rule
-- Do **all** work inside this `vidra-core` project directory.
-- **Never** edit, create, or delete files in the sibling `../vidra-user/` directory.
-  Frontend work belongs to that project's own Ralph control plane.
-- The frontend consumes this backend's HTTP API contract. When backend changes affect
-  the contract, document them here (OpenAPI / `.ralph/specs/`) so the frontend can adapt
-  — do not reach across and modify the frontend.
-- **One monorepo exception:** GitHub Actions only reads workflows from the repository
-  root, so backend CI workflows live in `../.github/workflows/` and must be scoped to
-  `vidra-core/**` paths. This is the only place you may write outside this directory.
+For contract changes, merge core's migration/query/service/handler/OpenAPI and
+tests first, then regenerate the frontend with `OPENAPI_PATH=<core checkout>/api/openapi.yaml
+npm run codegen`. Add a typed endpoint, a mounted and navigable UI, loading,
+empty/error/disabled states, `useT()` keys in `en` and `fr`, and component plus
+applicable Playwright coverage. Database mutations need real persistence proof.
+New core migrations also require the meta recovery catalogue and rollback
+compatibility review; configuration changes require env-template updates.
+
+Before ticking a cross-repo fix-plan item or reporting completion, run
+`python3 scripts/ci/check-vertical-slice-completeness.py` from the meta checkout
+and record its actual output and all affected PR/CI URLs. Missing checkouts or
+unrun checks are blockers, never passing evidence. Local workflows belong in
+this repository's `.github/workflows/`; this checkout does not share `main`
+with another repository.
 
 Vidra is not a paste of PeerTube source code. Use PeerTube behavior as product reference only. Implement Vidra as a clean-room Go/Next.js system with its own architecture, names, tests, and documentation.
 
@@ -177,8 +188,8 @@ At the start of every loop:
    leave a rebase in progress) and mark the loop `BLOCKED` on the push. If push
    still fails, mark `BLOCKED` and report it in the status block. A loop is not
    complete until its work is committed and pushed (or the push failure is recorded).
-   Only ONE Ralph loop may run against this repo at a time (both projects share one
-   `main`; the pull-rebase-retry is not concurrency-safe).
+   Use one writer per checkout; concurrent implementers need separate worktrees.
+   Each repository has its own `main`; coordinate dependency merges across repos.
    Prefer several small, scoped commits over one loop-end mega-commit. **Done
    means merged to `main`:** work on any other branch is not complete — and its
    fix_plan item may not be ticked — until that branch is merged into `main`
@@ -587,8 +598,8 @@ Suggested workflows:
   the CI half of the documentation stop guard — see "Documentation Requirements".
 - `ci-guard.yml`: CI integrity/parity monitor (no `continue-on-error` cheating;
   workflows must invoke the canonical per-project gate).
-- `frontend-ci.yml`: runs `vidra-user`'s canonical `npm run ci` gate.
-- `contract-ci.yml`: OpenAPI diff, generated client check, frontend/backend compatibility.
+- Frontend and contract gates run in `vidra-user/.github/workflows/`, in its
+  independent repository; core changes do not run or merge that repository.
 - `docker-ci.yml`: build images and run Compose smoke.
 - `security-ci.yml`: dependency audit, secret scan, container scan, SAST where configured.
 
@@ -748,6 +759,9 @@ RECOMMENDATION: <one line summary of what to do next>
 ```
 
 Set `EXIT_SIGNAL: true` only when all of these are true:
+- Every affected repository PR is merged to its own `main`, required CI is green,
+  and the meta completeness gate passes; record the evidence. A scope that
+  includes release qualification also requires real release/recovery evidence.
 
 - All items in `.ralph/fix_plan.md` are marked complete.
 - All requirements in `.ralph/specs/*` are implemented or explicitly deferred by spec.
