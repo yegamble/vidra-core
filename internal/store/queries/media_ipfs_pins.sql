@@ -190,6 +190,25 @@ WHERE object_key IN (
 )
 RETURNING object_key, media_class, cid, car_root, state, attempts, network, video_id, owner_user_id;
 
+-- name: ClaimDueIPFSUnpins :many
+-- ClaimDueIPFSPins restricted to removals. The unmanaged-node ceiling (Tier A F3)
+-- stops ADDS while the repo is over budget, and a takedown must never queue behind
+-- a backlog of adds it is not going to process: claiming pending rows only to drop
+-- them delays unpins by (backlog / batch) ticks, each pending row leased for the
+-- full lease. Same lease semantics and fences as ClaimDueIPFSPins.
+UPDATE media_ipfs_pins
+SET next_attempt_at = now() + (sqlc.arg(lease_seconds)::int * interval '1 second'),
+    updated_at = now()
+WHERE object_key IN (
+    SELECT p.object_key FROM media_ipfs_pins p
+    WHERE p.network = sqlc.arg(network) AND p.state = 'unpinning' AND p.next_attempt_at <= now()
+      AND p.claim_token IS NULL
+    ORDER BY p.next_attempt_at
+    LIMIT sqlc.arg(batch_size)
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING object_key, media_class, cid, car_root, state, attempts, network, video_id, owner_user_id;
+
 -- name: MarkIPFSPinned :one
 -- Terminal success for a pin: record the CID (and wrap-directory root for HLS
 -- trees) and the pinned byte size. STATE-GUARDED against a lost-update race with a
@@ -241,8 +260,14 @@ RETURNING state;
 -- newer intent is preserved rather than clobbered to 'failed' — which the reconcile
 -- scan would otherwise re-arm in the WRONG direction (a failed-pin cid='' re-pins,
 -- so a clobbered unpin would re-pin a now-non-public object: a privacy regression).
+--
+-- A FAILED RE-ADD OF A ROW THAT ALREADY HOLDS A GOOD ROOT (a re-transcode or the bulk
+-- re-pin re-arms a pinned directory row; cid and car_root are kept) returns to
+-- 'pinned' on that old root, last_error kept. Dead-lettering it would let
+-- RearmFailedIPFSPins read cid <> '' as a failed UNPIN and unpin the good root.
 UPDATE media_ipfs_pins
-SET state = 'failed', attempts = attempts + 1, last_error = $2, updated_at = now()
+SET state = CASE WHEN sqlc.arg(expected_state) = 'pending' AND cid <> '' AND car_root <> '' THEN 'pinned' ELSE 'failed' END,
+    attempts = attempts + 1, last_error = $2, updated_at = now()
 WHERE object_key = $1 AND state = sqlc.arg(expected_state);
 
 -- name: RescheduleIPFSPin :exec
@@ -571,3 +596,52 @@ SELECT
     count(*) FILTER (WHERE state = 'failed')::bigint                   AS failed,
     GREATEST(COALESCE(EXTRACT(EPOCH FROM (now() - min(next_attempt_at) FILTER (WHERE state IN ('pending', 'unpinning'))))::bigint, 0), 0)::bigint AS oldest_pending_age_seconds
 FROM media_ipfs_pins;
+
+-- name: ListIPFSPinsForRepin :many
+-- One keyset page of the pinned HLS directory rows the playback-only re-pin
+-- (Tier A F6 follow-up) examines, in object_key order so a cursor resumes it. The
+-- trailing-slash filter is the directory intent; car_root <> '' skips a row that
+-- never recorded a root. A row mid-admission (claim_token set) is left to finish.
+SELECT * FROM media_ipfs_pins
+WHERE media_class = 'hls' AND state = 'pinned' AND car_root <> ''
+  AND object_key LIKE '%/' AND claim_token IS NULL
+  AND object_key > sqlc.arg(after_key)::text
+ORDER BY object_key
+LIMIT sqlc.arg(batch_size);
+
+-- name: CountIPFSPinsForRepinAfter :one
+-- How many rows the re-pin has not examined yet (an upper bound on its remaining work:
+-- most will turn out to be playback-only already).
+SELECT count(*)::bigint FROM media_ipfs_pins
+WHERE media_class = 'hls' AND state = 'pinned' AND car_root <> ''
+  AND object_key LIKE '%/' AND object_key > sqlc.arg(after_key)::text;
+
+-- name: RearmIPFSPinForRepin :execrows
+-- Move ONE pinned HLS row back to 'pending' so the ordinary pin path (admission,
+-- reservation, F2 trailer check, F3 budget) re-adds the playback-only tree and
+-- swapUnpin releases the superseded root. cid/car_root are PRESERVED (that is what
+-- swapUnpin compares) and so is policy_reason, unlike RepinIPFSObject which resets it
+-- to 'new'. Guarded on the CID the caller inspected: a privacy flip, a delete or a
+-- re-transcode that moved the row in between wins by making this match nothing.
+UPDATE media_ipfs_pins
+SET state = 'pending', capacity_reason = '', attempts = 0, next_attempt_at = now(),
+    last_error = '', updated_at = now()
+WHERE object_key = sqlc.arg(object_key)
+  AND state = 'pinned' AND cid = sqlc.arg(cid)
+  AND claim_token IS NULL AND target_network IS NULL;
+
+-- name: StartIPFSRepinRun :execrows
+-- Compare-and-set start of the bulk re-pin run: writes the fresh run state unless the
+-- stored one is running or paused (0 rows = another start won). The state is JSON in
+-- instance_settings.value; json.Marshal emits "phase":"x" without spaces.
+INSERT INTO instance_settings (key, value, updated_at)
+VALUES (sqlc.arg(key), sqlc.arg(value), now())
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+WHERE instance_settings.value !~ '"phase":"(running|paused)"';
+
+-- name: SaveIPFSRepinRun :execrows
+-- Compare-and-set save of the run state: only while the stored phase is still the one
+-- the writer loaded, so a cancel or a restart between its load and save wins (0 rows).
+UPDATE instance_settings
+SET value = sqlc.arg(value), updated_at = now()
+WHERE key = sqlc.arg(key) AND value LIKE '%"phase":"' || sqlc.arg(expected_phase)::text || '"%';

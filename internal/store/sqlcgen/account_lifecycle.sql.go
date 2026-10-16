@@ -117,6 +117,16 @@ func (q *Queries) DeleteRemoteChannelFollowsByUser(ctx context.Context, userID u
 	return err
 }
 
+const deleteRemoteVideoUserRatingsByUser = `-- name: DeleteRemoteVideoUserRatingsByUser :exec
+DELETE FROM remote_video_user_ratings WHERE user_id = $1
+`
+
+// The user's votes on remote videos (0179).
+func (q *Queries) DeleteRemoteVideoUserRatingsByUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteRemoteVideoUserRatingsByUser, userID)
+	return err
+}
+
 const deleteSavedVideosByUser = `-- name: DeleteSavedVideosByUser :exec
 DELETE FROM saved_videos WHERE user_id = $1
 `

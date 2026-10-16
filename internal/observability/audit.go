@@ -66,6 +66,14 @@ const (
 	// is an ADMIN-domain action against a target account, distinct from
 	// auth.mfa.disable, which the account holder performs on themselves.
 	ActionAdminMFAReset = "admin.user.mfa_reset"
+	// ActionDeviceForget: an account holder removed a recognised device.
+	ActionDeviceForget = "auth.device.forget"
+	// ActionSecurityPrefsUpdate: an account holder changed the new-device email
+	// switch (a stolen session turning the alert off must leave a trace).
+	ActionSecurityPrefsUpdate = "auth.security_prefs.update"
+	// ActionAdminLoginLockoutClear: an administrator cleared an account's
+	// failed-login counters and locks. No credential or address is recorded.
+	ActionAdminLoginLockoutClear = "admin.user.login_lockout_clear"
 	// ActionAdminPasswordResetLink: an administrator minted a one-time reset link
 	// for a locked-out ordinary user. The token and link are never recorded.
 	ActionAdminPasswordResetLink = "admin.user.password_reset_link"
@@ -91,6 +99,12 @@ const (
 	// actually removed.
 	ActionAdminWatchedWordCreate = "admin.watched_word.create"
 	ActionAdminWatchedWordDelete = "admin.watched_word.delete"
+	// ActionAdminWatchedWordList* record a moderator creating / changing /
+	// deleting a named INSTANCE list (0172); the resource is the list id and no
+	// name or term is recorded. A creator's own lists are theirs and not audited.
+	ActionAdminWatchedWordListCreate = "admin.watched_word_list.create"
+	ActionAdminWatchedWordListUpdate = "admin.watched_word_list.update"
+	ActionAdminWatchedWordListDelete = "admin.watched_word_list.delete"
 	// ActionAdminCommentBulkRemove records a moderator removing every comment of
 	// one account in one request. The resource is the account (id, or a
 	// fingerprint for a remote actor URL); metadata carries only the count.
@@ -102,6 +116,16 @@ const (
 	ActionVideoReject            = "moderation.video.quarantine_reject"
 	ActionInstanceBlock          = "moderation.instance.block"
 	ActionInstanceUnblock        = "moderation.instance.unblock"
+	// ActionBlocklistSync records one blocklist-subscription sync (added/removed
+	// counts in metadata; never the list URL or the domains).
+	ActionBlocklistSync = "moderation.blocklist.sync"
+	// ActionBlocklistSubscriptionAdd/Remove record an admin adding/removing a
+	// subscription; ActionBlocklistAllow/Disallow the allowlist exemption.
+	ActionBlocklistSubscriptionAdd    = "moderation.blocklist.subscription_add"
+	ActionBlocklistSubscriptionUpdate = "moderation.blocklist.subscription_update"
+	ActionBlocklistSubscriptionRemove = "moderation.blocklist.subscription_remove"
+	ActionBlocklistAllow              = "moderation.blocklist.allow"
+	ActionBlocklistDisallow           = "moderation.blocklist.disallow"
 	// ActionRemoteActorBlock/Unblock record an admin blocking ONE remote
 	// account for every reader on this instance (A29 parity), rather than
 	// defederating that account's whole server. The blocked actor URL is the
@@ -216,6 +240,11 @@ const (
 	// eligible pre-existing public objects. Reason carries only safe counts
 	// (enqueued, classes, rearmed) — never a CID or object key.
 	ActionIPFSReconcile = "admin.ipfs.reconcile"
+	// ActionIPFSRepin records an admin starting the bulk re-pin of pinned HLS trees to
+	// the playback-only set. Reason carries only a safe count - never a CID or key.
+	ActionIPFSRepin = "admin.ipfs.repin"
+	// ActionIPFSRepinCancel records an admin cancelling that run.
+	ActionIPFSRepinCancel = "admin.ipfs.repin.cancel"
 	// ActionDonationVerify records a creator proving control of a donation
 	// address by signing the challenge (P14). Reason carries the safe address
 	// id + network only — never the signature, nonce, or any key material.
@@ -284,6 +313,14 @@ const (
 	// never the activity payload.
 	ActionFederationFollowerApprove = "admin.federation.follower_approve"
 	ActionFederationFollowerReject  = "admin.federation.follower_reject"
+	// Instance follows (migration 0166): an admin accepting, rejecting or
+	// removing a remote instance that follows ours, and following/unfollowing
+	// one. ResourceID carries the safe follow row id only.
+	ActionFederationInstanceFollowerAccept = "admin.federation.instance_follower_accept"
+	ActionFederationInstanceFollowerReject = "admin.federation.instance_follower_reject"
+	ActionFederationInstanceFollowerRemove = "admin.federation.instance_follower_remove"
+	ActionFederationInstanceFollow         = "admin.federation.instance_follow"
+	ActionFederationInstanceUnfollow       = "admin.federation.instance_unfollow"
 	// Suggestion bans (search-service moderation): a moderator/admin suppressing
 	// a query string from instance-wide autosuggest, or lifting that ban. The
 	// domain is `moderation`, not `admin`, because that is what the action IS —

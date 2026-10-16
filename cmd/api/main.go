@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/gommon/bytes"
 
 	"github.com/vidra/vidra-core/internal/account"
@@ -27,6 +28,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/authoredremotecomment"
 	"github.com/vidra/vidra-core/internal/block"
+	"github.com/vidra/vidra-core/internal/blocklistsub"
 	"github.com/vidra/vidra-core/internal/cache"
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/cdn"
@@ -65,7 +67,11 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/oidcproviders"
+	"github.com/vidra/vidra-core/internal/peertubearchive"
+	"github.com/vidra/vidra-core/internal/peertubefollows"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
+	"github.com/vidra/vidra-core/internal/playbackstats"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/processheartbeat"
@@ -91,6 +97,7 @@ import (
 	"github.com/vidra/vidra-core/internal/version"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
+	"github.com/vidra/vidra-core/internal/viewerprefs"
 	"github.com/vidra/vidra-core/internal/watchword"
 	"github.com/vidra/vidra-core/internal/ytdlp"
 )
@@ -466,6 +473,14 @@ func run() error {
 		})
 	}
 	var authOpts []auth.Option
+	authOpts = append(authOpts, auth.WithLoginLockStore(db.Queries()), auth.WithDeviceStore(db.Queries()))
+	if len(cfg.TrustedProxyCIDRs) == 0 {
+		// Per-network lockout needs the real client address. Behind a CDN/proxy outside
+		// the built-in trusted ranges every visitor shares the edge's, so a prefix
+		// lock would lock an account for everyone: fall back to delay-only backoff.
+		authOpts = append(authOpts, auth.WithDelayOnlyPrefixBackoff())
+		logger.Warn("TRUSTED_PROXY_CIDRS is unset: failed-login backoff is delay-only (never hard-locks per network); set it to your CDN/proxy ranges to enable per-network lockout")
+	}
 	authOpts = append(authOpts, auth.WithRegistrationRequestHook(staffQueueHook("registration_request",
 		func(ctx context.Context, id uuid.UUID) (int64, error) {
 			return notifsvc.NotifyNewRegistrationRequest(ctx, id)
@@ -743,7 +758,30 @@ func run() error {
 	// accounts that are passwordless and whose DID is their ONLY credential. With
 	// no providers configured /auth/oauth/:provider still answers 404 (unknown
 	// provider), which is what it answered before.
-	opts = append(opts, httpapi.WithOAuthService(auth.NewOAuthService(db.Queries(), authsvc, providers)))
+	oauthsvc := auth.NewOAuthService(db.Queries(), authsvc, providers,
+		// Admin-managed providers fetch discovery/JWKS through the SSRF guard;
+		// OIDC_ALLOW_PRIVATE_ISSUERS admits an internal IdP or a lab.
+		auth.WithOAuthAllowPrivateIssuers(cfg.OIDCAllowPrivateIssuers))
+	opts = append(opts, httpapi.WithOAuthService(oauthsvc))
+
+	// Admin-managed OIDC providers (migration 0182) override the environment
+	// providers of the same name. The client secret is sealed with the same KEK
+	// chain as the mail credential; without one, reads work and a save that
+	// would store a secret is refused.
+	if cfg.OIDCAllowPrivateIssuers {
+		logger.Warn("OIDC_ALLOW_PRIVATE_ISSUERS is on: admin-managed OIDC providers may reach http and private-network addresses (metadata ranges stay blocked)")
+	}
+	envIssuers := make(map[string]string, len(cfg.OAuthProviders))
+	for _, p := range cfg.OAuthProviders {
+		envIssuers[p.Name] = p.IssuerURL
+	}
+	oidcprovsvc := oidcproviders.NewService(db.Queries(), mailCipher, oauthsvc,
+		oidcproviders.WithVersionBump(bumpSettingsVersion),
+		oidcproviders.WithAllowPrivate(cfg.OIDCAllowPrivateIssuers),
+		oidcproviders.WithEnvironmentIssuers(envIssuers))
+	if err := oidcprovsvc.Load(startCtx); err != nil {
+		return fmt.Errorf("load oidc providers: %w", err)
+	}
 
 	// The per-user channel cap (max_channels_per_user, config-parity W8) is
 	// resolved per create from the settings overlay; 0 (the default) = unlimited.
@@ -956,6 +994,8 @@ func run() error {
 			// it the instance's own gateway keeps serving a withdrawn CID until some
 			// later GC, which A31's rehearsal measured directly.
 			GCAfterUnpin: cfg.IPFSGCAfterUnpin,
+			// Ceiling for an UNMANAGED node (IPFS_REPO_BUDGET_BYTES, Tier A F3); 0 = none.
+			RepoBudgetBytes: cfg.IPFSRepoBudgetBytes,
 			// Private tier (P19.P1) — a dedicated private-swarm node client the worker
 			// routes network='private' rows to (and ONLY those rows).
 			PrivateEnabled:     privateEnabled,
@@ -1050,6 +1090,9 @@ func run() error {
 		logger.Warn("storyboard generation disabled (ffmpeg/ffprobe not on PATH); videos publish without a storyboard")
 	}
 	vopts = append(vopts, video.WithViewDeduper(cache.NewDeduper(rdb.Client)))
+	// Video ownership changes (T21, migration 0165). The accept runs under the
+	// video row lock (see store.OwnershipRepo).
+	vopts = append(vopts, video.WithOwnershipRepository(db.OwnershipRepository()))
 	// The durable audit trail (also mounted on the admin API below) lets the video
 	// service record a content.upload.malware_rejected event when a scan keeps an
 	// upload out of published (infection / unscannable under a non-publishing mode).
@@ -1214,6 +1257,8 @@ func run() error {
 		// deferred-assignment, nil-guarded seam as every other closure in this
 		// block.
 		fedsvc *federation.Service
+		// ptFollows is assigned beside fedsvc and read by the worker below.
+		ptFollows *peertubefollows.Service
 	)
 	// releaseHold releases a publish-after-transcode hold once no live job
 	// remains (0098), shared by the completion and terminal-failure hooks. The
@@ -1434,6 +1479,19 @@ func run() error {
 			video.WithDeleteHook(func(ctx context.Context, videoID, channelID uuid.UUID, wasPublic bool) {
 				if err := ipfsMirror.UnpinVideo(ctx, videoID); err != nil {
 					logger.Warn("ipfs mirror delete unpin failed", "video_id", videoID, "error", err)
+				}
+			}),
+			// Tier A F5: captions, posters and storyboards are pinned under stable keys,
+			// so a delete or an in-place replacement changes nothing the mirror watches
+			// on its own. These two hooks are the only things that tell it.
+			video.WithCaptionChangeHook(func(ctx context.Context, videoID uuid.UUID, key string, deleted bool) {
+				if err := ipfsMirror.OnCaptionChanged(ctx, videoID, key, deleted); err != nil {
+					logger.Warn("ipfs mirror caption change failed", "video_id", videoID, "deleted", deleted, "error", err)
+				}
+			}),
+			video.WithMediaReplacedHook(func(ctx context.Context, videoID uuid.UUID, kind string) {
+				if err := ipfsMirror.OnMediaReplaced(ctx, videoID, kind); err != nil {
+					logger.Warn("ipfs mirror media replacement failed", "video_id", videoID, "kind", kind, "error", err)
 				}
 			}),
 		)
@@ -1670,9 +1728,17 @@ func run() error {
 			return settingssvc.Bool(instancesettings.KeyVideoCardPreviewsDefaultEnabled)
 		}))
 	opts = append(opts, httpapi.WithPlayerSettingsService(playersettingssvc))
+	opts = append(opts, httpapi.WithViewerPrefsService(viewerprefs.NewService(db.Queries())))
 
 	playlistsvc := playlist.NewService(db.Queries(), playlist.WithStorage(blobs), playlist.WithMirror(ipfsMirror))
 	opts = append(opts, httpapi.WithPlaylistService(playlistsvc))
+	ptImporter := &peertubearchive.Importer{
+		Channels: channelsvc, Playlists: playlistsvc, PlayerSettings: playersettingssvc,
+		Lock: func(ctx context.Context, userID uuid.UUID) (func(), error) {
+			return lockUserImport(ctx, db.Pool, userID)
+		},
+	}
+	opts = append(opts, httpapi.WithPeerTubeArchiveImporter(ptImporter))
 
 	// Media garbage collection: admin-triggered sweep + a daily scheduled sweep.
 	// The endpoint is mounted whatever MEDIA_GC_ENABLED says — the flag governs
@@ -1740,7 +1806,17 @@ func run() error {
 	watchwordsvc := watchword.NewService(db.Queries())
 	opts = append(opts, httpapi.WithWatchWordService(watchwordsvc))
 
-	adminsvc := admin.NewService(db.Queries())
+	adminsvc := admin.NewService(db.Queries(), admin.WithTx(func(ctx context.Context, fn func(admin.Repository) error) error {
+		tx, err := db.Pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := fn(db.Queries().WithTx(tx)); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}))
 	opts = append(opts, httpapi.WithAdminService(adminsvc))
 
 	opts = append(opts, httpapi.WithAuditLog(auditsvc))
@@ -1895,6 +1971,9 @@ func run() error {
 		// admin switching relay on one replica would otherwise leave the others
 		// sending through the old one — including the workers — until restart.
 		settingsversion.Cache{Name: "mail config", Reload: mailcfgsvc.Load},
+		// Admin-managed OIDC providers (0182): each process holds its own
+		// provider set, so a change on one replica must reach the others.
+		settingsversion.Cache{Name: "oidc providers", Reload: oidcprovsvc.Load},
 	)
 	// Prime AFTER the three boot loads above so this process starts in agreement
 	// with the database. A failure is not fatal: the token stays at zero and the
@@ -2245,6 +2324,11 @@ func run() error {
 		// repository's accepted remote_channel_follows edges by default (§2) —
 		// no extra wiring needed.
 		federation.WithMediaStorage(blobs),
+		// A local view of a remote video is federated to its origin once per
+		// viewer per window (deduped in Redis like a local view), and at most
+		// maxRemoteViewsPerOriginHour per origin domain across replicas.
+		federation.WithRemoteViewDeduper(cache.NewDeduper(rdb.Client)),
+		federation.WithRemoteViewOriginCap(ratelimit.NewRedisCounter(rdb.Client)),
 		// Inbound federated comments run the same watched-words flagging as
 		// local ones (remote-content §6).
 		federation.WithCommentFlagger(watchwordsvc),
@@ -2260,6 +2344,11 @@ func run() error {
 		federation.WithFollowerRequestHook(staffQueueHook("federation_follower_request",
 			func(ctx context.Context, id uuid.UUID) (int64, error) {
 				return notifsvc.NotifyFederationFollowerRequest(ctx, id)
+			})),
+		// ...and so does a remote INSTANCE's follow of this one (0166).
+		federation.WithInstanceFollowerRequestHook(staffQueueHook("federation_instance_follower_request",
+			func(ctx context.Context, _ uuid.UUID) (int64, error) {
+				return notifsvc.NotifyInstanceFollowerRequest(ctx)
 			})),
 		// A remote comment held for approval (0161) pings the video's managers.
 		federation.WithHeldCommentHook(staffQueueHook("comment_held",
@@ -2287,6 +2376,17 @@ func run() error {
 			return settingssvc.Bool(instancesettings.KeyFederationAutoFollowBack)
 		}),
 		federation.WithLogger(logger),
+		// An inbound View (PeerTube parity) counts through the same seam as a
+		// local view — RecordView's per-viewer dedupe and per-day rollup — as
+		// an anonymous viewer keyed on the signing actor. A video that stopped
+		// being visible between the inbox gate and the count is not an error.
+		federation.WithViewCounting(func(ctx context.Context, videoID uuid.UUID, viewerKey string, gate func(context.Context) (bool, error)) error {
+			err := videosvc.RecordViewGated(ctx, videoID, uuid.Nil, false, viewerKey, gate)
+			if errors.Is(err, video.ErrNotFound) {
+				return nil
+			}
+			return err
+		}, ratelimit.NewRedisCounter(rdb.Client)),
 	}
 	if cfg.FederationKeyKEK != "" {
 		cipher, err := secretbox.NewCipherFromBase64(cfg.FederationKeyKEK)
@@ -2302,6 +2402,13 @@ func run() error {
 	if cfg.FederationEnabled {
 		opts = append(opts, httpapi.WithVideoFederation(fedsvc))
 	}
+	// PeerTube export "following": queued here, followed by the worker below
+	// through fedsvc.FollowRemoteChannel (the POST /me/remote-follows path).
+	ptFollows = &peertubefollows.Service{
+		Repo: db.Queries(), Follower: fedsvc, Enabled: func() bool { return cfg.FederationEnabled },
+	}
+	ptImporter.Follows = ptFollows
+	opts = append(opts, httpapi.WithPeerTubeFollowStatus(ptFollows))
 
 	// ATProto / Bluesky extension (P10.2, .ralph/specs/atproto.md) — v1 outbound
 	// cross-posting only. Always constructed so the /me/atproto routes are a stable
@@ -2403,6 +2510,22 @@ func run() error {
 	instancemodsvc := instancemod.NewService(db.Queries())
 	opts = append(opts, httpapi.WithInstanceModerationService(instancemodsvc))
 
+	// Blocklist subscriptions: shared denylists synced into the instance
+	// blocklist. The service is built in every role (the admin routes use it); the
+	// periodic sync is leader-gated below. Removing a list entry resumes the
+	// deliveries the block cancelled, exactly as a manual unblock does.
+	blocklistOpts := []blocklistsub.Option{blocklistsub.WithAuditor(auditsvc), blocklistsub.WithLogger(logger), blocklistsub.WithProtectedHost(cfg.PublicBaseURL)}
+	if cfg.FederationEnabled {
+		blocklistOpts = append(blocklistOpts, blocklistsub.WithOnUnblocked(func(ctx context.Context, domain string, blockedAt time.Time) {
+			if _, err := fedsvc.RedeliverAfterUnblock(ctx, domain, blockedAt); err != nil {
+				logger.Warn("resuming deliveries after a blocklist sync failed", "domain", domain, "error", err)
+			}
+		}))
+	}
+	blocklistFetcher := blocklistsub.NewHTTPFetcher(cfg.ImportAllowPrivateURLs)
+	blocklistsvc := blocklistsub.NewService(db.Queries(), blocklistFetcher, blocklistFetcher.ValidateURL, blocklistOpts...)
+	opts = append(opts, httpapi.WithBlocklistSubscriptionService(blocklistsvc))
+
 	// LEADER ELECTION for the singleton background sweeps. The workers that CLAIM
 	// from a durable queue run on every instance -- that is what the leases are
 	// for, and more instances mean more throughput. The workers that SWEEP must
@@ -2490,12 +2613,41 @@ func run() error {
 		}.Run(sweepCtx, logger)
 	}
 
+	// Blocklist-subscription sync. LEADER-GATED: a sync is a set diff against the
+	// blocklist, so every instance running it would fetch the same lists and race
+	// the same rows for no gain. Subscriptions are refreshed at most every
+	// blocklistsub.SyncInterval; the ticker only finds the ones that are due.
+	if runWorkers {
+		blCtx, blCancel := context.WithCancel(context.Background())
+		defer blCancel()
+		go jobloop.Loop{
+			Interval: blocklistsub.DueTick,
+			Jitter:   true,
+			Leader:   cronLeader,
+			Passes: []jobloop.Pass{{
+				FailMsg: "blocklist subscription sync failed",
+				Run:     func(ctx context.Context, _ time.Time) (int, error) { return blocklistsvc.SyncDue(ctx) },
+			}},
+		}.Run(blCtx, logger)
+	}
+
 	// Drain the outbound federation delivery queue in the background (signed
 	// Accept/activity delivery with retry + dead-letter). Only when enabled.
 	if runWorkers && cfg.FederationEnabled {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runFederationDeliveryWorker(workerCtx, logger, fedsvc)
+		go jobloop.Loop{
+			Interval: 15 * time.Second,
+			Jitter:   true,
+			Passes: []jobloop.Pass{{
+				FailMsg: "peertube follow import drain failed",
+				Run:     func(ctx context.Context, _ time.Time) (int, error) { return ptFollows.Drain(ctx) },
+			}, {
+				FailMsg: "peertube follow import prune failed",
+				Run:     func(ctx context.Context, _ time.Time) (int, error) { return ptFollows.Prune(ctx) },
+			}},
+		}.Run(workerCtx, logger)
 		logger.Info("federation delivery worker started")
 	}
 
@@ -2884,6 +3036,8 @@ func run() error {
 		qoe.NewDigester([]byte(cfg.JWTSecret)),
 		qoe.NewClassifier(cfg.DeliveryCDNBaseURL, cfg.IPFSGatewayURL, objectStorePublicBase(cfg), cfg.PublicBaseURL),
 	))
+	playbackSvc := playbackstats.NewService(db.Queries())
+	opts = append(opts, httpapi.WithPlaybackStats(playbackSvc))
 	if runWorkers {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
@@ -2900,7 +3054,7 @@ func run() error {
 			return instancesettings.EffectiveAuditRetention(cfg.AuditLogRetention,
 				settingssvc.Int(instancesettings.KeyAuditLogRetentionDays))
 		}
-		go runTelemetryRetentionWorker(workerCtx, logger, qoeSvc, auditsvc, auditRetention, cronLeader)
+		go runTelemetryRetentionWorker(workerCtx, logger, qoeSvc, playbackSvc, auditsvc, auditRetention, cronLeader)
 		logger.Info("qoe rollup + telemetry retention workers started",
 			"audit_log_retention", auditRetention().String())
 	}
@@ -3013,6 +3167,10 @@ func run() error {
 					// restart rather than at the end of the run.
 					ReloadSettings: settingssvc.Load,
 					Logger:         logger,
+					PublicBaseURL:  cfg.PublicBaseURL,
+					// Remote followers' inboxes and keys come from their own
+					// actor documents, fetched the way federation fetches them.
+					ResolveRemoteActor: fedsvc.ResolveRemoteActor,
 				})
 				return imp, func() { src.Close() }, nil
 			}))
@@ -3063,6 +3221,34 @@ func run() error {
 			}
 			return out, nil
 		})
+		// IPFS capacity (Tier A F4): repo usage, budget and the admission-pause reason,
+		// read through the same Runtime the admin page uses so the two cannot disagree.
+		if cfg.IPFSEnabled || ipfsHost != nil {
+			metrics.RegisterIPFSCapacitySource(func(ctx context.Context) (observability.IPFSCapacity, error) {
+				rt, err := ipfsControl.Runtime(ctx)
+				if err != nil {
+					return observability.IPFSCapacity{}, err
+				}
+				out := observability.IPFSCapacity{
+					BudgetBytes: rt.Capacity.BudgetBytes, ReservedBytes: rt.Capacity.ReservedBytes, MinFreeBytes: rt.Capacity.MinFreeBytes,
+					RepoUsedBytes: rt.Capacity.RepoUsedBytes, FilesystemFreeBytes: rt.Capacity.FilesystemFreeBytes,
+				}
+				if rt.Capacity.AdmissionPausedReason != nil {
+					out.PausedReason = *rt.Capacity.AdmissionPausedReason
+				}
+				// An UNMANAGED node (no adopted policy) is governed by IPFS_REPO_BUDGET_BYTES
+				// instead of the managed budget Runtime reports; read its size live.
+				if doc, derr := ipfsControl.Config(ctx); derr == nil && !doc.PolicyActive {
+					if used, budget, ok := ipfsMirror.UnmanagedCapacity(ctx); ok {
+						out = observability.IPFSCapacity{BudgetBytes: budget, RepoUsedBytes: &used}
+						if used >= budget {
+							out.PausedReason = "budget_exhausted"
+						}
+					}
+				}
+				return out, nil
+			})
+		}
 		// The pool gauges (phase-5 multi-node floor). Sampled at scrape time from
 		// the live pool, through the same sampler the admin status page reads.
 		metrics.RegisterDBPoolSource(dbPoolStats)
@@ -3168,6 +3354,13 @@ func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsv
 			Run: func(ctx context.Context, _ time.Time) (int, error) {
 				return fedsvc.DrainDeliveries(ctx, batch)
 			},
+		}, {
+			// Inbound Moves: re-point local follows of a remote actor that moved,
+			// a bounded batch per pass, until every one is done (0167).
+			FailMsg: "federation move drain failed",
+			DoneMsg: "federation move follows re-pointed",
+			Drain:   true,
+			Run:     func(ctx context.Context, _ time.Time) (int, error) { return fedsvc.DrainMoves(ctx) },
 		}},
 	}.Run(ctx, logger)
 }
@@ -3702,10 +3895,21 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 	}
 	reconcile := time.NewTicker(reconcileInterval)
 	defer reconcile.Stop()
+	// Bulk re-pin to the playback-only set (admin-started, Tier A F6 follow-up): one
+	// bounded step per tick, leader-only, a no-op unless a run is active.
+	repin := time.NewTicker(30 * time.Second)
+	defer repin.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-repin.C:
+			if !leader.IsLeader() {
+				continue
+			}
+			if err := svc.RepinTick(ctx); err != nil {
+				logger.Warn("ipfs mirror playback-only re-pin step failed", "error", err)
+			}
 		case <-drain.C:
 			total := 0
 			n, err := svc.DrainDue(ctx, batch)
@@ -4205,7 +4409,7 @@ func runQoERollupWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Servi
 // independently, so a QoE prune that fails still leaves the audit prune to run
 // (and logs its own failure), which is what keeps one table's problem from
 // silently stopping the other table's retention.
-func runTelemetryRetentionWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Service, auditsvc *audit.Service, auditRetention func() time.Duration, leader *leaderlock.Elector) {
+func runTelemetryRetentionWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Service, playbackSvc *playbackstats.Service, auditsvc *audit.Service, auditRetention func() time.Duration, leader *leaderlock.Elector) {
 	const interval = time.Hour
 	jobloop.Loop{
 		Interval: interval,
@@ -4221,6 +4425,15 @@ func runTelemetryRetentionWorker(ctx context.Context, logger *slog.Logger, svc *
 					logger.Info("qoe retention pruned rows", "events", events, "rollups", rollups)
 				}
 				return 0, nil
+			},
+		}, {
+			FailMsg: "playback stats retention failed",
+			Run: func(ctx context.Context, tick time.Time) (int, error) {
+				n, err := playbackSvc.Prune(ctx, tick.UTC())
+				if n > 0 {
+					logger.Info("playback stats retention pruned rows", "count", n)
+				}
+				return 0, err
 			},
 		}, {
 			FailMsg: "audit log retention failed",
@@ -4496,4 +4709,32 @@ func auditScanDisabled(ctx context.Context, auditsvc *audit.Service, logger *slo
 	}); err != nil {
 		logger.Warn("could not record the malware-scan opt-out in the audit log", "error", err)
 	}
+}
+
+// peertubeImportLockClass is the advisory-lock class for per-user archive
+// imports. The two-int form keeps it apart from golang-migrate's lock space.
+const peertubeImportLockClass int32 = 0x7074_6965 // "ptie"
+
+// lockUserImport takes a session-scoped advisory lock keyed by the user on a
+// dedicated connection and returns the release func, so two concurrent imports
+// for one user run one after the other.
+func lockUserImport(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID) (func(), error) {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1, hashtext($2))", peertubeImportLockClass, userID.String()); err != nil {
+		conn.Release()
+		return nil, err
+	}
+	return func() {
+		// Detached context: the request may already be cancelled, and the lock
+		// must still be released before the connection returns to the pool.
+		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if _, err := conn.Exec(uctx, "SELECT pg_advisory_unlock($1, hashtext($2))", peertubeImportLockClass, userID.String()); err != nil {
+			conn.Conn().Close(uctx) // dropping the session releases the lock
+		}
+		conn.Release()
+	}, nil
 }

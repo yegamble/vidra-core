@@ -24,6 +24,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/authoredremotecomment"
 	"github.com/vidra/vidra-core/internal/block"
+	"github.com/vidra/vidra-core/internal/blocklistsub"
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/cdnpurge"
 	"github.com/vidra/vidra-core/internal/channel"
@@ -47,6 +48,8 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/peertubearchive"
+	"github.com/vidra/vidra-core/internal/peertubefollows"
 	"github.com/vidra/vidra-core/internal/playback"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
@@ -65,6 +68,7 @@ import (
 	"github.com/vidra/vidra-core/internal/uploadfinalize"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
+	"github.com/vidra/vidra-core/internal/viewerprefs"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
@@ -97,7 +101,21 @@ type Server struct {
 	unlockLimit *ratelimit.Limiter
 	// bulkVideosLimit throttles POST /me/videos/bulk PER USER (see ratelimit.go).
 	bulkVideosLimit *ratelimit.Limiter
-	attachmentLimit *ratelimit.Limiter
+	// remoteRatingLimit throttles remote-video vote changes PER USER.
+	remoteRatingLimit *ratelimit.Limiter
+	// remoteViewLimit throttles remote-video view pings PER CLIENT IP.
+	remoteViewLimit *ratelimit.Limiter
+	// peertubeImportLimit throttles POST /me/import/peertube PER USER.
+	peertubeImportLimit *ratelimit.Limiter
+	// ptSpool admits PeerTube archive uploads to local disk (process-wide).
+	ptSpool *peertubeSpool
+	// playbackStats + playbackLimit back the watch-time beacon and its owner
+	// report (playback_stats.go). Nil playbackStats leaves both routes unmounted.
+	playbackStats playbackStatsService
+	playbackLimit *ratelimit.Limiter
+	// playbackStartLimit bounds how often one client can count a new play.
+	playbackStartLimit *ratelimit.Limiter
+	attachmentLimit    *ratelimit.Limiter
 	// contactLimit throttles the public contact form (POST /instance/contact) —
 	// its own fixed-window budget, 1 request/IP/hour in production (wired in
 	// cmd/api via WithContactRateLimiter). Nil (e.g. unit tests) mounts the
@@ -140,6 +158,9 @@ type Server struct {
 	ratingsvc         *rating.Service
 	notifsvc          *notification.Service
 	playersettingssvc *playersettings.Service
+	peertubeArchive   *peertubearchive.Importer
+	peertubeFollows   *peertubefollows.Service
+	viewerprefssvc    *viewerprefs.Service
 	playlistsvc       *playlist.Service
 	moderationsvc     *moderation.Service
 	mutesvc           *mute.Service
@@ -170,7 +191,11 @@ type Server struct {
 	remotevideosvc    *remotevideo.Service
 	authoredrcsvc     *authoredremotecomment.Service
 	instancemodsvc    *instancemod.Service
-	settingssvc       *instancesettings.Service
+	blocklistsvc      *blocklistsub.Service
+	// blocklistSyncLimit throttles the admin "sync now" action (it fetches an
+	// admin-supplied URL).
+	blocklistSyncLimit *ratelimit.Limiter
+	settingssvc        *instancesettings.Service
 	// settingsSync is the settings-version poller's health record (core#115),
 	// read by the admin status page's settings_sync component. An interface so
 	// the page depends on the one question it asks, and nil — unit tests,
@@ -386,6 +411,11 @@ const uploadChunkRoutePath = "/api/v1/uploads/:upload_id/chunks/:n"
 // each attachment at 100 MiB itself (messaging-v2.md D6).
 const attachmentUploadRoutePath = "/api/v1/conversations/:id/attachments"
 
+// peertubeImportRoutePath is the Echo route template for the PeerTube archive
+// import. It is exempt from the global body limit and gets its own
+// PEERTUBE_IMPORT_MAX_SIZE cap (a real export bundles the video files).
+const peertubeImportRoutePath = "/api/v1/me/import/peertube"
+
 // adminJobEventsPath is the admin job-events SSE stream. It is the one route
 // that gets neither a request context deadline nor a socket write deadline — it
 // owns a bounded, token-expiry-capped lifetime inside its own handler.
@@ -551,6 +581,12 @@ func WithRatingService(svc *rating.Service) Option {
 // registered and no notifications are created.
 func WithNotificationService(svc *notification.Service) Option {
 	return func(s *Server) { s.notifsvc = svc }
+}
+
+// WithViewerPrefsService mounts GET/PUT /me/content-preferences and makes the
+// sensitive-content resolution honour the viewer's per-flag overrides.
+func WithViewerPrefsService(svc *viewerprefs.Service) Option {
+	return func(s *Server) { s.viewerprefssvc = svc }
 }
 
 // WithPlayerSettingsService mounts the per-user player-settings endpoints
@@ -1208,12 +1244,23 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// Bulk video actions each run the full delete/update pipeline up to 100
 	// times, so they always carry a per-user budget, wired in-process like unlock.
 	s.bulkVideosLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultBulkVideosRateLimit, defaultBulkVideosRateWindow)
+	s.remoteRatingLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultRemoteRatingRateLimit, defaultRemoteRatingRateWindow)
+	s.remoteViewLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultRemoteViewRateLimit, defaultRemoteViewRateWindow)
+	s.peertubeImportLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPeerTubeImportRateLimit, defaultPeerTubeImportRateWindow)
+	s.ptSpool = newPeerTubeSpool()
+	if s.peertubeArchive != nil {
+		// A process killed mid-import leaves its spool file behind; reclaim it.
+		sweepStalePeerTubeSpools(s.peertubeSpoolDir(), 2*time.Hour, time.Now(), s.logger)
+	}
+	s.playbackLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackRateLimit, defaultPlaybackRateWindow)
+	s.playbackStartLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPlaybackStartLimit, defaultPlaybackStartWindow)
 	// Remote-URI search resolution (config-parity W13) triggers outbound
 	// fetches, so it always carries a per-caller budget: the wired limiter
 	// (Redis-backed in cmd/api) when present, else an in-memory default.
 	if s.searchResolveLimit == nil {
 		s.searchResolveLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultSearchResolveRateLimit, defaultSearchResolveRateWindow)
 	}
+	s.blocklistSyncLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), blocklistSyncRateLimit, blocklistSyncRateWindow)
 	if s.reportMessageLimit == nil {
 		s.reportMessageLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultReportMessageRateLimit, time.Hour)
 	}
@@ -1284,6 +1331,9 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 			}
 			// DM attachment uploads carry a bounded (100 MiB) media body.
 			if r.Method == http.MethodPost && c.Path() == attachmentUploadRoutePath {
+				return true
+			}
+			if r.Method == http.MethodPost && c.Path() == peertubeImportRoutePath {
 				return true
 			}
 			// Resumable chunk PUTs carry raw media bytes (up to the chunk size);
@@ -1510,7 +1560,7 @@ func (s *Server) routes() {
 			s.echo.GET("/accounts/:handle/"+kind, s.accountCollection(kind))
 		}
 		s.echo.GET("/video-channels/:handle/outbox", s.channelOutbox)
-		s.echo.GET("/accounts/:handle/outbox", s.accountCollection("outbox"))
+		s.echo.GET("/accounts/:handle/outbox", s.accountOutbox)
 		// The OBJECT ids vidra mints (A29-F2). They live on frontend paths, so
 		// they are reachable here only when the operator's proxy
 		// content-negotiates an ActivityPub Accept to the api — which the
@@ -1656,6 +1706,9 @@ func (s *Server) routes() {
 		// the authenticated account; the challenge is the second half of an MFA
 		// login — public, and behind the strict auth limiter like login itself
 		// (it is a code-guessing surface).
+		authGroup.GET("/devices", s.handleListDevices, s.requireAuth)
+		authGroup.DELETE("/devices/:id", s.handleForgetDevice, s.requireAuth)
+		authGroup.PATCH("/security-prefs", s.handleUpdateSecurityPrefs, s.requireAuth)
 		authGroup.GET("/mfa", s.handleGetMFAStatus, s.requireAuth)
 		authGroup.POST("/mfa/totp", s.handleBeginTOTPEnrollment, s.requireAuth)
 		authGroup.POST("/mfa/totp/verify", s.handleVerifyTOTPEnrollment, s.requireAuth)
@@ -1712,6 +1765,12 @@ func (s *Server) routes() {
 		api.GET("/me/export", s.handleGetAccountExport, s.requireAuth)
 		api.GET("/me/export/download", s.handleDownloadAccountExport, s.requireAuth)
 		api.POST("/me/import", s.handleImportAccount, s.requireAuth, s.requireScannerGate)
+		if s.peertubeArchive != nil {
+			api.POST("/me/import/peertube", s.handlePeerTubeArchiveImport, s.requireAuth, s.peertubeImportRateLimit(), s.peertubeImportBodyLimit())
+		}
+		if s.peertubeFollows != nil {
+			api.GET("/me/import/peertube/follows/:id", s.handlePeerTubeFollowStatus, s.requireAuth)
+		}
 	}
 
 	// DEV-ONLY: expose captured account-security tokens so e2e tests can complete
@@ -1833,6 +1892,12 @@ func (s *Server) routes() {
 		api.DELETE("/me/history", s.handleClearHistory, s.requireAuth)
 		api.DELETE("/me/history/:id", s.handleDeleteHistoryEntry, s.requireAuth)
 		api.GET("/videos/:id/watch-progress", s.handleGetWatchProgress, s.requireAuth)
+		// Ownership changes (T21): give a video to another local user.
+		api.POST("/videos/:id/give-ownership", s.handleGiveVideoOwnership, s.requireAuth)
+		api.DELETE("/videos/:id/give-ownership", s.handleCancelVideoOwnership, s.requireAuth)
+		api.GET("/me/video-ownership-changes", s.handleListVideoOwnershipChanges, s.requireAuth)
+		api.POST("/me/video-ownership-changes/:id/accept", s.handleAcceptVideoOwnership, s.requireAuth)
+		api.POST("/me/video-ownership-changes/:id/refuse", s.handleRefuseVideoOwnership, s.requireAuth)
 		api.PUT("/videos/:id/watch-progress", s.handleRecordWatchProgress, s.requireAuth)
 		api.GET("/videos/config", s.handleVideoConfig)
 		api.GET("/videos/search", s.handleSearchVideos, s.optionalAuth)
@@ -1916,6 +1981,10 @@ func (s *Server) routes() {
 		// Creator statistics (owner-only; non-owners get 404).
 		api.GET("/videos/:id/stats", s.handleGetVideoStats, s.requireAuth)
 		api.GET("/channels/:handle/stats", s.handleGetChannelStats, s.requireAuth)
+		if s.playbackStats != nil {
+			api.POST("/videos/:id/playback", s.handlePlaybackBeacon, s.optionalAuth, s.playbackRateLimit())
+			api.GET("/videos/:id/playback-stats", s.handleGetPlaybackStats, s.requireAuth)
+		}
 		// Account-level rollup across all channels the caller owns (studio
 		// "All channels" analytics scope). Owner-scoped by construction.
 		api.GET("/me/stats", s.handleGetAccountStats, s.requireAuth)
@@ -2022,6 +2091,10 @@ func (s *Server) routes() {
 	// Per-user player settings (PLAY-07): the signed-in user's playback defaults
 	// (speed, autoplay-next, quality, captions/theater). GET always returns the
 	// full effective object (defaults for a fresh user); PUT is a merge.
+	if s.viewerprefssvc != nil {
+		api.GET("/me/content-preferences", s.handleGetContentPrefs, s.requireAuth)
+		api.PUT("/me/content-preferences", s.handleUpdateContentPrefs, s.requireAuth)
+	}
 	if s.playersettingssvc != nil {
 		api.GET("/me/player-settings", s.handleGetPlayerSettings, s.requireAuth)
 		api.PUT("/me/player-settings", s.handleUpdatePlayerSettings, s.requireAuth)
@@ -2032,6 +2105,9 @@ func (s *Server) routes() {
 	if s.playlistsvc != nil {
 		api.POST("/playlists", s.handleCreatePlaylist, s.requireAuth)
 		api.GET("/me/playlists", s.handleListMyPlaylists, s.requireAuth)
+		if s.channelsvc != nil {
+			api.GET("/channels/:handle/playlists", s.handleListChannelPlaylists, s.optionalAuth)
+		}
 		api.GET("/playlists/:id", s.handleGetPlaylist, s.optionalAuth)
 		api.PATCH("/playlists/:id", s.handleUpdatePlaylist, s.requireAuth)
 		api.DELETE("/playlists/:id", s.handleDeletePlaylist, s.requireAuth)
@@ -2128,6 +2204,22 @@ func (s *Server) routes() {
 		api.DELETE("/admin/instances/blocked/:domain", s.handleUnblockInstance, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
+	// Blocklist subscriptions: shared denylists synced into the instance
+	// blocklist, plus the allowlist that exempts a domain from all of them.
+	// ADMIN-only (not moderator): subscribing makes the server fetch a URL and
+	// can add thousands of blocks.
+	if s.blocklistsvc != nil {
+		const bl = "/admin/instances/blocklist-subscriptions"
+		api.GET(bl, s.handleListBlocklistSubscriptions, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST(bl, s.handleCreateBlocklistSubscription, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.PATCH(bl+"/:id", s.handleUpdateBlocklistSubscription, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE(bl+"/:id", s.handleDeleteBlocklistSubscription, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST(bl+"/:id/sync", s.handleSyncBlocklistSubscription, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.GET("/admin/instances/blocklist-allowlist", s.handleListBlocklistAllow, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/instances/blocklist-allowlist", s.handleAddBlocklistAllow, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/instances/blocklist-allowlist/:domain", s.handleRemoveBlocklistAllow, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	}
+
 	// Per-remote-account blocks (A29-F7). Mounted with the federation service,
 	// because the identity a viewer supplies is resolved through the same
 	// WebFinger + SSRF-guarded machinery the follow flow uses.
@@ -2160,6 +2252,14 @@ func (s *Server) routes() {
 		// instance mutes and remote-account blocks filter the thread.
 		if s.fedsvc != nil {
 			api.GET("/remote-videos/:id/comments", s.handleListRemoteVideoComments, s.optionalAuth)
+			// A local user's vote on a remote video (0179), federated to the
+			// origin as Like/Dislike/Undo; the origin owns the counts.
+			api.GET("/remote-videos/:id/rating", s.handleGetRemoteVideoRating, s.requireAuth)
+			api.PUT("/remote-videos/:id/rating", s.handlePutRemoteVideoRating, s.requireAuth, s.remoteRatingRateLimit())
+			api.DELETE("/remote-videos/:id/rating", s.handleDeleteRemoteVideoRating, s.requireAuth, s.remoteRatingRateLimit())
+			// A view of a remote video, federated to the origin as a View from
+			// the instance actor (remote_video_views.go).
+			api.POST("/remote-videos/:id/view", s.handleRecordRemoteVideoView, s.optionalAuth, s.remoteViewRateLimit())
 		}
 		// The WRITE side (migration 0147, the home-instance-hosts-and-federates
 		// ruling): a signed-in local user authors a comment ON a remote video, and
@@ -2198,6 +2298,16 @@ func (s *Server) routes() {
 		api.GET("/admin/federation/follower-requests", s.handleListFederationFollowerRequests, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/federation/follower-requests/:id/approve", s.handleApproveFederationFollowerRequest, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/federation/follower-requests/:id/reject", s.handleRejectFederationFollowerRequest, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// Instance follows (migration 0166): the instances following ours —
+		// PeerTube's /server/followers. Admin only, like the queue above.
+		api.GET("/admin/federation/instance-followers", s.handleListInstanceFollowers, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/instance-followers/:id/accept", s.instanceFollowDecision(s.fedsvc.AcceptInstanceFollower, observability.ActionFederationInstanceFollowerAccept), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/instance-followers/:id/reject", s.instanceFollowDecision(s.fedsvc.RejectInstanceFollower, observability.ActionFederationInstanceFollowerReject), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/federation/instance-followers/:id", s.instanceFollowDecision(s.fedsvc.RemoveInstanceFollower, observability.ActionFederationInstanceFollowerRemove), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// ...and the instances ours follows — PeerTube's /server/following.
+		api.GET("/admin/federation/instance-following", s.handleListInstanceFollowing, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/instance-following", s.handleFollowInstance, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/federation/instance-following/:id", s.instanceFollowDecision(s.fedsvc.UnfollowInstance, observability.ActionFederationInstanceUnfollow), s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// ATProto / Bluesky link (P10.2 extension): the caller links/inspects/unlinks
@@ -2223,6 +2333,17 @@ func (s *Server) routes() {
 		api.GET("/admin/watched-words", s.handleListWatchedWords, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/watched-words", s.handleAddWatchedWord, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.DELETE("/admin/watched-words/:id", s.handleDeleteWatchedWord, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.GET("/admin/watched-word-lists", s.handleAdminListWordLists, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/watched-word-lists", s.handleAdminCreateWordList, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.GET("/admin/watched-word-lists/:id", s.handleAdminGetWordList, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.PATCH("/admin/watched-word-lists/:id", s.handleAdminUpdateWordList, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.DELETE("/admin/watched-word-lists/:id", s.handleAdminDeleteWordList, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		// A creator's own lists (0172): applied to comments on their own videos only.
+		api.GET("/me/watched-word-lists", s.handleMyListWordLists, s.requireAuth)
+		api.POST("/me/watched-word-lists", s.handleMyCreateWordList, s.requireAuth)
+		api.GET("/me/watched-word-lists/:id", s.handleMyGetWordList, s.requireAuth)
+		api.PATCH("/me/watched-word-lists/:id", s.handleMyUpdateWordList, s.requireAuth)
+		api.DELETE("/me/watched-word-lists/:id", s.handleMyDeleteWordList, s.requireAuth)
 		api.GET("/admin/watched-word-matches", s.handleListWatchedWordMatches, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/watched-word-matches/:id/resolve", s.handleResolveWatchedWordMatch, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
@@ -2246,6 +2367,9 @@ func (s *Server) routes() {
 		// exactly like login.
 		adminMFAMW := s.adminPasswordStepUpMW()
 		api.DELETE("/admin/users/:id/mfa", s.handleAdminRemoveUserMFA, adminMFAMW...)
+		// Clear a failed-login lockout (admin-only, audited). It only removes a
+		// brake, so no password step-up.
+		api.DELETE("/admin/users/:id/login-lockout", s.handleAdminClearLoginLockout, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		// One-time reset link for a locked-out ordinary user on an instance with
 		// no working mail. Same step-up (caller's own password) and strict limiter.
 		api.POST("/admin/users/:id/password-reset-link", s.handleAdminPasswordResetLink, adminMFAMW...)
@@ -2365,6 +2489,9 @@ func (s *Server) routes() {
 	api.POST("/admin/ipfs/apply", s.handleApplyIPFS, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	api.POST("/admin/ipfs/restart", s.handleRestartIPFS, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	api.POST("/admin/ipfs/reconcile", s.handleIPFSReconcile, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	api.POST("/admin/ipfs/repin-playback-only", s.handleStartIPFSRepin, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	api.GET("/admin/ipfs/repin-playback-only", s.handleGetIPFSRepin, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	api.DELETE("/admin/ipfs/repin-playback-only", s.handleCancelIPFSRepin, s.requireAuth, s.requireRole(admin.RoleAdmin))
 
 	// Direct messaging (1:1 conversations + messages). All behind requireAuth;
 	// non-participants get 404 so a conversation's existence is not leaked.
@@ -2422,6 +2549,9 @@ func (s *Server) routes() {
 		// Public "Live now" listing (home rail): currently-live PUBLIC streams
 		// across all channels. Public read; unlisted/private never listed.
 		api.GET("/live", s.handleListLivePublicStreams, s.optionalAuth)
+		// Public "Upcoming" listing (scheduled lives, migration 0168). Static
+		// segment, registered beside /live/:id — Echo prefers the static route.
+		api.GET("/live/upcoming", s.handleListUpcomingLiveStreams, s.optionalAuth)
 		api.GET("/live/:id", s.handleGetLiveStream, s.optionalAuth)
 		api.PATCH("/live/:id", s.handleUpdateLiveStream, s.requireAuth)
 		api.POST("/live/:id/key", s.handleRegenerateLiveStreamKey, s.requireAuth)

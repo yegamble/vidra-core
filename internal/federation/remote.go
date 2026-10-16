@@ -42,7 +42,10 @@ type fetchedActor struct {
 	// blocking @name@domain saw nothing change, because the videos are
 	// attributed to the Group and the block named the Person.
 	AttributedTo json.RawMessage `json:"attributedTo"`
-	PublicKey    struct {
+	// AlsoKnownAs lists the actor's other identities. Read only to verify an
+	// inbound Move: the target must name the actor that moved to it.
+	AlsoKnownAs json.RawMessage `json:"alsoKnownAs"`
+	PublicKey   struct {
 		PublicKeyPem string `json:"publicKeyPem"`
 	} `json:"publicKey"`
 	Endpoints struct {
@@ -105,6 +108,25 @@ func (s *Service) resolveRemoteActor(ctx context.Context, actorURL string) (sqlc
 	return s.refetchRemoteActor(ctx, actorURL)
 }
 
+// ResolveRemoteActor is resolveRemoteActor for callers outside federation: the
+// cached actor, or one fetched now through the SSRF guard and cached. It is how
+// the PeerTube importer learns a follower's inbox and key — from the actor's own
+// document, never from the source database's copy of it.
+func (s *Service) ResolveRemoteActor(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
+	return s.resolveRemoteActor(ctx, actorURL)
+}
+
+// InboxesOnActorHost reports whether an actor's inbox, and its shared inbox
+// when it names one, live on the actor's own host. It is the rule #361 adds as
+// inboxesOnOwnHost for instance followers; the two are the same check and
+// should be deduplicated once both are on main.
+func InboxesOnActorHost(ra sqlcgen.RemoteActor) bool {
+	if !sameHost(ra.InboxUrl, ra.ActorUrl) {
+		return false
+	}
+	return ra.SharedInboxUrl == nil || *ra.SharedInboxUrl == "" || sameHost(*ra.SharedInboxUrl, ra.ActorUrl)
+}
+
 // refreshRemoteActorKey re-fetches a cached actor and replaces its stored
 // publicKeyPem — the recovery path for key rotation at a peer (A29-F12).
 //
@@ -134,7 +156,11 @@ func (s *Service) refetchRemoteActor(ctx context.Context, actorURL string) (sqlc
 	if err != nil {
 		return sqlcgen.RemoteActor{}, err
 	}
+	return s.cacheFetchedActor(ctx, actorURL, fa)
+}
 
+// cacheFetchedActor upserts the cache row for an actor document just fetched.
+func (s *Service) cacheFetchedActor(ctx context.Context, actorURL string, fa fetchedActor) (sqlcgen.RemoteActor, error) {
 	var sharedInbox *string
 	if fa.Endpoints.SharedInbox != "" {
 		sharedInbox = &fa.Endpoints.SharedInbox
@@ -176,11 +202,8 @@ func (s *Service) fetchActor(ctx context.Context, actorURL string) (fetchedActor
 	if err != nil {
 		return fetchedActor{}, fmt.Errorf("federation: unsafe actor URL: %w", err)
 	}
-	client := s.fetchClient
-	if client == nil {
-		client = guard.NewClient(remoteFetchTimeout)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	client := s.remoteClient(guard)
+	req, err := http.NewRequestWithContext(withSameHostRedirects(ctx), http.MethodGet, target.String(), nil)
 	if err != nil {
 		return fetchedActor{}, err
 	}
@@ -200,6 +223,12 @@ func (s *Service) fetchActor(ctx context.Context, actorURL string) (fetchedActor
 	var fa fetchedActor
 	if err := json.Unmarshal(body, &fa); err != nil {
 		return fetchedActor{}, fmt.Errorf("federation: parse actor: %w", err)
+	}
+	// The document is cached under actorURL, so it must speak for that host.
+	// Redirects cannot leave the host (withSameHostRedirects), which makes the
+	// requested host and the answering host one and the same.
+	if !sameHost(fa.ID, target.String()) {
+		return fetchedActor{}, errors.New("federation: actor id is not on the fetched host")
 	}
 	if strings.TrimSpace(fa.PublicKey.PublicKeyPem) == "" {
 		return fetchedActor{}, errors.New("federation: remote actor has no public key")

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"net/netip"
 	"strconv"
 	"time"
 
@@ -203,7 +204,7 @@ func (s *Server) mailTestRateLimit() echo.MiddlewareFunc {
 func (s *Server) authRateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
 		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
-			return limiter, "auth:" + c.RealIP(), true
+			return limiter, "auth:" + limiterIPKey(c.RealIP()), true
 		},
 		unavailable: "auth rate limiter unavailable, failing open",
 		denied:      "rate limit exceeded",
@@ -232,6 +233,52 @@ const (
 	defaultBulkVideosRateWindow = time.Minute
 )
 
+// A remote-video vote change queues one or two signed deliveries to another
+// instance, so writes carry a per-user budget on top of the API-wide one.
+const (
+	defaultRemoteRatingRateLimit  = 30
+	defaultRemoteRatingRateWindow = time.Minute
+)
+
+// remoteRatingRateLimit throttles PUT/DELETE /remote-videos/{id}/rating PER
+// USER. It runs after requireAuth.
+func (s *Server) remoteRatingRateLimit() echo.MiddlewareFunc {
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+			userID, _, ok := principalFromContext(c)
+			if !ok || s.remoteRatingLimit == nil {
+				return nil, "", false
+			}
+			return s.remoteRatingLimit, "remote-rating:" + userID.String(), true
+		},
+		unavailable: "remote rating rate limiter unavailable, failing open",
+		denied:      "too many rating changes; wait a minute and try again",
+	})
+}
+
+// A remote-video view ping can queue a signed delivery to another instance, so
+// it carries a per-IP budget on top of the API-wide one (the federation service
+// also caps Views per origin per hour).
+const (
+	defaultRemoteViewRateLimit  = 60
+	defaultRemoteViewRateWindow = time.Minute
+)
+
+// remoteViewRateLimit throttles POST /remote-videos/{id}/view PER CLIENT IP
+// (an IPv6 client by its /64), signed in or not.
+func (s *Server) remoteViewRateLimit() echo.MiddlewareFunc {
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+			if s.remoteViewLimit == nil {
+				return nil, "", false
+			}
+			return s.remoteViewLimit, "remote-view:" + limiterIPKey(c.RealIP()), true
+		},
+		unavailable: "remote view rate limiter unavailable, failing open",
+		denied:      "too many view pings; wait a minute and try again",
+	})
+}
+
 // bulkVideosRateLimit throttles POST /me/videos/bulk PER USER, in the style of
 // mailTestRateLimit. It runs after requireAuth.
 func (s *Server) bulkVideosRateLimit() echo.MiddlewareFunc {
@@ -246,4 +293,41 @@ func (s *Server) bulkVideosRateLimit() echo.MiddlewareFunc {
 		unavailable: "bulk video rate limiter unavailable, failing open",
 		denied:      "too many bulk actions; wait a minute and try again",
 	})
+}
+
+// PeerTube archive import: 3 requests per user per hour. Each request parses a
+// zip and runs the create path for up to 150 rows, so a per-user budget sits
+// under the general per-IP one.
+const (
+	defaultPeerTubeImportRateLimit  = 3
+	defaultPeerTubeImportRateWindow = time.Hour
+)
+
+// peertubeImportRateLimit throttles POST /me/import/peertube PER USER. It runs
+// after requireAuth.
+func (s *Server) peertubeImportRateLimit() echo.MiddlewareFunc {
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+			userID, _, ok := principalFromContext(c)
+			if !ok || s.peertubeImportLimit == nil {
+				return nil, "", false
+			}
+			return s.peertubeImportLimit, "peertube-import:" + userID.String(), true
+		},
+		unavailable: "peertube import rate limiter unavailable, failing open",
+		denied:      "too many imports; try again later",
+	})
+}
+
+// limiterIPKey collapses an IPv6 address to its /64 for rate-limit keying: a
+// single IPv6 host controls a /64 (or far more) of source addresses, so keying
+// on the full address gives an attacker an effectively unlimited budget. IPv4
+// and unparseable values are returned unchanged.
+func limiterIPKey(raw string) string {
+	addr, err := netip.ParseAddr(raw)
+	if err != nil || addr.Unmap().Is4() {
+		return raw
+	}
+	p, _ := addr.Prefix(64)
+	return p.String()
 }

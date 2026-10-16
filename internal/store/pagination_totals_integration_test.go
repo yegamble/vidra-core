@@ -114,12 +114,12 @@ func TestListTotalsExecuteAgainstPostgres(t *testing.T) {
 				return e
 			},
 			"CountAuditLog":      func() error { _, e := q.CountAuditLog(ctx, nil); return e },
-			"CountAdminComments": func() error { _, e := q.CountAdminComments(ctx, nil); return e },
-			"CountReports/all":   func() error { _, e := q.CountReports(ctx, nil); return e },
-			"CountReports/open":  func() error { _, e := q.CountReports(ctx, &open); return e },
+			"CountAdminComments": func() error { _, e := q.CountAdminComments(ctx, sqlcgen.CountAdminCommentsParams{}); return e },
+			"CountReports/all":   func() error { _, e := q.CountReports(ctx, sqlcgen.CountReportsParams{}); return e },
+			"CountReports/open":  func() error { _, e := q.CountReports(ctx, sqlcgen.CountReportsParams{Status: &open}); return e },
 			// "resolved" is a query value, not a stored status — it must reach the
 			// `status <> 'open'` branch rather than comparing equal to nothing.
-			"CountReports/resolved": func() error { _, e := q.CountReports(ctx, &resolved); return e },
+			"CountReports/resolved": func() error { _, e := q.CountReports(ctx, sqlcgen.CountReportsParams{Status: &resolved}); return e },
 			"CountRegistrationRequests": func() error {
 				_, e := q.CountRegistrationRequests(ctx, &pending)
 				return e

@@ -175,6 +175,7 @@ type Repository interface {
 	CreateVideoFile(ctx context.Context, arg sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error)
 	GetVideoFileByKind(ctx context.Context, arg sqlcgen.GetVideoFileByKindParams) (sqlcgen.VideoFile, error)
 	DeleteVideoFilesByVideoAndKind(ctx context.Context, arg sqlcgen.DeleteVideoFilesByVideoAndKindParams) error
+	SwapVideoOriginalIfOwner(ctx context.Context, arg sqlcgen.SwapVideoOriginalIfOwnerParams) (sqlcgen.VideoFile, error)
 	UpsertCaption(ctx context.Context, arg sqlcgen.UpsertCaptionParams) (sqlcgen.Caption, error)
 	ListCaptionsByVideo(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.Caption, error)
 	GetCaptionByLang(ctx context.Context, arg sqlcgen.GetCaptionByLangParams) (sqlcgen.Caption, error)
@@ -339,6 +340,10 @@ type Service struct {
 	onMove               []func(ctx context.Context, videoID, fromChannelID uuid.UUID, wasFederated bool)
 	onDelete             []func(context.Context, uuid.UUID, uuid.UUID, bool)
 	onMediaReplaced      []func(context.Context, uuid.UUID, string)
+	onCaptionChange      []func(ctx context.Context, videoID uuid.UUID, storageKey string, deleted bool)
+	// own persists ownership change requests (T21, 0165); nil = the routes
+	// answer ErrOwnershipUnavailable.
+	own OwnershipRepository
 	// uploadUsageRecorder appends a rolling daily-upload-quota ledger event
 	// (config-parity W7) after AttachOriginal stores an original. Best-effort;
 	// nil = no daily accounting.
@@ -559,6 +564,24 @@ func WithMediaReplacedHook(fn func(context.Context, uuid.UUID, string)) Option {
 	return func(s *Service) { s.onMediaReplaced = append(s.onMediaReplaced, fn) }
 }
 
+// WithCaptionChangeHook registers a callback invoked (best-effort, synchronously)
+// after a caption track is stored or replaced (deleted=false) and after one is
+// removed (deleted=true), with the track's storage key. The IPFS mirror is the
+// consumer: a caption is pinned under its stable key, so a deleted track stayed
+// pinned and retrievable and a replaced one stayed pinned under its old bytes
+// (Tier A F5). Unlike WithMediaReplacedHook it carries no edge fence — whether
+// the video is mirror-eligible is the consumer's decision.
+func WithCaptionChangeHook(fn func(ctx context.Context, videoID uuid.UUID, storageKey string, deleted bool)) Option {
+	return func(s *Service) { s.onCaptionChange = append(s.onCaptionChange, fn) }
+}
+
+// fireCaptionChange runs the caption hooks.
+func (s *Service) fireCaptionChange(ctx context.Context, videoID uuid.UUID, key string, deleted bool) {
+	for _, hook := range s.onCaptionChange {
+		hook(ctx, videoID, key, deleted)
+	}
+}
+
 // fireMediaReplaced runs the replacement hooks for a video that an edge could be
 // holding. Best-effort and synchronous, like every other hook here: the hooks
 // themselves detach whatever needs detaching.
@@ -617,6 +640,9 @@ type CreateInput struct {
 	// excluded from public browse/search when the instance policy is "hide";
 	// otherwise presentation-only.
 	IsSensitive bool
+	// SensitiveFlags are the kinds of sensitive content (SensitiveFlags const
+	// set); any flag implies IsSensitive. Normalised here.
+	SensitiveFlags []string
 	// SensitiveReason is the creator's optional content-warning text shown next to
 	// a sensitive video (empty = none). Stored regardless of IsSensitive; the
 	// frontend pairs the two. Trimmed here; the HTTP layer caps its length.
@@ -756,7 +782,8 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 		Language:        nilIfEmpty(in.Language),
 		License:         nilIfEmpty(license),
 		PublishAt:       timestamptz(in.PublishAt),
-		IsSensitive:     in.IsSensitive,
+		IsSensitive:     in.IsSensitive || len(in.SensitiveFlags) > 0,
+		SensitiveFlags:  NormalizeSensitiveFlags(in.SensitiveFlags),
 		SensitiveReason: strings.TrimSpace(in.SensitiveReason),
 		Support:         nilIfEmpty(pgconv.Deref(support)),
 		CommentsPolicy:  commentsPolicy,
@@ -1061,21 +1088,26 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 	// The swap: from here the new source is the video's original. Downloads and
 	// progressive playback follow the file row immediately; HLS keeps serving
 	// the previous generation until the re-transcode promotes the new one.
-	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
-		VideoID: videoID,
-		Kind:    "original",
-	}); err != nil {
-		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
-	}
-	file, err := s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+	//
+	// One statement, and only while the video still belongs to the owner it had
+	// when this replacement began (v.OwnerID): ownership is derived from the
+	// channel, and an accepted ownership change can land while the file is
+	// stored, scanned and probed. Then nothing is swapped, the new blob is
+	// dropped like any other refused replacement, and the caller sees
+	// ErrReplaceConflict.
+	file, err := s.repo.SwapVideoOriginalIfOwner(ctx, sqlcgen.SwapVideoOriginalIfOwnerParams{
 		VideoID:      videoID,
-		Kind:         "original",
+		OwnerID:      v.OwnerID,
 		StorageKey:   key,
 		ContentType:  strings.TrimSpace(in.ContentType),
 		OriginalName: strings.TrimSpace(in.Filename),
 		SizeBytes:    size,
 		Sha256:       sum,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = s.blobs.Delete(ctx, key)
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrReplaceConflict
+	}
 	if err != nil {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
 	}
@@ -1549,6 +1581,14 @@ func (s *Service) FileForView(ctx context.Context, videoID, viewerID uuid.UUID, 
 // owner previews do not inflate counts. The deduper is best-effort: an error is
 // treated as "count it".
 func (s *Service) RecordView(ctx context.Context, videoID, viewerID uuid.UUID, authed bool, viewerKey string) error {
+	return s.RecordViewGated(ctx, videoID, viewerID, authed, viewerKey, nil)
+}
+
+// RecordViewGated is RecordView with a gate consulted only for a view that
+// passed the per-viewer dedupe, just before it is counted: a closed gate (false)
+// drops the view. Federation uses it for a per-sender budget, so repeats from a
+// viewer already counted never spend that budget. A nil gate is always open.
+func (s *Service) RecordViewGated(ctx context.Context, videoID, viewerID uuid.UUID, authed bool, viewerKey string, gate func(context.Context) (bool, error)) error {
 	v, err := s.GetByID(ctx, videoID)
 	if err != nil {
 		return err // ErrNotFound
@@ -1563,6 +1603,11 @@ func (s *Service) RecordView(ctx context.Context, videoID, viewerID uuid.UUID, a
 		key := "view:" + videoID.String() + ":" + viewerKey
 		if first, derr := s.viewDeduper.First(ctx, key, viewDedupeWindow); derr == nil && !first {
 			return nil // already counted this viewer in the window
+		}
+	}
+	if gate != nil {
+		if open, err := gate(ctx); err != nil || !open {
+			return err
 		}
 	}
 	if _, err = s.repo.IncrementVideoViews(ctx, videoID); err != nil {
@@ -2133,6 +2178,9 @@ type UpdateInput struct {
 	// IsSensitive: nil leaves the sensitive-content flag unchanged; a non-nil
 	// value sets it.
 	IsSensitive *bool
+	// SensitiveFlags: nil leaves the flags unchanged; a non-nil slice replaces
+	// them (empty clears). A non-empty set also marks the video sensitive.
+	SensitiveFlags *[]string
 	// SensitiveReason: nil leaves the content-warning text unchanged; a non-nil
 	// value sets it (an empty string clears it). Trimmed here; the HTTP layer
 	// caps its length.
@@ -2207,7 +2255,8 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 		Language:        in.Language,
 		License:         in.License,
 		PublishAt:       timestamptz(in.PublishAt),
-		IsSensitive:     in.IsSensitive,
+		IsSensitive:     sensitiveWithFlags(in.IsSensitive, in.SensitiveFlags),
+		SensitiveFlags:  sensitiveFlagsPatch(in.IsSensitive, in.SensitiveFlags),
 		SensitiveReason: pgconv.TrimPtr(in.SensitiveReason),
 		Support:         pgconv.TrimPtr(in.Support),
 		CommentsPolicy:  in.CommentsPolicy,
@@ -2267,19 +2316,27 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 			updated.State = "published"
 		}
 	}
-	// v is the PRE-edit row: whether this video was public+published before the
-	// edit is the fact federation needs to tell a retraction from a video no
-	// peer ever held (see WithUpdateHook).
+	s.fireUpdateHooks(ctx, v, moved)
+	return updated, nil
+}
+
+// fireUpdateHooks runs the side effects of an edit — the update hooks (search
+// reindex, federation Update, IPFS sync) and, for a channel move, the move hooks
+// (federation retract to the old channel's followers). v is the PRE-edit row:
+// whether this video was public+published before the edit is the fact
+// federation needs to tell a retraction from a video no peer ever held (see
+// WithUpdateHook), and v.ChannelID is the channel a move left. Shared by the
+// same-owner move above and the cross-owner one (AcceptOwnershipChange).
+func (s *Service) fireUpdateHooks(ctx context.Context, v sqlcgen.GetVideoByIDRow, moved bool) {
 	wasFederated := v.Privacy == "public" && v.State == "published"
 	for _, hook := range s.onUpdate {
-		hook(ctx, id, wasFederated)
+		hook(ctx, v.ID, wasFederated)
 	}
 	if moved {
 		for _, hook := range s.onMove {
-			hook(ctx, id, v.ChannelID, wasFederated)
+			hook(ctx, v.ID, v.ChannelID, wasFederated)
 		}
 	}
-	return updated, nil
 }
 
 // PrefillMetadata fills a video's title/description from an importer's metadata
@@ -2370,7 +2427,7 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, sort s
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		it.PublishAt = TimePtr(r.PublishAt) // studio view: badge scheduled videos
 		it.Blocked = r.Blocked              // studio view: badge blocked videos
@@ -2427,7 +2484,7 @@ func (s *Service) ListByOwner(ctx context.Context, ownerID uuid.UUID, f OwnerLis
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		it.PublishAt = TimePtr(r.PublishAt)
 		it.Blocked = r.Blocked
@@ -2470,7 +2527,7 @@ func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID, 
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, it)
 	}
@@ -2502,7 +2559,7 @@ func (s *Service) ListPublicByOwner(ctx context.Context, ownerID uuid.UUID, view
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, it)
 	}
@@ -2553,12 +2610,12 @@ type FeedItem struct {
 // newFeedItem packages a video's columns and card data into a FeedItem. It lets
 // the (structurally identical but distinct) sqlc row types from the feed,
 // search, and channel-list queries share one conversion.
-func newFeedItem(id, channelID uuid.UUID, title, description, privacy, state string, createdAt, updatedAt time.Time, views int64, hasThumbnail bool, channelHandle, channelDisplayName string, durationSeconds *int32, isSensitive bool, sensitiveReason, shortCode string) FeedItem {
+func newFeedItem(id, channelID uuid.UUID, title, description, privacy, state string, createdAt, updatedAt time.Time, views int64, hasThumbnail bool, channelHandle, channelDisplayName string, durationSeconds *int32, isSensitive bool, sensitiveFlags []string, sensitiveReason, shortCode string) FeedItem {
 	return FeedItem{
 		Video: sqlcgen.Video{
 			ID: id, ChannelID: channelID, Title: title, Description: description,
 			Privacy: privacy, State: state, CreatedAt: createdAt, UpdatedAt: updatedAt,
-			IsSensitive: isSensitive, SensitiveReason: sensitiveReason,
+			IsSensitive: isSensitive, SensitiveFlags: sensitiveFlags, SensitiveReason: sensitiveReason,
 			// Empty on a REMOTE card: the UNION's remote branch selects
 			// ''::text, because a federated video has no local short code.
 			ShortCode: shortCode,
@@ -2583,7 +2640,14 @@ func remoteCard(it FeedItem, remote bool, domain, watchURL string, streamURL *st
 }
 
 // feedSorts are the accepted feed ordering modes.
-var feedSorts = map[string]bool{"recent": true, "popular": true, "trending": true}
+//
+// "hot" is deliberately absent: a windowed engagement score needs per-window
+// view/like counters (only all-time totals exist), and "trending" already is
+// the age-decayed engagement sort — a second name for it would be dishonest.
+var feedSorts = map[string]bool{
+	"recent": true, "popular": true, "trending": true,
+	"originally_published_at": true, "name": true,
+}
 
 // NormalizeFeedSort returns sort when it is a recognised mode, else "recent".
 func NormalizeFeedSort(sort string) string {
@@ -2613,6 +2677,10 @@ type FeedFilter struct {
 	Tag      string
 	Category string
 	Language string
+	// Languages (browse feed only; search uses the single Language) are
+	// language taxonomy ids: a video matches when its language is ANY of them.
+	// Empty = no filter.
+	Languages []string
 	// License is a taxonomy id honoured by the SEARCH path only — the feed
 	// queries have no predicate for it, so it is ignored by ListPublic.
 	License string
@@ -2622,7 +2690,7 @@ type FeedFilter struct {
 }
 
 // ListPublic returns the cross-channel public feed in the requested order
-// (recent|popular|trending; unknown → recent), optionally narrowed by filter,
+// (recent|popular|trending|originally_published_at|name; unknown → recent), optionally narrowed by filter,
 // each item carrying its view count and poster availability. scope=all
 // (remote-content §4) adds federated remote videos (excluded whenever a
 // tag/category/language filter is active — remote videos carry no local
@@ -2631,7 +2699,10 @@ type FeedFilter struct {
 func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, int64, error) {
 	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
 	includeRemote := NormalizeFeedScope(scope) == FeedScopeAll
-	tag, category, language := nilIfEmpty(strings.ToLower(filter.Tag)), nilIfEmpty(filter.Category), nilIfEmpty(filter.Language)
+	tag, category, language := nilIfEmpty(strings.ToLower(filter.Tag)), nilIfEmpty(filter.Category), filter.Languages
+	if len(language) == 0 {
+		language = nil // NULL = no filter; an empty array would match nothing
+	}
 	rows, err := s.repo.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
 		Sort:          NormalizeFeedSort(sort),
 		IncludeRemote: includeRemote,
@@ -2661,7 +2732,7 @@ func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter Fee
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
@@ -2704,7 +2775,7 @@ func (s *Service) listSubscriptions(ctx context.Context, userID uuid.UUID, limit
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
@@ -2756,7 +2827,7 @@ func (s *Service) ListSaved(ctx context.Context, userID uuid.UUID, limit, offset
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, it)
 	}
@@ -2820,7 +2891,7 @@ func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offs
 		}
 		items := make([]HistoryItem, 0, len(rows))
 		for _, r := range rows {
-			it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+			it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 			it.AuthorDisplayName = r.AuthorDisplayName
 			items = append(items, HistoryItem{
 				FeedItem:        it,
@@ -2844,7 +2915,7 @@ func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offs
 	}
 	items := make([]HistoryItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, HistoryItem{
 			FeedItem:        it,
@@ -3014,7 +3085,7 @@ func (s *Service) SearchPublic(ctx context.Context, query string, filter SearchF
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
@@ -3052,7 +3123,7 @@ func (s *Service) HydrateByIDs(ctx context.Context, ids []uuid.UUID, viewerID uu
 	}
 	byID := make(map[uuid.UUID]FeedItem, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		byID[r.ID] = it
 	}
@@ -3083,7 +3154,7 @@ func (s *Service) RelatedFallback(ctx context.Context, videoID, channelID uuid.U
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, it)
 	}

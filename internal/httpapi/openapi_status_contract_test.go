@@ -171,6 +171,8 @@ var contractStatusVocabulary = []string{
 	// of a namespace collision answers permanently at its old handle for a year.
 	"301", "302", "304", "307",
 	"400", "401", "403", "404", "409", "410", "413", "415", "422", "429",
+	// 408 / 411: the PeerTube archive upload (a stalled body; no Content-Length).
+	"408", "411",
 	"501", "502", "503",
 }
 

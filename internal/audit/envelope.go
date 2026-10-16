@@ -72,10 +72,10 @@ var (
 	// changed_keys beside it and the transport in provider, so the row describes
 	// the whole edit without holding any part of the credential.
 	allowedMetadataKeys = stringSet(
-		"attempt", "attempts", "auth_method", "breaker_tripped", "changed_key",
+		"added", "attempt", "attempts", "auth_method", "breaker_tripped", "changed_key",
 		"changed_keys", "count", "dry_run", "failed", "ipfs_rearmed",
 		"ipfs_unpinned", "mode", "network",
-		"outcome", "policy", "provider", "purged", "reason_code",
+		"outcome", "policy", "provider", "purged", "reason_code", "removed",
 		"reason_provided", "resolver", "secret_changed", "source_version",
 		"stage", "url_count",
 	)
@@ -85,7 +85,7 @@ var (
 	// are intentionally absent.
 	allowedChangeFields = stringSet(
 		"account_enabled", "bypass_quarantine", "comments_enabled",
-		"download_enabled", "email_verified", "imports_enabled", "is_owner",
+		"daily_quota_bytes", "download_enabled", "email_verified", "imports_enabled", "is_owner",
 		"live_enabled", "mfa_enabled", "privacy", "role", "state",
 		"storage_quota_bytes",
 		"uploads_enabled",

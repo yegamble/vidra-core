@@ -13,7 +13,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/net/idna"
 
+	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 )
@@ -38,6 +40,10 @@ var (
 	// ErrRemoteUnresolvable means WebFinger or the actor fetch failed, so the
 	// target could not be resolved to a followable remote actor (422).
 	ErrRemoteUnresolvable = errors.New("federation: could not resolve the remote actor")
+	// ErrBlockedFollowTarget means the target's domain is on this instance's
+	// block list; nothing is fetched from it. Callers must present it exactly
+	// like ErrRemoteUnresolvable so block membership is not revealed.
+	ErrBlockedFollowTarget = errors.New("federation: follow target is on a blocked domain")
 	// ErrFollowNotFound means no such remote follow exists for this user (404).
 	ErrFollowNotFound = errors.New("federation: remote follow not found")
 )
@@ -74,11 +80,27 @@ func (s *Service) FollowRemoteChannel(ctx context.Context, userID uuid.UUID, tar
 		return RemoteFollow{}, err
 	}
 
+	// An admin-blocked domain is refused BEFORE the WebFinger fetch: a block
+	// means no outbound request is made toward the host.
+	host, ok := followTargetHost(target)
+	if !ok {
+		return RemoteFollow{}, ErrBadFollowTarget
+	}
+	if err := s.refuseBlockedFollowHost(ctx, host); err != nil {
+		return RemoteFollow{}, err
+	}
 	candidates, err := s.resolveFollowTarget(ctx, target)
 	if err != nil {
 		return RemoteFollow{}, err
 	}
 	for _, actorURL := range candidates {
+		ah, ok := followTargetHost(actorURL)
+		if !ok {
+			return RemoteFollow{}, ErrRemoteUnresolvable
+		}
+		if err := s.refuseBlockedFollowHost(ctx, ah); err != nil {
+			return RemoteFollow{}, err
+		}
 		if strings.EqualFold(hostOf(actorURL), s.domain()) {
 			return RemoteFollow{}, ErrLocalFollowTarget
 		}
@@ -87,14 +109,79 @@ func (s *Service) FollowRemoteChannel(ctx context.Context, userID uuid.UUID, tar
 	if err != nil {
 		return RemoteFollow{}, fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 	}
+	return s.followResolvedActor(ctx, userID, u.Username, ra)
+}
 
+// NormalizeFollowHost reduces a host as written in a follow target to the key
+// the domain block list uses: lower-case, port and trailing dot removed, IDN in
+// its ASCII form. It refuses (ok=false) anything that is not a plain hostname:
+// empty labels, userinfo, path/query/fragment characters, backslashes,
+// whitespace, brackets. A refused host is never fetched.
+func NormalizeFollowHost(host string) (string, bool) {
+	host = strings.TrimSpace(host)
+	if host == "" || strings.ContainsAny(host, "?#/@\\[] \t\r\n") {
+		return "", false
+	}
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		port := host[i+1:]
+		if port == "" || strings.Trim(port, "0123456789") != "" || strings.Contains(host[:i], ":") {
+			return "", false
+		}
+		host = host[:i]
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "" || strings.Contains(host, "..") || strings.HasPrefix(host, ".") {
+		return "", false
+	}
+	ascii, err := idna.Lookup.ToASCII(host)
+	if err != nil || ascii == "" {
+		return "", false
+	}
+	return ascii, true
+}
+
+// followTargetHost is the normalised host a follow target names: an http(s)
+// URL's host, or the part after the first '@' of a name@domain handle (the cut
+// resolveFollowTarget makes, so both read the same host). ok=false means the
+// target cannot be fetched at all.
+func followTargetHost(target string) (string, bool) {
+	target = strings.TrimSpace(target)
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+		u, err := url.Parse(target)
+		if err != nil {
+			return "", false
+		}
+		return NormalizeFollowHost(u.Host)
+	}
+	_, host, found := strings.Cut(strings.TrimPrefix(target, "@"), "@")
+	if !found {
+		return "", false
+	}
+	return NormalizeFollowHost(host)
+}
+
+func (s *Service) refuseBlockedFollowHost(ctx context.Context, host string) error {
+	blocked, err := instancemod.BlockMatches(ctx, s.repo.IsInstanceBlocked, host)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return ErrBlockedFollowTarget
+	}
+	return nil
+}
+
+// followResolvedActor follows an already-resolved remote actor as a local user:
+// the pending row, then a signed Follow on a fresh insert only. Shared by a
+// user's own follow and by an inbound Move re-pointing their follow.
+func (s *Service) followResolvedActor(ctx context.Context, userID uuid.UUID, username string, ra sqlcgen.RemoteActor) (RemoteFollow, error) {
 	// Mint the account keypair up front: the queued Follow is signed as this
 	// account at send time.
 	if _, err := s.ensureAccountKey(ctx, userID); err != nil {
 		return RemoteFollow{}, err
 	}
 
-	accountActor := s.baseURL + "/accounts/" + u.Username
+	accountActor := s.baseURL + "/accounts/" + username
 	followID := accountActor + "/activities/follow/" + uuid.NewString()
 	row, err := s.repo.UpsertRemoteChannelFollow(ctx, sqlcgen.UpsertRemoteChannelFollowParams{
 		UserID:            userID,
@@ -118,7 +205,7 @@ func (s *Service) FollowRemoteChannel(ctx context.Context, userID uuid.UUID, tar
 		if err != nil {
 			return RemoteFollow{}, err
 		}
-		if err := s.enqueueAccountDelivery(ctx, userID, u.Username, inbox, payload); err != nil {
+		if err := s.enqueueAccountDelivery(ctx, userID, username, inbox, payload); err != nil {
 			return RemoteFollow{}, err
 		}
 	}
@@ -324,10 +411,7 @@ func (s *Service) fetchJRD(ctx context.Context, jrdURL string) (*JRD, error) {
 	if err != nil {
 		return nil, fmt.Errorf("federation: unsafe webfinger URL: %w", err)
 	}
-	client := s.fetchClient
-	if client == nil {
-		client = guard.NewClient(remoteFetchTimeout)
-	}
+	client := s.remoteClient(guard)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, err
@@ -430,11 +514,14 @@ func (s *Service) handleAccept(ctx context.Context, act inboxActivity, signerAct
 	// The Accept may also answer one of our channel follow-backs
 	// (federation_auto_follow_back, config-parity W12): same signer-is-the-
 	// followed-actor predicate, disjoint activity-id namespaces.
-	_, err := s.repo.AcceptChannelFollowBackByActivity(ctx, sqlcgen.AcceptChannelFollowBackByActivityParams{
+	if _, err := s.repo.AcceptChannelFollowBackByActivity(ctx, sqlcgen.AcceptChannelFollowBackByActivityParams{
 		FollowActivityUrl: followURL,
 		RemoteActorUrl:    signerActorURL,
-	})
-	return err
+	}); err != nil {
+		return err
+	}
+	// ...or our instance actor's follow of a remote instance (0166).
+	return s.answerInstanceFollowing(ctx, true, followURL, signerActorURL)
 }
 
 // handleReject processes an inbound Reject{Follow}: the mirror of handleAccept,
@@ -459,11 +546,13 @@ func (s *Service) handleReject(ctx context.Context, act inboxActivity, signerAct
 	// A Reject may also answer one of our channel follow-backs (W12): the
 	// refused follow-back row goes away. (A later re-follow by that actor may
 	// mint a fresh follow-back — the insert-if-absent guard has been cleared.)
-	_, err := s.repo.DeleteChannelFollowBackByActivity(ctx, sqlcgen.DeleteChannelFollowBackByActivityParams{
+	if _, err := s.repo.DeleteChannelFollowBackByActivity(ctx, sqlcgen.DeleteChannelFollowBackByActivityParams{
 		FollowActivityUrl: followURL,
 		RemoteActorUrl:    signerActorURL,
-	})
-	return err
+	}); err != nil {
+		return err
+	}
+	return s.answerInstanceFollowing(ctx, false, followURL, signerActorURL)
 }
 
 // acceptedFollowID extracts the embedded Follow's id from an Accept/Reject and

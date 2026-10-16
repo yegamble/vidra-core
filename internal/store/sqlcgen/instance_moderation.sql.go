@@ -16,7 +16,7 @@ import (
 const blockInstance = `-- name: BlockInstance :execrows
 INSERT INTO blocked_instances (domain, reason, blocked_by)
 VALUES ($1, $2, $3)
-ON CONFLICT (domain) DO UPDATE SET reason = EXCLUDED.reason, blocked_by = EXCLUDED.blocked_by
+ON CONFLICT (domain) DO UPDATE SET reason = EXCLUDED.reason, blocked_by = EXCLUDED.blocked_by, source = 'manual'
 `
 
 type BlockInstanceParams struct {
@@ -26,7 +26,8 @@ type BlockInstanceParams struct {
 }
 
 // Admin-block a remote instance (idempotent; re-blocking refreshes the reason
-// and blocking admin).
+// and blocking admin). A manual block ADOPTS a subscription-owned row (source
+// becomes 'manual'), so removing the domain from the list later cannot lift it.
 func (q *Queries) BlockInstance(ctx context.Context, arg BlockInstanceParams) (int64, error) {
 	result, err := q.db.Exec(ctx, blockInstance, arg.Domain, arg.Reason, arg.BlockedBy)
 	if err != nil {
@@ -60,10 +61,12 @@ func (q *Queries) CountMutedInstances(ctx context.Context, muterID uuid.UUID) (i
 }
 
 const isInstanceBlocked = `-- name: IsInstanceBlocked :one
-SELECT EXISTS (SELECT 1 FROM blocked_instances WHERE domain = $1)
+SELECT EXISTS (SELECT 1 FROM blocked_instances
+               WHERE domain = $1 OR regexp_replace(domain, ':[0-9]+$', '') = $1)
 `
 
 // The cheap inbox/drain check: is this (lowercased) domain on the blocklist?
+// A stored host:port entry (dev origins) blocks the bare host too.
 func (q *Queries) IsInstanceBlocked(ctx context.Context, domain string) (bool, error) {
 	row := q.db.QueryRow(ctx, isInstanceBlocked, domain)
 	var exists bool
@@ -72,7 +75,7 @@ func (q *Queries) IsInstanceBlocked(ctx context.Context, domain string) (bool, e
 }
 
 const listBlockedInstances = `-- name: ListBlockedInstances :many
-SELECT domain, reason, blocked_by, created_at
+SELECT domain, reason, blocked_by, created_at, source
 FROM blocked_instances
 ORDER BY created_at DESC, domain
 LIMIT $2 OFFSET $1
@@ -98,6 +101,7 @@ func (q *Queries) ListBlockedInstances(ctx context.Context, arg ListBlockedInsta
 			&i.Reason,
 			&i.BlockedBy,
 			&i.CreatedAt,
+			&i.Source,
 		); err != nil {
 			return nil, err
 		}

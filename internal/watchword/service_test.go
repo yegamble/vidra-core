@@ -16,14 +16,16 @@ import (
 // fakeRepo is an in-memory watchword.Repository enforcing the case-insensitive
 // uniqueness of the real unique index.
 type fakeRepo struct {
-	words   map[uuid.UUID]sqlcgen.WatchedWord
-	order   []uuid.UUID
-	present map[string]bool // lower(word) -> exists
-	matches []sqlcgen.ListWatchedWordMatchesRow
+	WordListRepository // list management is covered by the store integration tests
+	words              map[uuid.UUID]sqlcgen.WatchedWord
+	order              []uuid.UUID
+	present            map[string]bool // lower(word) -> exists
+	matches            []sqlcgen.ListWatchedWordMatchesRow
 	// live maps a target id to its CURRENT text, so the fake can project the
 	// live excerpt and target_status the SQL computes rather than echoing the
 	// snapshot back — the distinction this slice exists to make.
-	live map[uuid.UUID]string
+	live     map[uuid.UUID]string
+	autoTags map[uuid.UUID][]string // comment_automatic_tags (0177)
 }
 
 func newFakeRepo() *fakeRepo {
@@ -39,15 +41,15 @@ func (f *fakeRepo) wordOf(id pgtype.UUID) string {
 	return f.words[uuid.UUID(id.Bytes)].Word
 }
 
-func (f *fakeRepo) CreateWatchedWord(_ context.Context, a sqlcgen.CreateWatchedWordParams) (sqlcgen.WatchedWord, error) {
+func (f *fakeRepo) CreateWatchedWord(_ context.Context, a sqlcgen.CreateWatchedWordParams) (sqlcgen.CreateWatchedWordRow, error) {
 	if f.present[strings.ToLower(a.Word)] {
-		return sqlcgen.WatchedWord{}, &pgconn.PgError{Code: "23505"} // unique violation
+		return sqlcgen.CreateWatchedWordRow{}, &pgconn.PgError{Code: "23505"} // unique violation
 	}
 	w := sqlcgen.WatchedWord{ID: uuid.New(), Word: a.Word, CreatedBy: a.CreatedBy, CreatedAt: time.Now()}
 	f.words[w.ID] = w
 	f.order = append(f.order, w.ID)
 	f.present[strings.ToLower(a.Word)] = true
-	return w, nil
+	return sqlcgen.CreateWatchedWordRow{ID: w.ID, Word: w.Word, CreatedBy: w.CreatedBy, CreatedAt: w.CreatedAt}, nil
 }
 
 func (f *fakeRepo) ListWatchedWords(_ context.Context, _ sqlcgen.ListWatchedWordsParams) ([]sqlcgen.ListWatchedWordsRow, error) {
@@ -89,6 +91,27 @@ func (f *fakeRepo) MatchWatchedWords(_ context.Context, text string) ([]sqlcgen.
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeRepo) MatchWatchedWordsForVideo(ctx context.Context, a sqlcgen.MatchWatchedWordsForVideoParams) ([]sqlcgen.MatchWatchedWordsForVideoRow, error) {
+	rows, _ := f.MatchWatchedWords(ctx, a.Text)
+	out := make([]sqlcgen.MatchWatchedWordsForVideoRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, sqlcgen.MatchWatchedWordsForVideoRow{ID: r.ID, Word: r.Word, ListName: "Default", ListAction: ActionFlag})
+	}
+	return out, nil
+}
+
+func (f *fakeRepo) GetComment(context.Context, uuid.UUID) (sqlcgen.Comment, error) {
+	return sqlcgen.Comment{}, nil
+}
+
+func (f *fakeRepo) ReplaceCommentAutomaticTags(_ context.Context, a sqlcgen.ReplaceCommentAutomaticTagsParams) error {
+	if f.autoTags == nil {
+		f.autoTags = map[uuid.UUID][]string{}
+	}
+	f.autoTags[a.CommentID] = a.Tags
+	return nil
 }
 
 func (f *fakeRepo) RecordWatchedWordMatch(_ context.Context, a sqlcgen.RecordWatchedWordMatchParams) error {

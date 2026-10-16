@@ -13,21 +13,38 @@ import (
 
 // fakeRepo is an in-memory playlist.Repository.
 type fakeRepo struct {
+	channels  map[uuid.UUID]uuid.UUID // channelID -> owner
 	playlists map[uuid.UUID]sqlcgen.Playlist
 	items     map[uuid.UUID][]uuid.UUID // playlistID -> ordered videoIDs
 }
 
 func newFakeRepo() *fakeRepo {
-	return &fakeRepo{playlists: map[uuid.UUID]sqlcgen.Playlist{}, items: map[uuid.UUID][]uuid.UUID{}}
+	return &fakeRepo{channels: map[uuid.UUID]uuid.UUID{}, playlists: map[uuid.UUID]sqlcgen.Playlist{}, items: map[uuid.UUID][]uuid.UUID{}}
 }
 
 func (f *fakeRepo) CreatePlaylist(_ context.Context, a sqlcgen.CreatePlaylistParams) (sqlcgen.Playlist, error) {
 	p := sqlcgen.Playlist{
 		ID: uuid.New(), OwnerID: a.OwnerID, Title: a.Title, Description: a.Description,
-		Visibility: a.Visibility, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		Visibility: a.Visibility, ChannelID: a.ChannelID, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.playlists[p.ID] = p
 	return p, nil
+}
+
+func (f *fakeRepo) GetChannelByID(_ context.Context, id uuid.UUID) (sqlcgen.Channel, error) {
+	owner, ok := f.channels[id]
+	if !ok {
+		return sqlcgen.Channel{}, errors.New("not found")
+	}
+	return sqlcgen.Channel{ID: id, OwnerID: owner}, nil
+}
+
+func (f *fakeRepo) ListPlaylistsByChannel(context.Context, sqlcgen.ListPlaylistsByChannelParams) ([]sqlcgen.ListPlaylistsByChannelRow, error) {
+	return nil, nil
+}
+
+func (f *fakeRepo) CountPlaylistsByChannel(context.Context, sqlcgen.CountPlaylistsByChannelParams) (int64, error) {
+	return 0, nil
 }
 
 func (f *fakeRepo) GetPlaylistByID(_ context.Context, id uuid.UUID) (sqlcgen.GetPlaylistByIDRow, error) {
@@ -67,6 +84,9 @@ func (f *fakeRepo) UpdatePlaylist(_ context.Context, a sqlcgen.UpdatePlaylistPar
 	}
 	if a.Visibility != nil {
 		p.Visibility = *a.Visibility
+	}
+	if a.SetChannel {
+		p.ChannelID = a.ChannelID
 	}
 	p.UpdatedAt = time.Now()
 	f.playlists[a.ID] = p
@@ -365,3 +385,45 @@ func (f *fakeRepo) CountPlaylistItems(ctx context.Context, playlistID uuid.UUID)
 	rows, err := f.ListPlaylistItems(ctx, sqlcgen.ListPlaylistItemsParams{PlaylistID: playlistID, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
 }
+
+// A playlist can only be attributed to a channel its owner owns — the same
+// owner-equality rule as moving a video between channels.
+func TestPlaylistChannelOwnership(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := NewService(repo)
+	owner, other := uuid.New(), uuid.New()
+	mine, theirs := uuid.New(), uuid.New()
+	repo.channels[mine], repo.channels[theirs] = owner, other
+
+	if _, err := svc.Create(ctx, owner, CreateInput{Title: "x", Visibility: "public", ChannelID: &theirs}); !errors.Is(err, ErrChannelRefused) {
+		t.Fatalf("create on someone else's channel = %v, want ErrChannelRefused", err)
+	}
+	missing := uuid.New()
+	if _, err := svc.Create(ctx, owner, CreateInput{Title: "x", Visibility: "public", ChannelID: &missing}); !errors.Is(err, ErrChannelRefused) {
+		t.Fatalf("create on a missing channel = %v, want ErrChannelRefused", err)
+	}
+	p, err := svc.Create(ctx, owner, CreateInput{Title: "x", Visibility: "public", ChannelID: &mine})
+	if err != nil || !p.ChannelID.Valid {
+		t.Fatalf("create on own channel = %+v, %v", p, err)
+	}
+	if _, err := svc.Update(ctx, owner, p.ID, UpdateInput{SetChannel: true, ChannelID: &theirs}); !errors.Is(err, ErrChannelRefused) {
+		t.Fatalf("update to someone else's channel = %v, want ErrChannelRefused", err)
+	}
+	if got := repo.playlists[p.ID]; !got.ChannelID.Valid {
+		t.Fatal("a refused update must leave the link intact")
+	}
+	// Absent leaves the link; explicit nil clears it.
+	if u, err := svc.Update(ctx, owner, p.ID, UpdateInput{Title: ptr("y")}); err != nil || !u.ChannelID.Valid {
+		t.Fatalf("title-only update changed the link: %+v, %v", u, err)
+	}
+	if u, err := svc.Update(ctx, owner, p.ID, UpdateInput{SetChannel: true}); err != nil || u.ChannelID.Valid {
+		t.Fatalf("clearing the link = %+v, %v", u, err)
+	}
+	// A non-owner still cannot touch the playlist at all.
+	if _, err := svc.Update(ctx, other, p.ID, UpdateInput{SetChannel: true, ChannelID: &theirs}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-owner update = %v, want ErrForbidden", err)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

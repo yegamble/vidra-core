@@ -26,10 +26,11 @@ SELECT count(*)::bigint FROM muted_instances WHERE muter_id = $1;
 
 -- name: BlockInstance :execrows
 -- Admin-block a remote instance (idempotent; re-blocking refreshes the reason
--- and blocking admin).
+-- and blocking admin). A manual block ADOPTS a subscription-owned row (source
+-- becomes 'manual'), so removing the domain from the list later cannot lift it.
 INSERT INTO blocked_instances (domain, reason, blocked_by)
 VALUES ($1, $2, $3)
-ON CONFLICT (domain) DO UPDATE SET reason = EXCLUDED.reason, blocked_by = EXCLUDED.blocked_by;
+ON CONFLICT (domain) DO UPDATE SET reason = EXCLUDED.reason, blocked_by = EXCLUDED.blocked_by, source = 'manual';
 
 -- name: UnblockInstance :one
 -- Lift an instance block (idempotent). RETURNS THE MOMENT THE BLOCK BEGAN, and
@@ -45,7 +46,7 @@ RETURNING created_at;
 
 -- name: ListBlockedInstances :many
 -- The admin blocklist, newest block first.
-SELECT domain, reason, blocked_by, created_at
+SELECT domain, reason, blocked_by, created_at, source
 FROM blocked_instances
 ORDER BY created_at DESC, domain
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
@@ -56,4 +57,6 @@ SELECT count(*)::bigint FROM blocked_instances;
 
 -- name: IsInstanceBlocked :one
 -- The cheap inbox/drain check: is this (lowercased) domain on the blocklist?
-SELECT EXISTS (SELECT 1 FROM blocked_instances WHERE domain = $1);
+-- A stored host:port entry (dev origins) blocks the bare host too.
+SELECT EXISTS (SELECT 1 FROM blocked_instances
+               WHERE domain = $1 OR regexp_replace(domain, ':[0-9]+$', '') = $1);

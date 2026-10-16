@@ -98,7 +98,7 @@ func (s *Service) handleCreateNote(ctx context.Context, act inboxActivity, signe
 	if policy == "disabled" || (s.commentsEnabled != nil && !s.commentsEnabled()) {
 		return nil
 	}
-	held := policy == commentsPolicyRequiresApproval
+	held := policy == commentsPolicyRequiresApproval || s.watchedWordHolds(ctx, videoID, body)
 	// The author-name snapshot comes from the cached signer actor (it was
 	// fetched+cached during signature verification).
 	author, err := s.repo.GetRemoteActor(ctx, signerActorURL)
@@ -172,7 +172,7 @@ func (s *Service) handleUpdateNote(ctx context.Context, act inboxActivity, signe
 		return err
 	}
 	updated, err := s.repo.UpdateComment(ctx, sqlcgen.UpdateCommentParams{
-		ID: c.ID, Body: body, Hold: policy == commentsPolicyRequiresApproval,
+		ID: c.ID, Body: body, Hold: policy == commentsPolicyRequiresApproval || s.watchedWordHolds(ctx, c.VideoID, body),
 	})
 	if err != nil {
 		return err
@@ -355,6 +355,23 @@ func (s *Service) videoIsPubliclyVisible(ctx context.Context, videoID uuid.UUID)
 		return false, err
 	}
 	return v.Privacy == "public" && v.State == "published" && !v.Blocked, nil
+}
+
+// commentHolder is the optional second face of the comment flagger: whether a
+// "hold" watched-word list (0172) matches, so the comment is stored through the
+// same held-for-review path a requires_approval video uses.
+type commentHolder interface {
+	ShouldHold(ctx context.Context, videoID uuid.UUID, body string) (bool, error)
+}
+
+// watchedWordHolds fails open: a lookup error never rejects ingestion.
+func (s *Service) watchedWordHolds(ctx context.Context, videoID uuid.UUID, body string) bool {
+	h, ok := s.flagger.(commentHolder)
+	if !ok {
+		return false
+	}
+	hold, err := h.ShouldHold(ctx, videoID, body)
+	return err == nil && hold
 }
 
 // flagRemoteComment runs the watched-words moderation flagging over a stored

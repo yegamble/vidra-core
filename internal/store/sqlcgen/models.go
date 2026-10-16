@@ -33,10 +33,11 @@ type AccountExport struct {
 }
 
 type ActorHandle struct {
-	HandleLower string      `json:"handle_lower"`
-	UserID      pgtype.UUID `json:"user_id"`
-	ChannelID   pgtype.UUID `json:"channel_id"`
-	CreatedAt   time.Time   `json:"created_at"`
+	HandleLower   string      `json:"handle_lower"`
+	UserID        pgtype.UUID `json:"user_id"`
+	ChannelID     pgtype.UUID `json:"channel_id"`
+	CreatedAt     time.Time   `json:"created_at"`
+	InstanceActor bool        `json:"instance_actor"`
 }
 
 type AtprotoAccount struct {
@@ -107,6 +108,7 @@ type BlockedInstance struct {
 	Reason    string      `json:"reason"`
 	BlockedBy pgtype.UUID `json:"blocked_by"`
 	CreatedAt time.Time   `json:"created_at"`
+	Source    string      `json:"source"`
 }
 
 type BlockedRemoteActor struct {
@@ -114,6 +116,30 @@ type BlockedRemoteActor struct {
 	BlockedBy      pgtype.UUID `json:"blocked_by"`
 	Reason         string      `json:"reason"`
 	CreatedAt      time.Time   `json:"created_at"`
+}
+
+type BlocklistAllowlist struct {
+	Domain    string      `json:"domain"`
+	AddedBy   pgtype.UUID `json:"added_by"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
+type BlocklistSubscription struct {
+	ID            uuid.UUID          `json:"id"`
+	Url           string             `json:"url"`
+	Label         string             `json:"label"`
+	Format        string             `json:"format"`
+	Enabled       bool               `json:"enabled"`
+	Etag          string             `json:"etag"`
+	LastAttemptAt pgtype.Timestamptz `json:"last_attempt_at"`
+	LastSyncedAt  pgtype.Timestamptz `json:"last_synced_at"`
+	LastStatus    string             `json:"last_status"`
+	LastError     string             `json:"last_error"`
+	LastAdded     int32              `json:"last_added"`
+	LastRemoved   int32              `json:"last_removed"`
+	EntryCount    int32              `json:"entry_count"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     time.Time          `json:"created_at"`
 }
 
 type Caption struct {
@@ -191,6 +217,12 @@ type ChannelFollowBack struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
+type ChannelFollowerBackfill struct {
+	Host           string    `json:"host"`
+	ChannelID      uuid.UUID `json:"channel_id"`
+	LastBackfillAt time.Time `json:"last_backfill_at"`
+}
+
 type ChannelHandleAlias struct {
 	HandleLower string    `json:"handle_lower"`
 	ChannelID   uuid.UUID `json:"channel_id"`
@@ -251,6 +283,11 @@ type Comment struct {
 	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
 	Hearted          bool               `json:"hearted"`
 	HeldForReview    bool               `json:"held_for_review"`
+}
+
+type CommentAutomaticTag struct {
+	CommentID uuid.UUID `json:"comment_id"`
+	Tag       string    `json:"tag"`
 }
 
 type Conversation struct {
@@ -351,6 +388,7 @@ type FederationDelivery struct {
 	RequestID               string      `json:"request_id"`
 	CorrelationID           string      `json:"correlation_id"`
 	AuthoredRemoteCommentID pgtype.UUID `json:"authored_remote_comment_id"`
+	SigningInstanceActor    bool        `json:"signing_instance_actor"`
 }
 
 type FederationInboxActivity struct {
@@ -372,12 +410,41 @@ type ImportJob struct {
 	Stage         string    `json:"stage"`
 }
 
+type InstanceActorKey struct {
+	Singleton     bool      `json:"singleton"`
+	PublicKeyPem  string    `json:"public_key_pem"`
+	PrivateKeyPem string    `json:"private_key_pem"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type InstanceDocument struct {
 	Name      string      `json:"name"`
 	Body      string      `json:"body"`
 	Sha256    string      `json:"sha256"`
 	UpdatedBy pgtype.UUID `json:"updated_by"`
 	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+type InstanceFollower struct {
+	ID                uuid.UUID `json:"id"`
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	State             string    `json:"state"`
+	FollowActivityUrl string    `json:"follow_activity_url"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+type InstanceFollowerBackfill struct {
+	Host           string    `json:"host"`
+	LastBackfillAt time.Time `json:"last_backfill_at"`
+}
+
+type InstanceFollowing struct {
+	ID                uuid.UUID `json:"id"`
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	Host              string    `json:"host"`
+	State             string    `json:"state"`
+	FollowActivityUrl string    `json:"follow_activity_url"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type InstanceIdentity struct {
@@ -392,6 +459,11 @@ type InstanceImage struct {
 	SizeBytes   int64     `json:"size_bytes"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type InstanceOutboxVideo struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type InstanceSetting struct {
@@ -530,6 +602,15 @@ type LiveStream struct {
 	TerminatedBy          pgtype.UUID        `json:"terminated_by"`
 	TerminationReasonCode *string            `json:"termination_reason_code"`
 	TerminationReason     string             `json:"termination_reason"`
+	ScheduledStartAt      pgtype.Timestamptz `json:"scheduled_start_at"`
+}
+
+type LoginThrottle struct {
+	UserID      uuid.UUID          `json:"user_id"`
+	Scope       string             `json:"scope"`
+	FailCount   int32              `json:"fail_count"`
+	WindowStart time.Time          `json:"window_start"`
+	LockedUntil pgtype.Timestamptz `json:"locked_until"`
 }
 
 type MailConfig struct {
@@ -669,6 +750,21 @@ type OauthIdentity struct {
 	Handle    *string   `json:"handle"`
 }
 
+type OidcProvider struct {
+	Name                string      `json:"name"`
+	DisplayName         string      `json:"display_name"`
+	IssuerUrl           string      `json:"issuer_url"`
+	ClientID            string      `json:"client_id"`
+	ClientSecret        string      `json:"client_secret"`
+	Scopes              []string    `json:"scopes"`
+	Enabled             bool        `json:"enabled"`
+	AutoProvision       bool        `json:"auto_provision"`
+	AllowedEmailDomains []string    `json:"allowed_email_domains"`
+	UpdatedBy           pgtype.UUID `json:"updated_by"`
+	CreatedAt           time.Time   `json:"created_at"`
+	UpdatedAt           time.Time   `json:"updated_at"`
+}
+
 type OwnerClaimToken struct {
 	ID        bool               `json:"id"`
 	TokenHash string             `json:"token_hash"`
@@ -683,6 +779,24 @@ type PasswordResetToken struct {
 	ExpiresAt time.Time          `json:"expires_at"`
 	UsedAt    pgtype.Timestamptz `json:"used_at"`
 	CreatedAt time.Time          `json:"created_at"`
+}
+
+type PeertubeFollowImport struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type PeertubeFollowImportTarget struct {
+	ID            uuid.UUID `json:"id"`
+	ImportID      uuid.UUID `json:"import_id"`
+	UserID        uuid.UUID `json:"user_id"`
+	Target        string    `json:"target"`
+	State         string    `json:"state"`
+	Attempts      int32     `json:"attempts"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	LastError     string    `json:"last_error"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type PeertubeImportLedger struct {
@@ -741,14 +855,15 @@ type PipelineRun struct {
 }
 
 type Playlist struct {
-	ID           uuid.UUID `json:"id"`
-	OwnerID      uuid.UUID `json:"owner_id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Visibility   string    `json:"visibility"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	ThumbnailExt *string   `json:"thumbnail_ext"`
+	ID           uuid.UUID   `json:"id"`
+	OwnerID      uuid.UUID   `json:"owner_id"`
+	Title        string      `json:"title"`
+	Description  string      `json:"description"`
+	Visibility   string      `json:"visibility"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+	ThumbnailExt *string     `json:"thumbnail_ext"`
+	ChannelID    pgtype.UUID `json:"channel_id"`
 }
 
 type PlaylistItem struct {
@@ -862,6 +977,14 @@ type RemoteActorBlockReach struct {
 	ActorUrl  string    `json:"actor_url"`
 }
 
+type RemoteActorMove struct {
+	OriginActorUrl string    `json:"origin_actor_url"`
+	TargetActorUrl string    `json:"target_actor_url"`
+	ClaimedAt      time.Time `json:"claimed_at"`
+	State          string    `json:"state"`
+	TouchedAt      time.Time `json:"touched_at"`
+}
+
 type RemoteChannelFollow struct {
 	ID                uuid.UUID `json:"id"`
 	UserID            uuid.UUID `json:"user_id"`
@@ -894,6 +1017,7 @@ type RemoteVideo struct {
 	FetchedAt       time.Time          `json:"fetched_at"`
 	UpdatedAt       time.Time          `json:"updated_at"`
 	IsSensitive     bool               `json:"is_sensitive"`
+	SensitiveFlags  []string           `json:"sensitive_flags"`
 }
 
 type RemoteVideoBlock struct {
@@ -917,6 +1041,25 @@ type RemoteVideoComment struct {
 	ParentObjectUrl  string             `json:"parent_object_url"`
 }
 
+type RemoteVideoRating struct {
+	VideoID        uuid.UUID `json:"video_id"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+	Rating         string    `json:"rating"`
+	ActivityUrl    string    `json:"activity_url"`
+	Domain         string    `json:"domain"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	CapDomain      *string   `json:"cap_domain"`
+}
+
+type RemoteVideoUserRating struct {
+	RemoteVideoID uuid.UUID `json:"remote_video_id"`
+	UserID        uuid.UUID `json:"user_id"`
+	Rating        string    `json:"rating"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type Report struct {
 	ID                     uuid.UUID          `json:"id"`
 	ReporterID             pgtype.UUID        `json:"reporter_id"`
@@ -937,6 +1080,9 @@ type Report struct {
 	RemoteReporterActorUrl *string            `json:"remote_reporter_actor_url"`
 	RemoteReporterDomain   *string            `json:"remote_reporter_domain"`
 	RemoteFlagActivityID   *string            `json:"remote_flag_activity_id"`
+	PredefinedReasons      []string           `json:"predefined_reasons"`
+	VideoStartSeconds      *int32             `json:"video_start_seconds"`
+	VideoEndSeconds        *int32             `json:"video_end_seconds"`
 }
 
 type ReportMessage struct {
@@ -1150,6 +1296,19 @@ type UserBlock struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type UserContentPref struct {
+	UserID                uuid.UUID `json:"user_id"`
+	SensitiveFlagPolicies []byte    `json:"sensitive_flag_policies"`
+	PreferredLanguages    []string  `json:"preferred_languages"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+type UserDailyQuota struct {
+	UserID          uuid.UUID `json:"user_id"`
+	DailyQuotaBytes int64     `json:"daily_quota_bytes"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type UserFeedToken struct {
 	UserID    uuid.UUID `json:"user_id"`
 	TokenHash string    `json:"token_hash"`
@@ -1164,6 +1323,15 @@ type UserImage struct {
 	SizeBytes   int64     `json:"size_bytes"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type UserKnownDevice struct {
+	ID          uuid.UUID `json:"id"`
+	UserID      uuid.UUID `json:"user_id"`
+	DeviceHash  string    `json:"device_hash"`
+	Label       string    `json:"label"`
+	FirstSeenAt time.Time `json:"first_seen_at"`
+	LastSeenAt  time.Time `json:"last_seen_at"`
 }
 
 type UserMfa struct {
@@ -1183,6 +1351,12 @@ type UserPlayerSetting struct {
 	TheaterDefault           bool           `json:"theater_default"`
 	UpdatedAt                time.Time      `json:"updated_at"`
 	VideoCardPreviewsEnabled *bool          `json:"video_card_previews_enabled"`
+}
+
+type UserSecurityPref struct {
+	UserID               uuid.UUID          `json:"user_id"`
+	NewDeviceEmail       bool               `json:"new_device_email"`
+	LastNewDeviceEmailAt pgtype.Timestamptz `json:"last_new_device_email_at"`
 }
 
 type Video struct {
@@ -1211,6 +1385,7 @@ type Video struct {
 	PeertubeUuid          pgtype.UUID        `json:"peertube_uuid"`
 	TranscodeGeneration   int32              `json:"transcode_generation"`
 	Support               *string            `json:"support"`
+	SensitiveFlags        []string           `json:"sensitive_flags"`
 }
 
 type VideoBlock struct {
@@ -1257,11 +1432,37 @@ type VideoMetadatum struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+type VideoOwnershipChange struct {
+	ID          uuid.UUID `json:"id"`
+	VideoID     uuid.UUID `json:"video_id"`
+	InitiatorID uuid.UUID `json:"initiator_id"`
+	NextOwnerID uuid.UUID `json:"next_owner_id"`
+	VideoTitle  string    `json:"video_title"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type VideoPassword struct {
 	ID           uuid.UUID `json:"id"`
 	VideoID      uuid.UUID `json:"video_id"`
 	PasswordHash string    `json:"password_hash"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type VideoPlaybackDay struct {
+	VideoID      uuid.UUID   `json:"video_id"`
+	Day          pgtype.Date `json:"day"`
+	Plays        int64       `json:"plays"`
+	WatchSeconds int64       `json:"watch_seconds"`
+}
+
+type VideoPlaybackDim struct {
+	VideoID uuid.UUID   `json:"video_id"`
+	Day     pgtype.Date `json:"day"`
+	Kind    string      `json:"kind"`
+	Key     string      `json:"key"`
+	Value   int64       `json:"value"`
 }
 
 type VideoRating struct {
@@ -1330,6 +1531,17 @@ type WatchedWord struct {
 	Word      string      `json:"word"`
 	CreatedBy pgtype.UUID `json:"created_by"`
 	CreatedAt time.Time   `json:"created_at"`
+	ListID    pgtype.UUID `json:"list_id"`
+}
+
+type WatchedWordList struct {
+	ID        uuid.UUID   `json:"id"`
+	OwnerID   pgtype.UUID `json:"owner_id"`
+	Name      string      `json:"name"`
+	Action    string      `json:"action"`
+	IsDefault bool        `json:"is_default"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
 }
 
 type WatchedWordMatch struct {
@@ -1348,4 +1560,7 @@ type WatchedWordMatch struct {
 	ResolvedBy              pgtype.UUID        `json:"resolved_by"`
 	ResolvedAt              pgtype.Timestamptz `json:"resolved_at"`
 	AuthoredRemoteCommentID pgtype.UUID        `json:"authored_remote_comment_id"`
+	ListID                  pgtype.UUID        `json:"list_id"`
+	ListName                string             `json:"list_name"`
+	ListOwnerID             pgtype.UUID        `json:"list_owner_id"`
 }

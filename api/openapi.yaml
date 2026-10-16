@@ -517,7 +517,11 @@ paths:
         wins — the owner of an address is the only account that string can reach,
         so a lookalike username can never shadow someone else's sign-in.
         Unknown account and wrong password are reported identically (401) to
-        prevent account enumeration. Browser cookie mode also sets `vidra_video_access`,
+        prevent account enumeration. So is a temporarily LOCKED account: after
+        repeated failures from one network prefix (IPv4 /24, IPv6 /48), or a
+        larger number across all networks, sign-in is refused with the same 401
+        body, the same status and no Retry-After — even with the right password
+        — until the backoff expires or an administrator clears it. Browser cookie mode also sets `vidra_video_access`,
         an HttpOnly, SameSite=Lax access-token cookie scoped to `/api/v1/videos/`,
         Secure on HTTPS, with the access-token TTL. It authorizes only private or
         unpublished video GET/HEAD reads, never mutations; public playback ignores
@@ -1494,6 +1498,101 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/devices:
+    get:
+      operationId: listRecognisedDevices
+      summary: List recognised devices
+      description: >-
+        The browsers and devices the account has signed in from, most recent
+        first, and whether the new-device sign-in email is on. A device is a
+        long-lived random `vidra_device` cookie (httpOnly, Path=/api/v1/auth)
+        bound to the browser family and OS; only a hash and a coarse label such
+        as "Chrome on macOS" are stored, never an IP address. `current` marks the
+        device making this request.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The account's recognised devices.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecognisedDevicesResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/devices/{id}:
+    delete:
+      operationId: forgetRecognisedDevice
+      summary: Forget a recognised device
+      description: >-
+        Removes the record, so the next sign-in from that device is treated as
+        new (and mails the account, unless that is turned off). It does NOT end
+        sessions: sessions carry no device link, so use sign out of all devices
+        for that. Audited as `auth.device.forget`.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: The device was forgotten.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such device on this account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/security-prefs:
+    patch:
+      operationId: updateSecurityPrefs
+      summary: Turn the new-device sign-in email on or off
+      description: >-
+        The email is on by default. At most one such email is sent to an account
+        per hour, and an account with no recognised device yet never gets one
+        (its first sign-in just records).
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecurityPrefsRequest"
+      responses:
+        "200":
+          description: The stored preference.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityPrefsRequest"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (new_device_email is required).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/auth/mfa:
     get:
       operationId: getMFAStatus
@@ -1888,7 +1987,10 @@ paths:
 
         User-actionable failures redirect with an `oauth_error` query code
         (`access_denied`, `email_conflict`, `email_required`,
-        `account_disabled`, `conflict`); protocol violations (missing/forged/
+        `account_disabled`, `conflict`, and for a provider that does not
+        create accounts `signup_disabled` or `email_domain_not_allowed` — the
+        latter also when the address in an allowed domain is unverified);
+        protocol violations (missing/forged/
         expired state, nonce mismatch) are 400.
       tags: [auth]
       parameters:
@@ -3264,6 +3366,148 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/import/peertube/follows/{id}:
+    get:
+      operationId: getPeerTubeFollowImport
+      summary: Status of a background follow import
+      description: >-
+        Counts per outcome for the follow import started by
+        POST /api/v1/me/import/peertube (its follows_job_id). Only the caller's
+        own import is visible; any other id is 404.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Current counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeerTubeFollowImportStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such import for this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/import/peertube:
+    post:
+      operationId: importPeerTubeArchive
+      summary: Import the metadata of a PeerTube user-export archive
+      description: >-
+        Accepts a PeerTube (>= 6.1) user-export zip as multipart field
+        `archive` and imports its METADATA into the caller's own account:
+        channels (created when the handle is free and valid here; a handle the
+        caller already owns counts as existing, another owner's is skipped),
+        regular playlists (matched by title, so a re-import never duplicates;
+        items are not resolved and are counted in playlist_items_skipped), and
+        the autoplay-next setting. Videos, likes, dislikes, comments, watch
+        history, blocklists and followers are NOT imported yet and are counted
+        under skipped_sections. The accounts in following.json (up to 1000) are
+        queued and followed in the background through the same path as
+        POST /me/remote-follows; the response carries follows_job_id. Synchronous: the work is bounded
+        and touches no network or media. The body cap for this route is
+        PEERTUBE_IMPORT_MAX_SIZE, which defaults to the global HTTP body limit
+        (8 MB), enough for an export trimmed to its peertube/*.json entries; an
+        instance that raises it also accepts the full export including its
+        video files. A Content-Length is required (411 without one). The upload
+        is streamed to a temporary file that is always removed, and only the
+        peertube/*.json entries are ever read; media entries are never opened.
+        The archive is refused whole on traversal, symlink, encrypted,
+        duplicate or oversize JSON entries, or an oversized or ambiguous
+        central directory (more than 20000 entries or 4 MiB). An upload that
+        stops sending for 60 s is abandoned with 408. 403 feature_disabled
+        when user_import_enabled is off. At most 3 imports per user per hour.
+        At most 50 channels may be owned after an import, existing ones
+        included. If the import stops part-way on a server error, the answer is
+        the standard error envelope with an added `summary`
+        (PeerTubeImportSummary) of what was done first; rows already created
+        are kept and re-uploading the same archive is safe.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [archive]
+              properties:
+                archive:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: What was imported and what was skipped.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeerTubeImportSummary"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Archive imports are disabled (code feature_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "408":
+          description: The upload stopped sending for 60 seconds and was abandoned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "411":
+          description: The request has no Content-Length.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: >-
+            The request body exceeds PEERTUBE_IMPORT_MAX_SIZE (default: the
+            global HTTP body limit), declared or actually streamed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Missing, not a zip, or not a valid PeerTube export.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many imports in the window (3 per user per hour).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            The server is already receiving the maximum number of archives, or
+            has too little free temporary space for this one (also when space
+            runs short mid-upload); retry after the Retry-After seconds.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/quota:
     get:
       operationId: getMyQuota
@@ -3921,6 +4165,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/playlists:
+    get:
+      operationId: listChannelPlaylists
+      summary: List a channel's playlists
+      description: >-
+        The channel page's Playlists tab, newest first, paginated with a `total`.
+        Anyone sees the channel's public playlists; a playlist's owner (bearer
+        token) also sees their own unlisted and private ones. Other users and
+        anonymous callers never see those.
+      tags: [playlists]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: The channel's playlists visible to the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistListResponse"
+        "404":
+          description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/videos:
     get:
       operationId: listMyVideos
@@ -4183,11 +4461,14 @@ paths:
           in: query
           required: false
           description: >-
-            Ordering: recent (newest first), popular (most all-time views), or
-            trending (views decayed by age). Unknown values fall back to recent.
+            Ordering: recent (newest first), popular (most all-time views),
+            trending (views decayed by age), originally_published_at
+            (newest by the creator-declared original date, falling back to the
+            publish date), or name (title A-Z, case-insensitive). Every order ends in
+            a newest-first, id tiebreak. Unknown values fall back to recent.
           schema:
             type: string
-            enum: [recent, popular, trending]
+            enum: [recent, popular, trending, originally_published_at, name]
             default: recent
         - name: scope
           in: query
@@ -4221,8 +4502,10 @@ paths:
           in: query
           required: false
           description: >-
-            Only videos with this content-language code (see GET /videos/config).
-            Unknown value -> 422.
+            Only videos in this content language (see GET /videos/config), or
+            in ANY of a comma-separated list of up to 10 (`en,fr`; a viewer's
+            preferred_languages from GET /me/content-preferences). Unknown
+            value -> 422.
           schema:
             type: string
         - $ref: "#/components/parameters/PageLimit"
@@ -4961,6 +5244,88 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/playback:
+    post:
+      operationId: recordVideoPlayback
+      summary: Anonymous watch-time beacon
+      description: >-
+        One periodic playback sample (about every 10 s while playing). Folded
+        into the video's daily aggregates; no IP address, User-Agent, session or
+        viewer id is stored. Device class and OS family are bucketed from the
+        User-Agent server-side and the raw value is discarded. Rate limited per
+        client and video; the owner's own plays are ignored; a play may be marked started once per client per 10 minutes. 204 on success, 404 for a video that is not published or visible.
+      tags: [videos]
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaybackBeaconRequest"
+      responses:
+        "204":
+          description: Sample accepted (or ignored).
+        "400":
+          description: Malformed body or out-of-range value.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: No such video, or not visible to the caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429":
+          description: Beacon budget exceeded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /api/v1/videos/{id}/playback-stats:
+    get:
+      operationId: getVideoPlaybackStats
+      summary: Watch-time, retention and device analytics for a video (owner or channel editor)
+      description: >-
+        Last 30 days of playback aggregates: plays, watch seconds, average view
+        duration, a 20-bucket audience retention curve (omitted when the video
+        duration is unknown or nothing was watched), a device-class and OS split
+        and a daily series. Country is not available (no GeoIP in core). A
+        non-owner/non-editor or unknown id is reported as 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The video's playback statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackStatsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: No such video, or the caller may not manage it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /api/v1/channels/{handle}/stats:
     get:
       operationId: getChannelStats
@@ -8746,6 +9111,275 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/give-ownership:
+    post:
+      operationId: giveVideoOwnership
+      summary: Offer a video to another local user
+      description: >-
+        Starts an ownership change (PeerTube's "give ownership"): the named
+        local account is asked to take over the video and answers from
+        GET /me/video-ownership-changes. Only the video's owner may give it —
+        not a channel editor, not staff (a deliberate departure from PeerTube,
+        where staff may give on an owner's behalf). The recipient is notified
+        (video_ownership_request) unless they muted the caller; the request
+        stands either way. Nothing moves until the recipient accepts, and the
+        giver can withdraw it meanwhile (DELETE). A pending request expires
+        after 30 days, or as soon as the giver no longer owns the video. The
+        checks that do not depend on the recipient (ownership, upload state, a
+        pending request) are answered before the username is looked at. Rate
+        limited like every other API write.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties:
+                username:
+                  type: string
+                  description: The recipient's username (case-insensitive).
+      responses:
+        "204":
+          description: The request is pending the recipient's answer.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: >-
+            The video does not exist or the caller does not own it ("video not
+            found"), or no eligible recipient has that username ("user not
+            found" — one answer for an unknown, banned or deleted account, a
+            block in either direction, and the caller themselves).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            A request for this video is already pending; the video is still
+            uploading or processing (state draft or processing, or any upload,
+            replacement, import or transcode of it unfinished); or an offer from
+            the caller to the same recipient ended — refused, or withdrawn by
+            the caller — in the last 24 hours.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (username is required).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Ownership changes are not configured on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: cancelVideoOwnershipChange
+      summary: Withdraw your pending offer of a video
+      description: >-
+        Cancels the caller's pending ownership change for this video; the
+        recipient's list shows it as no longer available (expired). Only the
+        giver may cancel, and only while it is pending. Like a refusal, a
+        withdrawal starts the 24-hour cooldown before the caller can offer the
+        same recipient another video. Anything else — an unknown video, someone
+        else's offer, nothing pending — is the same 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Withdrawn.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No pending offer of this video by the caller.
+  /api/v1/me/video-ownership-changes:
+    get:
+      operationId: listVideoOwnershipChanges
+      summary: List the ownership changes offered to you
+      description: >-
+        The video ownership changes addressed to the caller, newest first,
+        whatever their status: pending ones are answered with the accept and
+        refuse routes; answered ones and ones no longer available (expired)
+        stay as history. Paginated via limit
+        (1–100, default 20) and offset.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of ownership changes (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoOwnershipChangeListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Ownership changes are not configured on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/video-ownership-changes/{id}/accept:
+    post:
+      operationId: acceptVideoOwnershipChange
+      summary: Accept a video offered to you
+      description: >-
+        Accepts a pending ownership change addressed to the caller by moving the
+        video into one of the caller's channels. The video's stored bytes must
+        fit the caller's storage quota (and daily upload quota), exactly as an
+        upload would. The move happens in the same statement that marks the
+        request accepted, and only while the giver still owns the video and
+        nothing about its media is still being uploaded or processed. It has
+        the side effects of any channel move: search reindex, a federation
+        Update to the new channel's followers and a Delete to followers of only
+        the old one, and a content.video.move audit event.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel_id]
+              properties:
+                channel_id:
+                  type: string
+                  format: uuid
+                  description: One of the caller's own channels.
+      responses:
+        "204":
+          description: Accepted; the video now belongs to the caller.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: >-
+            No such request addressed to the caller ("ownership change not
+            found"), or the channel does not exist or is not the caller's
+            ("channel not found").
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The request was already answered, withdrawn or expired (older than
+            30 days); the giver no longer owns the video; or the video is still
+            being uploaded or processed (any upload, replacement, import or
+            transcode of it unfinished).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Validation failed (channel_id must be a channel id), or the video
+            does not fit the caller's quota (code quota_exceeded or
+            daily_quota_exceeded).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Ownership changes are not configured on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/video-ownership-changes/{id}/refuse:
+    post:
+      operationId: refuseVideoOwnershipChange
+      summary: Refuse a video offered to you
+      description: >-
+        Refuses a pending ownership change addressed to the caller. The video
+        stays where it is, and its owner may offer it again.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Refused.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such request addressed to the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The request was already accepted or refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Ownership changes are not configured on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/watch-progress:
     get:
       operationId: getWatchProgress
@@ -8940,7 +9574,8 @@ paths:
         notification type (caption_ready, comment, comment_held, comment_mention, comment_reply,
         federation_follower_request, follow, message, new_registration_request,
         new_report, new_video, report_message, report_resolved,
-        upload_quarantined, video_blocked, video_rejected, video_unblocked)
+        upload_quarantined, video_blocked, video_ownership_request, video_rejected,
+        video_unblocked)
         mapped to whether it
         is delivered. Types never configured default to enabled. The new_report,
         new_registration_request, upload_quarantined and
@@ -9009,6 +9644,68 @@ paths:
           description: >-
             Empty update, unknown notification type, or an email switch for a
             type without email delivery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/content-preferences:
+    get:
+      operationId: getContentPreferences
+      summary: Get the caller's content preferences
+      description: >-
+        The signed-in viewer's per-flag sensitive-content policy overrides,
+        layered on their own sensitive_content_policy (else the instance
+        policy) and their preferred feed languages. A flag with no entry
+        inherits that base policy. Always 200.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's content preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentPreferences"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateContentPreferences
+      summary: Update the caller's content preferences
+      description: >-
+        Merge-update: sensitive_flag_policies replaces the overrides wholesale
+        (a flag set to an empty string, or omitted, inherits the base policy)
+        and preferred_languages replaces the language list; an omitted field
+        is kept. Unknown flag, policy or language, or more than 10 languages
+        -> 400.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateContentPreferencesRequest"
+      responses:
+        "200":
+          description: The saved content preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentPreferences"
+        "400":
+          description: Malformed body, unknown flag, or invalid policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
           content:
             application/json:
               schema:
@@ -9745,6 +10442,14 @@ paths:
             type: string
             enum: [open, resolved, all]
             default: all
+        - name: reason
+          in: query
+          required: false
+          description: >-
+            Only reports carrying this predefined reason; `total` counts the same
+            filter. An unrecognised value is a 400.
+          schema:
+            $ref: "#/components/schemas/ReportReason"
         - $ref: "#/components/parameters/PageLimit"
         - $ref: "#/components/parameters/PageOffset"
       responses:
@@ -10290,6 +10995,418 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/watched-word-lists:
+    get:
+      operationId: listAdminWatchedWordLists
+      summary: List instance watched-word lists
+      description: >-
+        Instance named watched-word lists, default list first, each with its
+        word count (not its words). Paginated via limit (1-100, default 20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of lists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordListsPage"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createAdminWatchedWordList
+      summary: Create a instance watched-word list
+      description: >-
+        Creates a named list with an optional word set (at most 500 words, each at
+        most 100 characters). action is "flag" (default; record a match for review)
+        or "hold" (also hold the comment for approval through the held-for-review
+        queue). Names are unique per scope, case-insensitively.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWatchedWordListRequest"
+      responses:
+        "201":
+          description: The list was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The name is already used, or the per-account list limit (20) is reached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/watched-word-lists/{id}:
+    get:
+      operationId: getAdminWatchedWordList
+      summary: Get a instance watched-word list
+      description: One list with its words (the default list's words are paged via the flat watched-words endpoints and omitted here). A list in the other scope is 404.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such list in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateAdminWatchedWordList
+      summary: Update a instance watched-word list
+      description: >-
+        Renames the list and/or changes its action; when words is present it REPLACES
+        the list's terms (an empty array clears them). Replacing the default list's
+        words is refused (409).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWatchedWordListRequest"
+      responses:
+        "200":
+          description: The updated list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such list in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Name already used, or words on the default list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteAdminWatchedWordList
+      summary: Delete a instance watched-word list
+      description: Deletes the list and its terms; existing matches keep their snapshot. The default list cannot be deleted (409).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The list was deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such list in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The default list cannot be deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/watched-word-lists:
+    get:
+      operationId: listMyWatchedWordLists
+      summary: List your own watched-word lists
+      description: >-
+        Your own named watched-word lists, default list first, each with its
+        word count (not its words). Paginated via limit (1-100, default 20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of lists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordListsPage"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createMyWatchedWordList
+      summary: Create a your own watched-word list
+      description: >-
+        Creates a named list with an optional word set (at most 500 words, each at
+        most 100 characters). action is "flag" (default; record a match for review)
+        or "hold" (also hold the comment for approval through the held-for-review
+        queue). Names are unique per scope, case-insensitively.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWatchedWordListRequest"
+      responses:
+        "201":
+          description: The list was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The name is already used, or the per-account list limit (20) is reached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/watched-word-lists/{id}:
+    get:
+      operationId: getMyWatchedWordList
+      summary: Get a your own watched-word list
+      description: One list with its words (the default list's words are paged via the flat watched-words endpoints and omitted here). A list in the other scope is 404.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such list in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateMyWatchedWordList
+      summary: Update a your own watched-word list
+      description: >-
+        Renames the list and/or changes its action; when words is present it REPLACES
+        the list's terms (an empty array clears them). Replacing the default list's
+        words is refused (409).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWatchedWordListRequest"
+      responses:
+        "200":
+          description: The updated list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such list in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Name already used, or words on the default list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteMyWatchedWordList
+      summary: Delete a your own watched-word list
+      description: Deletes the list and its terms; existing matches keep their snapshot. The default list cannot be deleted (409).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The list was deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such list in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The default list cannot be deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/watched-word-matches/{id}/resolve:
     post:
       operationId: resolveWatchedWordMatch
@@ -10430,6 +11547,14 @@ paths:
           in: query
           required: false
           description: Case-insensitive body substring filter.
+          schema:
+            type: string
+        - name: auto_tag
+          in: query
+          required: false
+          description: >-
+            Keep only comments carrying this automatic tag (`external-link`, or
+            an instance watched-word list name); case-insensitive exact match.
           schema:
             type: string
         - $ref: "#/components/parameters/PageLimit"
@@ -11527,6 +12652,355 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instances/blocklist-subscriptions:
+    get:
+      operationId: listBlocklistSubscriptions
+      summary: List blocklist subscriptions (admin)
+      description: >-
+        Shared fediverse denylists this instance syncs into its instance
+        blocklist. Admin only. Paginated via limit (1–100, default 20) and offset.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of subscriptions (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlocklistSubscriptionListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createBlocklistSubscription
+      summary: Subscribe to a blocklist (admin)
+      description: >-
+        Adds a list URL (Mastodon CSV, plain domain list, or JSON). The server
+        fetches it through the SSRF guard (public http/https only, redirects
+        re-checked, 8 MiB cap) on the periodic sync or "sync now". Entries with
+        severity suspend (or none) become instance blocks owned by this
+        subscription; silence/limit entries are ignored. Admin only. Audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBlocklistSubscriptionRequest"
+      responses:
+        "201":
+          description: The subscription (never synced yet).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlocklistSubscription"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Already subscribed to that URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid URL (not a public http/https URL) or format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instances/blocklist-subscriptions/{id}:
+    patch:
+      operationId: updateBlocklistSubscription
+      summary: Edit a blocklist subscription (admin)
+      description: >-
+        Changes the label and/or enabled flag. Disabling stops future syncs; the
+        blocks already applied stay until the subscription is deleted.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBlocklistSubscriptionRequest"
+      responses:
+        "200":
+          description: The updated subscription.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlocklistSubscription"
+        "400":
+          description: Malformed subscription id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such subscription.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteBlocklistSubscription
+      summary: Remove a blocklist subscription (admin)
+      description: >-
+        Removes the subscription AND exactly the instance blocks it created.
+        Manual blocks, and blocks owned by other subscriptions, are never
+        touched. Audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Subscription and the blocks it owned are removed.
+        "400":
+          description: Malformed subscription id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such subscription.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instances/blocklist-subscriptions/{id}/sync:
+    post:
+      operationId: syncBlocklistSubscription
+      summary: Sync a blocklist subscription now (admin)
+      description: >-
+        Fetches the list and applies it: adds blocks for new entries, removes
+        only blocks this subscription created that the list no longer names.
+        A fetch/parse failure is a 200 with status "error" (the last good state
+        is kept); a list with no usable entries removes nothing. A sync that
+        would remove more than 25 blocks and more than half of the ones the
+        subscription owns is held: status "needs_confirmation", nothing changed;
+        repeat with {"confirm": true} to apply it. Entries naming this instance
+        or a parent domain of it are skipped. Rate limited per admin (6 per
+        minute). Audited with added/removed counts.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm: {type: boolean}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The outcome of this sync.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlocklistSyncResult"
+        "400":
+          description: Malformed subscription id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such subscription.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Sync budget exhausted; Retry-After is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instances/blocklist-allowlist:
+    get:
+      operationId: listBlocklistAllowlist
+      summary: List domains exempt from blocklist subscriptions (admin)
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of allowlisted domains (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlocklistAllowlistResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: addBlocklistAllow
+      summary: Exempt a domain from blocklist subscriptions (admin)
+      description: >-
+        The allowlist wins over every subscription: the domain is not blocked by
+        a sync, and a block a subscription already created for it is lifted now.
+        A manual block is untouched. Idempotent. Audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlocklistAllowRequest"
+      responses:
+        "204":
+          description: The domain is exempt.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Missing or invalid domain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instances/blocklist-allowlist/{domain}:
+    delete:
+      operationId: removeBlocklistAllow
+      summary: Lift a blocklist-subscription exemption (admin)
+      description: Idempotent. The next sync re-applies lists to the domain. Audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: domain
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The domain is no longer exempt.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid domain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/remote-videos/{id}:
     get:
       operationId: getRemoteVideo
@@ -11554,6 +13028,199 @@ paths:
                 $ref: "#/components/schemas/RemoteVideo"
         "404":
           description: No such remote video (or its origin instance is blocked).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/remote-videos/{id}/rating:
+    get:
+      operationId: getRemoteVideoRating
+      summary: Your own rating of a federated video
+      description: >-
+        Returns the caller's like/dislike of a remote video, or null. The
+        counts belong to the origin instance and are not reported here.
+      tags: [ratings]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The caller's rating.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteVideoRating"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such remote video, or it (or its origin) is blocked here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: setRemoteVideoRating
+      summary: Like or dislike a federated video
+      description: >-
+        Records the caller's like/dislike and federates it to the video's origin
+        as an ActivityPub Like or Dislike signed by the caller's account actor;
+        changing a rating also sends an Undo of the previous one. Repeating the
+        same rating sends nothing.
+      tags: [ratings]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating]
+              properties:
+                rating:
+                  type: string
+                  enum: [like, dislike]
+      responses:
+        "200":
+          description: The caller's rating.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteVideoRating"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such remote video, or it (or its origin) is blocked here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "400":
+          description: Malformed JSON body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The rating is not `like` or `dislike`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many rating changes by this user; retry after a minute.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Federation is disabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteRemoteVideoRating
+      summary: Clear your rating of a federated video
+      description: >-
+        Removes the caller's rating (idempotent) and federates an Undo of it to
+        the origin.
+      tags: [ratings]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The rating is cleared (my_rating null).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteVideoRating"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such remote video, or it (or its origin) is blocked here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many rating changes by this user; retry after a minute.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Federation is disabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/remote-videos/{id}/view:
+    post:
+      operationId: recordRemoteVideoView
+      summary: Record a view of a federated video
+      description: >-
+        The remote twin of recordVideoView. The origin instance owns the view
+        count, so nothing is counted here: when federation is enabled the view
+        is sent to the origin as an ActivityPub View signed by this instance's
+        actor (never the viewer's account), at most once per viewer per window
+        (the user id when authenticated, else the client IP, hashed), and at
+        most a fixed number of Views per origin domain per hour. Always returns
+        204 for a visible remote video, whether or not a View was sent.
+      tags: [federation]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The view ping was accepted.
+        "404":
+          description: No such remote video, or it (or its origin) is blocked here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Per-IP view-ping budget exhausted (60 per minute); Retry-After is set.
           content:
             application/json:
               schema:
@@ -12001,7 +13668,8 @@ paths:
             Invalid target (neither handle nor actor_url, or both), a target
             on this instance (follow local channels via
             POST /channels/{handle}/follow), or a handle/actor URL that could
-            not be resolved to a remote channel.
+            not be resolved to a remote channel. A target this instance does
+            not federate with gets the same answer as an unresolvable one.
           content:
             application/json:
               schema:
@@ -12638,6 +14306,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LivePublicListResponse"
+  /api/v1/live/upcoming:
+    get:
+      operationId: listUpcomingLiveStreams
+      summary: Public "Upcoming" listing of scheduled lives
+      description: >-
+        Lists PUBLIC streams that are not live yet and carry a planned start,
+        soonest first. A start up to one hour in the past is still listed (a
+        broadcaster a few minutes late reads "starting soon"); older ones drop
+        out without the row being touched. Same visibility as "Live now":
+        unlisted and private streams never appear, and a stream owner the
+        signed-in viewer muted or blocked is omitted for that viewer. The
+        optional `channel` handle narrows it to one channel (the channel page).
+        A public read, not gated on the live feature toggle. Paginated.
+      tags: [live]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: channel
+          in: query
+          required: false
+          description: Only this channel's upcoming streams (by handle).
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 30
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: The upcoming public streams (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveUpcomingListResponse"
   /api/v1/live/{id}:
     get:
       operationId: getLiveStream
@@ -16071,6 +17779,149 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/ipfs/repin-playback-only:
+    post:
+      operationId: startIPFSRepin
+      summary: Start the bulk re-pin to the playback-only set (admin)
+      description: >-
+        Re-pins every already-pinned HLS tree whose pinned root still includes files
+        the HLS routes do not serve (download MP4s, vp9.webm), so it matches what a
+        new pin adds (Tier A F6). Runs in the leader's mirror worker through the
+        ordinary pin path - admission, reservation and the capacity ceilings all
+        apply - in small batches, and pauses while the node is at its budget. The
+        superseded root is unpinned only when no other row shares it; its blocks are
+        freed by the node's garbage collection. Resumable and safe to repeat. Returns
+        202 with the run status. Restricted to admins; audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "202":
+          description: The run was recorded; the worker advances it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSRepinStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A re-pin is already running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: This build or storage backend cannot recompute the playback-only set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: getIPFSRepin
+      summary: Progress of the bulk re-pin to the playback-only set (admin)
+      description: >-
+        The current or last run: phase (idle, running, paused, completed, cancelled), counts of
+        rows done, skipped (already playback-only), blocked (the admission policy
+        would not re-admit them), failed and in flight, the pinned HLS rows not yet
+        examined (an upper bound on the work left) and an estimate of the pinned
+        bytes saved. Bytes are returned to the disk only after the node's GC.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The run status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSRepinStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: This build or storage backend cannot recompute the playback-only set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: cancelIPFSRepin
+      summary: Cancel the bulk re-pin to the playback-only set (admin)
+      description: >-
+        Stops the run from arming further rows. Rows already re-armed finish through
+        the ordinary pin path; nothing is rolled back. Works while running or paused.
+        Returns the run status. Restricted to admins; audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The run was cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSRepinStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: No re-pin is running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: This build or storage backend cannot recompute the playback-only set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/ipfs/reconcile:
     post:
       operationId: reconcileIPFS
@@ -17058,10 +18909,10 @@ paths:
         decision, newest first, while federation_follower_approval is on
         (config-parity W12). Modeled on the registration-requests queue.
         Restricted to admins. Paginated via limit (1–100, default 20) and
-        offset. A vidra deviation from PeerTube recorded in the parity ledger:
-        approval applies to CHANNEL followers because vidra has no
-        instance-level AP actor. Governs the ActivityPub inbox only — the
-        ATProto integration is outbound cross-posting with no inbound path.
+        offset. The same setting holds INSTANCE followers for approval too;
+        those are decided at /admin/federation/instance-followers. Governs the
+        ActivityPub inbox only — the ATProto integration is outbound
+        cross-posting with no inbound path.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -17178,6 +19029,293 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such pending follower request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/federation/instance-followers:
+    get:
+      operationId: listInstanceFollowers
+      summary: List the instances following this one
+      description: >-
+        Remote instance actors (PeerTube's `Application` actor) that follow this
+        instance's actor (/accounts/peertube), newest first — PeerTube's
+        /server/followers. A pending follower waits for an admin while
+        federation_follower_approval is on; a rejected one stays rejected until
+        removed. Admin only. Paginated via limit (1–100, default 20) and offset.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/InstanceFollowState"
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of instance followers (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceFollowListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: state is not pending, accepted or rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/federation/instance-followers/{id}/accept:
+    post:
+      operationId: acceptInstanceFollower
+      summary: Accept a pending instance follower
+      description: >-
+        Accepts one pending instance follower: the instance actor's Accept is
+        queued to its inbox, followed by Announces of the newest public videos
+        (at most 50). Admin only; audited
+        (admin.federation.instance_follower_accept, safe row id only).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/InstanceFollowID"
+      responses:
+        "204":
+          description: Accepted; the Accept is queued.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such pending instance follower.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/federation/instance-followers/{id}/reject:
+    post:
+      operationId: rejectInstanceFollower
+      summary: Reject an instance follower
+      description: >-
+        Rejects a pending or accepted instance follower: a Reject is queued to
+        its inbox and the row stays `rejected`, so its next Follow is refused
+        too (as on PeerTube). Admin only; audited
+        (admin.federation.instance_follower_reject, safe row id only).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/InstanceFollowID"
+      responses:
+        "204":
+          description: Rejected; the Reject is queued.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such pending or accepted instance follower.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/federation/instance-followers/{id}:
+    delete:
+      operationId: removeInstanceFollower
+      summary: Remove an instance follower
+      description: >-
+        Removes an instance follower in any state. A pending or accepted one is
+        told with a Reject; a removed instance may follow again. Admin only;
+        audited (admin.federation.instance_follower_remove, safe row id only).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/InstanceFollowID"
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such instance follower.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/federation/instance-following:
+    get:
+      operationId: listInstanceFollowing
+      summary: List the instances this one follows
+      description: >-
+        Remote instance actors this instance's actor follows, newest first —
+        PeerTube's /server/following. `pending` until the remote Accepts;
+        `rejected` when it refused. Admin only. Paginated via limit (1–100,
+        default 20) and offset.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/InstanceFollowState"
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of followed instances (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceFollowListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: state is not pending, accepted or rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: followInstance
+      summary: Follow a remote instance
+      description: >-
+        Follows the instance at `host` as this instance's actor
+        (/accounts/peertube), as PeerTube's POST /server/following does. The
+        remote instance actor is found through its NodeInfo `Application` link,
+        else WebFinger acct:peertube@host (every fetch SSRF-guarded), and must
+        live on that host. A signed Follow is queued to it; once it Accepts,
+        the public videos it announces are ingested like those of a followed
+        remote channel. Idempotent: an existing follow is returned unchanged,
+        and one the remote rejected is re-armed. Admin only; audited
+        (admin.federation.instance_follow, safe row id only).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host]
+              properties:
+                host:
+                  type: string
+                  description: The remote instance's host (and port, if any).
+                  example: videos.example
+      responses:
+        "201":
+          description: The follow (pending until the remote Accepts).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceFollow"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The instance (or its actor) is blocked here, or this instance does not serve its instance actor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: host is malformed, is this instance, or has no reachable instance actor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Federation is disabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/federation/instance-following/{id}:
+    delete:
+      operationId: unfollowInstance
+      summary: Unfollow a remote instance
+      description: >-
+        Stops following: the follow is removed at once and an Undo{Follow} is
+        queued to the remote instance actor (also through an instance block,
+        since it only ends contact). Admin only; audited
+        (admin.federation.instance_unfollow, safe row id only).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/InstanceFollowID"
+      responses:
+        "204":
+          description: Unfollowed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such followed instance.
           content:
             application/json:
               schema:
@@ -17303,7 +19441,8 @@ paths:
         token — so a demoted staff member loses the staff routes at once while
         keeping their ordinary session. storage_quota_bytes is tri-state —
         omitted: unchanged; null: reset to the instance default; a non-negative
-        integer: per-user override (0 = unlimited). Moderators share ONLY ban
+        integer: per-user override (0 = unlimited); daily_quota_bytes is the same
+        tri-state for the per-user rolling-24h upload quota. Moderators share ONLY ban
         and unban (`is_active`, with a required `ban_reason` when banning) and
         only for accounts whose role is `user`: any other field, a staff or
         owner target, or themselves is 403. Banning stores the reason, time
@@ -17400,6 +19539,45 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Attempt to hard-delete the caller's own account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/users/{id}/login-lockout:
+    delete:
+      operationId: adminClearLoginLockout
+      summary: Clear an account's failed-login lockout (admin)
+      description: >-
+        Drops every failed-login counter and lock for the account, so the holder
+        can sign in again immediately. Admin-only; audited as
+        `admin.user.login_lockout_clear` with the target named. Idempotent: 204
+        whether or not a lockout existed. No password step-up — it only removes a
+        brake.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: Any lockout on the account was cleared.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such user.
           content:
             application/json:
               schema:
@@ -17554,6 +19732,22 @@ components:
       scheme: bearer
       bearerFormat: JWT
   parameters:
+    InstanceFollowID:
+      name: id
+      in: path
+      required: true
+      description: The instance follow's id.
+      schema:
+        type: string
+        format: uuid
+    InstanceFollowState:
+      name: state
+      in: query
+      required: false
+      description: Only follows in this state.
+      schema:
+        type: string
+        enum: [pending, accepted, rejected]
     # The page bounds shared by every list endpoint whose ceiling is 100. A few
     # endpoints have their own bounds (the admin user list pages to 200) and keep
     # their parameter inline; everything else points here so "how big is a page"
@@ -19278,6 +21472,18 @@ components:
             When the instance sensitive_content_policy is "hide", flagged
             videos are excluded from the public feed and search server-side;
             under warn/blur the frontend applies the matching presentation.
+        sensitive_flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveFlag"
+          description: >-
+            The kinds of sensitive content (PeerTube 7.2 nsfwFlags), always present
+            ([] when none; a flag implies is_sensitive). The viewer's per-flag
+            policy (GET /me/content-preferences) overrides their base policy for
+            that flag; with several flags the most restrictive applies. "hide" is
+            enforced server-side in browse and search; blur and warn are
+            presentation.
+
         sensitive_reason:
           type: string
           description: >-
@@ -19951,6 +22157,76 @@ components:
           description: Dense 30-day series, oldest first, zero-filled.
           items:
             $ref: "#/components/schemas/DailyViews"
+    PlaybackBeaconRequest:
+      type: object
+      required: [position_seconds, watched_seconds]
+      properties:
+        position_seconds:
+          type: integer
+          minimum: 0
+          description: Playhead position at sample time.
+        watched_seconds:
+          type: integer
+          minimum: 0
+          maximum: 12
+          description: Seconds actually played since the previous sample (heartbeat is 10 s).
+        started:
+          type: boolean
+          description: True on the first sample of a play.
+    PlaybackShare:
+      type: object
+      required: [key, watch_seconds, share]
+      properties:
+        key:
+          type: string
+        watch_seconds:
+          type: integer
+          format: int64
+        share:
+          type: number
+          description: Fraction of total watch seconds, 0..1.
+    PlaybackDay:
+      type: object
+      required: [day, plays, watch_seconds]
+      properties:
+        day:
+          type: string
+          format: date
+        plays:
+          type: integer
+          format: int64
+        watch_seconds:
+          type: integer
+          format: int64
+    PlaybackStatsResponse:
+      type: object
+      required: [plays, watch_seconds, avg_view_duration_seconds, duration_seconds, devices, os, daily]
+      properties:
+        plays:
+          type: integer
+          format: int64
+        watch_seconds:
+          type: integer
+          format: int64
+        avg_view_duration_seconds:
+          type: number
+        duration_seconds:
+          type: integer
+          description: Probed video duration; 0 when unknown.
+        retention:
+          type: [array, "null"]
+          description: 20 buckets of the video's length, each 0..1.
+          items:
+            type: number
+        devices:
+          type: array
+          items: { $ref: "#/components/schemas/PlaybackShare" }
+        os:
+          type: array
+          items: { $ref: "#/components/schemas/PlaybackShare" }
+        daily:
+          type: array
+          items: { $ref: "#/components/schemas/PlaybackDay" }
     ChannelStatsResponse:
       type: object
       required: [views, likes, dislikes, comments, followers, videos, daily_views]
@@ -20160,6 +22436,14 @@ components:
           description: >-
             Mark the video as sensitive content (defaults to false). See the
             Video schema for how the instance policy treats flagged videos.
+        sensitive_flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveFlag"
+          description: >-
+            The kinds of sensitive content. Any flag also marks the video sensitive.
+            An unknown flag -> 422.
+
         sensitive_reason:
           type: string
           maxLength: 280
@@ -20245,6 +22529,14 @@ components:
         is_sensitive:
           type: boolean
           description: Set or clear the sensitive-content flag (omit to leave unchanged).
+        sensitive_flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveFlag"
+          description: >-
+            Replace the sensitive-content kinds (omit to leave unchanged; [] clears).
+            A non-empty set also marks the video sensitive. An unknown flag -> 422.
+
         sensitive_reason:
           type: string
           maxLength: 280
@@ -20433,6 +22725,59 @@ components:
             only channel_handle, so the client drops the ones naming a muted or
             blocked account itself. An account with no channel yields an empty
             array, never null.
+    VideoOwnershipChange:
+      type: object
+      required: [id, status, created_at, updated_at, video, initiator]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, accepted, refused, expired]
+          description: >-
+            pending is answerable; expired = no longer available. A request the
+            giver withdrew, one older than 30 days and one that can no longer be
+            honoured all read expired, deliberately alike: the recipient is not
+            told which.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        video:
+          type: object
+          required: [id, title]
+          properties:
+            id:
+              type: string
+              format: uuid
+            title:
+              type: string
+              description: >-
+                The title when the video was offered. It does not follow later
+                renames, so an answered request never shows what the video has
+                become since.
+        initiator:
+          type: object
+          description: The account that offered the video (its owner when it did).
+          required: [username, display_name]
+          properties:
+            username:
+              type: string
+            display_name:
+              type: string
+    VideoOwnershipChangeListResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [changes]
+          properties:
+            changes:
+              type: array
+              items:
+                $ref: "#/components/schemas/VideoOwnershipChange"
     MutedAccountListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -20475,7 +22820,7 @@ components:
           description: Recorded on the blocklist and in the audit trail. May be empty.
     BlockedInstance:
       type: object
-      required: [domain, reason, blocked_at]
+      required: [domain, reason, blocked_at, source]
       properties:
         domain:
           type: string
@@ -20488,6 +22833,11 @@ components:
         blocked_at:
           type: string
           format: date-time
+        source:
+          type: string
+          description: >-
+            Who owns the block: "manual", or "subscription:<id>" when a blocklist
+            subscription created it.
     BlockedInstanceListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -20498,6 +22848,84 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/BlockedInstance"
+    BlocklistSubscription:
+      type: object
+      required: [id, url, label, format, enabled, last_status, last_added, last_removed, entry_count, block_count, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        url: {type: string}
+        label: {type: string}
+        format: {type: string, enum: [mastodon_csv, domain_list, json]}
+        enabled: {type: boolean}
+        last_status:
+          type: string
+          enum: [never, ok, not_modified, error, needs_confirmation]
+          description: Outcome of the last attempt. A failed attempt keeps the last good counts.
+        last_error:
+          type: string
+          description: A short class message (e.g. "HTTP 500", "address not allowed"), never a raw error.
+        last_synced_at: {type: string, format: date-time}
+        last_attempt_at: {type: string, format: date-time}
+        last_added: {type: integer}
+        last_removed: {type: integer}
+        entry_count: {type: integer, description: Usable domains in the last applied list.}
+        block_count: {type: integer, format: int64, description: Instance blocks this subscription currently owns.}
+        created_at: {type: string, format: date-time}
+    BlocklistSubscriptionListResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [subscriptions]
+          properties:
+            subscriptions:
+              type: array
+              items:
+                $ref: "#/components/schemas/BlocklistSubscription"
+    CreateBlocklistSubscriptionRequest:
+      type: object
+      required: [url, format]
+      properties:
+        url: {type: string, maxLength: 2048}
+        format: {type: string, enum: [mastodon_csv, domain_list, json]}
+        label: {type: string, maxLength: 200}
+        enabled: {type: boolean, description: Defaults to true.}
+    UpdateBlocklistSubscriptionRequest:
+      type: object
+      properties:
+        label: {type: string, maxLength: 200}
+        enabled: {type: boolean}
+    BlocklistSyncResult:
+      type: object
+      required: [status, added, removed, entries, ignored_severity, invalid, protected]
+      properties:
+        status: {type: string, enum: [ok, not_modified, error, needs_confirmation]}
+        error: {type: string}
+        protected: {type: integer, description: Entries skipped because they name this instance or a parent domain.}
+        pending_removals: {type: integer, description: "With needs_confirmation, how many blocks a confirmed sync would remove."}
+        added: {type: integer}
+        removed: {type: integer}
+        entries: {type: integer}
+        ignored_severity: {type: integer, description: Rows skipped because vidra has no equivalent of silence/limit.}
+        invalid: {type: integer, description: "Rows skipped as malformed (wildcard, obfuscated, IP, ...)."}
+    BlocklistAllowRequest:
+      type: object
+      required: [domain]
+      properties:
+        domain: {type: string}
+    BlocklistAllowlistResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [domains]
+          properties:
+            domains:
+              type: array
+              items:
+                type: object
+                required: [domain, added_at]
+                properties:
+                  domain: {type: string}
+                  added_at: {type: string, format: date-time}
     RemoteVideo:
       type: object
       required: [id, remote, domain, title, description, object_url, watch_url, has_thumbnail, is_sensitive]
@@ -20562,6 +22990,13 @@ components:
             The origin flagged this video sensitive (ActivityStreams
             `sensitive`). The viewer's sensitive-content policy applies as to a
             local video's is_sensitive: under "hide" it is excluded from search.
+        sensitive_flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SensitiveFlag"
+          description: >-
+            The origin's PeerTube SensitiveTag flags (explicitSex maps to sex);
+            unknown names are dropped.
     ATProtoLinkRequest:
       type: object
       required: [handle, app_password]
@@ -20965,6 +23400,14 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/BlockedUser"
+    RemoteVideoRating:
+      type: object
+      required: [my_rating]
+      properties:
+        my_rating:
+          type: [string, "null"]
+          enum: [like, dislike, null]
+          description: The caller's own rating of the remote video, or null.
     VideoRating:
       type: object
       required: [like_count, dislike_count, my_rating]
@@ -21082,7 +23525,7 @@ components:
                 $ref: "#/components/schemas/Video"
             sort:
               type: string
-              enum: [recent, popular, trending]
+              enum: [recent, popular, trending, originally_published_at, name]
               description: The ordering actually applied (normalised from the request).
             scope:
               type: string
@@ -21280,8 +23723,8 @@ components:
           format: uuid
         type:
           type: string
-          enum: [follow, comment, comment_held, comment_reply, comment_mention, message, new_video, new_report, new_registration_request, upload_quarantined, federation_follower_request, report_resolved, report_message, video_rejected, video_blocked, video_unblocked, caption_ready]
-          description: What happened. follow = someone followed your channel; comment = someone commented on your video (addressed to the video's OWNER); comment_held = a comment on a requires_approval video you manage (as its channel owner or an editor) awaits your approval (actor = the commenter, absent for a federated one; video_id/video_title/comment_id carry which; one per comment, re-surfaced unread when an edit sends an approved comment back for review); comment_reply = someone replied to a comment you wrote (addressed to the comment's AUTHOR, who is usually not the video's owner; actor = the replier, video_id/video_title = the video the thread lives on, comment_id = the reply). A reply to a comment written by the video's own owner delivers comment_reply only, never both; message = someone sent you a direct message; new_video = a channel you follow published a new public video (actor = the channel owner, channel_handle/channel_display_name = the channel, video_id/video_title = the video; sent only while your bell for that channel is "all"); new_report = a user filed an abuse report (delivered only to admins/moderators; actor = the reporter, report_id/report_status/report_target_type carry the report); new_registration_request = a registration request awaits approval (delivered only to admins/moderators; no actor, the applicant has no account yet); upload_quarantined = an upload entered the quarantine review queue (delivered only to admins/moderators; actor = the uploader, video_id/video_title/channel_handle carry which one); federation_follower_request = a remote actor asked to follow a channel while follower approval is on (delivered only to admins; channel_handle/channel_display_name = the followed channel); report_resolved = a moderator resolved an abuse report you filed; report_message = a new message on an abuse report's thread (the reporter is told when staff write, with no actor — the moderator is never named; staff who receive new_report are told when the reporter writes, actor = the reporter; report_id/report_status/report_target_type carry the report, and the message body is never included); video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one, moderation_note carries the moderator's written reason when they gave one; the moderator's identity is never included); video_blocked = a moderator blocked one of your PUBLISHED videos, so it is no longer available to viewers (video_id/video_title carry which one; distinct from video_rejected, which is the quarantine outcome for an upload that never published — a block takes down live content and is reversible). The moderator's identity is never included, but moderation_note carries their block reason while the block stands (the A16 ruling made it creator-facing) and is absent once the block is lifted; video_unblocked = a moderator LIFTED the block on one of your videos, so it is available again (video_id/video_title carry which one; no moderator identity and no prose — there is nothing to explain about a restoration). It closes the loop video_blocked opens, and a repeated unblock of the same video delivers only one; caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one).
+          enum: [follow, comment, comment_held, comment_reply, comment_mention, message, new_video, new_report, new_registration_request, upload_quarantined, federation_follower_request, report_resolved, report_message, video_rejected, video_blocked, video_unblocked, caption_ready, video_ownership_request]
+          description: What happened. follow = someone followed your channel; comment = someone commented on your video (addressed to the video's OWNER); comment_held = a comment on a requires_approval video you manage (as its channel owner or an editor) awaits your approval (actor = the commenter, absent for a federated one; video_id/video_title/comment_id carry which; one per comment, re-surfaced unread when an edit sends an approved comment back for review); comment_reply = someone replied to a comment you wrote (addressed to the comment's AUTHOR, who is usually not the video's owner; actor = the replier, video_id/video_title = the video the thread lives on, comment_id = the reply). A reply to a comment written by the video's own owner delivers comment_reply only, never both; message = someone sent you a direct message; new_video = a channel you follow published a new public video (actor = the channel owner, channel_handle/channel_display_name = the channel, video_id/video_title = the video; sent only while your bell for that channel is "all"); new_report = a user filed an abuse report (delivered only to admins/moderators; actor = the reporter, report_id/report_status/report_target_type carry the report); new_registration_request = a registration request awaits approval (delivered only to admins/moderators; no actor, the applicant has no account yet); upload_quarantined = an upload entered the quarantine review queue (delivered only to admins/moderators; actor = the uploader, video_id/video_title/channel_handle carry which one); federation_follower_request = a remote actor asked to follow a channel while follower approval is on (delivered only to admins; channel_handle/channel_display_name = the followed channel) — or, with no channel, a remote INSTANCE asked to follow this instance (at most one unread; decided at /admin/federation/instance-followers); report_resolved = a moderator resolved an abuse report you filed; report_message = a new message on an abuse report's thread (the reporter is told when staff write, with no actor — the moderator is never named; staff who receive new_report are told when the reporter writes, actor = the reporter; report_id/report_status/report_target_type carry the report, and the message body is never included); video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one, moderation_note carries the moderator's written reason when they gave one; the moderator's identity is never included); video_blocked = a moderator blocked one of your PUBLISHED videos, so it is no longer available to viewers (video_id/video_title carry which one; distinct from video_rejected, which is the quarantine outcome for an upload that never published — a block takes down live content and is reversible). The moderator's identity is never included, but moderation_note carries their block reason while the block stands (the A16 ruling made it creator-facing) and is absent once the block is lifted; video_unblocked = a moderator LIFTED the block on one of your videos, so it is available again (video_id/video_title carry which one; no moderator identity and no prose — there is nothing to explain about a restoration). It closes the loop video_blocked opens, and a repeated unblock of the same video delivers only one; caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one). video_ownership_request = another local user offered you one of their videos (actor = the giver; the title is on the request, not on the notification); answer it from GET /me/video-ownership-changes.
         read:
           type: boolean
         created_at:
@@ -21365,7 +23808,7 @@ components:
             this user. Types with no stored preference default to true.
           additionalProperties:
             type: boolean
-          example: { caption_ready: true, comment: true, comment_held: true, comment_mention: true, comment_reply: true, federation_follower_request: true, follow: false, message: true, new_registration_request: true, new_report: true, new_video: true, report_message: true, report_resolved: true, upload_quarantined: true, video_blocked: true, video_rejected: true, video_unblocked: true }
+          example: { caption_ready: true, comment: true, comment_held: true, comment_mention: true, comment_reply: true, federation_follower_request: true, follow: false, message: true, new_registration_request: true, new_report: true, new_video: true, report_message: true, report_resolved: true, upload_quarantined: true, video_blocked: true, video_ownership_request: true, video_rejected: true, video_unblocked: true }
         email:
           type: object
           description: >-
@@ -21390,7 +23833,8 @@ components:
             are changed. Known types: caption_ready, comment, comment_held, comment_mention, comment_reply,
             federation_follower_request, follow, message,
             new_registration_request, new_report, new_video, report_message,
-            report_resolved, upload_quarantined, video_blocked, video_rejected, video_unblocked. An unknown
+            report_resolved, upload_quarantined, video_blocked, video_ownership_request,
+            video_rejected, video_unblocked. An unknown
             type rejects the whole update (422).
           additionalProperties:
             type: boolean
@@ -21404,6 +23848,54 @@ components:
           additionalProperties:
             type: boolean
           example: { new_video: true }
+    SensitiveFlag:
+      type: string
+      enum: [violent, shocking, sex]
+      description: >-
+        A kind of sensitive content. On the wire to PeerTube these are
+        SensitiveTag entries (sex is explicitSex); `sensitive` stays the boolean
+        Mastodon reads.
+    ContentPreferences:
+      type: object
+      required: [sensitive_flag_policies, preferred_languages]
+      properties:
+        sensitive_flag_policies:
+          type: object
+          description: >-
+            Per-flag viewer policy overrides. Keys are SensitiveFlag values;
+            each value is hide, warn, blur or display. A flag with no entry
+            inherits the viewer's base policy.
+          additionalProperties:
+            type: string
+            enum: [hide, warn, blur, display]
+        preferred_languages:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+          description: >-
+            Language ids (GET /videos/config) the viewer wants in browse feeds;
+            [] = no filter. The client passes them as the feed's comma-separated
+            ?language.
+    UpdateContentPreferencesRequest:
+      type: object
+      description: >-
+        A merge: an omitted field keeps its stored value.
+      properties:
+        sensitive_flag_policies:
+          type: object
+          description: >-
+            REPLACES the per-flag overrides. An empty string value (or an
+            omitted flag) inherits the base policy.
+          additionalProperties:
+            type: string
+            enum: [hide, warn, blur, display, ""]
+        preferred_languages:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+          description: REPLACES the language list ([] clears). Unknown id -> 400.
     PlayerSettings:
       type: object
       description: >-
@@ -21495,6 +23987,13 @@ components:
           description: >-
             The owning user. Compare it with the signed-in user to decide owner
             controls; GET /me/playlists is paged and cannot answer that.
+        channel_id:
+          type: string
+          format: uuid
+          description: >-
+            The owner's channel this playlist is shown under (its Playlists tab,
+            GET /channels/{handle}/playlists). Omitted when the playlist is not
+            attributed to a channel, or after that channel was deleted.
         title:
           type: string
           example: Watch later picks
@@ -21556,6 +24055,12 @@ components:
           type: string
           enum: [public, unlisted, private]
           description: Defaults to "private" when omitted.
+        channel_id:
+          type: string
+          format: uuid
+          description: >-
+            Optional channel to show the playlist under. It must be a channel
+            the caller owns; otherwise the request fails with 404.
     UpdatePlaylistRequest:
       type: object
       description: Partial update; provide at least one field.
@@ -21570,6 +24075,12 @@ components:
         visibility:
           type: string
           enum: [public, unlisted, private]
+        channel_id:
+          type: [string, "null"]
+          format: uuid
+          description: >-
+            Attach the playlist to a channel the caller owns (404 otherwise), or
+            null to detach it. Omit to leave it unchanged.
     AddPlaylistItemRequest:
       type: object
       required: [video_id]
@@ -21598,14 +24109,33 @@ components:
           items:
             type: string
             format: uuid
+    ReportReason:
+      type: string
+      enum: [violentOrRepulsive, hatefulOrAbusive, spamOrMisleading, privacy, rights, serverRules, thumbnails, captions]
     CreateReportRequest:
       type: object
       required: [reason]
+      description: >-
+        `reasons`, `start_seconds` and `end_seconds` apply to VIDEO reports only
+        (422 on a comment or account report). `end_seconds` needs `start_seconds`
+        and must exceed it; both must be within the video's duration when known.
       properties:
         reason:
           type: string
           minLength: 1
           maxLength: 2000
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportReason"
+        start_seconds:
+          type: integer
+          format: int32
+          minimum: 0
+        end_seconds:
+          type: integer
+          format: int32
+          minimum: 1
     BulkRemoveCommentsRequest:
       type: object
       required: [account]
@@ -21743,7 +24273,7 @@ components:
           type: string
     Report:
       type: object
-      required: [id, target_type, reason, status, moderator_note, created_at, reporter]
+      required: [id, target_type, reason, status, moderator_note, created_at, reporter, reasons]
       properties:
         id:
           type: string
@@ -21756,6 +24286,22 @@ components:
         status:
           type: string
           enum: [open, accepted, rejected]
+        reasons:
+          type: array
+          description: >-
+            PeerTube-style predefined reasons (never null; empty when none).
+          items:
+            $ref: "#/components/schemas/ReportReason"
+        start_seconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Start of the reported video range, in seconds (video reports only).
+        end_seconds:
+          type: integer
+          format: int32
+          minimum: 1
+          description: End of the reported video range; omitted for a single moment.
         moderator_note:
           type: string
         created_at:
@@ -21862,7 +24408,7 @@ components:
       description: >-
         One of the caller's own reports. There is deliberately no
         moderator_note: it is staff-internal.
-      required: [id, target_type, status, reason, created_at, last_activity_at, message_count]
+      required: [id, target_type, status, reason, created_at, last_activity_at, message_count, reasons]
       properties:
         id:
           type: string
@@ -21876,6 +24422,22 @@ components:
         reason:
           type: string
           description: The caller's own words when filing.
+        reasons:
+          type: array
+          description: >-
+            PeerTube-style predefined reasons (never null; empty when none).
+          items:
+            $ref: "#/components/schemas/ReportReason"
+        start_seconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Start of the reported video range, in seconds (video reports only).
+        end_seconds:
+          type: integer
+          format: int32
+          minimum: 1
+          description: End of the reported video range; omitted for a single moment.
         created_at:
           type: string
           format: date-time
@@ -22094,7 +24656,7 @@ components:
     AdminComment:
       type: object
       description: A comment in the admin/moderator overview, with author + video context.
-      required: [id, video_id, video_title, body, author_username, author_display_name, remote, created_at, deleted]
+      required: [id, video_id, video_title, body, author_username, author_display_name, remote, created_at, deleted, automatic_tags]
       properties:
         id:
           type: string
@@ -22124,6 +24686,18 @@ components:
           description: >-
             True for a tombstoned comment (its author's account was permanently
             deleted); body renders as "[deleted]".
+        automatic_tags:
+          type: array
+          description: >-
+            Tags computed from the body when it was posted or last edited:
+            `external-link` (it contains a URL) and the NAME of each instance
+            watched-word list it matches. Never the matched words. Empty for an
+            untagged comment, and for one that predates the feature until it is
+            edited. Tags are a snapshot of list names at post/edit time:
+            renaming or deleting a list, or adding words, does not retag old
+            comments.
+          items:
+            type: string
     AdminCommentListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -22199,6 +24773,59 @@ components:
           type: integer
         offset:
           type: integer
+    WatchedWordList:
+      type: object
+      description: >-
+        A named watched-word list. Instance lists (admin) apply to every comment;
+        a creator's own lists apply only to comments on their videos. words is
+        present on get/create/update only, and never for the default list.
+      required: [id, name, action, is_default, word_count, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        action:
+          type: string
+          enum: [flag, hold]
+        is_default: {type: boolean}
+        word_count: {type: integer, format: int64}
+        words:
+          type: array
+          items: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    WatchedWordListsPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [lists]
+          properties:
+            lists:
+              type: array
+              items:
+                $ref: "#/components/schemas/WatchedWordList"
+    CreateWatchedWordListRequest:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, maxLength: 100}
+        action:
+          type: string
+          enum: [flag, hold]
+        words:
+          type: array
+          maxItems: 500
+          items: {type: string, maxLength: 100}
+    UpdateWatchedWordListRequest:
+      type: object
+      properties:
+        name: {type: string, maxLength: 100}
+        action:
+          type: string
+          enum: [flag, hold]
+        words:
+          type: array
+          maxItems: 500
+          items: {type: string, maxLength: 100}
     WatchedWordListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -22244,6 +24871,9 @@ components:
           description: >-
             The watched term that matched, as it read when the flag was raised.
             It survives the term being deleted from the list (see term_active).
+        list_name:
+          type: string
+          description: The watched-word list that matched (a snapshot; absent for matches that predate named lists).
         type:
           type: string
           enum: [comment, video]
@@ -22405,7 +25035,7 @@ components:
     AdminUser:
       type: object
       description: Admin projection of an account (never includes the password hash).
-      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, created_at, deleted_at, is_owner, mfa_enabled, ban_reason, banned_at, banned_by]
+      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, daily_quota_bytes, daily_used_bytes, created_at, deleted_at, is_owner, mfa_enabled, ban_reason, banned_at, banned_by]
       properties:
         id:
           type: string
@@ -22442,6 +25072,19 @@ components:
             The account's current storage usage: total stored bytes of its
             video files (originals, renditions, thumbnails) across the videos
             owned via its channels.
+        daily_quota_bytes:
+          type: [integer, "null"]
+          format: int64
+          description: >-
+            Per-user rolling-24h upload quota override in bytes. null = the
+            instance default (default_user_daily_quota_bytes) applies; 0 =
+            unlimited for this account.
+        daily_used_bytes:
+          type: integer
+          format: int64
+          description: >-
+            Bytes the account stored in the trailing 24 hours (the upload-usage
+            ledger the daily quota gate sums; deleting a video does not refund it).
         created_at:
           type: string
           format: date-time
@@ -22943,6 +25586,80 @@ components:
               watched_at:
                 type: string
                 format: date-time
+    PeerTubeImportSummary:
+      type: object
+      description: What POST /api/v1/me/import/peertube created and skipped.
+      required:
+        - channels_created
+        - channels_existing
+        - channels_skipped
+        - playlists_created
+        - playlists_existing
+        - playlists_skipped
+        - playlist_items_skipped
+        - settings_applied
+        - skipped_sections
+        - channels_mapped
+        - follows_queued
+        - follows_skipped_federation
+        - follows_job_id
+      properties:
+        follows_queued:
+          type: integer
+          description: >-
+            Accounts from following.json queued to be followed in the
+            background (name@host handles only; at most 1000 pending per user and 20 per host). Handles not queued
+            (duplicate, malformed, over the cap) are counted in
+            skipped_sections.following.
+        follows_skipped_federation:
+          type: integer
+          description: Handles held back because federation is disabled on this instance.
+        follows_job_id:
+          type: [string, "null"]
+          format: uuid
+          description: >-
+            Poll GET /api/v1/me/import/peertube/follows/{id}; null when nothing
+            was queued.
+        channels_created: {type: integer}
+        channels_existing: {type: integer}
+        channels_mapped:
+          type: array
+          description: >-
+            Channels whose PeerTube name was rewritten into the handle alphabet
+            ([A-Za-z0-9_], 3-30 characters; other characters become "_", with a
+            numeric "_N" suffix on a collision). Playlists follow their channel.
+          items:
+            type: object
+            required: [from, to]
+            properties:
+              from: {type: string}
+              to: {type: string}
+        channels_skipped:
+          type: integer
+          description: Empty name, reserved, owned by someone else, or over the channel limit.
+        playlists_created: {type: integer}
+        playlists_existing: {type: integer}
+        playlists_skipped: {type: integer}
+        playlist_items_skipped: {type: integer}
+        settings_applied: {type: integer}
+        skipped_sections:
+          type: object
+          additionalProperties: {type: integer}
+    PeerTubeFollowImportStatus:
+      type: object
+      description: >-
+        Progress of one background follow import. total is the sum of the
+        other counts; the import is finished when pending is 0.
+      required: [id, created_at, total, pending, done, failed, skipped_federation, skipped_invalid]
+      properties:
+        id: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+        total: {type: integer}
+        pending: {type: integer, description: "Waiting or being retried with backoff."}
+        done: {type: integer, description: "Follow requested (the remote may still accept or reject it)."}
+        failed: {type: integer, description: "Could not be resolved (unreachable after the retry limit, or not followable from this instance)."}
+        skipped_federation: {type: integer}
+        skipped_invalid: {type: integer, description: "A local actor or a handle that cannot be followed."}
     AccountImportSummary:
       type: object
       description: >-
@@ -23028,6 +25745,13 @@ components:
           description: >-
             When the current live session began (stamped on the transition into
             "live", cleared when it ends). Present only while the stream is live.
+        scheduled_start_at:
+          type: string
+          format: date-time
+          description: >-
+            Planned start, present only while the stream is not live. Public to
+            whoever may already read the stream (a private stream is 404 to
+            strangers, so its schedule is too). Announcement metadata only.
         created_at:
           type: string
           format: date-time
@@ -23158,6 +25882,16 @@ components:
             default_save_replay) is seeded; an explicit value always wins.
             While the instance disallows replay (live.allow_replay=false) the
             seed is always false and any stored flag produces no replay.
+        scheduled_start_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: >-
+            Planned start (RFC 3339). Must be in the future and within one year;
+            otherwise 422 on scheduled_start_at. ANNOUNCEMENT ONLY: nothing ever
+            starts a stream because this time passed — going live is still the
+            encoder connecting. Going live clears it.
     UpdateLiveStreamRequest:
       type: object
       required: [title]
@@ -23178,6 +25912,16 @@ components:
         replay_enabled:
           type: boolean
           default: false
+        scheduled_start_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: >-
+            Planned start (RFC 3339). REPLACES the stored value like every field of this body, so omitting it or sending null CLEARS it. An unchanged stored value may be echoed back even after it has passed. Not settable while the stream is live. Must be in the future and within one year;
+            otherwise 422 on scheduled_start_at. ANNOUNCEMENT ONLY: nothing ever
+            starts a stream because this time passed — going live is still the
+            encoder connecting. Going live clears it.
     CreateLiveStreamResponse:
       type: object
       required: [live_stream, stream_key]
@@ -23190,6 +25934,12 @@ components:
         rtmp_url:
           type: string
           description: RTMP ingest base URL (omitted when no ingest is configured).
+        rtmps_url:
+          type: string
+          description: >-
+            RTMPS (RTMP over TLS) ingest base URL, present only when the
+            operator configured LIVE_RTMPS_URL. Prefer it over rtmp_url: plain
+            RTMP sends the stream key in cleartext.
     LiveStreamListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -23250,6 +26000,37 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/LiveStreamCard"
+    LiveStreamUpcomingCard:
+      type: object
+      description: >-
+        One entry of the public "Upcoming" listing: a PUBLIC, not-yet-live
+        stream with a planned start. Never carries privacy/state or the key.
+      required: [id, title, channel_handle, channel_display_name, scheduled_start_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        channel_handle:
+          type: string
+        channel_display_name:
+          type: string
+        scheduled_start_at:
+          type: string
+          format: date-time
+    LiveUpcomingListResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [live_streams]
+          properties:
+            live_streams:
+              type: array
+              items:
+                $ref: "#/components/schemas/LiveStreamUpcomingCard"
     LiveStreamKey:
       type: object
       required: [stream_key]
@@ -23259,6 +26040,12 @@ components:
           description: The new stream key, shown ONCE.
         rtmp_url:
           type: string
+        rtmps_url:
+          type: string
+          description: >-
+            RTMPS (RTMP over TLS) ingest base URL, present only when the
+            operator configured LIVE_RTMPS_URL. Prefer it over rtmp_url: plain
+            RTMP sends the stream key in cleartext.
     LiveIngestRequest:
       type: object
       required: [stream_key]
@@ -25054,6 +27841,9 @@ components:
               description: >-
                 LIVE_RTMP_URL — already handed verbatim to every streamer on
                 stream creation.
+            rtmps_url:
+              type: string
+              description: LIVE_RTMPS_URL; absent when RTMPS is not offered.
             hls_root:
               type: string
               description: >-
@@ -25536,7 +28326,12 @@ components:
             video_sensitive, video_block, video_file, hls_playlist,
             video_no_media, thumbnail,
             storyboard, caption, tag, view_count, video_original_date, chapter,
-            rating, rendition, comment, playlist, playlist_item, follow, watch_history).
+            rating, rendition, comment, playlist, playlist_item, follow,
+            remote_follower, watch_history).
+            remote_follower counts accepted follows of a local channel by a
+            remote actor, carried only when the channel's actor id here is the
+            one followed and no block refuses the follower; an ACCOUNT follow is
+            unsupported (followers are per channel).
             watch_history restores local-video resume positions and timestamps in
             batches; remote history is unsupported. Existing or cleared destination
             history is preserved even in source-authoritative mode. New accounts
@@ -26006,6 +28801,56 @@ components:
         unpinned:
           type: integer
           format: int64
+    IPFSRepinStatus:
+      type: object
+      description: >-
+        Progress of the bulk re-pin of pinned HLS trees to the playback-only set.
+      required: [phase, started_at, finished_at, pause_reason, scanned, queued, done, skipped, blocked, failed, in_flight, remaining, bytes_saved_estimate]
+      properties:
+        phase:
+          type: string
+          enum: [idle, running, paused, completed, cancelled]
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+        pause_reason:
+          type: string
+          description: Why the run is paused (e.g. budget_exhausted); empty otherwise.
+        scanned:
+          type: integer
+          format: int64
+        queued:
+          type: integer
+          format: int64
+          description: Rows moved back to pending for a playback-only re-add.
+        done:
+          type: integer
+          format: int64
+          description: Queued rows now pinned to a new root.
+        skipped:
+          type: integer
+          format: int64
+          description: Rows already playback-only, or that changed under the run.
+        blocked:
+          type: integer
+          format: int64
+          description: Rows the admission policy would not re-admit (e.g. backfill off).
+        failed:
+          type: integer
+          format: int64
+        in_flight:
+          type: integer
+        remaining:
+          type: integer
+          format: int64
+          description: Pinned HLS rows not examined yet; an upper bound on the work left.
+        bytes_saved_estimate:
+          type: integer
+          format: int64
+          description: Pinned bytes no longer held by the ledger; freed on disk only after GC.
     IPFSReconcileResult:
       type: object
       description: >-
@@ -26161,6 +29006,16 @@ components:
             Per-user storage quota in bytes. Omit to leave unchanged; null
             resets the account to the instance default; 0 makes the account
             unlimited. Negative or non-integer values are 422.
+        daily_quota_bytes:
+          type: [integer, "null"]
+          format: int64
+          minimum: 0
+          description: >-
+            Per-user rolling-24h upload quota in bytes (PeerTube
+            videoQuotaDaily), tri-state like storage_quota_bytes: omit to leave
+            unchanged; null resets to the instance default
+            (default_user_daily_quota_bytes); 0 makes the account unlimited.
+            Negative or non-integer values are 422.
     VideoFile:
       type: object
       description: >-
@@ -26742,6 +29597,41 @@ components:
         created_at:
           type: string
           format: date-time
+    InstanceFollow:
+      type: object
+      required: [id, actor_url, host, handle, state, created_at]
+      description: >-
+        One instance follow (migration 0166): a remote instance actor following
+        this instance's actor, or this instance's actor following one.
+      properties:
+        id:
+          type: string
+          format: uuid
+        actor_url:
+          type: string
+          description: The remote instance actor's ActivityPub id.
+        host:
+          type: string
+          description: The remote instance's host.
+        handle:
+          type: string
+          description: The remote instance actor's preferred_username@host.
+        state:
+          type: string
+          enum: [pending, accepted, rejected]
+        created_at:
+          type: string
+          format: date-time
+    InstanceFollowListResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [follows]
+          properties:
+            follows:
+              type: array
+              items:
+                $ref: "#/components/schemas/InstanceFollow"
     FederationFollowerRequestListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -26843,6 +29733,33 @@ components:
           description: >-
             Short-lived (5 min) single-purpose token. Not an access token — it
             is only accepted by the MFA challenge endpoint.
+    RecognisedDevice:
+      type: object
+      required: [id, label, first_seen_at, last_seen_at, current]
+      properties:
+        id: {type: string, format: uuid}
+        label: {type: string, example: Chrome on macOS}
+        first_seen_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        current:
+          type: boolean
+          description: True for the device making this request.
+    RecognisedDevicesResponse:
+      type: object
+      required: [devices, new_device_email]
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecognisedDevice"
+        new_device_email:
+          type: boolean
+          description: Whether the new-device sign-in email is on (default true).
+    SecurityPrefsRequest:
+      type: object
+      required: [new_device_email]
+      properties:
+        new_device_email: {type: boolean}
     MFAStatusResponse:
       type: object
       required: [enabled, recovery_codes_remaining]

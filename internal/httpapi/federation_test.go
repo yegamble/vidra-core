@@ -47,8 +47,10 @@ type fakeFedRepo struct {
 	outboxVideos     []sqlcgen.ListChannelOutboxVideosRow
 	// A29 remediation: the rows the dereferenceable object ids read.
 	videosByID map[uuid.UUID]sqlcgen.GetVideoByIDRow
-	commentsBy map[uuid.UUID]sqlcgen.Comment
-	tombstones map[uuid.UUID]time.Time
+	// importedVideos maps a PeerTube source UUID to its imported local video.
+	importedVideos map[uuid.UUID]uuid.UUID
+	commentsBy     map[uuid.UUID]sqlcgen.Comment
+	tombstones     map[uuid.UUID]time.Time
 	// blockedDomains is the admin instance blocklist the inbox consults.
 	blockedDomains map[string]bool
 	// remoteBlocks are per-viewer blocks of a remote ACTOR (migration 0138),
@@ -57,8 +59,6 @@ type fakeFedRepo struct {
 	// remoteVideoComments are MIRRORED threads on remote videos (0140), keyed
 	// by the origin's object url.
 	remoteVideoComments map[string]sqlcgen.UpsertRemoteVideoCommentParams
-	// importedVideos maps a PeerTube source uuid to the imported video (0127).
-	importedVideos map[uuid.UUID]uuid.UUID
 }
 
 func (f fakeFedRepo) CountUsers(context.Context) (int64, error)        { return f.users, nil }
@@ -146,6 +146,24 @@ func (f fakeFedRepo) GetVideoIDByLegacyUUID(_ context.Context, id uuid.UUID) (uu
 		return v, nil
 	}
 	return uuid.UUID{}, pgx.ErrNoRows
+}
+
+// Inbound Move (0167): this world has no local follows of remote actors.
+func (f fakeFedRepo) ClaimRemoteActorMove(context.Context, sqlcgen.ClaimRemoteActorMoveParams) (int64, error) {
+	return 1, nil
+}
+func (f fakeFedRepo) ListRemoteChannelFollowsOfActor(context.Context, sqlcgen.ListRemoteChannelFollowsOfActorParams) ([]sqlcgen.ListRemoteChannelFollowsOfActorRow, error) {
+	return nil, nil
+}
+func (f fakeFedRepo) ReleaseRemoteActorMove(context.Context, string) error { return nil }
+func (f fakeFedRepo) SetRemoteActorMoveState(context.Context, sqlcgen.SetRemoteActorMoveStateParams) error {
+	return nil
+}
+func (f fakeFedRepo) NextMovingRemoteActorMove(context.Context) (sqlcgen.NextMovingRemoteActorMoveRow, error) {
+	return sqlcgen.NextMovingRemoteActorMoveRow{}, pgx.ErrNoRows
+}
+func (f fakeFedRepo) CarryRemoteActorBlocks(context.Context, sqlcgen.CarryRemoteActorBlocksParams) (int64, error) {
+	return 0, nil
 }
 
 func (f fakeFedRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
@@ -428,9 +446,9 @@ func newFedRepoFor(_ *config.Config) fakeFedRepo {
 		remoteFollows:       map[string]sqlcgen.InsertRemoteFollowParams{},
 		deliveries:          map[string]sqlcgen.EnqueueDeliveryParams{},
 		videosByID:          map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
+		importedVideos:      map[uuid.UUID]uuid.UUID{},
 		commentsBy:          map[uuid.UUID]sqlcgen.Comment{},
 		tombstones:          map[uuid.UUID]time.Time{},
-		importedVideos:      map[uuid.UUID]uuid.UUID{},
 		blockedDomains:      map[string]bool{},
 		remoteBlocks:        map[string]bool{},
 		remoteVideoComments: map[string]sqlcgen.UpsertRemoteVideoCommentParams{},
@@ -851,6 +869,35 @@ func (f fakeFedRepo) GetChannelActorAlias(_ context.Context, channelID uuid.UUID
 		return h, nil
 	}
 	return "", pgx.ErrNoRows
+}
+
+func (f fakeFedRepo) ListChannelBackfillVideoIDs(context.Context, sqlcgen.ListChannelBackfillVideoIDsParams) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
+func (f fakeFedRepo) ClaimChannelFollowerBackfill(context.Context, sqlcgen.ClaimChannelFollowerBackfillParams) (int64, error) {
+	return 0, nil
+}
+
+// Remote votes (0178) are not exercised through the HTTP layer's fake.
+func (fakeFedRepo) UpsertRemoteVideoRating(context.Context, sqlcgen.UpsertRemoteVideoRatingParams) (int64, error) {
+	return 0, nil
+}
+
+func (fakeFedRepo) GetRemoteVideoUserRating(context.Context, sqlcgen.GetRemoteVideoUserRatingParams) (string, error) {
+	return "", pgx.ErrNoRows
+}
+
+func (fakeFedRepo) UpsertRemoteVideoUserRating(context.Context, sqlcgen.UpsertRemoteVideoUserRatingParams) error {
+	return nil
+}
+
+func (fakeFedRepo) DeleteRemoteVideoUserRating(context.Context, sqlcgen.DeleteRemoteVideoUserRatingParams) (string, error) {
+	return "", pgx.ErrNoRows
+}
+
+func (fakeFedRepo) DeleteRemoteVideoRating(context.Context, sqlcgen.DeleteRemoteVideoRatingParams) error {
+	return nil
 }
 
 func (f fakeFedRepo) IsRemoteActorBlockedInstanceWide(_ context.Context, actorURL string) (bool, error) {

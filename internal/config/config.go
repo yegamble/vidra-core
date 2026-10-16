@@ -539,6 +539,14 @@ type Config struct {
 	// ingest is provisioned; the create response then omits it.
 	LiveRTMPURL string
 
+	// LiveRTMPSURL is the OPTIONAL TLS twin of LiveRTMPURL (rtmps://host:1936/live),
+	// served by a TLS-terminating front the operator runs ahead of the RTMP
+	// ingest (the meta repo's `rtmps` service). Plain RTMP carries the stream
+	// key in cleartext; when this is set the Go-live panel prefers it and keeps
+	// LiveRTMPURL as the fallback. Empty (default) = no RTMPS offered. It does not
+	// gate live: LIVE_RTMP_URL still decides whether live is available.
+	LiveRTMPSURL string
+
 	// LiveIngestSecret is the shared secret the media server (RTMP ingest) presents
 	// on the internal live-ingest start/stop hooks, so only it can flip a stream's
 	// live state. Empty disables the ingest hooks entirely (they 404) — they are
@@ -675,6 +683,14 @@ type Config struct {
 	// re-opens the SSRF hole the guard closes. Default false; the process warns
 	// loudly when on. See internal/urlsafety.Guard.AllowPrivate.
 	ImportAllowPrivateURLs bool
+
+	// OIDCAllowPrivateIssuers lets ADMIN-MANAGED OIDC providers (migration
+	// 0182) use http and private-network issuers and endpoints — an internal
+	// IdP or a lab. Separate from the import switch on purpose. The cloud
+	// metadata ranges stay blocked either way. Environment providers
+	// (OAUTH_PROVIDERS) are operator configuration and are not guarded.
+	// Default false.
+	OIDCAllowPrivateIssuers bool
 
 	// ImportFetchTimeout is the TOTAL wall clock one direct URL import download
 	// may spend, however steadily it is progressing. It bounds how long a single
@@ -950,6 +966,14 @@ type Config struct {
 	// 404. An operator who needs a takedown to complete on their own gateway
 	// promptly turns this on, or runs the node with --enable-gc.
 	IPFSGCAfterUnpin bool
+	// IPFSRepoBudgetBytes is the ceiling for an UNMANAGED node (Tier A F3): when the
+	// node's repo/stat RepoSize reaches it, the legacy drain stops ADDING (unpins
+	// still run). 0, the default, is no ceiling — the behaviour before this knob
+	// existed. It is a repo-size budget, not a free-space floor: core cannot statvfs
+	// a node it only reaches over RPC, so set it below disk size minus database
+	// growth minus media scratch. Ignored once a managed policy is adopted (the
+	// managed budget governs then).
+	IPFSRepoBudgetBytes int64
 	// IPFSMirrorPrivate is the master opt-in for the PRIVATE mirroring tier
 	// (fix_plan P19.P, .ralph/specs/ipfs-media-private.md). It defaults false and,
 	// when true, REQUIRES a dedicated private-swarm kubo at IPFSPrivateAPIURL —
@@ -987,6 +1011,18 @@ type Config struct {
 	// so the JSON API stays small while media uploads get headroom. Oversized
 	// uploads are rejected with 413.
 	UploadMaxSize string
+
+	// PeerTubeImportMaxSize caps the request body of POST /me/import/peertube
+	// only (Echo size string). Empty or 0 (the default) keeps HTTP_BODY_LIMIT,
+	// which admits trimmed metadata-only exports; a full PeerTube export bundles
+	// the video files, so an operator who wants those raises this deliberately
+	// and budgets PeerTubeImportTmpDir for it. The upload is spooled to a temp
+	// file and only its peertube/*.json entries are read.
+	PeerTubeImportMaxSize string
+
+	// PeerTubeImportTmpDir is where PeerTube archive uploads are spooled.
+	// Empty (the default) means os.TempDir(), i.e. TMPDIR.
+	PeerTubeImportTmpDir string
 
 	// UploadMaxActiveSessionsPerUser caps how many ACTIVE (unfinished, unexpired)
 	// resumable upload sessions one user may hold at once — the batch-upload guard
@@ -1258,6 +1294,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		SearchReconcileInterval:                p.Duration("SEARCH_RECONCILE_INTERVAL", 24*time.Hour),
 		SearchHealthInterval:                   p.Duration("SEARCH_HEALTH_INTERVAL", 15*time.Second),
 		LiveRTMPURL:                            liveRTMPURL,
+		LiveRTMPSURL:                           strings.TrimSpace(getEnv("LIVE_RTMPS_URL", "")),
 		LiveIngestSecret:                       getEnv("LIVE_INGEST_SECRET", ""),
 		LiveHLSRoot:                            strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
 		LiveIngestControlURL:                   strings.TrimRight(getEnv("LIVE_INGEST_CONTROL_URL", ""), "/"),
@@ -1280,6 +1317,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		SMTPFrom:                               getEnv("SMTP_FROM", ""),
 		DevMailCaptureEnabled:                  p.Bool("DEV_MAIL_CAPTURE_ENABLED", false),
 		ImportAllowPrivateURLs:                 p.Bool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
+		OIDCAllowPrivateIssuers:                p.Bool("OIDC_ALLOW_PRIVATE_ISSUERS", false),
 		ImportFetchTimeout:                     p.Duration("IMPORT_FETCH_TIMEOUT", 6*time.Hour),
 		ImportFetchIdleTimeout:                 p.Duration("IMPORT_FETCH_IDLE_TIMEOUT", 60*time.Second),
 		OwnerClaimToken:                        getEnv("OWNER_CLAIM_TOKEN", ""),
@@ -1346,6 +1384,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		IPFSReconcileInterval:                  p.Duration("IPFS_RECONCILE_INTERVAL", 5*time.Minute),
 		IPFSHealthProbeInterval:                p.Duration("IPFS_HEALTH_PROBE_INTERVAL", DefaultIPFSHealthProbeInterval),
 		IPFSGCAfterUnpin:                       p.Bool("IPFS_GC_AFTER_UNPIN", false),
+		IPFSRepoBudgetBytes:                    p.Int64("IPFS_REPO_BUDGET_BYTES", 0),
 		IPFSMirrorPrivate:                      p.Bool("IPFS_MIRROR_PRIVATE", false),
 		IPFSClusterAPIURL:                      strings.TrimRight(getEnv("IPFS_CLUSTER_API_URL", ""), "/"),
 		IPFSClusterToken:                       getEnv("IPFS_CLUSTER_TOKEN", ""),
@@ -1353,6 +1392,8 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		IPFSPrivateClusterAPIURL:               strings.TrimRight(getEnv("IPFS_PRIVATE_CLUSTER_API_URL", ""), "/"),
 		IPFSPrivateClusterToken:                getEnv("IPFS_PRIVATE_CLUSTER_TOKEN", ""),
 		UploadMaxSize:                          getEnv("UPLOAD_MAX_SIZE", "2G"),
+		PeerTubeImportMaxSize:                  getEnv("PEERTUBE_IMPORT_MAX_SIZE", ""),
+		PeerTubeImportTmpDir:                   getEnv("PEERTUBE_IMPORT_TMPDIR", ""),
 		YtdlpImportEnabled:                     p.Bool("YTDLP_IMPORT_ENABLED", false),
 		YtdlpPath:                              getEnv("YTDLP_PATH", "yt-dlp"),
 		YtdlpTimeout:                           p.Duration("YTDLP_TIMEOUT", 15*time.Minute),
@@ -1739,6 +1780,12 @@ func (c *Config) validate() error {
 	}
 	if _, err := bytes.Parse(c.UploadMaxSize); err != nil {
 		add(varErrorf("UPLOAD_MAX_SIZE", "config: invalid UPLOAD_MAX_SIZE %q: %w", c.UploadMaxSize, err))
+	}
+	if _, err := bytes.Parse(c.PeerTubeImportMaxSize); err != nil && c.PeerTubeImportMaxSize != "" { // "" = HTTP_BODY_LIMIT
+		add(varErrorf("PEERTUBE_IMPORT_MAX_SIZE", "config: invalid PEERTUBE_IMPORT_MAX_SIZE %q: %w", c.PeerTubeImportMaxSize, err))
+	}
+	if c.PeerTubeImportTmpDir != "" && !filepath.IsAbs(c.PeerTubeImportTmpDir) {
+		add(varErrorf("PEERTUBE_IMPORT_TMPDIR", "config: PEERTUBE_IMPORT_TMPDIR must be an absolute path, got %q", c.PeerTubeImportTmpDir))
 	}
 	if c.UploadMaxActiveSessionsPerUser < 0 {
 		add(varErrorf("UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER", "config: UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER must be >= 0 (0 = unlimited), got %d", c.UploadMaxActiveSessionsPerUser))
@@ -2235,6 +2282,10 @@ func (c *Config) validateIPFS() error {
 		errs = append(errs, varErrorf("IPFS_HEALTH_PROBE_INTERVAL",
 			"config: IPFS_HEALTH_PROBE_INTERVAL must be at least %s (got %s): each probe is a gateway fetch plus one pin/ls per swarm, in every process, so a shorter interval is a load generator rather than a health check; the default is %s",
 			MinIPFSHealthProbeInterval, c.IPFSHealthProbeInterval, DefaultIPFSHealthProbeInterval))
+	}
+	if c.IPFSRepoBudgetBytes < 0 {
+		errs = append(errs, varErrorf("IPFS_REPO_BUDGET_BYTES",
+			"config: IPFS_REPO_BUDGET_BYTES must be 0 (no ceiling) or a positive byte count (got %d)", c.IPFSRepoBudgetBytes))
 	}
 	if !c.IPFSEnabled && c.IPFSManagerSocket == "" {
 		return errors.Join(errs...)

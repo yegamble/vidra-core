@@ -2149,3 +2149,30 @@ func (f *fakeRepo) ListPublicVideosByOwner(context.Context, sqlcgen.ListPublicVi
 func (f *fakeRepo) CountPublicVideosByOwnerVisible(context.Context, sqlcgen.CountPublicVideosByOwnerVisibleParams) (int64, error) {
 	return 0, nil
 }
+
+// RecordViewGated runs the gate only for a viewer's FIRST view in the window,
+// and a closed gate leaves the count alone: a per-sender budget is spent on new
+// views only, never on repeats.
+func TestRecordViewGatedRunsGateAfterDedupe(t *testing.T) {
+	owner := uuid.New()
+	svc := NewService(newFakeRepo(owner), nil, WithViewDeduper(newFakeDeduper()))
+	ctx := context.Background()
+	v := publishDraft(t, svc, ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	calls := 0
+	open := func(context.Context) (bool, error) { calls++; return true, nil }
+	for i := 0; i < 3; i++ {
+		if err := svc.RecordViewGated(ctx, v.ID, uuid.Nil, false, "a", open); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 1 || svc.Views(ctx, v.ID) != 1 {
+		t.Fatalf("gate calls = %d, views = %d; want 1, 1", calls, svc.Views(ctx, v.ID))
+	}
+	closed := func(context.Context) (bool, error) { return false, nil }
+	if err := svc.RecordViewGated(ctx, v.ID, uuid.Nil, false, "b", closed); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.Views(ctx, v.ID); got != 1 {
+		t.Fatalf("closed gate counted: views = %d", got)
+	}
+}

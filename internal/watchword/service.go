@@ -10,11 +10,13 @@ package watchword
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -25,6 +27,12 @@ var ErrAlreadyExists = errors.New("watchword: already exists")
 
 // ErrMatchNotFound means the match id does not exist (triage of an unknown row).
 var ErrMatchNotFound = errors.New("watchword: match not found")
+
+// List actions: what a match against a list's terms does to the comment.
+const (
+	ActionFlag = "flag" // record a match for the review queue (the default)
+	ActionHold = "hold" // also park the comment in held_for_review (0161)
+)
 
 // Triage states for a match, mirroring the report queue's lifecycle: a match is
 // open until a moderator either acted on it (resolved) or judged it a false
@@ -66,11 +74,15 @@ func locate(text, word string) (int32, int32) {
 // Repository is the data access the watched-words service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
-	CreateWatchedWord(ctx context.Context, arg sqlcgen.CreateWatchedWordParams) (sqlcgen.WatchedWord, error)
+	CreateWatchedWord(ctx context.Context, arg sqlcgen.CreateWatchedWordParams) (sqlcgen.CreateWatchedWordRow, error)
 	ListWatchedWords(ctx context.Context, arg sqlcgen.ListWatchedWordsParams) ([]sqlcgen.ListWatchedWordsRow, error)
 	CountWatchedWords(ctx context.Context) (int64, error)
 	DeleteWatchedWord(ctx context.Context, id uuid.UUID) (int64, error)
 	MatchWatchedWords(ctx context.Context, text string) ([]sqlcgen.MatchWatchedWordsRow, error)
+	MatchWatchedWordsForVideo(ctx context.Context, arg sqlcgen.MatchWatchedWordsForVideoParams) ([]sqlcgen.MatchWatchedWordsForVideoRow, error)
+	GetComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)
+	WordListRepository
+	ReplaceCommentAutomaticTags(ctx context.Context, arg sqlcgen.ReplaceCommentAutomaticTagsParams) error
 	RecordWatchedWordMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordMatchParams) error
 	RecordWatchedWordVideoMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordVideoMatchParams) error
 	RecordWatchedWordAuthoredRemoteCommentMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordAuthoredRemoteCommentMatchParams) error
@@ -157,7 +169,11 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) (bool, error) {
 // (so removing the term does not erase the evidence); a term the edit newly
 // introduces creates a new match with the new body as its snapshot.
 func (s *Service) FlagComment(ctx context.Context, commentID uuid.UUID, body string) (int, error) {
-	matches, err := s.repo.MatchWatchedWords(ctx, body)
+	c, err := s.repo.GetComment(ctx, commentID)
+	if err != nil {
+		return 0, err
+	}
+	matches, err := s.matchForVideo(ctx, c.VideoID, body)
 	if err != nil {
 		return 0, err
 	}
@@ -170,11 +186,63 @@ func (s *Service) FlagComment(ctx context.Context, commentID uuid.UUID, body str
 			MatchedTerm:   m.Word,
 			MatchOffset:   off,
 			MatchLength:   length,
+			ListID:        pgconv.UUID(m.ListID),
+			ListName:      m.ListName,
+			ListOwnerID:   m.ListOwner,
 		}); err != nil {
 			return 0, err
 		}
 	}
+	// Automatic tags (0177) come from the SAME matches, replaced on every call
+	// so an edit that drops a URL or a term drops its tag. Written AFTER the
+	// match rows and never fatal: a tag-table failure must not suppress the
+	// moderation bookkeeping above.
+	if err := s.recordCommentTags(ctx, commentID, body, matches); err != nil {
+		slog.WarnContext(ctx, "automatic tag write failed", "error", err, "comment_id", commentID)
+	}
 	return len(matches), nil
+}
+
+// ShouldHold reports whether a comment about to be posted on videoID matches a
+// term of a list whose action is "hold" — an instance list or one of the
+// video owner's own. The caller then stores the comment through the EXISTING
+// held-for-review path (comment.CreateHeld / EditForReview, 0161): this decides,
+// it does not hold anything itself, so there is one hold mechanism. Called
+// BEFORE the write so a held comment is never announced and then retracted.
+func (s *Service) ShouldHold(ctx context.Context, videoID uuid.UUID, body string) (bool, error) {
+	matches, err := s.matchForVideo(ctx, videoID, body)
+	if err != nil {
+		return false, err
+	}
+	for _, m := range matches {
+		if m.ListAction == ActionHold {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// matched is a watched term found in a text, with the list that holds it.
+type matched struct {
+	ID         uuid.UUID
+	Word       string
+	ListID     uuid.UUID
+	ListName   string
+	ListOwner  pgtype.UUID // NULL = instance list
+	ListAction string
+}
+
+// matchForVideo: instance lists plus the lists of the video's owner.
+func (s *Service) matchForVideo(ctx context.Context, videoID uuid.UUID, text string) ([]matched, error) {
+	rows, err := s.repo.MatchWatchedWordsForVideo(ctx, sqlcgen.MatchWatchedWordsForVideoParams{VideoID: videoID, Text: text})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]matched, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, matched{r.ID, r.Word, r.ListID, r.ListName, r.ListOwnerID, r.ListAction})
+	}
+	return out, nil
 }
 
 // FlagVideo checks a video's title+description against the watched-words list
@@ -197,6 +265,9 @@ func (s *Service) FlagVideo(ctx context.Context, videoID uuid.UUID, text string)
 			MatchedTerm:   m.Word,
 			MatchOffset:   off,
 			MatchLength:   length,
+			ListID:        pgconv.UUID(m.ListID),
+			ListName:      m.ListName,
+			ListOwnerID:   m.ListOwnerID,
 		}); err != nil {
 			return 0, err
 		}
@@ -225,6 +296,9 @@ func (s *Service) FlagAuthoredRemoteComment(ctx context.Context, commentID uuid.
 			MatchedTerm:             m.Word,
 			MatchOffset:             off,
 			MatchLength:             length,
+			ListID:                  pgconv.UUID(m.ListID),
+			ListName:                m.ListName,
+			ListOwnerID:             m.ListOwnerID,
 		}); err != nil {
 			return 0, err
 		}
@@ -265,6 +339,7 @@ const (
 type Match struct {
 	ID          uuid.UUID
 	Word        string
+	ListName    string // the list that matched (snapshot; empty on pre-0172 orphans)
 	Type        string
 	CommentID   uuid.UUID
 	CommentBody string
@@ -318,7 +393,7 @@ func (s *Service) ListMatches(ctx context.Context, status string, limit, offset 
 	out := make([]Match, 0, len(rows))
 	for _, r := range rows {
 		m := Match{
-			ID: r.ID, Word: r.Word, Type: MatchTargetVideo,
+			ID: r.ID, Word: r.Word, ListName: r.ListName, Type: MatchTargetVideo,
 			VideoID: r.VideoID, AuthorUsername: r.AuthorUsername, AuthorDomain: r.AuthorDomain,
 			CreatedAt:   r.CreatedAt,
 			MatchedText: r.MatchedText, MatchOffset: r.MatchOffset, MatchLength: r.MatchLength,

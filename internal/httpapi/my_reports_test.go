@@ -25,7 +25,8 @@ func (f *moderationFakeRepo) ListMyReports(_ context.Context, a sqlcgen.ListMyRe
 			continue
 		}
 		row := sqlcgen.ListMyReportsRow{ID: r.id, TargetType: r.targetType, Status: r.status, Reason: r.reason,
-			CreatedAt: r.createdAt, ResolvedAt: r.resolvedAt, LastActivityAt: r.createdAt, VideoID: r.videoID}
+			CreatedAt: r.createdAt, ResolvedAt: r.resolvedAt, LastActivityAt: r.createdAt, VideoID: r.videoID,
+			PredefinedReasons: r.reasons, VideoStartSeconds: r.startSeconds, VideoEndSeconds: r.endSeconds}
 		if r.videoID.Valid {
 			if v, ok := f.videos.videos[uuid.UUID(r.videoID.Bytes)]; ok {
 				row.VideoTitle = v.Title

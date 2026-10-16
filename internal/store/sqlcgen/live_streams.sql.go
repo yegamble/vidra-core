@@ -17,7 +17,9 @@ const countLivePublicStreams = `-- name: CountLivePublicStreams :one
 SELECT count(*)::bigint
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
+JOIN users u ON u.id = ch.owner_id
 WHERE ls.state = 'live' AND ls.privacy = 'public'
+  AND u.is_active = TRUE AND NOT u.unlisted
   AND NOT EXISTS (
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = $1 AND m.muted_id = ch.owner_id
@@ -82,34 +84,72 @@ func (q *Queries) CountLiveStreamsLiveByOwner(ctx context.Context, ownerID uuid.
 	return count, err
 }
 
+const countUpcomingLiveStreams = `-- name: CountUpcomingLiveStreams :one
+SELECT count(*)::bigint
+FROM live_streams ls
+JOIN channels ch ON ch.id = ls.channel_id
+JOIN users u ON u.id = ch.owner_id
+WHERE ls.state = 'offline' AND ls.privacy = 'public'
+  AND u.is_active = TRUE AND NOT u.unlisted
+  AND ls.termination_reason_code IS NULL
+  AND ls.scheduled_start_at IS NOT NULL
+  AND ls.scheduled_start_at > now() - interval '1 hour'
+  AND ($1::text IS NULL OR ch.handle = $1::text)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = ch.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = ch.owner_id
+  )
+`
+
+type CountUpcomingLiveStreamsParams struct {
+	ChannelHandle *string     `json:"channel_handle"`
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+}
+
+// How many rows ListUpcomingLiveStreams would return, ignoring pagination —
+// same predicate, including the viewer clause (a total that counted rows the
+// list filters out would promise a page it cannot serve).
+func (q *Queries) CountUpcomingLiveStreams(ctx context.Context, arg CountUpcomingLiveStreamsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countUpcomingLiveStreams, arg.ChannelHandle, arg.ViewerID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createLiveStream = `-- name: CreateLiveStream :one
-INSERT INTO live_streams (channel_id, title, description, privacy, permanent, replay_enabled, stream_key_hash)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at
+INSERT INTO live_streams (channel_id, title, description, privacy, permanent, replay_enabled, stream_key_hash, scheduled_start_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at, scheduled_start_at
 `
 
 type CreateLiveStreamParams struct {
-	ChannelID     uuid.UUID `json:"channel_id"`
-	Title         string    `json:"title"`
-	Description   string    `json:"description"`
-	Privacy       string    `json:"privacy"`
-	Permanent     bool      `json:"permanent"`
-	ReplayEnabled bool      `json:"replay_enabled"`
-	StreamKeyHash string    `json:"stream_key_hash"`
+	ChannelID        uuid.UUID          `json:"channel_id"`
+	Title            string             `json:"title"`
+	Description      string             `json:"description"`
+	Privacy          string             `json:"privacy"`
+	Permanent        bool               `json:"permanent"`
+	ReplayEnabled    bool               `json:"replay_enabled"`
+	StreamKeyHash    string             `json:"stream_key_hash"`
+	ScheduledStartAt pgtype.Timestamptz `json:"scheduled_start_at"`
 }
 
 type CreateLiveStreamRow struct {
-	ID            uuid.UUID          `json:"id"`
-	ChannelID     uuid.UUID          `json:"channel_id"`
-	Title         string             `json:"title"`
-	Description   string             `json:"description"`
-	Privacy       string             `json:"privacy"`
-	State         string             `json:"state"`
-	Permanent     bool               `json:"permanent"`
-	ReplayEnabled bool               `json:"replay_enabled"`
-	StartedAt     pgtype.Timestamptz `json:"started_at"`
-	CreatedAt     time.Time          `json:"created_at"`
-	UpdatedAt     time.Time          `json:"updated_at"`
+	ID               uuid.UUID          `json:"id"`
+	ChannelID        uuid.UUID          `json:"channel_id"`
+	Title            string             `json:"title"`
+	Description      string             `json:"description"`
+	Privacy          string             `json:"privacy"`
+	State            string             `json:"state"`
+	Permanent        bool               `json:"permanent"`
+	ReplayEnabled    bool               `json:"replay_enabled"`
+	StartedAt        pgtype.Timestamptz `json:"started_at"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+	ScheduledStartAt pgtype.Timestamptz `json:"scheduled_start_at"`
 }
 
 // Create a live stream for a channel with a pre-hashed stream key. The raw key is
@@ -123,6 +163,7 @@ func (q *Queries) CreateLiveStream(ctx context.Context, arg CreateLiveStreamPara
 		arg.Permanent,
 		arg.ReplayEnabled,
 		arg.StreamKeyHash,
+		arg.ScheduledStartAt,
 	)
 	var i CreateLiveStreamRow
 	err := row.Scan(
@@ -137,6 +178,7 @@ func (q *Queries) CreateLiveStream(ctx context.Context, arg CreateLiveStreamPara
 		&i.StartedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ScheduledStartAt,
 	)
 	return i, err
 }
@@ -155,7 +197,7 @@ func (q *Queries) DeleteLiveStream(ctx context.Context, id uuid.UUID) (int64, er
 
 const getLiveStreamByID = `-- name: GetLiveStreamByID :one
 SELECT ls.id, ls.channel_id, ls.title, ls.description, ls.privacy, ls.state, ls.permanent,
-       ls.replay_enabled, ls.started_at, ls.created_at, ls.updated_at,
+       ls.replay_enabled, ls.started_at, ls.created_at, ls.updated_at, ls.scheduled_start_at,
        ls.terminated_at, ls.terminated_by, ls.termination_reason_code, ls.termination_reason,
        ch.owner_id, ch.handle AS channel_handle, ch.display_name AS channel_display_name
 FROM live_streams ls
@@ -175,6 +217,7 @@ type GetLiveStreamByIDRow struct {
 	StartedAt             pgtype.Timestamptz `json:"started_at"`
 	CreatedAt             time.Time          `json:"created_at"`
 	UpdatedAt             time.Time          `json:"updated_at"`
+	ScheduledStartAt      pgtype.Timestamptz `json:"scheduled_start_at"`
 	TerminatedAt          pgtype.Timestamptz `json:"terminated_at"`
 	TerminatedBy          pgtype.UUID        `json:"terminated_by"`
 	TerminationReasonCode *string            `json:"termination_reason_code"`
@@ -201,6 +244,7 @@ func (q *Queries) GetLiveStreamByID(ctx context.Context, id uuid.UUID) (GetLiveS
 		&i.StartedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ScheduledStartAt,
 		&i.TerminatedAt,
 		&i.TerminatedBy,
 		&i.TerminationReasonCode,
@@ -255,7 +299,9 @@ SELECT ls.id, ls.title, ls.description, ls.started_at,
        ch.handle AS channel_handle, ch.display_name AS channel_display_name
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
+JOIN users u ON u.id = ch.owner_id
 WHERE ls.state = 'live' AND ls.privacy = 'public'
+  AND u.is_active = TRUE AND NOT u.unlisted
   AND NOT EXISTS (
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = $1 AND m.muted_id = ch.owner_id
@@ -286,6 +332,9 @@ type ListLivePublicStreamsRow struct {
 // Public "Live now" listing: currently-live PUBLIC streams across all channels,
 // most-recently-started first. Unlisted/private streams and offline/ended streams
 // never appear. Joined with the owning channel for display; never the key hash.
+//
+// Owner gate: an active owner who has not opted out of discovery (is_active,
+// NOT unlisted), the same clauses ListPublicVideosSorted and SearchChannels carry.
 //
 // A16 ruling: the per-viewer mute/block clause, verbatim from
 // ListPublicVideosSorted and ListPublicVideosByChannel. This rail took NO viewer
@@ -320,7 +369,7 @@ func (q *Queries) ListLivePublicStreams(ctx context.Context, arg ListLivePublicS
 }
 
 const listLiveStreamsByChannel = `-- name: ListLiveStreamsByChannel :many
-SELECT id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at,
+SELECT id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at, scheduled_start_at,
        terminated_at, terminated_by, termination_reason_code, termination_reason
 FROM live_streams
 WHERE channel_id = $1
@@ -346,6 +395,7 @@ type ListLiveStreamsByChannelRow struct {
 	StartedAt             pgtype.Timestamptz `json:"started_at"`
 	CreatedAt             time.Time          `json:"created_at"`
 	UpdatedAt             time.Time          `json:"updated_at"`
+	ScheduledStartAt      pgtype.Timestamptz `json:"scheduled_start_at"`
 	TerminatedAt          pgtype.Timestamptz `json:"terminated_at"`
 	TerminatedBy          pgtype.UUID        `json:"terminated_by"`
 	TerminationReasonCode *string            `json:"termination_reason_code"`
@@ -374,6 +424,7 @@ func (q *Queries) ListLiveStreamsByChannel(ctx context.Context, arg ListLiveStre
 			&i.StartedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ScheduledStartAt,
 			&i.TerminatedAt,
 			&i.TerminatedBy,
 			&i.TerminationReasonCode,
@@ -427,6 +478,89 @@ func (q *Queries) ListOverdueLiveStreams(ctx context.Context, startedAt pgtype.T
 	return items, nil
 }
 
+const listUpcomingLiveStreams = `-- name: ListUpcomingLiveStreams :many
+SELECT ls.id, ls.title, ls.description, ls.scheduled_start_at,
+       ch.handle AS channel_handle, ch.display_name AS channel_display_name
+FROM live_streams ls
+JOIN channels ch ON ch.id = ls.channel_id
+JOIN users u ON u.id = ch.owner_id
+WHERE ls.state = 'offline' AND ls.privacy = 'public'
+  AND u.is_active = TRUE AND NOT u.unlisted
+  AND ls.termination_reason_code IS NULL
+  AND ls.scheduled_start_at IS NOT NULL
+  AND ls.scheduled_start_at > now() - interval '1 hour'
+  AND ($1::text IS NULL OR ch.handle = $1::text)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = ch.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = ch.owner_id
+  )
+ORDER BY ls.scheduled_start_at, ls.id
+LIMIT $4 OFFSET $3
+`
+
+type ListUpcomingLiveStreamsParams struct {
+	ChannelHandle *string     `json:"channel_handle"`
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+	ResultOffset  int32       `json:"result_offset"`
+	ResultLimit   int32       `json:"result_limit"`
+}
+
+type ListUpcomingLiveStreamsRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	Title              string             `json:"title"`
+	Description        string             `json:"description"`
+	ScheduledStartAt   pgtype.Timestamptz `json:"scheduled_start_at"`
+	ChannelHandle      string             `json:"channel_handle"`
+	ChannelDisplayName string             `json:"channel_display_name"`
+}
+
+// Public "Upcoming" listing (migration 0168): PUBLIC, offline streams that carry
+// a planned start, soonest first. A planned start up to one hour in the past is
+// still listed so a broadcaster who is a few minutes late reads "starting soon"
+// rather than vanishing; after that the announcement is stale and drops out
+// (the row is not touched — the owner can still edit or clear it).
+//
+// Same visibility as every other public discovery surface: privacy = 'public'
+// only, an ACTIVE owner who has not opted out of discovery (is_active, NOT
+// unlisted — the clauses ListPublicVideosSorted and SearchChannels carry), a
+// stream no moderator terminated, and the per-viewer mute/block clause verbatim. channel_handle is an optional filter
+// for the channel page (NULL = every channel).
+func (q *Queries) ListUpcomingLiveStreams(ctx context.Context, arg ListUpcomingLiveStreamsParams) ([]ListUpcomingLiveStreamsRow, error) {
+	rows, err := q.db.Query(ctx, listUpcomingLiveStreams,
+		arg.ChannelHandle,
+		arg.ViewerID,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUpcomingLiveStreamsRow
+	for rows.Next() {
+		var i ListUpcomingLiveStreamsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Description,
+			&i.ScheduledStartAt,
+			&i.ChannelHandle,
+			&i.ChannelDisplayName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setLiveStreamState = `-- name: SetLiveStreamState :exec
 UPDATE live_streams
 SET state = $2,
@@ -435,6 +569,7 @@ SET state = $2,
         WHEN $2 = 'live' THEN started_at
         ELSE NULL
     END,
+    scheduled_start_at = CASE WHEN $2 = 'live' THEN NULL ELSE scheduled_start_at END,
     terminated_at = CASE WHEN $2 = 'live' THEN NULL ELSE terminated_at END,
     terminated_by = CASE WHEN $2 = 'live' THEN NULL ELSE terminated_by END,
     termination_reason_code = CASE WHEN $2 = 'live' THEN NULL ELSE termination_reason_code END,
@@ -470,6 +605,7 @@ const terminateLiveStream = `-- name: TerminateLiveStream :exec
 UPDATE live_streams
 SET state = $2,
     started_at = NULL,
+    scheduled_start_at = NULL,
     terminated_at = now(),
     terminated_by = $3,
     termination_reason_code = $4,
@@ -511,36 +647,41 @@ func (q *Queries) TerminateLiveStream(ctx context.Context, arg TerminateLiveStre
 
 const updateLiveStream = `-- name: UpdateLiveStream :one
 UPDATE live_streams
-SET title = $2, description = $3, privacy = $4, permanent = $5, replay_enabled = $6, updated_at = now()
+SET title = $2, description = $3, privacy = $4, permanent = $5, replay_enabled = $6,
+    -- A stream that went live after the caller's check cannot be announced.
+    scheduled_start_at = CASE WHEN state = 'live' THEN NULL ELSE $7::timestamptz END,
+    updated_at = now()
 WHERE id = $1
-RETURNING id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at
+RETURNING id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at, scheduled_start_at
 `
 
 type UpdateLiveStreamParams struct {
-	ID            uuid.UUID `json:"id"`
-	Title         string    `json:"title"`
-	Description   string    `json:"description"`
-	Privacy       string    `json:"privacy"`
-	Permanent     bool      `json:"permanent"`
-	ReplayEnabled bool      `json:"replay_enabled"`
+	ID               uuid.UUID          `json:"id"`
+	Title            string             `json:"title"`
+	Description      string             `json:"description"`
+	Privacy          string             `json:"privacy"`
+	Permanent        bool               `json:"permanent"`
+	ReplayEnabled    bool               `json:"replay_enabled"`
+	ScheduledStartAt pgtype.Timestamptz `json:"scheduled_start_at"`
 }
 
 type UpdateLiveStreamRow struct {
-	ID            uuid.UUID          `json:"id"`
-	ChannelID     uuid.UUID          `json:"channel_id"`
-	Title         string             `json:"title"`
-	Description   string             `json:"description"`
-	Privacy       string             `json:"privacy"`
-	State         string             `json:"state"`
-	Permanent     bool               `json:"permanent"`
-	ReplayEnabled bool               `json:"replay_enabled"`
-	StartedAt     pgtype.Timestamptz `json:"started_at"`
-	CreatedAt     time.Time          `json:"created_at"`
-	UpdatedAt     time.Time          `json:"updated_at"`
+	ID               uuid.UUID          `json:"id"`
+	ChannelID        uuid.UUID          `json:"channel_id"`
+	Title            string             `json:"title"`
+	Description      string             `json:"description"`
+	Privacy          string             `json:"privacy"`
+	State            string             `json:"state"`
+	Permanent        bool               `json:"permanent"`
+	ReplayEnabled    bool               `json:"replay_enabled"`
+	StartedAt        pgtype.Timestamptz `json:"started_at"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+	ScheduledStartAt pgtype.Timestamptz `json:"scheduled_start_at"`
 }
 
 // Edit a stream's mutable metadata (title/description/privacy/permanent/
-// replay_enabled). The caller has already authorised ownership. Never touches the
+// replay_enabled/scheduled_start_at — the last is REPLACED, so NULL clears it). The caller has already authorised ownership. Never touches the
 // stream key or live state.
 func (q *Queries) UpdateLiveStream(ctx context.Context, arg UpdateLiveStreamParams) (UpdateLiveStreamRow, error) {
 	row := q.db.QueryRow(ctx, updateLiveStream,
@@ -550,6 +691,7 @@ func (q *Queries) UpdateLiveStream(ctx context.Context, arg UpdateLiveStreamPara
 		arg.Privacy,
 		arg.Permanent,
 		arg.ReplayEnabled,
+		arg.ScheduledStartAt,
 	)
 	var i UpdateLiveStreamRow
 	err := row.Scan(
@@ -564,6 +706,7 @@ func (q *Queries) UpdateLiveStream(ctx context.Context, arg UpdateLiveStreamPara
 		&i.StartedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ScheduledStartAt,
 	)
 	return i, err
 }

@@ -307,6 +307,42 @@ func TestUploadMaxSizeDefaultAndOverride(t *testing.T) {
 	}
 }
 
+// The large PeerTube archive cap is opt-in: unset means HTTP_BODY_LIMIT.
+func TestPeerTubeImportMaxSizeAndTmpDir(t *testing.T) {
+	t.Setenv("PEERTUBE_IMPORT_MAX_SIZE", "")
+	t.Setenv("PEERTUBE_IMPORT_TMPDIR", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.PeerTubeImportMaxSize != "" || cfg.PeerTubeImportTmpDir != "" {
+		t.Errorf("defaults = %q / %q, want both empty", cfg.PeerTubeImportMaxSize, cfg.PeerTubeImportTmpDir)
+	}
+	for _, ok := range []string{"0", "20G"} {
+		t.Setenv("PEERTUBE_IMPORT_MAX_SIZE", ok)
+		if _, err := Load(); err != nil {
+			t.Errorf("PEERTUBE_IMPORT_MAX_SIZE=%s: %v", ok, err)
+		}
+	}
+	t.Setenv("PEERTUBE_IMPORT_MAX_SIZE", "lots")
+	if _, err := Load(); err == nil {
+		t.Error("invalid PEERTUBE_IMPORT_MAX_SIZE accepted")
+	}
+	t.Setenv("PEERTUBE_IMPORT_MAX_SIZE", "")
+	t.Setenv("PEERTUBE_IMPORT_TMPDIR", "relative/dir")
+	if _, err := Load(); err == nil {
+		t.Error("relative PEERTUBE_IMPORT_TMPDIR accepted")
+	}
+	t.Setenv("PEERTUBE_IMPORT_TMPDIR", "/var/spool/vidra")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("absolute PEERTUBE_IMPORT_TMPDIR: %v", err)
+	}
+	if cfg.PeerTubeImportTmpDir != "/var/spool/vidra" {
+		t.Errorf("PeerTubeImportTmpDir = %q", cfg.PeerTubeImportTmpDir)
+	}
+}
+
 func TestImportAllowPrivateURLsDefaultAndOverride(t *testing.T) {
 	t.Setenv("HTTP_IMPORT_ALLOW_PRIVATE_URLS", "")
 	cfg, err := Load()
@@ -323,6 +359,22 @@ func TestImportAllowPrivateURLsDefaultAndOverride(t *testing.T) {
 	}
 	if !cfg.ImportAllowPrivateURLs {
 		t.Error("ImportAllowPrivateURLs = false, want true when overridden")
+	}
+}
+
+func TestOIDCAllowPrivateIssuersDefaultAndOverride(t *testing.T) {
+	t.Setenv("OIDC_ALLOW_PRIVATE_ISSUERS", "")
+	t.Setenv("HTTP_IMPORT_ALLOW_PRIVATE_URLS", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.OIDCAllowPrivateIssuers {
+		t.Error("OIDCAllowPrivateIssuers = true by default, or inherited from the import switch")
+	}
+	t.Setenv("OIDC_ALLOW_PRIVATE_ISSUERS", "true")
+	if cfg, err = Load(); err != nil || !cfg.OIDCAllowPrivateIssuers {
+		t.Errorf("override: %v, %v", cfg.OIDCAllowPrivateIssuers, err)
 	}
 }
 
@@ -2306,5 +2358,25 @@ func TestPeerTubeImportCopyConcurrency(t *testing.T) {
 				t.Fatalf("concurrency=%d want=%d", cfg.PeerTubeImportCopyConcurrency, want)
 			}
 		})
+	}
+}
+
+// TestIPFSRepoBudgetDefaultsOffAndRejectsNegative: F3's ceiling is opt-in — the
+// unmanaged drain's behaviour is unchanged for everyone who does not set it.
+func TestIPFSRepoBudgetDefaultsOffAndRejectsNegative(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load default: %v", err)
+	}
+	if cfg.IPFSRepoBudgetBytes != 0 {
+		t.Errorf("IPFS_REPO_BUDGET_BYTES defaults to %d, want 0 (no ceiling)", cfg.IPFSRepoBudgetBytes)
+	}
+	t.Setenv("IPFS_REPO_BUDGET_BYTES", "10737418240")
+	if cfg, err = Load(); err != nil || cfg.IPFSRepoBudgetBytes != 10<<30 {
+		t.Fatalf("IPFS_REPO_BUDGET_BYTES=10GiB: %d, %v", cfg.IPFSRepoBudgetBytes, err)
+	}
+	t.Setenv("IPFS_REPO_BUDGET_BYTES", "-1")
+	if _, err = Load(); err == nil {
+		t.Fatal("a negative IPFS_REPO_BUDGET_BYTES must be refused, not read as off")
 	}
 }

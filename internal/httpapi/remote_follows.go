@@ -104,7 +104,7 @@ func (s *Server) handleCreateRemoteFollow(c echo.Context) error {
 			return &ValidationError{Fields: []FieldError{{Field: "handle", Message: "must be name@domain or an http(s) actor URL"}}}
 		case errors.Is(err, federation.ErrLocalFollowTarget):
 			return &ValidationError{Fields: []FieldError{{Field: "handle", Message: "is a local actor — follow local channels via POST /channels/{handle}/follow"}}}
-		case errors.Is(err, federation.ErrRemoteUnresolvable):
+		case errors.Is(err, federation.ErrRemoteUnresolvable), errors.Is(err, federation.ErrBlockedFollowTarget):
 			// The target is not echoed back (attacker-controlled input).
 			return &ValidationError{Fields: []FieldError{{Field: "handle", Message: "could not be resolved to a remote channel"}}}
 		case errors.Is(err, federation.ErrNotFound):

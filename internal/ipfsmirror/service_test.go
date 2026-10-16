@@ -203,6 +203,27 @@ func (r *fakeRepo) ClaimDueIPFSPins(ctx context.Context, arg sqlcgen.ClaimDueIPF
 	return out, nil
 }
 
+// ClaimDueIPFSUnpins mirrors the removals-only claim (F3).
+func (r *fakeRepo) ClaimDueIPFSUnpins(ctx context.Context, arg sqlcgen.ClaimDueIPFSUnpinsParams) ([]sqlcgen.ClaimDueIPFSUnpinsRow, error) {
+	now := time.Now().UTC()
+	var out []sqlcgen.ClaimDueIPFSUnpinsRow
+	for _, row := range r.rows {
+		if normalizeNetwork(row.Network) != normalizeNetwork(arg.Network) || row.State != "unpinning" || row.NextAttemptAt.After(now) {
+			continue
+		}
+		row.NextAttemptAt = now.Add(time.Duration(arg.LeaseSeconds) * time.Second)
+		out = append(out, sqlcgen.ClaimDueIPFSUnpinsRow{
+			ObjectKey: row.ObjectKey, MediaClass: row.MediaClass, Cid: row.Cid,
+			CarRoot: row.CarRoot, State: row.State, Attempts: row.Attempts,
+			Network: normalizeNetwork(row.Network), VideoID: row.VideoID, OwnerUserID: row.OwnerUserID,
+		})
+		if len(out) >= int(arg.BatchSize) {
+			break
+		}
+	}
+	return out, nil
+}
+
 // MarkIPFSPinned mirrors the state-guarded RETURNING query: the CID is ALWAYS
 // recorded, but state advances to 'pinned' only from a pinnable state — a row a
 // concurrent unpin flipped to 'unpinning' KEEPS 'unpinning' (the lost-update guard,
@@ -235,6 +256,9 @@ func (r *fakeRepo) MarkIPFSPinned(ctx context.Context, arg sqlcgen.MarkIPFSPinne
 func (r *fakeRepo) MarkIPFSPinFailed(ctx context.Context, arg sqlcgen.MarkIPFSPinFailedParams) error {
 	if row, ok := r.rows[arg.ObjectKey]; ok && row.State == arg.ExpectedState {
 		row.State = "failed"
+		if arg.ExpectedState == "pending" && row.Cid != "" && row.CarRoot != "" {
+			row.State = "pinned" // keeps the still-valid old root (see the SQL)
+		}
 		row.Attempts++
 		row.LastError = arg.LastError
 	}

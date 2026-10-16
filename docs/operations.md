@@ -1434,6 +1434,70 @@ bytes:
   A CID is unpinned only after a reference check confirms no other live pin shares
   it (content-address dedupe), so neither remedy can collect bytes another object
   still publishes.
+- **Capacity visibility and the unmanaged ceiling.** With the metrics endpoint on,
+  `vidra_ipfs_budget_bytes`, `vidra_ipfs_repo_used_bytes`,
+  `vidra_ipfs_filesystem_free_bytes` and `vidra_ipfs_admission_paused{reason}` (1
+  only while paused) track the mirror's disk; the worker logs `ipfs_admission_paused`
+  / `ipfs_admission_resumed` once per transition, and `/admin/system`'s `ipfs`
+  component carries the numbers and the reason in its detail. An **unmanaged** node
+  (no adopted publication policy) used to have no ceiling at all — the pin queue
+  filled the volume, which usually also holds Postgres and the media scratch. Set
+  `IPFS_REPO_BUDGET_BYTES` (default `0` = none): at that `repo/stat` RepoSize the
+  mirror stops *adding* (unpins always run) and resumes by itself when space frees.
+  It is a repo-size budget, not a free-space floor — core cannot see the node's
+  filesystem and RepoSize excludes flatfs slack — so set it **below disk size minus
+  database growth minus media scratch**. It is probed once per drain tick (over it the drain claims removals only), so a
+  tick's adds can overshoot it. Only the public node is
+  budgeted.
+- **What an HLS tree pins — playback files only.** The mirror wraps exactly the
+  files the HLS routes serve (master, variant playlists, init and media segments,
+  trick-play, the DASH manifest); it does **not** pin each rendition's progressive
+  `video.mp4` / `video-only.mp4`, the `audio.m4a`, or `vp9.webm`. The downloads are
+  never referenced by a playlist and are served from primary storage under the
+  download policy, not through the mirror. **A video pinned before this change keeps
+  its old, larger root until it is re-pinned** (a re-transcode does it, or the bulk
+  re-pin below). Once a row has moved to the new root, the superseded root's
+  blocks are freed only by a garbage collection — see "Node GC" above.
+- **Bulk re-pin to the playback-only set, then GC, THEN measure.** Deploying Tier A
+  alone barely lowers disk use: existing pins keep their old roots. Order matters:
+  1. **Re-pin.** Admin -> IPFS -> "Re-pin existing videos to the playback-only set"
+     (or `POST /api/v1/admin/ipfs/repin-playback-only`; progress at the same path
+     with `GET`). The leader's mirror worker takes it from there, 8 rows per 30 s
+     step, each through the ordinary pin path (admission, reservation, trailer check,
+     repo ceiling). It re-adds the playback-only tree, records the new root, and
+     unpins the old one only if no other row shares that CID. Blocks are
+     content-addressed, so the new root re-uses the old files' blocks and grows the
+     repo only by directory nodes. It **pauses** (status `paused`, with the reason)
+     while the node is at its budget (`IPFS_REPO_BUDGET_BYTES` / the managed
+     budget): raise the budget briefly rather than waiting on space this very job
+     frees. A row is re-added only if its recorded root is not smaller than the
+     served bytes plus half the non-served bytes in the store, so a second run (or a
+     resume after a restart) finds nothing left to do. `blocked` counts rows the
+     publication policy would not re-admit (for example `legacy` rows with
+     backfill off) - enable backfill or leave them. A video is briefly `pending`
+     while its tree is re-added; playback falls back to primary storage meanwhile.
+     Cancel (Admin -> IPFS, or `DELETE` on the same path) stops arming new rows,
+     including from `paused`; rows already armed finish. A re-add that exhausts its
+     attempts returns the row to its old root (counted `failed`, `last_error` kept),
+     never to a removal. A process crash between pinning the new root and unpinning
+     the old one leaks the old root on the node (extra disk, nothing lost); it shows
+     up as `unaccounted_node_pins` on `/admin/system` and is removed by unpinning it by hand.
+  2. **GC.** Unpinning frees nothing until the node collects: run `ipfs repo gc` (or
+     rely on `--enable-gc`, or `IPFS_GC_AFTER_UNPIN=true`) once the run reports
+     `completed`.
+  3. **Measure** (Tier A's by-construction ~5x is a computation, not a measurement):
+     - record `repo/stat` RepoSize and NumObjects and the pin count by class
+       (`GET /api/v1/ipfs/status`) in `docs/` - once before step 1 and once after 2;
+     - for one real ladder, the tree size before and after (`ipfs files stat
+       /ipfs/<root>` on the old and new root, or `byte_size` before/after) and that
+       no download asset (`video.mp4`, `video-only.mp4`, `audio.m4a`, `vp9.webm`) is
+       reachable through the gateway after the re-pin **and** the GC;
+     - measure the copy reservation factor on a real HLS tree (F1 used a synthetic
+       3-rendition ffmpeg tree and a 64 MiB sample) and re-set it with stated
+       headroom if it differs;
+     - only then compute the real multiple and decide whether Tier B is worth it.
+     `bytes_saved_estimate` in the status is the ledger's own figure; the disk figure
+     is the RepoSize delta after the GC.
 - **Probe cadence.** `IPFS_HEALTH_PROBE_INTERVAL` (default `5m`, minimum `10s`) is
   how often **every** role re-asks the gateway whether it is serving and re-compares
   the pin ledger against the node's pinset. It is the bound on how long the api

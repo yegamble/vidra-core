@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +51,7 @@ import (
 	"github.com/vidra/vidra-core/internal/uploadfinalize"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
+	"github.com/vidra/vidra-core/internal/viewerprefs"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
@@ -262,7 +264,7 @@ func (f *videoFakeRepo) ListSavedVideos(_ context.Context, a sqlcgen.ListSavedVi
 			ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
-			IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
+			IsSensitive: r.IsSensitive, SensitiveFlags: r.SensitiveFlags, SensitiveReason: r.SensitiveReason,
 		})
 	}
 	return rows, nil
@@ -317,8 +319,8 @@ func (f *videoFakeRepo) ListWatchHistory(_ context.Context, a sqlcgen.ListWatchH
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			ChannelHandle: handle, ChannelDisplayName: name,
-			IsSensitive:     r.IsSensitive,
-			SensitiveReason: r.SensitiveReason,
+			IsSensitive:    r.IsSensitive,
+			SensitiveFlags: r.SensitiveFlags, SensitiveReason: r.SensitiveReason,
 			PositionSeconds: e.m.position, WatchedAt: e.m.watchedAt,
 		})
 	}
@@ -364,7 +366,7 @@ func (f *videoFakeRepo) ListWatchHistoryInProgress(_ context.Context, a sqlcgen.
 			ChannelHandle: handle, ChannelDisplayName: name,
 			DurationSeconds: duration,
 			IsSensitive:     r.IsSensitive,
-			SensitiveReason: r.SensitiveReason,
+			SensitiveFlags:  r.SensitiveFlags, SensitiveReason: r.SensitiveReason,
 			PositionSeconds: e.m.position, WatchedAt: e.m.watchedAt,
 		})
 	}
@@ -408,7 +410,7 @@ func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.List
 				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
-				IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
+				IsSensitive: r.IsSensitive, SensitiveFlags: r.SensitiveFlags, SensitiveReason: r.SensitiveReason,
 			})
 		}
 	}
@@ -467,7 +469,7 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		ID: uuid.New(), ShortCode: fakeShortCode(), ChannelID: a.ChannelID, Title: a.Title,
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
 		Category: a.Category, Language: a.Language, License: a.License,
-		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive, SensitiveReason: a.SensitiveReason,
+		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive, SensitiveFlags: a.SensitiveFlags, SensitiveReason: a.SensitiveReason,
 		CommentsPolicy: a.CommentsPolicy, DownloadEnabled: a.DownloadEnabled,
 		PublishAfterTranscode: a.PublishAfterTranscode, Support: a.Support,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -476,7 +478,7 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		ID: v.ID, ShortCode: v.ShortCode, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
 		Privacy: v.Privacy, State: v.State, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 		Category: v.Category, Language: v.Language, License: v.License,
-		PublishAt: v.PublishAt, IsSensitive: v.IsSensitive, SensitiveReason: v.SensitiveReason,
+		PublishAt: v.PublishAt, IsSensitive: v.IsSensitive, SensitiveFlags: v.SensitiveFlags, SensitiveReason: v.SensitiveReason,
 		CommentsPolicy: v.CommentsPolicy, DownloadEnabled: v.DownloadEnabled,
 		PublishAfterTranscode: v.PublishAfterTranscode, Support: v.Support,
 		OwnerID: owner,
@@ -555,7 +557,7 @@ func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 		Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		Category: r.Category, Language: r.Language, License: r.License, PublishAt: r.PublishAt,
 		OriginallyPublishedAt: r.OriginallyPublishedAt,
-		IsSensitive:           r.IsSensitive, SensitiveReason: r.SensitiveReason,
+		IsSensitive:           r.IsSensitive, SensitiveFlags: r.SensitiveFlags, SensitiveReason: r.SensitiveReason,
 		CommentsPolicy: r.CommentsPolicy, DownloadEnabled: r.DownloadEnabled,
 		PublishAfterTranscode: r.PublishAfterTranscode, Support: r.Support,
 	}
@@ -581,7 +583,7 @@ func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, a sqlcgen.ListVid
 			out = append(out, sqlcgen.ListVideosByChannelRow{
 				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				PublishAt: r.PublishAt, IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
+				PublishAt: r.PublishAt, IsSensitive: r.IsSensitive, SensitiveFlags: r.SensitiveFlags, SensitiveReason: r.SensitiveReason,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 				// The SQL selects EXISTS(video_blocks) here. The owner view is
 				// the ONE listing that keeps a blocked row, so the fake must
@@ -648,7 +650,7 @@ func (f *videoFakeRepo) ListOwnerVideos(_ context.Context, a sqlcgen.ListOwnerVi
 		out = append(out, sqlcgen.ListOwnerVideosRow{
 			ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-			PublishAt: r.PublishAt, IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
+			PublishAt: r.PublishAt, IsSensitive: r.IsSensitive, SensitiveFlags: r.SensitiveFlags, SensitiveReason: r.SensitiveReason,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			Blocked: f.blockedFromFeed(r.ID), BlockReason: f.blockReasonFromFeed(r.ID),
 		})
@@ -740,7 +742,7 @@ func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, a sqlcgen.L
 				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
-				IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
+				IsSensitive: r.IsSensitive, SensitiveFlags: r.SensitiveFlags, SensitiveReason: r.SensitiveReason,
 			})
 		}
 	}
@@ -822,6 +824,9 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 	}
 	if a.IsSensitive != nil {
 		r.IsSensitive = *a.IsSensitive
+	}
+	if a.SensitiveFlags != nil {
+		r.SensitiveFlags = a.SensitiveFlags
 	}
 	if a.SensitiveReason != nil {
 		r.SensitiveReason = *a.SensitiveReason
@@ -1117,7 +1122,7 @@ func (f *videoFakeRepo) ListPublicVideosByIDs(_ context.Context, a sqlcgen.ListP
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			AuthorDisplayName: f.authorName(r.ChannelID), IsSensitive: r.IsSensitive,
-			SensitiveReason: r.SensitiveReason,
+			SensitiveFlags: r.SensitiveFlags, SensitiveReason: r.SensitiveReason,
 		})
 	}
 	return rows, nil
@@ -1149,8 +1154,8 @@ func (f *videoFakeRepo) ListRelatedVideosFallback(_ context.Context, a sqlcgen.L
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			AuthorDisplayName: f.authorName(r.ChannelID), IsSensitive: r.IsSensitive,
-			SensitiveReason: r.SensitiveReason,
-			SameChannel:     sameChannel,
+			SensitiveFlags: r.SensitiveFlags, SensitiveReason: r.SensitiveReason,
+			SameChannel: sameChannel,
 		})
 	}
 	if int(a.ResultLimit) < len(rows) {
@@ -1364,8 +1369,8 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 		if a.Category != nil && (r.Category == nil || *r.Category != *a.Category) {
 			continue
 		}
-		if a.Language != nil && (r.Language == nil || *r.Language != *a.Language) {
-			continue
+		if a.Language != nil && (r.Language == nil || !slices.Contains(a.Language, *r.Language)) {
+			continue // ANY of the viewer's languages, as the SQL's = ANY()
 		}
 		if a.HideSensitive && r.IsSensitive {
 			continue // sensitive-content policy "hide" mirrors the SQL filter
@@ -1666,6 +1671,7 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		WithCommentService(comment.NewService(cmRepo)),
 		WithRatingService(rating.NewService(ratingRepo)),
 		WithNotificationService(notifsvc),
+		WithViewerPrefsService(viewerprefs.NewService(&contentPrefsFake{rows: map[uuid.UUID]sqlcgen.UserContentPref{}})),
 		WithPlayerSettingsService(playersettings.NewService(newPlayerSettingsFakeRepo(),
 			playersettings.WithVideoCardPreviewsDefaultEnabledFunc(func() bool {
 				return settingssvc.Bool(instancesettings.KeyVideoCardPreviewsDefaultEnabled)
@@ -3149,4 +3155,49 @@ func (f *videoFakeRepo) GetChannelByID(_ context.Context, id uuid.UUID) (sqlcgen
 		}
 	}
 	return sqlcgen.Channel{}, errors.New("not found")
+}
+
+// Per-flag sensitive content (0173): the creator ticks kinds, any flag implies
+// is_sensitive, an unknown flag is 422, the detail view round-trips them and
+// [] clears.
+func TestVideoSensitiveFlagsRoundTrip(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	rec := postJSONAuth(srv, "/api/v1/channels/ada/videos",
+		`{"title":"flagged","privacy":"public","sensitive_flags":["sex","violent","sex"]}`, tok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var created videoView
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	if !created.IsSensitive || strings.Join(created.SensitiveFlags, ",") != "violent,sex" {
+		t.Errorf("create = sensitive %v flags %v, want true [violent sex] (canonical, deduped, implies sensitive)", created.IsSensitive, created.SensitiveFlags)
+	}
+	detail := func() videoView {
+		var v videoView
+		_ = json.Unmarshal(getVideo(srv, created.ID, tok).Body.Bytes(), &v)
+		return v
+	}
+	if d := detail(); strings.Join(d.SensitiveFlags, ",") != "violent,sex" {
+		t.Errorf("detail flags = %v", d.SensitiveFlags)
+	}
+	if u := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+created.ID, `{"sensitive_flags":["shocking"]}`, tok); u.Code != http.StatusOK {
+		t.Fatalf("update = %d; body=%s", u.Code, u.Body.String())
+	}
+	if d := detail(); strings.Join(d.SensitiveFlags, ",") != "shocking" || !d.IsSensitive {
+		t.Errorf("after update = sensitive %v flags %v, want true [shocking]", d.IsSensitive, d.SensitiveFlags)
+	}
+	if u := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+created.ID, `{"sensitive_flags":[]}`, tok); u.Code != http.StatusOK {
+		t.Fatalf("clear = %d", u.Code)
+	}
+	if d := detail(); len(d.SensitiveFlags) != 0 || d.SensitiveFlags == nil {
+		t.Errorf("after clear flags = %#v, want []", d.SensitiveFlags)
+	}
+	if bad := postJSONAuth(srv, "/api/v1/channels/ada/videos", `{"title":"x","sensitive_flags":["gore"]}`, tok); bad.Code != http.StatusUnprocessableEntity {
+		t.Errorf("unknown flag create = %d, want 422", bad.Code)
+	}
+	if bad := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+created.ID, `{"sensitive_flags":["gore"]}`, tok); bad.Code != http.StatusUnprocessableEntity {
+		t.Errorf("unknown flag update = %d, want 422", bad.Code)
+	}
 }

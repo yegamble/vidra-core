@@ -16,6 +16,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/authoredremotecomment"
 	"github.com/vidra/vidra-core/internal/block"
+	"github.com/vidra/vidra-core/internal/blocklistsub"
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/channelsync"
@@ -36,7 +37,10 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/peertubearchive"
+	"github.com/vidra/vidra-core/internal/peertubefollows"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
+	"github.com/vidra/vidra-core/internal/playbackstats"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
@@ -49,6 +53,7 @@ import (
 	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
+	"github.com/vidra/vidra-core/internal/viewerprefs"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
@@ -76,7 +81,10 @@ func fullRouteOptions() []Option {
 		WithRatingService(rating.NewService(nil)),
 		WithNotificationService(notification.NewService(nil)),
 		WithPlayerSettingsService(playersettings.NewService(nil)),
+		WithViewerPrefsService(viewerprefs.NewService(nil)),
 		WithPlaylistService(playlist.NewService(nil)),
+		WithPeerTubeArchiveImporter(&peertubearchive.Importer{}),
+		WithPeerTubeFollowStatus(&peertubefollows.Service{}),
 		WithModerationService(moderation.NewService(nil)),
 		WithMuteService(mute.NewService(nil)),
 		WithBlockService(block.NewService(nil)),
@@ -94,6 +102,7 @@ func fullRouteOptions() []Option {
 		WithChannelSyncService(channelsync.NewService(nil, nil, nil)),
 		WithCaptionJobService(captionjob.NewService(nil, nil, nil)),
 		WithInstanceModerationService(instancemod.NewService(nil)),
+		WithBlocklistSubscriptionService(blocklistsub.NewService(nil, nil, nil)),
 		WithSettingsService(instancesettings.NewService(nil, instancesettings.Defaults{})),
 		// Admin-configurable outbound mail: always part of the contract. cmd/api
 		// wires it unconditionally (the document is what decides whether mail is
@@ -118,6 +127,7 @@ func fullRouteOptions() []Option {
 		// qoe_collection_enabled setting gates collection at request time
 		// rather than making the route come and go.
 		WithQoEService(qoe.NewService(nil, nil), nil, nil),
+		WithPlaybackStats(playbackstats.NewService(nil)),
 		WithPeerTubeImportService(peertubeimport.NewService(nil)),
 		// Mounts the REST remote-follow routes. The AP root routes stay excluded
 		// from the drift guard: they additionally require cfg.FederationEnabled,
