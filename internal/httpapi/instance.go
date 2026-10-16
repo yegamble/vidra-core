@@ -12,6 +12,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/profileimage"
@@ -271,6 +272,9 @@ type instanceResponse struct {
 	// frontend can render "continue with …" buttons pointing at
 	// GET /api/v1/auth/oauth/{provider}. Empty array when OAuth is off.
 	OAuthProviders []string `json:"oauth_providers"`
+	// OAuthProviderDetails is the same list with each provider's display name
+	// (admin-managed providers can set one; otherwise it is the name).
+	OAuthProviderDetails []auth.OAuthProviderLabel `json:"oauth_provider_details"`
 	// ATProtoLogin reports whether ATProto identity login (Bluesky / any PDS) is
 	// enabled (ATPROTO_LOGIN_ENABLED), so the frontend can show the "sign in with
 	// a handle" affordance. Independent of the OAuth providers above.
@@ -362,6 +366,16 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 		regEnabled = false
 		regReason = "user_limit_reached"
 	}
+	// The EFFECTIVE OIDC providers (environment merged with admin-managed
+	// rows) when the service is mounted; the environment list otherwise.
+	names, labels := s.cfg.OAuthProviderNames(), []auth.OAuthProviderLabel{}
+	if s.oauthsvc != nil {
+		names, labels = s.oauthsvc.ProviderNames(), s.oauthsvc.ProviderLabels()
+	} else {
+		for _, n := range names {
+			labels = append(labels, auth.OAuthProviderLabel{Name: n, DisplayName: n})
+		}
+	}
 	return instanceResponse{
 		Name:                                  s.settingString(instancesettings.KeyInstanceName, s.cfg.InstanceName),
 		Description:                           s.settingString(instancesettings.KeyInstanceDescription, s.cfg.InstanceDescription),
@@ -373,7 +387,8 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 		RegistrationRequiresEmailVerification: s.registrationRequiresEmailVerification(),
 		RegistrationMinimumAge:                s.registrationMinimumAge(),
 		OwnerClaimPending:                     s.ownerClaimPending(ctx),
-		OAuthProviders:                        s.cfg.OAuthProviderNames(),
+		OAuthProviders:                        names,
+		OAuthProviderDetails:                  labels,
 		ATProtoLogin:                          s.atprotologinsvc != nil && s.atprotologinsvc.Enabled(),
 		FederationEnabled:                     s.cfg.FederationEnabled,
 		TermsURL:                              s.settingString(instancesettings.KeyTermsURL, s.cfg.InstanceTermsURL),

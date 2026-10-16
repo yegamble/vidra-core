@@ -395,6 +395,27 @@ func (s *OAuthService) ProviderNames() []string {
 	return names
 }
 
+// OAuthProviderLabel is one active provider as a sign-in button shows it.
+type OAuthProviderLabel struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+}
+
+// ProviderLabels returns the active providers in ProviderNames order, with the
+// display name defaulting to the name. Never nil.
+func (s *OAuthService) ProviderLabels() []OAuthProviderLabel {
+	set := s.set.Load()
+	out := make([]OAuthProviderLabel, 0, len(set.list))
+	for _, p := range set.list {
+		label := p.DisplayName
+		if label == "" {
+			label = p.Name
+		}
+		out = append(out, OAuthProviderLabel{Name: p.Name, DisplayName: label})
+	}
+	return out
+}
+
 // Enabled reports whether a provider name is configured.
 func (s *OAuthService) Enabled(name string) bool {
 	_, _, err := s.lookup(name)

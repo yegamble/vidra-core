@@ -20357,7 +20357,7 @@ components:
       required: [name, description, short_description, software, registration_enabled,
                  registration_requires_approval, registration_disabled_reason,
                  registration_requires_email_verification, registration_minimum_age,
-                 owner_claim_pending, oauth_providers, federation_enabled,
+                 owner_claim_pending, oauth_providers, oauth_provider_details, federation_enabled,
                  terms_url, privacy_url, contact_email, default_language, categories,
                  moderator_languages, server_country, is_sensitive,
                  sensitive_content_policy, contact_form_enabled, social_links, features,
@@ -20491,6 +20491,18 @@ components:
             "continue with <provider>" button per entry, navigating (top-level)
             to GET /api/v1/auth/oauth/{provider}. Empty when OAuth login is off.
           example: [google]
+        oauth_provider_details:
+          type: array
+          description: >-
+            The same providers as `oauth_providers`, in the same order, with
+            the label a sign-in button shows (admin-managed providers can set
+            one; otherwise it is the name).
+          items:
+            type: object
+            required: [name, display_name]
+            properties:
+              name: {type: string}
+              display_name: {type: string}
         atproto_login:
           type: boolean
           description: >-
