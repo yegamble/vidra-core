@@ -3411,8 +3411,13 @@ paths:
         channels (created when the handle is free and valid here; a handle the
         caller already owns counts as existing, another owner's is skipped),
         regular playlists (matched by title, so a re-import never duplicates;
-        items are not resolved and are counted in playlist_items_skipped), and
-        the autoplay-next setting. Videos, likes, dislikes, comments, watch
+        each exported item is resolved WITHOUT network access to a video this
+        instance already holds - by uuid (its own, or an imported video's
+        PeerTube source uuid) or /v/ short code - and added through the
+        playlist service when that video is public, published and not blocked;
+        everything else is counted in playlist_items_skipped with its reason in
+        skipped_sections, and a re-import fills items into an existing playlist
+        without duplicating), and the autoplay-next setting. Videos, likes, dislikes, comments, watch
         history, blocklists and followers are NOT imported yet and are counted
         under skipped_sections. The accounts in following.json (up to 1000) are
         queued and followed in the background through the same path as
@@ -25866,6 +25871,7 @@ components:
         - playlists_existing
         - playlists_skipped
         - playlist_items_skipped
+        - playlist_items_added
         - settings_applied
         - skipped_sections
         - channels_mapped
@@ -25909,7 +25915,12 @@ components:
         playlists_created: {type: integer}
         playlists_existing: {type: integer}
         playlists_skipped: {type: integer}
-        playlist_items_skipped: {type: integer}
+        playlist_items_skipped:
+          type: integer
+          description: "Items not added; skipped_sections.playlist_items_not_addable (no such video, or one that is not public and published, deliberately indistinguishable) and playlist_items_over_cap give the reasons."
+        playlist_items_added:
+          type: integer
+          description: "Items resolved to a local video and present in the playlist (a re-import re-confirms them)."
         settings_applied: {type: integer}
         skipped_sections:
           type: object
