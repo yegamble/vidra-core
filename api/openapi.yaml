@@ -16225,6 +16225,275 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/oidc-providers:
+    get:
+      operationId: listOIDCProviders
+      summary: List admin-managed OIDC login providers (admin)
+      description: >-
+        The OpenID Connect providers stored in the database, plus the
+        environment providers (OAUTH_PROVIDERS) they may override — name and
+        issuer only. A stored row REPLACES the environment provider of the
+        same name; a disabled row switches that name off.
+
+
+        NEVER RETURNS A CLIENT SECRET: each row reports `secret_configured`
+        and `secret_status` (`undecryptable` when the KEK changed; such a
+        provider is offered to nobody). `secrets_available` is false when this
+        deployment has no key-encryption key, in which case a save carrying a
+        secret is refused with 409.
+
+
+        Restricted to admins (moderators get 403).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The stored providers and the environment list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCProviderList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createOIDCProvider
+      summary: Add an OIDC login provider (admin)
+      description: >-
+        Adds a provider. `name` is the URL segment
+        (`/api/v1/auth/oauth/{name}`) and the key linked accounts are matched
+        by, so it is immutable, and it is refused when accounts are already
+        linked through that name from a different issuer (only the issuer of
+        an environment provider of the same name may be re-used). Discovery,
+        JWKS and token calls for this provider go through the SSRF guard;
+        `issuer_url` must be https on a public host, and every endpoint the
+        discovery document names must be https, unless
+        OIDC_ALLOW_PRIVATE_ISSUERS is on. A name configured in the
+        environment may be overridden only with that provider's issuer. `client_secret` is required and stored
+        sealed.
+
+
+        Takes effect immediately here and within one settings-poll interval
+        across the rest of the fleet. Audited as `admin.oidc_provider.create`
+        with the provider name; never a value.
+
+
+        Restricted to admins, and requires a FRESH credential — exactly one of
+        `current_password` or `step_up_token` — because a login provider
+        decides who can sign in.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OIDCProviderCreateRequest"
+      responses:
+        "201":
+          description: The created provider.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCProvider"
+        "400":
+          description: Malformed body, or a field the document does not define.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            The caller is not an admin; `current_password` is incorrect; or
+            `step_up_required`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            A provider with this name exists, or code
+            `oidc_secrets_key_missing` — no key-encryption key to seal the
+            secret with.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Invalid fields (`fields` names them: `name`, `issuer_url`,
+            `client_id`, `client_secret`, `scopes`, `allowed_email_domains`,
+            `display_name`), or both proofs were sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many credential attempts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/oidc-providers/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      operationId: updateOIDCProvider
+      summary: Update an OIDC login provider (admin)
+      description: >-
+        Replaces the mutable fields. `issuer_url` cannot change (subjects are
+        only unique within one issuer): omit it or repeat the stored value,
+        anything else is 422. `client_secret` is write-only: omit it to keep
+        the stored secret, send a value to replace it. `enabled` and
+        `auto_provision` keep their stored values when omitted. Audited as
+        `admin.oidc_provider.update` with the changed field NAMES and whether
+        the secret was replaced. Same fresh-credential rule as create.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OIDCProviderUpdateRequest"
+      responses:
+        "200":
+          description: The updated provider.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCProvider"
+        "400":
+          description: Malformed body, or a field the document does not define.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            The caller is not an admin; `current_password` is incorrect; or
+            `step_up_required`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No provider with this name is stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Code `oidc_secrets_key_missing`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid fields, an issuer change, or both proofs sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many credential attempts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteOIDCProvider
+      summary: Remove an OIDC login provider (admin)
+      description: >-
+        Removes a stored provider and its sealed secret. Linked identities are
+        kept. A provider whose name is also configured in the environment
+        (OAUTH_PROVIDERS) cannot be deleted — disable or edit it instead —
+        because deleting it would restore the environment provider without
+        the stored row's restrictions. Requires a fresh credential, like the
+        other writes. Audited as `admin.oidc_provider.delete`.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_password: {type: string, writeOnly: true}
+                step_up_token: {type: string, writeOnly: true}
+      responses:
+        "204":
+          description: The provider was removed.
+        "400":
+          description: Malformed body, or a field the document does not define.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            The caller is not an admin; `current_password` is incorrect; or
+            `step_up_required`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No provider with this name is stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The provider overrides an environment provider (`fields` names
+            `name`), or both proofs were sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many credential attempts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/mail/test:
     post:
       operationId: sendTestMail
@@ -27281,6 +27550,77 @@ components:
                 description: >-
                   True for the process that served this request, so an operator
                   reading a three-row list knows which one is answering.
+    OIDCProvider:
+      type: object
+      description: An admin-managed OIDC provider. Carries no secret.
+      required: [name, display_name, issuer_url, client_id, scopes, enabled, auto_provision, allowed_email_domains, secret_configured, secret_status, updated_at]
+      properties:
+        name: {type: string, example: corp-sso}
+        display_name: {type: string, description: "Sign-in button label; empty means the name."}
+        issuer_url: {type: string, format: uri}
+        client_id: {type: string}
+        scopes:
+          type: array
+          items: {type: string}
+          description: "Requested scopes; empty means openid email profile. openid is always added."
+        enabled: {type: boolean}
+        auto_provision:
+          type: boolean
+          description: "false: only already-linked identities sign in; an unknown subject gets oauth_error=signup_disabled."
+        allowed_email_domains:
+          type: array
+          items: {type: string}
+          description: "Non-empty: a new account is created only for a VERIFIED email in one of these domains (exact match), otherwise oauth_error=email_domain_not_allowed. Linked identities are unaffected."
+        secret_configured: {type: boolean}
+        secret_status:
+          type: string
+          enum: [ok, undecryptable]
+        updated_at: {type: string, format: date-time}
+    OIDCProviderList:
+      type: object
+      required: [providers, environment, secrets_available]
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/OIDCProvider"
+        environment:
+          type: array
+          items:
+            type: object
+            required: [name, issuer_url, overridden]
+            properties:
+              name: {type: string}
+              issuer_url: {type: string}
+              overridden: {type: boolean, description: "A stored provider with this name replaces it."}
+        secrets_available: {type: boolean, description: "Whether a key-encryption key exists to seal a client secret."}
+    OIDCProviderUpdateRequest:
+      type: object
+      required: [client_id]
+      properties:
+        display_name: {type: string, maxLength: 64}
+        issuer_url: {type: string, description: "Optional; must equal the stored issuer."}
+        client_id: {type: string, maxLength: 255}
+        client_secret: {type: string, writeOnly: true, maxLength: 1024, description: "Omit to keep the stored secret."}
+        scopes:
+          type: array
+          maxItems: 20
+          items: {type: string}
+        enabled: {type: boolean}
+        auto_provision: {type: boolean}
+        allowed_email_domains:
+          type: array
+          maxItems: 50
+          items: {type: string}
+        current_password: {type: string, writeOnly: true}
+        step_up_token: {type: string, writeOnly: true}
+    OIDCProviderCreateRequest:
+      allOf:
+        - $ref: "#/components/schemas/OIDCProviderUpdateRequest"
+        - type: object
+          required: [name, issuer_url, client_id, client_secret]
+          properties:
+            name: {type: string, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$", maxLength: 40}
     MailConfigState:
       type: object
       description: >-

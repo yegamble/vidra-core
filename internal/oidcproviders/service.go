@@ -107,6 +107,9 @@ func NewService(repo Repository, cipher *secretbox.Cipher, sink Sink, opts ...Op
 	return s
 }
 
+// SecretsAvailable reports whether a client secret can be stored (a KEK exists).
+func (s *Service) SecretsAvailable() bool { return s.cipher != nil }
+
 // Load reads every row and publishes the set. Boot loader and settingsversion
 // reload hook alike.
 func (s *Service) Load(ctx context.Context) error {

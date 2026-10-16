@@ -782,6 +782,7 @@ func run() error {
 	if err := oidcprovsvc.Load(startCtx); err != nil {
 		return fmt.Errorf("load oidc providers: %w", err)
 	}
+	opts = append(opts, httpapi.WithOIDCProviderService(oidcprovsvc))
 
 	// The per-user channel cap (max_channels_per_user, config-parity W8) is
 	// resolved per create from the settings overlay; 0 (the default) = unlimited.
