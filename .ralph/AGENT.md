@@ -1,7 +1,7 @@
 # Agent Build Instructions — vidra-core (Go backend)
 
 > Scope: the `vidra-core` Go backend only. Run all commands from the `vidra-core/`
-> project root. Do not touch the sibling `../vidra-user/` project.
+> repository root. Cross-repo work follows `.ralph/PROMPT.md` sequencing.
 
 ## Stack
 Go · Echo · PostgreSQL (pg_trgm, uuid-ossp) · pgx · sqlc · Redis · Docker.
@@ -492,10 +492,14 @@ migration; add a new one.
 Run `make help` for the full target list.
 
 ## Key learnings
-- Backend lives in `vidra-core/` (monorepo subdir). The module path is
+- Vidra has four independent repositories: meta `vidra`, `vidra-core`,
+  `vidra-user`, and `vidra-search`; each owns its Git history,
+  `.github/workflows/`, and `ci-required`. The core module path is
   `github.com/vidra/vidra-core`.
-- CI workflows live at the monorepo root `../.github/workflows/` (GitHub ignores
-  workflows in subdirectories); scope backend jobs with `vidra-core/**` path filters.
+- This checkout owns `.github/workflows/`; there is no shared parent workflow
+  directory. Read each affected repo's `AGENTS.md` and merge dependent PRs in
+  search → core → user → meta order. Keep cross-repo slices open until all merge
+  and the meta completeness check passes; record its output.
 - Redis is wired through `internal/store` (combined open) and/or `internal/cache`;
   Redis is never the durable source of truth.
 - **Outbound fetches of user-supplied URLs MUST go through `internal/urlsafety`**
