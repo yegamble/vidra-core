@@ -782,6 +782,7 @@ func run() error {
 	if err := oidcprovsvc.Load(startCtx); err != nil {
 		return fmt.Errorf("load oidc providers: %w", err)
 	}
+	opts = append(opts, httpapi.WithOIDCProviderService(oidcprovsvc))
 
 	// The per-user channel cap (max_channels_per_user, config-parity W8) is
 	// resolved per create from the settings overlay; 0 (the default) = unlimited.
@@ -1734,6 +1735,7 @@ func run() error {
 	opts = append(opts, httpapi.WithPlaylistService(playlistsvc))
 	ptImporter := &peertubearchive.Importer{
 		Channels: channelsvc, Playlists: playlistsvc, PlayerSettings: playersettingssvc,
+		Videos: videosvc,
 		Lock: func(ctx context.Context, userID uuid.UUID) (func(), error) {
 			return lockUserImport(ctx, db.Pool, userID)
 		},
@@ -1795,6 +1797,7 @@ func run() error {
 	opts = append(opts, httpapi.WithStorageMigrationService(storagemigrationsvc))
 
 	moderationsvc := moderation.NewService(db.Queries())
+	ptImporter.Blocks = moderationsvc // playlist items: a blocked video is not addable
 	opts = append(opts, httpapi.WithModerationService(moderationsvc))
 
 	mutesvc := mute.NewService(db.Queries())

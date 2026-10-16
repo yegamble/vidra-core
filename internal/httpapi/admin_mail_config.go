@@ -83,7 +83,7 @@ func (s *Server) handleUpdateMailConfig(c echo.Context) error {
 		return err
 	}
 	var in mailConfigPutRequest
-	if err := decodeMailConfigBody(c, &in); err != nil {
+	if err := decodeAdminDocumentBody(c, &in); err != nil {
 		return err
 	}
 	if err := s.confirmMailConfigWriter(c, callerID, in); err != nil {
@@ -132,18 +132,25 @@ type mailConfigPutRequest struct {
 // (403 step_up_required; wrong password 403). Refusals are audited by reason
 // code, never by value.
 func (s *Server) confirmMailConfigWriter(c echo.Context, callerID uuid.UUID, in mailConfigPutRequest) error {
-	stepUp := stepUpTokenFor(c, in.StepUpToken)
+	return s.confirmFreshAdminWriter(c, callerID, observability.ActionAdminMailConfigUpdate, in.CurrentPassword, in.StepUpToken)
+}
+
+// confirmFreshAdminWriter is the proof-of-presence gate shared by the admin
+// documents that hold a credential (mail config, OIDC providers). Refusals are
+// audited under action by reason code.
+func (s *Server) confirmFreshAdminWriter(c echo.Context, callerID uuid.UUID, action, password, stepUpToken string) error {
+	stepUp := stepUpTokenFor(c, stepUpToken)
 	refuse := func(reason string, err error) error {
-		s.audit(c, observability.ActionAdminMailConfigUpdate, observability.ResultFailure, callerID.String(), reason)
+		s.audit(c, action, observability.ResultFailure, callerID.String(), reason)
 		return err
 	}
 	switch {
-	case in.CurrentPassword == "" && stepUp == "":
+	case password == "" && stepUp == "":
 		return refuse("step_up_required", &StepUpRequiredError{Providers: s.authsvc.StepUpProvidersFor(c.Request().Context(), callerID)})
-	case in.CurrentPassword != "" && stepUp != "":
-		return refuse("ambiguous_proof", exactlyOneProof(in.CurrentPassword, stepUp))
+	case password != "" && stepUp != "":
+		return refuse("ambiguous_proof", exactlyOneProof(password, stepUp))
 	}
-	err := s.authsvc.ConfirmFreshCredential(c.Request().Context(), callerID, in.CurrentPassword, sessionIDFromContext(c), stepUp)
+	err := s.authsvc.ConfirmFreshCredential(c.Request().Context(), callerID, password, sessionIDFromContext(c), stepUp)
 	switch {
 	case err == nil:
 		return nil
@@ -234,18 +241,19 @@ func (s *Server) handleDeleteMailConfig(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// decodeMailConfigBody reads the PUT body under a hard size cap and refuses
+// decodeAdminDocumentBody reads an admin configuration body (mail config, OIDC
+// providers) under a hard size cap and refuses
 // unknown fields. DisallowUnknownFields matters more here than on most bodies:
 // a panel that mis-spells `password` would otherwise silently save a
 // configuration with no credential and report success.
-func decodeMailConfigBody(c echo.Context, out any) error {
+func decodeAdminDocumentBody(c echo.Context, out any) error {
 	d := json.NewDecoder(http.MaxBytesReader(c.Response(), c.Request().Body, maxMailConfigBody))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "malformed or invalid mail configuration document")
+		return echo.NewHTTPError(http.StatusBadRequest, "malformed or invalid configuration document")
 	}
 	if d.Decode(new(any)) != io.EOF {
-		return echo.NewHTTPError(http.StatusBadRequest, "malformed or invalid mail configuration document")
+		return echo.NewHTTPError(http.StatusBadRequest, "malformed or invalid configuration document")
 	}
 	return nil
 }

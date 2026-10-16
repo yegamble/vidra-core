@@ -94,8 +94,9 @@ If docker is unavailable, say so plainly in the PR — and ALWAYS run
 
 ## Hard rules
 
-1. **One small PR per session** (< 300 changed lines). List every other
-   finding in the PR body under "Also found (not fixed here)".
+1. **One small PR per concern** (< 300 changed lines). A cross-repo slice
+   may need several linked PRs; keep it open until every required dependency
+   is merged and verified. Record unrelated findings separately.
 2. **TDD**: failing test first. House test idioms: in-memory fake repos that
    mirror SQL semantics (duplicates return `pgx.ErrNoRows` where
    `ON CONFLICT DO NOTHING` applies); audit events proven via the capture

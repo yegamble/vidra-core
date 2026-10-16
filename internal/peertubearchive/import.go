@@ -35,6 +35,7 @@ type Channels interface {
 type Playlists interface {
 	Create(ctx context.Context, ownerID uuid.UUID, in playlist.CreateInput) (sqlcgen.Playlist, error)
 	ListOwn(ctx context.Context, ownerID uuid.UUID, limit, offset int32) ([]sqlcgen.ListPlaylistsByOwnerRow, int64, error)
+	AddItem(ctx context.Context, ownerID, playlistID, videoID uuid.UUID) error
 }
 type PlayerSettings interface {
 	Update(ctx context.Context, userID uuid.UUID, patch playersettings.Patch) (playersettings.Settings, error)
@@ -50,6 +51,10 @@ type Importer struct {
 	Channels       Channels
 	Playlists      Playlists
 	PlayerSettings PlayerSettings // optional
+	// Videos, when set, resolves playlist items to videos already in the
+	// database (never the network). Without it every item is counted skipped.
+	Videos Videos
+	Blocks Blocks // optional moderator-block check for items
 	// Follows, when set, queues the export's following.json handles for a
 	// background follow (see the peertubefollows package).
 	Follows FollowQueue
@@ -62,15 +67,18 @@ type Importer struct {
 // Summary is what an import did. SkippedSections counts archive entries of
 // sections slice 1 does not import (videos, likes, comments, ...).
 type Summary struct {
-	ChannelsCreated      int            `json:"channels_created"`
-	ChannelsExisting     int            `json:"channels_existing"`
-	ChannelsSkipped      int            `json:"channels_skipped"`
-	PlaylistsCreated     int            `json:"playlists_created"`
-	PlaylistsExisting    int            `json:"playlists_existing"`
-	PlaylistsSkipped     int            `json:"playlists_skipped"`
-	PlaylistItemsSkipped int            `json:"playlist_items_skipped"`
-	SettingsApplied      int            `json:"settings_applied"`
-	SkippedSections      map[string]int `json:"skipped_sections"`
+	ChannelsCreated      int `json:"channels_created"`
+	ChannelsExisting     int `json:"channels_existing"`
+	ChannelsSkipped      int `json:"channels_skipped"`
+	PlaylistsCreated     int `json:"playlists_created"`
+	PlaylistsExisting    int `json:"playlists_existing"`
+	PlaylistsSkipped     int `json:"playlists_skipped"`
+	PlaylistItemsSkipped int `json:"playlist_items_skipped"`
+	// PlaylistItemsAdded counts items resolved to a video and present in the
+	// playlist; a re-import re-confirms them (adding is idempotent).
+	PlaylistItemsAdded int            `json:"playlist_items_added"`
+	SettingsApplied    int            `json:"settings_applied"`
+	SkippedSections    map[string]int `json:"skipped_sections"`
 	// ChannelsMapped lists every channel whose PeerTube name was rewritten into
 	// vidra's handle alphabet (original -> handle actually used).
 	ChannelsMapped []ChannelMapping `json:"channels_mapped"`
@@ -244,7 +252,8 @@ func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (S
 	}
 
 	if len(a.Playlists) > 0 {
-		have := map[string]bool{}
+		have := map[string]uuid.UUID{}
+		budget := maxItemsPerImport
 		// Every page, so a title past the first page is still recognised.
 		for offset := int32(0); ; offset += ownPageSize {
 			rows, _, err := im.Playlists.ListOwn(ctx, userID, ownPageSize, offset)
@@ -252,7 +261,7 @@ func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (S
 				return sum, err
 			}
 			for _, r := range rows {
-				have[strings.ToLower(r.Title)] = true
+				have[strings.ToLower(r.Title)] = r.ID
 			}
 			if len(rows) < ownPageSize {
 				break
@@ -268,8 +277,12 @@ func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (S
 				sum.PlaylistsSkipped++
 				continue
 			}
-			if have[strings.ToLower(title)] {
+			if id, ok := have[strings.ToLower(title)]; ok {
 				sum.PlaylistsExisting++
+				// An earlier import (or slice 1) may have skipped the items.
+				if err := im.importItems(ctx, userID, id, p, &budget, &sum); err != nil {
+					return sum, err
+				}
 				continue
 			}
 			in := playlist.CreateInput{
@@ -279,13 +292,15 @@ func (im *Importer) Import(ctx context.Context, userID uuid.UUID, a *Archive) (S
 			if id, ok := ids[strings.ToLower(p.ChannelName)]; ok && id != uuid.Nil {
 				in.ChannelID = &id
 			}
-			if _, err := im.Playlists.Create(ctx, userID, in); err != nil {
+			created, err := im.Playlists.Create(ctx, userID, in)
+			if err != nil {
 				return sum, err
 			}
-			have[strings.ToLower(title)] = true
+			have[strings.ToLower(title)] = created.ID
 			sum.PlaylistsCreated++
-			// Items reference videos by URL; resolving them is slice 2.
-			sum.PlaylistItemsSkipped += p.Elements
+			if err := im.importItems(ctx, userID, created.ID, p, &budget, &sum); err != nil {
+				return sum, err
+			}
 		}
 	}
 

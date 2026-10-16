@@ -177,6 +177,13 @@ const (
 	// describable in an audit trail without being held by one.
 	ActionAdminMailConfigUpdate = "admin.mail_config.update"
 	ActionAdminMailConfigReset  = "admin.mail_config.reset"
+	// ActionAdminOIDCProviderCreate / Update / Delete record an admin managing
+	// an OpenID Connect login provider (migration 0182). Metadata: the provider
+	// NAME, the changed field names and whether the client secret was replaced
+	// — never a value, the secret's length or its prefix.
+	ActionAdminOIDCProviderCreate = "admin.oidc_provider.create"
+	ActionAdminOIDCProviderUpdate = "admin.oidc_provider.update"
+	ActionAdminOIDCProviderDelete = "admin.oidc_provider.delete"
 	// ActionAdminInstanceAssetUpdate / Delete record an admin uploading or
 	// removing an instance branding image (avatar/banner/logo slots,
 	// config-parity W1). Reason carries the asset kind only.
