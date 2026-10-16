@@ -47,8 +47,10 @@ type fakeFedRepo struct {
 	outboxVideos     []sqlcgen.ListChannelOutboxVideosRow
 	// A29 remediation: the rows the dereferenceable object ids read.
 	videosByID map[uuid.UUID]sqlcgen.GetVideoByIDRow
-	commentsBy map[uuid.UUID]sqlcgen.Comment
-	tombstones map[uuid.UUID]time.Time
+	// importedVideos maps a PeerTube source UUID to its imported local video.
+	importedVideos map[uuid.UUID]uuid.UUID
+	commentsBy     map[uuid.UUID]sqlcgen.Comment
+	tombstones     map[uuid.UUID]time.Time
 	// blockedDomains is the admin instance blocklist the inbox consults.
 	blockedDomains map[string]bool
 	// remoteBlocks are per-viewer blocks of a remote ACTOR (migration 0138),
@@ -133,6 +135,17 @@ func (f fakeFedRepo) InsertRemoteFollow(_ context.Context, arg sqlcgen.InsertRem
 func (f fakeFedRepo) DeleteRemoteFollow(_ context.Context, arg sqlcgen.DeleteRemoteFollowParams) error {
 	delete(f.remoteFollows, arg.RemoteActorUrl)
 	return nil
+}
+
+// GetVideoIDByLegacyUUID mirrors "WHERE id = $1 OR peertube_uuid = $1".
+func (f fakeFedRepo) GetVideoIDByLegacyUUID(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	if _, ok := f.videosByID[id]; ok {
+		return id, nil
+	}
+	if v, ok := f.importedVideos[id]; ok {
+		return v, nil
+	}
+	return uuid.UUID{}, pgx.ErrNoRows
 }
 
 // Inbound Move (0167): this world has no local follows of remote actors.
@@ -433,6 +446,7 @@ func newFedRepoFor(_ *config.Config) fakeFedRepo {
 		remoteFollows:       map[string]sqlcgen.InsertRemoteFollowParams{},
 		deliveries:          map[string]sqlcgen.EnqueueDeliveryParams{},
 		videosByID:          map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
+		importedVideos:      map[uuid.UUID]uuid.UUID{},
 		commentsBy:          map[uuid.UUID]sqlcgen.Comment{},
 		tombstones:          map[uuid.UUID]time.Time{},
 		blockedDomains:      map[string]bool{},

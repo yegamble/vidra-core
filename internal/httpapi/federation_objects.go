@@ -116,6 +116,36 @@ func (s *Server) handleVideoObject(c echo.Context) error {
 	)
 }
 
+// handleLegacyVideoObject answers GET /videos/watch/{uuid}: the object id a
+// video imported from PeerTube carried there (still held by every server that
+// federated with the source, and the id their replies and fetches arrive with),
+// or this instance's own pre-canonical form. It REDIRECTS rather than serving a
+// second copy, so the object keeps one identity; Mastodon and PeerTube follow it
+// and take the id the document states. Only a video that is served at all is
+// redirected to — anything else is the 404 the canonical id would answer.
+func (s *Server) handleLegacyVideoObject(c echo.Context) error {
+	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
+		return echo.NewHTTPError(http.StatusNotAcceptable, "objects are served as application/activity+json")
+	}
+	legacy, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound)
+	}
+	ctx := c.Request().Context()
+	id, err := s.fedsvc.LegacyVideoID(ctx, legacy)
+	if err == nil {
+		_, err = s.fedsvc.VideoObject(ctx, id)
+	}
+	switch {
+	case errors.Is(err, federation.ErrNotFound):
+		return echo.NewHTTPError(http.StatusNotFound)
+	case err != nil && !errors.Is(err, federation.ErrGone):
+		return err
+	}
+	c.Response().Header().Set("Cache-Control", apObjectCacheControl)
+	return c.Redirect(http.StatusMovedPermanently, s.cfg.PublicBaseURL+"/videos/"+id.String())
+}
+
 // handleNoteObject serves GET /comments/{uuid} as ActivityPub — the Note id a
 // remote reply threads against.
 func (s *Server) handleNoteObject(c echo.Context) error {

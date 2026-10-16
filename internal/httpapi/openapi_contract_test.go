@@ -308,6 +308,9 @@ var knownNonContractRoutes = map[string]string{
 	// representations of /videos/{id} in one generated client.
 	"GET /videos/{id}":   "ActivityPub object id",
 	"GET /comments/{id}": "ActivityPub object id",
+	// A video's PRE-canonical object id — this instance's older form, or a
+	// PeerTube-imported video's id at the source. AP only; 301s to /videos/{id}.
+	"GET /videos/watch/{id}": "ActivityPub legacy object id (redirect)",
 	// The object id for a locally-authored comment on a remote video (0147). AP
 	// JSON only (406 otherwise), on a frontend-owned path reached here only via the
 	// proxy's content negotiation — the same reasoning as /comments/{id}.

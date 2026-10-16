@@ -299,7 +299,9 @@ func (s *Service) resolveNoteTarget(ctx context.Context, inReplyTo string) (uuid
 	if inReplyTo == "" {
 		return uuid.UUID{}, pgtype.UUID{}, false, nil
 	}
-	if vid, ok := s.localVideoID(inReplyTo); ok {
+	if vid, ok, err := s.localVideoID(ctx, inReplyTo); err != nil {
+		return uuid.UUID{}, pgtype.UUID{}, false, err
+	} else if ok {
 		ok, err := s.videoIsPubliclyVisible(ctx, vid)
 		return vid, pgtype.UUID{}, ok, err
 	}
@@ -382,27 +384,44 @@ func (s *Service) flagRemoteComment(ctx context.Context, commentID uuid.UUID, bo
 	_, _ = s.flagger.FlagComment(ctx, commentID, body)
 }
 
-// localVideoID parses video object URLs we mint back to the video id.
+// localVideoID parses video object URLs we answer for back to the video id.
 //
-// Two forms are accepted. The legacy prefix (/videos/watch/<uuid>) is tried
-// first and kept forever so replies to videos federated under the old format
-// still resolve — those AP ids live in remote servers' databases, out of our
-// reach. New emissions use the canonical form (/videos/<uuid>): the same URL
-// RSS, the sitemap and oEmbed already advertise and the only one the frontend
-// actually routes (the legacy path was never routed — every such link 404s).
-// Order matters only conceptually: under the shorter prefix the legacy form
-// leaves "watch/<uuid>", which fails uuid.Parse anyway.
-func (s *Service) localVideoID(objectURL string) (uuid.UUID, bool) {
-	for _, prefix := range []string{s.baseURL + "/videos/watch/", s.baseURL + "/videos/"} {
-		rest, ok := strings.CutPrefix(objectURL, prefix)
-		if !ok {
-			continue
+// Two forms are accepted. New emissions use the canonical form (/videos/<uuid>):
+// the same URL RSS, the sitemap and oEmbed advertise. The legacy prefix
+// (/videos/watch/<uuid>) is kept forever, because those AP ids live in remote
+// servers' databases, out of our reach — and it names TWO namespaces: ids this
+// instance minted before the canonical form, and the object ids of videos
+// imported from PeerTube, whose followers' servers still hold the source uuid
+// (videos.peertube_uuid). A legacy uuid that resolves to neither is returned
+// as-is, so the caller's own not-found handling decides, as it always has.
+func (s *Service) localVideoID(ctx context.Context, objectURL string) (uuid.UUID, bool, error) {
+	if rest, ok := strings.CutPrefix(objectURL, s.baseURL+"/videos/watch/"); ok {
+		legacy, err := uuid.Parse(rest)
+		if err != nil {
+			return uuid.UUID{}, false, nil
 		}
+		id, err := s.LegacyVideoID(ctx, legacy)
+		if errors.Is(err, ErrNotFound) {
+			return legacy, true, nil
+		}
+		return id, err == nil, err
+	}
+	if rest, ok := strings.CutPrefix(objectURL, s.baseURL+"/videos/"); ok {
 		if id, err := uuid.Parse(rest); err == nil {
-			return id, true
+			return id, true, nil
 		}
 	}
-	return uuid.UUID{}, false
+	return uuid.UUID{}, false, nil
+}
+
+// LegacyVideoID resolves the uuid in a /videos/watch/{uuid} object id to the
+// video it names here (see localVideoID). ErrNotFound when it names none.
+func (s *Service) LegacyVideoID(ctx context.Context, legacy uuid.UUID) (uuid.UUID, error) {
+	id, err := s.repo.GetVideoIDByLegacyUUID(ctx, legacy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.UUID{}, ErrNotFound
+	}
+	return id, err
 }
 
 // localCommentID parses the comment object URLs we mint

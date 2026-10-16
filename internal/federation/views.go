@@ -57,9 +57,9 @@ func (s *Service) handleView(ctx context.Context, act inboxActivity, signerActor
 	if s.recordView == nil || act.Expires != "" {
 		return nil
 	}
-	videoID, ok := s.localVideoID(objectID(act.Object))
-	if !ok {
-		return nil
+	videoID, ok, err := s.localVideoID(ctx, objectID(act.Object))
+	if err != nil || !ok {
+		return err
 	}
 	if visible, err := s.videoIsPubliclyVisible(ctx, videoID); err != nil || !visible {
 		return err

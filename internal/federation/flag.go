@@ -88,8 +88,8 @@ func (s *Service) handleFlag(ctx context.Context, act inboxActivity, signerActor
 // resolveFlagTarget maps an object url to a LOCAL video, comment or account (a
 // channel actor reports its owner). Anything else is not ours to report.
 func (s *Service) resolveFlagTarget(ctx context.Context, uri string) (string, uuid.UUID, bool, error) {
-	if id, ok := s.localVideoID(uri); ok {
-		return moderation.TargetVideo, id, true, nil
+	if id, ok, err := s.localVideoID(ctx, uri); err != nil || ok {
+		return moderation.TargetVideo, id, ok, err
 	}
 	if id, ok := s.localCommentID(uri); ok {
 		return moderation.TargetComment, id, true, nil

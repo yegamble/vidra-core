@@ -69,9 +69,9 @@ func (s *Service) handleRate(ctx context.Context, act inboxActivity, signerActor
 // predicate inbound comments use), its owner does not block the actor, and the
 // actor is a cached Person — a channel or an instance actor has no vote.
 func (s *Service) rateTarget(ctx context.Context, object, actorURL string) (uuid.UUID, bool, error) {
-	videoID, ok := s.localVideoID(object)
-	if !ok {
-		return uuid.Nil, false, nil
+	videoID, ok, err := s.localVideoID(ctx, object)
+	if err != nil || !ok {
+		return uuid.Nil, false, err
 	}
 	if visible, err := s.videoIsPubliclyVisible(ctx, videoID); err != nil || !visible {
 		return uuid.Nil, false, err
@@ -109,7 +109,10 @@ func (s *Service) handleUndoRate(ctx context.Context, act inboxActivity, signerA
 	if act.Actor != signerActorURL || (inner.Actor != "" && inner.Actor != signerActorURL) {
 		return ErrActorMismatch
 	}
-	videoID, _ := s.localVideoID(objectID(inner.Object))
+	videoID, _, err := s.localVideoID(ctx, objectID(inner.Object))
+	if err != nil {
+		return err
+	}
 	return s.repo.DeleteRemoteVideoRating(ctx, sqlcgen.DeleteRemoteVideoRatingParams{
 		RemoteActorUrl: signerActorURL,
 		VideoID:        videoID,

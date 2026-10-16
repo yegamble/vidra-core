@@ -335,3 +335,38 @@ func TestInboundFlagOverSignedInbox(t *testing.T) {
 		}
 	}
 }
+
+// A video imported from PeerTube keeps the object id its followers' servers
+// hold: /videos/watch/{source uuid} redirects an ActivityPub fetch to the
+// canonical id, as does this instance's own older /videos/watch/{uuid} form.
+// Only a video that is served at all is redirected to.
+func TestLegacyVideoObjectIDRedirectsToTheCanonicalID(t *testing.T) {
+	srv, repo := fedServerRepo(fedTestConfig())
+	videoID, privateID, source, privateSource := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	repo.videosByID[videoID] = sqlcgen.GetVideoByIDRow{ID: videoID, ChannelID: repo.channelID, Title: "Dawn", Privacy: "public", State: "published"}
+	repo.videosByID[privateID] = sqlcgen.GetVideoByIDRow{ID: privateID, ChannelID: repo.channelID, Title: "Hush", Privacy: "private", State: "published"}
+	repo.importedVideos[source] = videoID
+	repo.importedVideos[privateSource] = privateID
+
+	for _, legacy := range []uuid.UUID{source, videoID} {
+		rec := getAccept(t, srv, "/videos/watch/"+legacy.String(), apJSONAccept)
+		if rec.Code != http.StatusMovedPermanently {
+			t.Fatalf("GET /videos/watch/%s = %d, want 301; body=%s", legacy, rec.Code, rec.Body.String())
+		}
+		if loc := rec.Header().Get("Location"); loc != "https://videos.example/videos/"+videoID.String() {
+			t.Errorf("Location = %q, want the canonical object id", loc)
+		}
+	}
+	for name, path := range map[string]string{
+		"unknown uuid":           "/videos/watch/" + uuid.NewString(),
+		"not a uuid":             "/videos/watch/not-a-uuid",
+		"private imported video": "/videos/watch/" + privateSource.String(),
+	} {
+		if rec := getAccept(t, srv, path, apJSONAccept); rec.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404", name, rec.Code)
+		}
+	}
+	if rec := getAccept(t, srv, "/videos/watch/"+source.String(), "text/html"); rec.Code != http.StatusNotAcceptable {
+		t.Errorf("non-AP Accept: status = %d, want 406", rec.Code)
+	}
+}

@@ -71,6 +71,8 @@ type fakeRepo struct {
 	// adminActorBlocks are the instance-wide per-actor blocks (0142), keyed by
 	// actor url.
 	adminActorBlocks map[string]string
+	// importedVideos maps a PeerTube source UUID to its imported local video.
+	importedVideos map[uuid.UUID]uuid.UUID
 	// backfillIDs are the videos ListChannelBackfillVideoIDs returns per channel
 	// (the canonical-predicate SQL is proven by the integration test; the fake
 	// serves what that query would), already ordered newest first.
@@ -179,6 +181,17 @@ func (f fakeRepo) ListRemoteChannelFollowsOfActor(_ context.Context, arg sqlcgen
 		}
 	}
 	return out, nil
+}
+
+// GetVideoIDByLegacyUUID mirrors "WHERE id = $1 OR peertube_uuid = $1".
+func (f fakeRepo) GetVideoIDByLegacyUUID(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	if _, ok := f.videosByID[id]; ok {
+		return id, nil
+	}
+	if v, ok := f.importedVideos[id]; ok {
+		return v, nil
+	}
+	return uuid.UUID{}, pgx.ErrNoRows
 }
 
 // GetRemoteVideoByID resolves the VIDEO behind a mirrored comment — the origin

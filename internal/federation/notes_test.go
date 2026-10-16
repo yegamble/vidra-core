@@ -365,10 +365,14 @@ func TestHandleInboxDeleteActorCascades(t *testing.T) {
 // inbound video object URLs. We now MINT the canonical /videos/<uuid> form (the
 // one RSS/sitemap/oEmbed emit and the frontend routes), but replies federated
 // while we minted /videos/watch/<uuid> must keep resolving to the same video —
-// so both prefixes are accepted, and nothing else is.
+// so both prefixes are accepted, and nothing else is. The legacy form also names
+// a video IMPORTED from PeerTube by its source uuid: the id its followers'
+// servers still hold, and the one their replies arrive with.
 func TestLocalVideoIDAcceptsBothWatchURLForms(t *testing.T) {
-	videoID := uuid.New()
-	svc := NewService(newNotesRepo(videoID), WithBaseURL(noteBase))
+	videoID, sourceUUID := uuid.New(), uuid.New()
+	repo := newNotesRepo(videoID)
+	repo.importedVideos = map[uuid.UUID]uuid.UUID{sourceUUID: videoID}
+	svc := NewService(repo, WithBaseURL(noteBase))
 
 	cases := []struct {
 		name      string
@@ -378,6 +382,7 @@ func TestLocalVideoIDAcceptsBothWatchURLForms(t *testing.T) {
 	}{
 		{"canonical form", noteBase + "/videos/" + videoID.String(), videoID, true},
 		{"legacy watch form", noteBase + "/videos/watch/" + videoID.String(), videoID, true},
+		{"legacy form, an imported PeerTube video's source uuid", noteBase + "/videos/watch/" + sourceUUID.String(), videoID, true},
 		{"legacy prefix with a non-uuid remainder", noteBase + "/videos/watch/not-a-uuid", uuid.UUID{}, false},
 		{"canonical prefix with a non-uuid remainder", noteBase + "/videos/not-a-uuid", uuid.UUID{}, false},
 		{"canonical prefix with an empty remainder", noteBase + "/videos/", uuid.UUID{}, false},
@@ -389,8 +394,8 @@ func TestLocalVideoIDAcceptsBothWatchURLForms(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := svc.localVideoID(tc.objectURL)
-			if ok != tc.wantOK || got != tc.wantID {
+			got, ok, err := svc.localVideoID(context.Background(), tc.objectURL)
+			if err != nil || ok != tc.wantOK || got != tc.wantID {
 				t.Errorf("localVideoID(%q) = %v, %v; want %v, %v", tc.objectURL, got, ok, tc.wantID, tc.wantOK)
 			}
 		})
