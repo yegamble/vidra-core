@@ -54,6 +54,8 @@ func (f *ptPlaylists) ListOwn(context.Context, uuid.UUID, int32, int32) ([]sqlcg
 	return nil, 0, nil
 }
 
+func (f *ptPlaylists) AddItem(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil }
+
 func ptZip(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var b bytes.Buffer
