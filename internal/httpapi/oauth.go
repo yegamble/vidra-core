@@ -291,6 +291,14 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 		case errors.Is(err, auth.ErrAccountDisabled):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "account_disabled")
 			return oauthErrorRedirect(c, returnTo, "account_disabled")
+		// Per-provider account-creation policy (admin-managed providers):
+		// first sign-in only, like the registration policy below.
+		case errors.Is(err, auth.ErrOAuthSignupDisabled):
+			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_signup_disabled")
+			return oauthErrorRedirect(c, returnTo, "signup_disabled")
+		case errors.Is(err, auth.ErrOAuthEmailDomainNotAllowed):
+			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_email_domain_not_allowed")
+			return oauthErrorRedirect(c, returnTo, "email_domain_not_allowed")
 		case errors.Is(err, auth.ErrOwnerClaimRequired):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "owner_claim_required")
 			return oauthErrorRedirect(c, returnTo, "owner_claim_required")

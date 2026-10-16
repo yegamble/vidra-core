@@ -414,3 +414,28 @@ func TestBudgetClientZeroTotalMeansNoCap(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 }
+
+// TestGuardKeepMetadataBlocked: an allow-private guard that keeps the
+// cloud-metadata ranges blocked still reaches ordinary private addresses.
+func TestGuardKeepMetadataBlocked(t *testing.T) {
+	g := Guard{AllowPrivate: true, KeepMetadataBlocked: true}
+	for ip, want := range map[string]bool{
+		"169.254.169.254": true,
+		"169.254.1.1":     true,
+		"fd00:ec2::254":   true,
+		"10.0.0.5":        false,
+		"127.0.0.1":       false,
+		"fd00:1::1":       false,
+		// The same metadata address in IPv4-mapped and NAT64 form.
+		"::ffff:169.254.169.254": true,
+		"64:ff9b::a9fe:a9fe":     true,
+		"64:ff9b::a00:5":         false,
+	} {
+		if got := g.blockedIP(net.ParseIP(ip)); got != want {
+			t.Errorf("blockedIP(%s) = %v, want %v", ip, got, want)
+		}
+	}
+	if (Guard{AllowPrivate: true}).blockedIP(net.ParseIP("169.254.169.254")) {
+		t.Error("plain AllowPrivate must keep its existing behavior")
+	}
+}

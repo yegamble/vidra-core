@@ -67,6 +67,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/oidcproviders"
 	"github.com/vidra/vidra-core/internal/peertubearchive"
 	"github.com/vidra/vidra-core/internal/peertubefollows"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
@@ -757,7 +758,31 @@ func run() error {
 	// accounts that are passwordless and whose DID is their ONLY credential. With
 	// no providers configured /auth/oauth/:provider still answers 404 (unknown
 	// provider), which is what it answered before.
-	opts = append(opts, httpapi.WithOAuthService(auth.NewOAuthService(db.Queries(), authsvc, providers)))
+	oauthsvc := auth.NewOAuthService(db.Queries(), authsvc, providers,
+		// Admin-managed providers fetch discovery/JWKS through the SSRF guard;
+		// OIDC_ALLOW_PRIVATE_ISSUERS admits an internal IdP or a lab.
+		auth.WithOAuthAllowPrivateIssuers(cfg.OIDCAllowPrivateIssuers))
+	opts = append(opts, httpapi.WithOAuthService(oauthsvc))
+
+	// Admin-managed OIDC providers (migration 0182) override the environment
+	// providers of the same name. The client secret is sealed with the same KEK
+	// chain as the mail credential; without one, reads work and a save that
+	// would store a secret is refused.
+	if cfg.OIDCAllowPrivateIssuers {
+		logger.Warn("OIDC_ALLOW_PRIVATE_ISSUERS is on: admin-managed OIDC providers may reach http and private-network addresses (metadata ranges stay blocked)")
+	}
+	envIssuers := make(map[string]string, len(cfg.OAuthProviders))
+	for _, p := range cfg.OAuthProviders {
+		envIssuers[p.Name] = p.IssuerURL
+	}
+	oidcprovsvc := oidcproviders.NewService(db.Queries(), mailCipher, oauthsvc,
+		oidcproviders.WithVersionBump(bumpSettingsVersion),
+		oidcproviders.WithAllowPrivate(cfg.OIDCAllowPrivateIssuers),
+		oidcproviders.WithEnvironmentIssuers(envIssuers))
+	if err := oidcprovsvc.Load(startCtx); err != nil {
+		return fmt.Errorf("load oidc providers: %w", err)
+	}
+	opts = append(opts, httpapi.WithOIDCProviderService(oidcprovsvc))
 
 	// The per-user channel cap (max_channels_per_user, config-parity W8) is
 	// resolved per create from the settings overlay; 0 (the default) = unlimited.
@@ -1950,6 +1975,9 @@ func run() error {
 		// admin switching relay on one replica would otherwise leave the others
 		// sending through the old one — including the workers — until restart.
 		settingsversion.Cache{Name: "mail config", Reload: mailcfgsvc.Load},
+		// Admin-managed OIDC providers (0182): each process holds its own
+		// provider set, so a change on one replica must reach the others.
+		settingsversion.Cache{Name: "oidc providers", Reload: oidcprovsvc.Load},
 	)
 	// Prime AFTER the three boot loads above so this process starts in agreement
 	// with the database. A failure is not fatal: the token stays at zero and the

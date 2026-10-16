@@ -362,6 +362,22 @@ func TestImportAllowPrivateURLsDefaultAndOverride(t *testing.T) {
 	}
 }
 
+func TestOIDCAllowPrivateIssuersDefaultAndOverride(t *testing.T) {
+	t.Setenv("OIDC_ALLOW_PRIVATE_ISSUERS", "")
+	t.Setenv("HTTP_IMPORT_ALLOW_PRIVATE_URLS", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.OIDCAllowPrivateIssuers {
+		t.Error("OIDCAllowPrivateIssuers = true by default, or inherited from the import switch")
+	}
+	t.Setenv("OIDC_ALLOW_PRIVATE_ISSUERS", "true")
+	if cfg, err = Load(); err != nil || !cfg.OIDCAllowPrivateIssuers {
+		t.Errorf("override: %v, %v", cfg.OIDCAllowPrivateIssuers, err)
+	}
+}
+
 func TestUploadMaxSizeRejectsInvalid(t *testing.T) {
 	t.Setenv("UPLOAD_MAX_SIZE", "not-a-size")
 	if _, err := Load(); err == nil {
