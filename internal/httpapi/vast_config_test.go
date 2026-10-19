@@ -94,3 +94,38 @@ func TestVASTPlayerConfig(t *testing.T) {
 		t.Fatal("reset must restore disabled defaults")
 	}
 }
+
+func TestVASTPlacementConfig(t *testing.T) {
+	e := newSettingsAuditEnv(t)
+	read := func() map[string]any {
+		t.Helper()
+		var body struct {
+			Ads map[string]any `json:"ads"`
+		}
+		if err := json.Unmarshal(getInstanceRec(e.srv).Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Ads
+	}
+	if ads := read(); ads["midroll_tag_url"] != "" || ads["postroll_tag_url"] != "" || ads["midroll_offset_seconds"] != float64(300) {
+		t.Fatalf("unexpected placement defaults: %+v", ads)
+	}
+	e.patch(t, `{"player_vast_enabled":true,"player_vast_midroll_tag_url":"https://ads.example.test/midroll","player_vast_midroll_offset_seconds":120}`)
+	if ads := read(); ads["enabled"] != true || ads["vast_tag_url"] != "" || ads["midroll_tag_url"] != "https://ads.example.test/midroll" || ads["midroll_offset_seconds"] != float64(120) {
+		t.Fatalf("midroll-only configuration is not effective: %+v", ads)
+	}
+	changes, raw := e.patch(t, `{"player_vast_midroll_tag_url":"","player_vast_postroll_tag_url":"https://ads.example.test/postroll"}`)
+	if ads := read(); ads["enabled"] != true || ads["postroll_tag_url"] != "https://ads.example.test/postroll" || ads["midroll_tag_url"] != "" {
+		t.Fatalf("postroll-only configuration is not effective: %+v", ads)
+	}
+	if c := changes["setting.player_vast_postroll_tag_url"]; c.Before != "" || c.After != "" || strings.Contains(raw+e.logs.String(), "https://ads.example.test/postroll") {
+		t.Fatal("placement URLs must not appear in audit values or logs")
+	}
+	if rec := sendJSONAuth(e.srv, http.MethodPatch, "/api/v1/admin/instance-settings", `{"player_vast_midroll_offset_seconds":0}`, e.admin); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatal("invalid midroll offset must be rejected")
+	}
+	e.patch(t, `{"player_vast_postroll_tag_url":null,"player_vast_midroll_offset_seconds":null}`)
+	if ads := read(); ads["enabled"] != false || ads["postroll_tag_url"] != "" || ads["midroll_offset_seconds"] != float64(300) {
+		t.Fatalf("placement reset failed: %+v", ads)
+	}
+}

@@ -165,8 +165,11 @@ type instanceBroadcast struct {
 }
 
 type instanceAds struct {
-	Enabled    bool   `json:"enabled"`
-	VASTTagURL string `json:"vast_tag_url"`
+	Enabled              bool   `json:"enabled"`
+	VASTTagURL           string `json:"vast_tag_url"`
+	MidrollTagURL        string `json:"midroll_tag_url"`
+	MidrollOffsetSeconds int64  `json:"midroll_offset_seconds"`
+	PostrollTagURL       string `json:"postroll_tag_url"`
 }
 
 // instanceFeatured is the admin featured-banner block (home-featured-banner).
@@ -561,13 +564,23 @@ func (s *Server) instanceBroadcastBlock() instanceBroadcast {
 }
 
 func (s *Server) instanceAdsBlock() instanceAds {
-	tag := s.settingString(instancesettings.KeyPlayerVASTTagURL, "")
-	if instancesettings.Validate(instancesettings.KeyPlayerVASTTagURL, tag) != nil {
-		tag = "" // Also fail closed for invalid rows written outside the settings API.
+	validTag := func(key string) string {
+		tag := s.settingString(key, "")
+		if instancesettings.Validate(key, tag) != nil {
+			return ""
+		}
+		return tag
+	}
+	tag := validTag(instancesettings.KeyPlayerVASTTagURL)
+	midroll, postroll := validTag(instancesettings.KeyPlayerVASTMidrollTagURL), validTag(instancesettings.KeyPlayerVASTPostrollTagURL)
+	offset := s.settingInt(instancesettings.KeyPlayerVASTMidrollOffsetSeconds, instancesettings.DefaultVASTMidrollOffsetSeconds)
+	if offset < 1 || offset > 86400 {
+		offset = instancesettings.DefaultVASTMidrollOffsetSeconds
 	}
 	return instanceAds{
-		Enabled:    s.settingBool(instancesettings.KeyPlayerVASTEnabled, false) && tag != "",
-		VASTTagURL: tag,
+		Enabled:       s.settingBool(instancesettings.KeyPlayerVASTEnabled, false) && (tag != "" || midroll != "" || postroll != ""),
+		VASTTagURL:    tag,
+		MidrollTagURL: midroll, MidrollOffsetSeconds: offset, PostrollTagURL: postroll,
 	}
 }
 
