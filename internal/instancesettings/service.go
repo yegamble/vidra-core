@@ -136,11 +136,16 @@ const (
 	KeyBroadcastDismissable = "broadcast_dismissable"
 
 	// Public browser advertising configuration; the server never fetches these URLs.
-	KeyPlayerVASTEnabled              = "player_vast_enabled"
-	KeyPlayerVASTTagURL               = "player_vast_tag_url"
-	KeyPlayerVASTMidrollTagURL        = "player_vast_midroll_tag_url"
-	KeyPlayerVASTMidrollOffsetSeconds = "player_vast_midroll_offset_seconds"
-	KeyPlayerVASTPostrollTagURL       = "player_vast_postroll_tag_url"
+	KeyPlayerVASTEnabled                   = "player_vast_enabled"
+	KeyPlayerVASTTagURL                    = "player_vast_tag_url"
+	KeyPlayerVASTMidrollTagURL             = "player_vast_midroll_tag_url"
+	KeyPlayerVASTMidrollOffsetSeconds      = "player_vast_midroll_offset_seconds"
+	KeyPlayerVASTPostrollTagURL            = "player_vast_postroll_tag_url"
+	KeyPlayerVASTPrerollEnabled            = "player_vast_preroll_enabled"
+	KeyPlayerVASTMidrollEnabled            = "player_vast_midroll_enabled"
+	KeyPlayerVASTPostrollEnabled           = "player_vast_postroll_enabled"
+	KeyPlayerVASTMidrollMinDurationSeconds = "player_vast_midroll_min_duration_seconds"
+	KeyPlayerVASTCooldownSeconds           = "player_vast_cooldown_seconds"
 
 	// Featured-banner keys (home-featured-banner). An admin-controlled YouTube-
 	// masthead-style slot on the homepage: a toggle, one picked LOCAL video, and
@@ -614,10 +619,12 @@ const (
 	// privacy on create means private) — silently loosening third-party API
 	// clients' drafts to public is not acceptable as a side effect of adding
 	// the knob. Admins who want PeerTube's public-by-default set it here.
-	DefaultVideoPrivacy             = "private"
-	DefaultCommentPolicy            = "enabled"
-	defaultPlayerAutoplay           = true
-	DefaultVASTMidrollOffsetSeconds = 300
+	DefaultVideoPrivacy                  = "private"
+	DefaultCommentPolicy                 = "enabled"
+	defaultPlayerAutoplay                = true
+	DefaultVASTMidrollOffsetSeconds      = 300
+	DefaultVASTMidrollMinDurationSeconds = 600
+	DefaultVASTCooldownSeconds           = 300
 
 	// DefaultUserExportExpirationHours is how long a finished account-export
 	// archive stays downloadable (W8; mirrors account.ExportTTL's 7 days —
@@ -938,6 +945,16 @@ var specs = []spec{
 	{key: KeyPlayerVASTMidrollOffsetSeconds, kind: KindInt, defInt: func(Defaults) int64 { return DefaultVASTMidrollOffsetSeconds }, validate: intRange(1, 86400),
 		page: PageVOD, section: "advertising"},
 	{key: KeyPlayerVASTPostrollTagURL, kind: KindString, defString: hardcoded(""), validate: validateOptionalVASTTagURL,
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTPrerollEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTMidrollEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTPostrollEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTMidrollMinDurationSeconds, kind: KindInt, defInt: func(Defaults) int64 { return DefaultVASTMidrollMinDurationSeconds }, validate: intRange(0, 86400),
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTCooldownSeconds, kind: KindInt, defInt: func(Defaults) int64 { return DefaultVASTCooldownSeconds }, validate: intRange(0, 86400),
 		page: PageVOD, section: "advertising"},
 	{key: KeyEmailSubjectPrefix, kind: KindString, defString: hardcoded(""), validate: maxLen(128),
 		page: PageCustomization, section: "email"},
