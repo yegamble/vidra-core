@@ -32,6 +32,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -133,6 +134,10 @@ const (
 	KeyBroadcastMessage     = "broadcast_message" // markdown body (short; document-scale content lives in instance_documents)
 	KeyBroadcastLevel       = "broadcast_level"
 	KeyBroadcastDismissable = "broadcast_dismissable"
+
+	// Public browser advertising configuration; the server never fetches these URLs.
+	KeyPlayerVASTEnabled = "player_vast_enabled"
+	KeyPlayerVASTTagURL  = "player_vast_tag_url"
 
 	// Featured-banner keys (home-featured-banner). An admin-controlled YouTube-
 	// masthead-style slot on the homepage: a toggle, one picked LOCAL video, and
@@ -920,6 +925,10 @@ var specs = []spec{
 		page: PageGeneral, section: "branding"},
 	{key: KeyDefaultPlayerAutoplay, kind: KindBool, defBool: func(Defaults) bool { return defaultPlayerAutoplay }, validate: validateBool,
 		page: PageCustomization, section: "player"},
+	{key: KeyPlayerVASTEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTTagURL, kind: KindString, defString: hardcoded(""), validate: validateOptionalVASTTagURL,
+		page: PageVOD, section: "advertising"},
 	{key: KeyEmailSubjectPrefix, kind: KindString, defString: hardcoded(""), validate: maxLen(128),
 		page: PageCustomization, section: "email"},
 	{key: KeyEmailBodySignature, kind: KindString, defString: hardcoded(""), validate: maxLen(5000),
@@ -1884,6 +1893,21 @@ func validateOptionalURL(v string) error {
 	u, err := url.Parse(v)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return errors.New("must be an absolute http(s) URL")
+	}
+	return nil
+}
+
+// validateOptionalVASTTagURL validates public browser configuration, never a server fetch target.
+func validateOptionalVASTTagURL(v string) error {
+	if v == "" {
+		return nil
+	}
+	if len(v) > 2000 || strings.Contains(v, "#") || strings.IndexFunc(v, unicode.IsSpace) >= 0 {
+		return errors.New("must be at most 2000 bytes without whitespace or fragments")
+	}
+	u, err := url.Parse(v)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
+		return errors.New("must be an absolute HTTP(S) URL without credentials")
 	}
 	return nil
 }

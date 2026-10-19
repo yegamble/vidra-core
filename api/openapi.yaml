@@ -17004,6 +17004,10 @@ paths:
         by this runtime setting (there is no env/config counterpart).
         Boot-time-only secrets and infrastructure (database DSN, KEKs, JWT secret,
         storage backend) are NOT represented here — they stay in config.
+        Player advertising is opt-in: player_vast_enabled defaults false and
+        player_vast_tag_url defaults empty. The public tag URL is fetched only
+        by browsers; it must be absolute HTTP(S), at most 2000 bytes, without
+        whitespace, credentials, or fragments. An empty string clears the tag.
         Restricted to admins.
       tags: [admin]
       security:
@@ -20787,6 +20791,20 @@ components:
                   enum: [enabled, disabled, requires_approval]
                 download_enabled:
                   type: boolean
+        ads:
+          type: object
+          description: >-
+            Optional browser VAST preroll configuration. Absent on older servers;
+            clients treat absence as disabled. Tag URLs are public configuration,
+            never server-fetched or secret. Ad failures must resume normal content.
+          required: [enabled, vast_tag_url]
+          properties:
+            enabled:
+              type: boolean
+              description: True only when the admin toggle is on and a valid tag URL is configured.
+            vast_tag_url:
+              type: string
+              description: Absolute HTTP(S) tag URL, at most 2000 bytes, without whitespace, credentials or fragments; empty when unconfigured.
         broadcast:
           type: object
           description: Operator broadcast banner (W3 renders it).
