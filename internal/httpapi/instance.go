@@ -164,6 +164,11 @@ type instanceBroadcast struct {
 	Dismissable bool   `json:"dismissable"`
 }
 
+type instanceAds struct {
+	Enabled    bool   `json:"enabled"`
+	VASTTagURL string `json:"vast_tag_url"`
+}
+
 // instanceFeatured is the admin featured-banner block (home-featured-banner).
 // The frontend fetches the picked video server-side and renders the masthead
 // banner only when Enabled AND VideoID resolves to a public, published video —
@@ -316,6 +321,7 @@ type instanceResponse struct {
 	Branding      instanceBranding      `json:"branding"`
 	Defaults      instanceDefaults      `json:"defaults"`
 	Broadcast     instanceBroadcast     `json:"broadcast"`
+	Ads           instanceAds           `json:"ads"`
 	Featured      instanceFeatured      `json:"featured"`
 	Customization instanceCustomization `json:"customization"`
 	Social        instanceSocialMeta    `json:"social"`
@@ -447,6 +453,7 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 		Branding:      s.instanceBrandingBlock(),
 		Defaults:      s.instanceDefaultsBlock(),
 		Broadcast:     s.instanceBroadcastBlock(),
+		Ads:           s.instanceAdsBlock(),
 		Featured:      s.instanceFeaturedBlock(),
 		Customization: s.instanceCustomizationBlock(),
 		Social: instanceSocialMeta{
@@ -550,6 +557,17 @@ func (s *Server) instanceBroadcastBlock() instanceBroadcast {
 		Message:     s.settingString(instancesettings.KeyBroadcastMessage, ""),
 		Level:       s.settingString(instancesettings.KeyBroadcastLevel, instancesettings.DefaultBroadcastLevel),
 		Dismissable: s.settingBool(instancesettings.KeyBroadcastDismissable, false),
+	}
+}
+
+func (s *Server) instanceAdsBlock() instanceAds {
+	tag := s.settingString(instancesettings.KeyPlayerVASTTagURL, "")
+	if instancesettings.Validate(instancesettings.KeyPlayerVASTTagURL, tag) != nil {
+		tag = "" // Also fail closed for invalid rows written outside the settings API.
+	}
+	return instanceAds{
+		Enabled:    s.settingBool(instancesettings.KeyPlayerVASTEnabled, false) && tag != "",
+		VASTTagURL: tag,
 	}
 }
 
