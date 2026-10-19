@@ -135,6 +135,10 @@ const (
 	KeyBroadcastLevel       = "broadcast_level"
 	KeyBroadcastDismissable = "broadcast_dismissable"
 
+	// Public GA4 browser configuration, disabled unless explicitly configured.
+	KeyAnalyticsGoogleEnabled       = "analytics_google_enabled"
+	KeyAnalyticsGoogleMeasurementID = "analytics_google_measurement_id"
+
 	// Public browser advertising configuration; the server never fetches these URLs.
 	KeyPlayerVASTEnabled                   = "player_vast_enabled"
 	KeyPlayerVASTTagURL                    = "player_vast_tag_url"
@@ -956,6 +960,10 @@ var specs = []spec{
 		page: PageVOD, section: "advertising"},
 	{key: KeyPlayerVASTCooldownSeconds, kind: KindInt, defInt: func(Defaults) int64 { return DefaultVASTCooldownSeconds }, validate: intRange(0, 86400),
 		page: PageVOD, section: "advertising"},
+	{key: KeyAnalyticsGoogleEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageGeneral, section: "analytics"},
+	{key: KeyAnalyticsGoogleMeasurementID, kind: KindString, defString: hardcoded(""), validate: validateOptionalGoogleMeasurementID,
+		page: PageGeneral, section: "analytics"},
 	{key: KeyEmailSubjectPrefix, kind: KindString, defString: hardcoded(""), validate: maxLen(128),
 		page: PageCustomization, section: "email"},
 	{key: KeyEmailBodySignature, kind: KindString, defString: hardcoded(""), validate: maxLen(5000),
@@ -1956,6 +1964,15 @@ func validateOptionalUUID(v string) error {
 
 // hexColorRe matches a 6-digit CSS hex color ("#rrggbb").
 var hexColorRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+var googleMeasurementIDRe = regexp.MustCompile(`^G-[A-Z0-9]{4,20}$`)
+
+func validateOptionalGoogleMeasurementID(v string) error {
+	if v != "" && !googleMeasurementIDRe.MatchString(v) {
+		return errors.New("must be empty or G- followed by 4–20 uppercase letters or digits")
+	}
+	return nil
+}
 
 // validateOptionalHexColor accepts the empty string (no primary-color
 // override) or a strict 6-digit hex color.
