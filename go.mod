@@ -11,7 +11,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/labstack/echo/v4 v4.16.0
 	github.com/labstack/gommon v0.5.0
-	github.com/minio/minio-go/v7 v7.3.0
+	github.com/minio/minio-go/v7 v7.4.1
 	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/redis/go-redis/v9 v9.22.0
