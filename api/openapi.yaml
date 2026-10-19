@@ -17011,6 +17011,13 @@ paths:
         player_vast_midroll_tag_url and player_vast_postroll_tag_url follow the
         same URL rules and default empty. player_vast_midroll_offset_seconds
         is an integer from 1 to 86400, default 300 (five minutes into content).
+        Independent player_vast_preroll_enabled, player_vast_midroll_enabled,
+        and player_vast_postroll_enabled switches default true beneath the
+        disabled master toggle. Disabled placements expose empty public tag URLs.
+        player_vast_midroll_min_duration_seconds (default 600) and
+        player_vast_cooldown_seconds (default 300) range from 0 to 86400;
+        zero removes the respective minimum. Cooldown covers all video ad breaks
+        across video changes and is enforced by clients.
         Restricted to admins.
       tags: [admin]
       security:
@@ -20804,13 +20811,13 @@ components:
           properties:
             enabled:
               type: boolean
-              description: True only when the admin toggle is on and at least one valid placement tag URL is configured.
+              description: True only when the master admin toggle is on and at least one enabled placement has a valid tag URL.
             vast_tag_url:
               type: string
-              description: Absolute HTTP(S) tag URL, at most 2000 bytes, without whitespace, credentials or fragments; empty when unconfigured.
+              description: Absolute HTTP(S) tag URL, at most 2000 bytes, without whitespace, credentials or fragments; empty when unconfigured or the preroll placement is disabled.
             midroll_tag_url:
               type: string
-              description: Midroll tag URL with the same validation as vast_tag_url; empty or absent means no midroll.
+              description: Midroll tag URL with the same validation as vast_tag_url; empty or absent means no midroll, including when that placement is disabled.
             midroll_offset_seconds:
               type: integer
               format: int64
@@ -20820,7 +20827,21 @@ components:
               description: Content playback position for the midroll; defaults to 300 when absent on older servers.
             postroll_tag_url:
               type: string
-              description: Postroll tag URL with the same validation as vast_tag_url; empty or absent means no postroll.
+              description: Postroll tag URL with the same validation as vast_tag_url; empty or absent means no postroll, including when that placement is disabled.
+            midroll_min_duration_seconds:
+              type: integer
+              format: int64
+              minimum: 0
+              maximum: 86400
+              default: 600
+              description: Minimum content duration for a midroll; zero removes the minimum. Clients use 600 when absent on older servers.
+            cooldown_seconds:
+              type: integer
+              format: int64
+              minimum: 0
+              maximum: 86400
+              default: 300
+              description: Minimum interval between all video ad breaks across video changes, enforced by clients; zero disables cooldown. Clients use 300 when absent on older servers.
         broadcast:
           type: object
           description: Operator broadcast banner (W3 renders it).

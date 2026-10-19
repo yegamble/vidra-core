@@ -129,3 +129,61 @@ func TestVASTPlacementConfig(t *testing.T) {
 		t.Fatalf("placement reset failed: %+v", ads)
 	}
 }
+
+func TestVASTPlacementPolicyStoredBounds(t *testing.T) {
+	repo := newInstanceSettingsFakeRepo()
+	for key, value := range map[string]string{"player_vast_midroll_min_duration_seconds": "-1", "player_vast_cooldown_seconds": "86401", "player_vast_midroll_offset_seconds": "0"} {
+		repo.rows[key] = sqlcgen.InstanceSetting{Key: key, Value: value}
+	}
+	svc := instancesettings.NewService(repo, instancesettings.Defaults{})
+	if err := svc.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, srv := range []*Server{New(testConfig(), nil, nil), New(testConfig(), nil, nil, WithSettingsService(svc))} {
+		if ads := publicInstance(t, srv).Ads; ads.MidrollMinDurationSeconds != 600 || ads.CooldownSeconds != 300 || ads.MidrollOffsetSeconds != 300 {
+			t.Fatalf("invalid or unwired policy must use safe defaults: %+v", ads)
+		}
+	}
+}
+
+func TestVASTPlacementPolicyConfig(t *testing.T) {
+	e := newSettingsAuditEnv(t)
+	read := func() map[string]any {
+		t.Helper()
+		var body struct {
+			Ads map[string]any `json:"ads"`
+		}
+		if err := json.Unmarshal(getInstanceRec(e.srv).Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Ads
+	}
+	if ads := read(); ads["midroll_min_duration_seconds"] != float64(600) || ads["cooldown_seconds"] != float64(300) {
+		t.Fatalf("unexpected policy defaults: %+v", ads)
+	}
+	e.patch(t, `{"player_vast_enabled":true,"player_vast_tag_url":"https://ads.example.test/pre","player_vast_midroll_tag_url":"https://ads.example.test/mid","player_vast_postroll_tag_url":"https://ads.example.test/post"}`)
+	before := getInstanceRec(e.srv).Header().Get("ETag")
+	for _, placement := range []struct{ flag, field string }{{"preroll", "vast_tag_url"}, {"midroll", "midroll_tag_url"}, {"postroll", "postroll_tag_url"}} {
+		e.patch(t, `{"player_vast_`+placement.flag+`_enabled":false}`)
+		if ads := read(); ads[placement.field] != "" {
+			t.Fatalf("disabled placement remains public: %+v", ads)
+		}
+	}
+	if ads := read(); ads["enabled"] != false || getInstanceRec(e.srv).Header().Get("ETag") == before {
+		t.Fatalf("all-off placements must disable ads and change ETag: %+v", ads)
+	}
+	if e.view(t, "player_vast_tag_url").Value != "https://ads.example.test/pre" || e.view(t, "player_vast_midroll_tag_url").Value != "https://ads.example.test/mid" || e.view(t, "player_vast_postroll_tag_url").Value != "https://ads.example.test/post" {
+		t.Fatal("placement toggles erased configured tags")
+	}
+	e.patch(t, `{"player_vast_preroll_enabled":null,"player_vast_midroll_enabled":null,"player_vast_postroll_enabled":null,"player_vast_midroll_min_duration_seconds":0,"player_vast_cooldown_seconds":86400}`)
+	if ads := read(); ads["enabled"] != true || ads["vast_tag_url"] != "https://ads.example.test/pre" || ads["midroll_tag_url"] != "https://ads.example.test/mid" || ads["postroll_tag_url"] != "https://ads.example.test/post" || ads["midroll_min_duration_seconds"] != float64(0) || ads["cooldown_seconds"] != float64(86400) {
+		t.Fatalf("reset toggles and policy overrides failed: %+v", ads)
+	}
+	if rec := sendJSONAuth(e.srv, http.MethodPatch, "/api/v1/admin/instance-settings", `{"player_vast_cooldown_seconds":-1,"player_vast_midroll_min_duration_seconds":120}`, e.admin); rec.Code != http.StatusUnprocessableEntity || read()["midroll_min_duration_seconds"] != float64(0) {
+		t.Fatal("invalid policy must reject the entire update")
+	}
+	e.patch(t, `{"player_vast_midroll_min_duration_seconds":null,"player_vast_cooldown_seconds":null}`)
+	if ads := read(); ads["midroll_min_duration_seconds"] != float64(600) || ads["cooldown_seconds"] != float64(300) {
+		t.Fatalf("policy reset failed: %+v", ads)
+	}
+}

@@ -93,3 +93,38 @@ func TestVASTPlacementSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestVASTPlacementPolicySettings(t *testing.T) {
+	svc := NewService(newFakeRepo(), testDefaults())
+	for _, key := range []string{"player_vast_preroll_enabled", "player_vast_midroll_enabled", "player_vast_postroll_enabled"} {
+		if kind, ok := KindOf(key); !ok || kind != KindBool || !svc.Bool(key) {
+			t.Errorf("placement must default enabled beneath disabled master: %s", key)
+		}
+		if err := Validate(key, "invalid"); err == nil {
+			t.Errorf("placement accepted non-boolean: %s", key)
+		}
+	}
+	for key, def := range map[string]int64{"player_vast_midroll_min_duration_seconds": 600, "player_vast_cooldown_seconds": 300} {
+		if kind, ok := KindOf(key); !ok || kind != KindInt || svc.Int(key) != def {
+			t.Errorf("unexpected policy default for %s: %d", key, svc.Int(key))
+		}
+		for _, value := range []string{"0", "86400"} {
+			if err := Validate(key, value); err != nil {
+				t.Error(err)
+			}
+		}
+		for _, value := range []string{"-1", "86401", "2.5", "invalid"} {
+			if err := Validate(key, value); err == nil {
+				t.Errorf("invalid policy accepted: %s=%s", key, value)
+			}
+		}
+	}
+	for _, entry := range svc.Snapshot() {
+		if strings.HasPrefix(entry.Key, "player_vast_") && (entry.Page != PageVOD || entry.Section != "advertising") {
+			t.Errorf("unexpected policy metadata: %+v", entry)
+		}
+	}
+	if svc.Bool("player_vast_enabled") {
+		t.Fatal("master must still default disabled")
+	}
+}

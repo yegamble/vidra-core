@@ -165,11 +165,13 @@ type instanceBroadcast struct {
 }
 
 type instanceAds struct {
-	Enabled              bool   `json:"enabled"`
-	VASTTagURL           string `json:"vast_tag_url"`
-	MidrollTagURL        string `json:"midroll_tag_url"`
-	MidrollOffsetSeconds int64  `json:"midroll_offset_seconds"`
-	PostrollTagURL       string `json:"postroll_tag_url"`
+	Enabled                   bool   `json:"enabled"`
+	VASTTagURL                string `json:"vast_tag_url"`
+	MidrollTagURL             string `json:"midroll_tag_url"`
+	MidrollOffsetSeconds      int64  `json:"midroll_offset_seconds"`
+	PostrollTagURL            string `json:"postroll_tag_url"`
+	MidrollMinDurationSeconds int64  `json:"midroll_min_duration_seconds"`
+	CooldownSeconds           int64  `json:"cooldown_seconds"`
 }
 
 // instanceFeatured is the admin featured-banner block (home-featured-banner).
@@ -564,23 +566,36 @@ func (s *Server) instanceBroadcastBlock() instanceBroadcast {
 }
 
 func (s *Server) instanceAdsBlock() instanceAds {
-	validTag := func(key string) string {
+	validTag := func(key, toggle string) string {
+		if !s.settingBool(toggle, true) {
+			return ""
+		}
 		tag := s.settingString(key, "")
 		if instancesettings.Validate(key, tag) != nil {
 			return ""
 		}
 		return tag
 	}
-	tag := validTag(instancesettings.KeyPlayerVASTTagURL)
-	midroll, postroll := validTag(instancesettings.KeyPlayerVASTMidrollTagURL), validTag(instancesettings.KeyPlayerVASTPostrollTagURL)
+	tag := validTag(instancesettings.KeyPlayerVASTTagURL, instancesettings.KeyPlayerVASTPrerollEnabled)
+	midroll := validTag(instancesettings.KeyPlayerVASTMidrollTagURL, instancesettings.KeyPlayerVASTMidrollEnabled)
+	postroll := validTag(instancesettings.KeyPlayerVASTPostrollTagURL, instancesettings.KeyPlayerVASTPostrollEnabled)
 	offset := s.settingInt(instancesettings.KeyPlayerVASTMidrollOffsetSeconds, instancesettings.DefaultVASTMidrollOffsetSeconds)
 	if offset < 1 || offset > 86400 {
 		offset = instancesettings.DefaultVASTMidrollOffsetSeconds
+	}
+	policySeconds := func(key string, def int64) int64 {
+		value := s.settingInt(key, def)
+		if value < 0 || value > 86400 {
+			return def
+		}
+		return value
 	}
 	return instanceAds{
 		Enabled:       s.settingBool(instancesettings.KeyPlayerVASTEnabled, false) && (tag != "" || midroll != "" || postroll != ""),
 		VASTTagURL:    tag,
 		MidrollTagURL: midroll, MidrollOffsetSeconds: offset, PostrollTagURL: postroll,
+		MidrollMinDurationSeconds: policySeconds(instancesettings.KeyPlayerVASTMidrollMinDurationSeconds, instancesettings.DefaultVASTMidrollMinDurationSeconds),
+		CooldownSeconds:           policySeconds(instancesettings.KeyPlayerVASTCooldownSeconds, instancesettings.DefaultVASTCooldownSeconds),
 	}
 }
 
