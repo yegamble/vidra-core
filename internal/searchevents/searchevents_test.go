@@ -20,12 +20,15 @@ func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard,
 
 // fakeOutbox implements OutboxRepository + DrainRepository in memory.
 type fakeOutbox struct {
-	enqueued []sqlcgen.EnqueueSearchEventParams
-	enqErr   error
+	enqueued  []sqlcgen.EnqueueSearchEventParams
+	enqErr    error
+	enqCalls  int
+	failEnqAt int
 
-	docs    map[uuid.UUID]sqlcgen.GetVideoSearchDocRow
-	docErr  error
-	allDocs []sqlcgen.ListVideoSearchDocsPageRow
+	docs      map[uuid.UUID]sqlcgen.GetVideoSearchDocRow
+	docErr    error
+	allDocs   []sqlcgen.ListVideoSearchDocsPageRow
+	pageCalls int
 
 	due             []sqlcgen.ClaimDueSearchEventsRow
 	claimErr        error
@@ -47,7 +50,8 @@ func newFakeOutbox() *fakeOutbox {
 }
 
 func (f *fakeOutbox) EnqueueSearchEvent(_ context.Context, a sqlcgen.EnqueueSearchEventParams) error {
-	if f.enqErr != nil {
+	f.enqCalls++
+	if f.enqErr != nil && (f.failEnqAt == 0 || f.enqCalls == f.failEnqAt) {
 		return f.enqErr
 	}
 	f.enqueued = append(f.enqueued, a)
@@ -110,6 +114,7 @@ func outboxRowIsPurgeable(e sqlcgen.EnqueueSearchEventParams, userID string) boo
 }
 
 func (f *fakeOutbox) ListVideoSearchDocsPage(_ context.Context, a sqlcgen.ListVideoSearchDocsPageParams) ([]sqlcgen.ListVideoSearchDocsPageRow, error) {
+	f.pageCalls++
 	sorted := append([]sqlcgen.ListVideoSearchDocsPageRow{}, f.allDocs...)
 	sort.Slice(sorted, func(i, j int) bool {
 		return bytes.Compare(sorted[i].ID[:], sorted[j].ID[:]) < 0
@@ -266,6 +271,25 @@ func TestNilEnqueuerIsNoop(t *testing.T) {
 	enq.EnqueueVideoUpsert(context.Background(), uuid.New())
 	enq.EnqueueVideoSuppress(context.Background(), uuid.New(), SuppressDeleted)
 	enq.EnqueueConfigUpdated(context.Background(), SearchConfig{})
+	enq.EnqueueBehavioral(context.Background(), TypeVideoWatchProg, json.RawMessage(`{}`))
+	if err := enq.enqueueWithError(context.Background(), TypeReconcileBegin, make(chan int)); err != nil {
+		t.Errorf("disabled enqueue: %v", err)
+	}
+}
+
+func TestRequestEnqueueFailureRemainsBestEffort(t *testing.T) {
+	repo := newFakeOutbox()
+	repo.enqErr = errors.New("outbox unavailable")
+	metrics := newFakeMetrics()
+	enq := NewEnqueuer(repo, testLogger(), WithMetrics(metrics))
+	enq.EnqueueVideoSuppress(context.Background(), uuid.New(), SuppressDeleted)
+	enq.EnqueueBehavioral(context.Background(), TypeVideoWatchProg, json.RawMessage(`{}`))
+	if len(repo.enqueued) != 0 || repo.enqCalls != 2 {
+		t.Errorf("enqueue calls/persisted = %d/%d, want 2/0", repo.enqCalls, len(repo.enqueued))
+	}
+	if metrics.enqueue[TypeVideoSuppress] != 1 || metrics.enqueue[TypeVideoWatchProg] != 1 {
+		t.Errorf("enqueue failures = %v, want one per request-path event", metrics.enqueue)
+	}
 }
 
 func TestRunReconcileEmitsBeginPagesEnd(t *testing.T) {
@@ -295,6 +319,71 @@ func TestRunReconcileEmitsBeginPagesEnd(t *testing.T) {
 	_ = json.Unmarshal(last.Payload, &end)
 	if end.Total != 3 {
 		t.Errorf("total = %d, want 3", end.Total)
+	}
+}
+
+func TestRunReconcileStopsOnEnqueueFailure(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		failAt    int
+		pageCalls int
+		eventType string
+	}{
+		{"begin", 1, 0, TypeReconcileBegin},
+		{"first page", 2, 1, TypeReconcilePage},
+		{"middle page", 3, 2, TypeReconcilePage},
+		{"last page", 4, 3, TypeReconcilePage},
+		{"end", 5, 3, TypeReconcileEnd},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeOutbox()
+			for i := 0; i < 5; i++ {
+				repo.allDocs = append(repo.allDocs, sqlcgen.ListVideoSearchDocsPageRow{
+					ID: uuid.New(), Privacy: "public", State: "published",
+				})
+			}
+			wantErr := errors.New("outbox unavailable")
+			repo.enqErr, repo.failEnqAt = wantErr, tt.failAt
+			metrics := newFakeMetrics()
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, nil))
+			enq := NewEnqueuer(repo, logger, WithMetrics(metrics))
+			if err := enq.RunReconcile(context.Background(), 2); !errors.Is(err, wantErr) {
+				t.Errorf("reconcile error = %v, want %v", err, wantErr)
+			}
+			if repo.enqCalls != tt.failAt || len(repo.enqueued) != tt.failAt-1 {
+				t.Errorf("enqueue calls/persisted = %d/%d, want %d/%d", repo.enqCalls, len(repo.enqueued), tt.failAt, tt.failAt-1)
+			}
+			if repo.pageCalls != tt.pageCalls {
+				t.Errorf("page reads = %d, want %d", repo.pageCalls, tt.pageCalls)
+			}
+			for _, event := range repo.enqueued {
+				if event.EventType == TypeReconcileEnd {
+					t.Error("reconcile.end persisted after an enqueue failure")
+				}
+			}
+			if metrics.enqueue[tt.eventType] != 1 || !bytes.Contains(logs.Bytes(), []byte(wantErr.Error())) {
+				t.Errorf("enqueue failure must be logged and metered: metrics=%v logs=%s", metrics.enqueue, logs.String())
+			}
+		})
+	}
+}
+
+func TestRunReconcileEmptyAndDisabled(t *testing.T) {
+	var disabled *Enqueuer
+	if err := disabled.RunReconcile(context.Background(), 0); err != nil {
+		t.Fatalf("disabled reconcile: %v", err)
+	}
+	repo := newFakeOutbox()
+	if err := NewEnqueuer(repo, testLogger()).RunReconcile(context.Background(), 0); err != nil {
+		t.Fatalf("empty reconcile: %v", err)
+	}
+	if len(repo.enqueued) != 2 || repo.enqueued[0].EventType != TypeReconcileBegin || repo.enqueued[1].EventType != TypeReconcileEnd {
+		t.Fatalf("events = %v, want begin and end", types(repo.enqueued))
+	}
+	var end reconcileEndPayload
+	if err := json.Unmarshal(repo.enqueued[1].Payload, &end); err != nil || end.Total != 0 {
+		t.Errorf("end = %+v, %v; want zero total", end, err)
 	}
 }
 

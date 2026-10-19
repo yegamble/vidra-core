@@ -28,10 +28,11 @@ type Metrics interface {
 	IncSearchEnqueueFailure(eventType string)
 }
 
-// Enqueuer builds and persists search events to the outbox. All methods are
-// best-effort: a marshal or DB error is logged + metered and swallowed so the
-// caller's request never fails. A nil *Enqueuer is a valid no-op receiver, so
-// call sites can be wired unconditionally.
+// Enqueuer builds and persists search events to the outbox. Request-path methods
+// are best-effort: a marshal or DB error is logged + metered and swallowed so the
+// caller's request never fails. RunReconcile returns errors to abort incomplete
+// sweeps. A nil *Enqueuer is a valid no-op receiver, so call sites can be wired
+// unconditionally.
 type Enqueuer struct {
 	repo    OutboxRepository
 	logger  *slog.Logger
@@ -58,28 +59,40 @@ func NewEnqueuer(repo OutboxRepository, logger *slog.Logger, opts ...Option) *En
 
 // enqueue marshals payload and inserts one outbox row. Best-effort.
 func (e *Enqueuer) enqueue(ctx context.Context, eventType string, payload any) {
+	_ = e.enqueueWithError(ctx, eventType, payload)
+}
+
+// enqueueWithError retains enqueue's logging and metrics while allowing a
+// reconcile sweep to stop before emitting an end for an incomplete sweep.
+func (e *Enqueuer) enqueueWithError(ctx context.Context, eventType string, payload any) error {
 	if e == nil {
-		return
+		return nil
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		e.fail(ctx, eventType, err)
-		return
+		return err
 	}
-	e.enqueueRaw(ctx, eventType, raw)
+	return e.enqueueRawWithError(ctx, eventType, raw)
 }
 
-// enqueueRaw inserts one outbox row from an already-serialized payload.
+// enqueueRaw inserts one outbox row from an already-serialized payload. Best-effort.
 func (e *Enqueuer) enqueueRaw(ctx context.Context, eventType string, payload json.RawMessage) {
+	_ = e.enqueueRawWithError(ctx, eventType, payload)
+}
+
+func (e *Enqueuer) enqueueRawWithError(ctx context.Context, eventType string, payload json.RawMessage) error {
 	if e == nil {
-		return
+		return nil
 	}
 	if err := e.repo.EnqueueSearchEvent(ctx, sqlcgen.EnqueueSearchEventParams{
 		EventType: eventType,
 		Payload:   payload,
 	}); err != nil {
 		e.fail(ctx, eventType, err)
+		return err
 	}
+	return nil
 }
 
 // fail logs + meters a dropped event.

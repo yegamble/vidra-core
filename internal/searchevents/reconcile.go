@@ -25,8 +25,9 @@ const DefaultReconcilePageSize = 200
 // docs) over every eligible public+published local video keyset-paged by id, then
 // a reconcile.end with the total. The search service, on reconcile.end, suppresses
 // any eligible local doc whose run stamp is stale — repairing the index against
-// dropped incremental events. Only the paging query error is returned (the page
-// enqueues are best-effort, like all emission).
+// dropped incremental events. Paging and enqueue errors abort the sweep and are
+// returned to the caller. This prevents enqueue loss from completing a partial
+// sweep; it does not guarantee delivery ordering during search-service outages.
 func (e *Enqueuer) RunReconcile(ctx context.Context, pageSize int32) error {
 	if e == nil {
 		return nil
@@ -35,7 +36,9 @@ func (e *Enqueuer) RunReconcile(ctx context.Context, pageSize int32) error {
 		pageSize = DefaultReconcilePageSize
 	}
 	runID := uuid.New()
-	e.enqueue(ctx, TypeReconcileBegin, reconcileBeginPayload{RunID: runID})
+	if err := e.enqueueWithError(ctx, TypeReconcileBegin, reconcileBeginPayload{RunID: runID}); err != nil {
+		return err
+	}
 
 	after := uuid.Nil
 	total := 0
@@ -54,7 +57,9 @@ func (e *Enqueuer) RunReconcile(ctx context.Context, pageSize int32) error {
 		for _, r := range rows {
 			docs = append(docs, videoDocFromPageRow(r))
 		}
-		e.enqueue(ctx, TypeReconcilePage, reconcilePagePayload{RunID: runID, Videos: docs})
+		if err := e.enqueueWithError(ctx, TypeReconcilePage, reconcilePagePayload{RunID: runID, Videos: docs}); err != nil {
+			return err
+		}
 		total += len(docs)
 		after = rows[len(rows)-1].ID
 		if len(rows) < int(pageSize) {
@@ -62,6 +67,5 @@ func (e *Enqueuer) RunReconcile(ctx context.Context, pageSize int32) error {
 		}
 	}
 
-	e.enqueue(ctx, TypeReconcileEnd, reconcileEndPayload{RunID: runID, Total: total})
-	return nil
+	return e.enqueueWithError(ctx, TypeReconcileEnd, reconcileEndPayload{RunID: runID, Total: total})
 }
