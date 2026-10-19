@@ -205,8 +205,8 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// + auto_transcribe_new_uploads (queue the Whisper caption job for each
 	// newly published video; default OFF, effective only with transcription).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 127 {
-		t.Fatalf("settings count = %d, want 127", len(got.Settings))
+	if len(got.Settings) != 130 {
+		t.Fatalf("settings count = %d, want 130", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

@@ -62,9 +62,11 @@ func fetchedURLReason(key string) string {
 var registryKeyAllowlist = map[string]string{
 	// Verified: terms_url / privacy_url are only validated (validateOptionalURL)
 	// and returned in the public instance payload; no server-side code fetches them.
-	KeyTermsURL:         "rendered by the client, never fetched server-side",
-	KeyPrivacyURL:       "rendered by the client, never fetched server-side",
-	KeyPlayerVASTTagURL: "public browser VAST tag; never fetched server-side and never a secret",
+	KeyTermsURL:                 "rendered by the client, never fetched server-side",
+	KeyPrivacyURL:               "rendered by the client, never fetched server-side",
+	KeyPlayerVASTTagURL:         "public browser VAST tag; never fetched server-side and never a secret",
+	KeyPlayerVASTMidrollTagURL:  "public browser VAST tag; never fetched server-side and never a secret",
+	KeyPlayerVASTPostrollTagURL: "public browser VAST tag; never fetched server-side and never a secret",
 	// Verified: both are bool toggles gating search_remote.go; the value is not
 	// a URL. The URI that gets fetched comes from the user's search query and goes
 	// through the SSRF-guarded federation resolver, so the admin cannot aim it.

@@ -17008,6 +17008,9 @@ paths:
         player_vast_tag_url defaults empty. The public tag URL is fetched only
         by browsers; it must be absolute HTTP(S), at most 2000 bytes, without
         whitespace, credentials, or fragments. An empty string clears the tag.
+        player_vast_midroll_tag_url and player_vast_postroll_tag_url follow the
+        same URL rules and default empty. player_vast_midroll_offset_seconds
+        is an integer from 1 to 86400, default 300 (five minutes into content).
         Restricted to admins.
       tags: [admin]
       security:
@@ -20794,17 +20797,30 @@ components:
         ads:
           type: object
           description: >-
-            Optional browser VAST preroll configuration. Absent on older servers;
+            Optional browser VAST placement configuration. Absent on older servers;
             clients treat absence as disabled. Tag URLs are public configuration,
             never server-fetched or secret. Ad failures must resume normal content.
           required: [enabled, vast_tag_url]
           properties:
             enabled:
               type: boolean
-              description: True only when the admin toggle is on and a valid tag URL is configured.
+              description: True only when the admin toggle is on and at least one valid placement tag URL is configured.
             vast_tag_url:
               type: string
               description: Absolute HTTP(S) tag URL, at most 2000 bytes, without whitespace, credentials or fragments; empty when unconfigured.
+            midroll_tag_url:
+              type: string
+              description: Midroll tag URL with the same validation as vast_tag_url; empty or absent means no midroll.
+            midroll_offset_seconds:
+              type: integer
+              format: int64
+              minimum: 1
+              maximum: 86400
+              default: 300
+              description: Content playback position for the midroll; defaults to 300 when absent on older servers.
+            postroll_tag_url:
+              type: string
+              description: Postroll tag URL with the same validation as vast_tag_url; empty or absent means no postroll.
         broadcast:
           type: object
           description: Operator broadcast banner (W3 renders it).

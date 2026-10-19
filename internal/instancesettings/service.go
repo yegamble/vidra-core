@@ -136,8 +136,11 @@ const (
 	KeyBroadcastDismissable = "broadcast_dismissable"
 
 	// Public browser advertising configuration; the server never fetches these URLs.
-	KeyPlayerVASTEnabled = "player_vast_enabled"
-	KeyPlayerVASTTagURL  = "player_vast_tag_url"
+	KeyPlayerVASTEnabled              = "player_vast_enabled"
+	KeyPlayerVASTTagURL               = "player_vast_tag_url"
+	KeyPlayerVASTMidrollTagURL        = "player_vast_midroll_tag_url"
+	KeyPlayerVASTMidrollOffsetSeconds = "player_vast_midroll_offset_seconds"
+	KeyPlayerVASTPostrollTagURL       = "player_vast_postroll_tag_url"
 
 	// Featured-banner keys (home-featured-banner). An admin-controlled YouTube-
 	// masthead-style slot on the homepage: a toggle, one picked LOCAL video, and
@@ -611,9 +614,10 @@ const (
 	// privacy on create means private) — silently loosening third-party API
 	// clients' drafts to public is not acceptable as a side effect of adding
 	// the knob. Admins who want PeerTube's public-by-default set it here.
-	DefaultVideoPrivacy   = "private"
-	DefaultCommentPolicy  = "enabled"
-	defaultPlayerAutoplay = true
+	DefaultVideoPrivacy             = "private"
+	DefaultCommentPolicy            = "enabled"
+	defaultPlayerAutoplay           = true
+	DefaultVASTMidrollOffsetSeconds = 300
 
 	// DefaultUserExportExpirationHours is how long a finished account-export
 	// archive stays downloadable (W8; mirrors account.ExportTTL's 7 days —
@@ -928,6 +932,12 @@ var specs = []spec{
 	{key: KeyPlayerVASTEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageVOD, section: "advertising"},
 	{key: KeyPlayerVASTTagURL, kind: KindString, defString: hardcoded(""), validate: validateOptionalVASTTagURL,
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTMidrollTagURL, kind: KindString, defString: hardcoded(""), validate: validateOptionalVASTTagURL,
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTMidrollOffsetSeconds, kind: KindInt, defInt: func(Defaults) int64 { return DefaultVASTMidrollOffsetSeconds }, validate: intRange(1, 86400),
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTPostrollTagURL, kind: KindString, defString: hardcoded(""), validate: validateOptionalVASTTagURL,
 		page: PageVOD, section: "advertising"},
 	{key: KeyEmailSubjectPrefix, kind: KindString, defString: hardcoded(""), validate: maxLen(128),
 		page: PageCustomization, section: "email"},
