@@ -174,6 +174,11 @@ type instanceAds struct {
 	CooldownSeconds           int64  `json:"cooldown_seconds"`
 }
 
+type instanceAnalytics struct {
+	GoogleEnabled       bool   `json:"google_enabled"`
+	GoogleMeasurementID string `json:"google_measurement_id"`
+}
+
 // instanceFeatured is the admin featured-banner block (home-featured-banner).
 // The frontend fetches the picked video server-side and renders the masthead
 // banner only when Enabled AND VideoID resolves to a public, published video —
@@ -327,6 +332,7 @@ type instanceResponse struct {
 	Defaults      instanceDefaults      `json:"defaults"`
 	Broadcast     instanceBroadcast     `json:"broadcast"`
 	Ads           instanceAds           `json:"ads"`
+	Analytics     instanceAnalytics     `json:"analytics"`
 	Featured      instanceFeatured      `json:"featured"`
 	Customization instanceCustomization `json:"customization"`
 	Social        instanceSocialMeta    `json:"social"`
@@ -459,6 +465,7 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 		Defaults:      s.instanceDefaultsBlock(),
 		Broadcast:     s.instanceBroadcastBlock(),
 		Ads:           s.instanceAdsBlock(),
+		Analytics:     s.instanceAnalyticsBlock(),
 		Featured:      s.instanceFeaturedBlock(),
 		Customization: s.instanceCustomizationBlock(),
 		Social: instanceSocialMeta{
@@ -596,6 +603,18 @@ func (s *Server) instanceAdsBlock() instanceAds {
 		MidrollTagURL: midroll, MidrollOffsetSeconds: offset, PostrollTagURL: postroll,
 		MidrollMinDurationSeconds: policySeconds(instancesettings.KeyPlayerVASTMidrollMinDurationSeconds, instancesettings.DefaultVASTMidrollMinDurationSeconds),
 		CooldownSeconds:           policySeconds(instancesettings.KeyPlayerVASTCooldownSeconds, instancesettings.DefaultVASTCooldownSeconds),
+	}
+}
+
+func (s *Server) instanceAnalyticsBlock() instanceAnalytics {
+	id := s.settingString(instancesettings.KeyAnalyticsGoogleMeasurementID, "")
+	if !s.settingBool(instancesettings.KeyAnalyticsGoogleEnabled, false) ||
+		instancesettings.Validate(instancesettings.KeyAnalyticsGoogleMeasurementID, id) != nil {
+		id = "" // Disabled or invalid settings must not expose a public ID.
+	}
+	return instanceAnalytics{
+		GoogleEnabled:       id != "",
+		GoogleMeasurementID: id,
 	}
 }
 

@@ -17018,6 +17018,10 @@ paths:
         player_vast_cooldown_seconds (default 300) range from 0 to 86400;
         zero removes the respective minimum. Cooldown covers all video ad breaks
         across video changes and is enforced by clients.
+        Google Analytics is opt-in: analytics_google_enabled defaults false,
+        analytics_google_measurement_id defaults empty and must match
+        ^G-[A-Z0-9]{4,20}$ when set. It is a public GA4 browser identifier,
+        not a secret or server-fetched resource. Empty clears the ID.
         Restricted to admins.
       tags: [admin]
       security:
@@ -17151,6 +17155,8 @@ paths:
         GET /api/v1/instance/about, POST /api/v1/instance/contact, public
         sensitive-content filtering, and the upload/import/live/comment/download/
         registration gates reflect them.
+        Google Analytics uses the boolean analytics_google_enabled and string
+        analytics_google_measurement_id (empty or ^G-[A-Z0-9]{4,20}$).
       tags: [admin]
       security:
         - bearerAuth: []
@@ -20801,6 +20807,19 @@ components:
                   enum: [enabled, disabled, requires_approval]
                 download_enabled:
                   type: boolean
+        analytics:
+          type: object
+          description: Optional public browser analytics configuration; absent on older servers means disabled. Defaults off. The server never contacts Google.
+          required: [google_enabled, google_measurement_id]
+          properties:
+            google_enabled:
+              type: boolean
+              description: True only when analytics_google_enabled is on and a valid nonempty measurement ID is configured.
+            google_measurement_id:
+              type: string
+              maxLength: 22
+              pattern: '^(G-[A-Z0-9]{4,20})?$'
+              description: Public GA4 measurement ID; empty when disabled, unconfigured or invalid. The saved admin setting is retained when disabled.
         ads:
           type: object
           description: >-
