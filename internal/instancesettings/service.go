@@ -150,6 +150,13 @@ const (
 	KeyPlayerVASTPostrollEnabled           = "player_vast_postroll_enabled"
 	KeyPlayerVASTMidrollMinDurationSeconds = "player_vast_midroll_min_duration_seconds"
 	KeyPlayerVASTCooldownSeconds           = "player_vast_cooldown_seconds"
+	KeyPlayerVASTEmbedEnabled              = "player_vast_embed_enabled"
+	KeyPlayerVASTControls                  = "player_vast_controls"
+	KeyPlayerVASTSkipAfterSeconds          = "player_vast_skip_after_seconds"
+	KeyPlayerVASTMidrollOffsetPercent      = "player_vast_midroll_offset_percent"
+	KeyPlayerVASTSkipCountdown             = "player_vast_skip_countdown"
+	KeyPlayerVASTSkipLabel                 = "player_vast_skip_label"
+	KeyPlayerVASTRemainingMessage          = "player_vast_remaining_message"
 
 	// Featured-banner keys (home-featured-banner). An admin-controlled YouTube-
 	// masthead-style slot on the homepage: a toggle, one picked LOCAL video, and
@@ -629,6 +636,10 @@ const (
 	DefaultVASTMidrollOffsetSeconds      = 300
 	DefaultVASTMidrollMinDurationSeconds = 600
 	DefaultVASTCooldownSeconds           = 300
+	DefaultVASTSkipAfterSeconds          = 5
+	DefaultVASTSkipCountdown             = "Skip in {seconds}…"
+	DefaultVASTSkipLabel                 = "Skip ad"
+	DefaultVASTRemainingMessage          = "This ad will end in {seconds}"
 
 	// DefaultUserExportExpirationHours is how long a finished account-export
 	// archive stays downloadable (W8; mirrors account.ExportTTL's 7 days —
@@ -959,6 +970,20 @@ var specs = []spec{
 	{key: KeyPlayerVASTMidrollMinDurationSeconds, kind: KindInt, defInt: func(Defaults) int64 { return DefaultVASTMidrollMinDurationSeconds }, validate: intRange(0, 86400),
 		page: PageVOD, section: "advertising"},
 	{key: KeyPlayerVASTCooldownSeconds, kind: KindInt, defInt: func(Defaults) int64 { return DefaultVASTCooldownSeconds }, validate: intRange(0, 86400),
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTEmbedEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTControls, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTSkipAfterSeconds, kind: KindInt, defInt: func(Defaults) int64 { return DefaultVASTSkipAfterSeconds }, validate: intRange(0, 300),
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTMidrollOffsetPercent, kind: KindInt, defInt: func(Defaults) int64 { return 0 }, validate: intRange(0, 100),
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTSkipCountdown, kind: KindString, defString: hardcoded(DefaultVASTSkipCountdown), validate: maxLen(200),
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTSkipLabel, kind: KindString, defString: hardcoded(DefaultVASTSkipLabel), validate: maxLen(80),
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTRemainingMessage, kind: KindString, defString: hardcoded(DefaultVASTRemainingMessage), validate: maxLen(200),
 		page: PageVOD, section: "advertising"},
 	{key: KeyAnalyticsGoogleEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageGeneral, section: "analytics"},

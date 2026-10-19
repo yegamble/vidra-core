@@ -172,6 +172,13 @@ type instanceAds struct {
 	PostrollTagURL            string `json:"postroll_tag_url"`
 	MidrollMinDurationSeconds int64  `json:"midroll_min_duration_seconds"`
 	CooldownSeconds           int64  `json:"cooldown_seconds"`
+	EmbedEnabled              bool   `json:"embed_enabled"`
+	Controls                  bool   `json:"controls"`
+	SkipAfterSeconds          int64  `json:"skip_after_seconds"`
+	MidrollOffsetPercent      int64  `json:"midroll_offset_percent"`
+	SkipCountdown             string `json:"skip_countdown"`
+	SkipLabel                 string `json:"skip_label"`
+	RemainingMessage          string `json:"remaining_message"`
 }
 
 type instanceAnalytics struct {
@@ -590,9 +597,16 @@ func (s *Server) instanceAdsBlock() instanceAds {
 	if offset < 1 || offset > 86400 {
 		offset = instancesettings.DefaultVASTMidrollOffsetSeconds
 	}
-	policySeconds := func(key string, def int64) int64 {
+	boundedInt := func(key string, def, max int64) int64 {
 		value := s.settingInt(key, def)
-		if value < 0 || value > 86400 {
+		if value < 0 || value > max {
+			return def
+		}
+		return value
+	}
+	publicText := func(key, def string) string {
+		value := s.settingString(key, def)
+		if instancesettings.Validate(key, value) != nil {
 			return def
 		}
 		return value
@@ -601,8 +615,15 @@ func (s *Server) instanceAdsBlock() instanceAds {
 		Enabled:       s.settingBool(instancesettings.KeyPlayerVASTEnabled, false) && (tag != "" || midroll != "" || postroll != ""),
 		VASTTagURL:    tag,
 		MidrollTagURL: midroll, MidrollOffsetSeconds: offset, PostrollTagURL: postroll,
-		MidrollMinDurationSeconds: policySeconds(instancesettings.KeyPlayerVASTMidrollMinDurationSeconds, instancesettings.DefaultVASTMidrollMinDurationSeconds),
-		CooldownSeconds:           policySeconds(instancesettings.KeyPlayerVASTCooldownSeconds, instancesettings.DefaultVASTCooldownSeconds),
+		MidrollMinDurationSeconds: boundedInt(instancesettings.KeyPlayerVASTMidrollMinDurationSeconds, instancesettings.DefaultVASTMidrollMinDurationSeconds, 86400),
+		CooldownSeconds:           boundedInt(instancesettings.KeyPlayerVASTCooldownSeconds, instancesettings.DefaultVASTCooldownSeconds, 86400),
+		EmbedEnabled:              s.settingBool(instancesettings.KeyPlayerVASTEmbedEnabled, true),
+		Controls:                  s.settingBool(instancesettings.KeyPlayerVASTControls, true),
+		SkipAfterSeconds:          boundedInt(instancesettings.KeyPlayerVASTSkipAfterSeconds, instancesettings.DefaultVASTSkipAfterSeconds, 300),
+		MidrollOffsetPercent:      boundedInt(instancesettings.KeyPlayerVASTMidrollOffsetPercent, 0, 100),
+		SkipCountdown:             publicText(instancesettings.KeyPlayerVASTSkipCountdown, instancesettings.DefaultVASTSkipCountdown),
+		SkipLabel:                 publicText(instancesettings.KeyPlayerVASTSkipLabel, instancesettings.DefaultVASTSkipLabel),
+		RemainingMessage:          publicText(instancesettings.KeyPlayerVASTRemainingMessage, instancesettings.DefaultVASTRemainingMessage),
 	}
 }
 
