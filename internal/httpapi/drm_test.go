@@ -44,11 +44,7 @@ func (r *drmFakeRepo) InsertVideoDRMKey(_ context.Context, arg sqlcgen.InsertVid
 	if _, exists := r.rows[arg.VideoID]; exists {
 		return nil
 	}
-	r.rows[arg.VideoID] = sqlcgen.GetVideoDRMKeyRow{
-		VideoID:          arg.VideoID,
-		KeyID:            arg.KeyID,
-		ContentKeySealed: arg.ContentKeySealed,
-	}
+	r.rows[arg.VideoID] = sqlcgen.GetVideoDRMKeyRow(arg)
 	return nil
 }
 

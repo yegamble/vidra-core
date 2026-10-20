@@ -167,7 +167,9 @@ func (s *Server) serveMediaAsset(c echo.Context, a mediaAsset) error {
 		req.ContentDisposition = attachmentHeader(a.filename)
 	}
 	header := c.Response().Header()
-	for _, src := range s.deliverysvc.Resolve(c.Request().Context(), req) {
+	sources := s.deliverysvc.Resolve(c.Request().Context(), req)
+	if len(sources) > 0 {
+		src := sources[0]
 		if src.Kind != delivery.SourceAPIProxy {
 			header.Set("Cache-Control", src.CacheControl)
 			return c.Redirect(http.StatusTemporaryRedirect, src.URL)

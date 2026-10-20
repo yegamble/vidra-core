@@ -59,7 +59,14 @@ func verifyProofSig(t *testing.T, header map[string]any, signingInput string, si
 	if err != nil {
 		t.Fatalf("decode y: %v", err)
 	}
-	pub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(xb), Y: new(big.Int).SetBytes(yb)}
+	encoded := make([]byte, 65)
+	encoded[0] = 4 // SEC 1 uncompressed P-256 point.
+	copy(encoded[1:33], xb)
+	copy(encoded[33:], yb)
+	pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), encoded)
+	if err != nil {
+		t.Fatalf("parse public key: %v", err)
+	}
 	if len(sig) != 64 {
 		t.Fatalf("signature is %d bytes, want 64 (raw R||S)", len(sig))
 	}

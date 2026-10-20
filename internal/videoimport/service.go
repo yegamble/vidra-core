@@ -547,7 +547,7 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 // guarded HEAD content-type; else the yt-dlp extractor when enabled) and rewrites
 // the stored resolver so the echoed value is always what actually ran.
 func (s *Service) selectResolver(ctx context.Context, guard urlsafety.Guard, row sqlcgen.ClaimDueImportJobsRow, target *url.URL) (resolver, error) {
-	concrete := row.Resolver
+	var concrete string
 	switch row.Resolver {
 	case ResolverDirect:
 		concrete = ResolverDirect

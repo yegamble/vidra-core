@@ -152,10 +152,11 @@ func (s *S3) EnsureBucket(ctx context.Context) (created bool, err error) {
 // store nobody has used yet" from "a store with somebody's data in it", which is
 // the distinction the ownership marker turns on.
 func (s *S3) IsEmpty(ctx context.Context) (bool, error) {
-	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+	objects := s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
 		Recursive: true,
 		MaxKeys:   1,
-	}) {
+	})
+	if obj, ok := <-objects; ok {
 		if obj.Err != nil {
 			return false, classifyS3("list", fmt.Errorf("storage: s3: list bucket %q: %w", s.bucket, obj.Err))
 		}

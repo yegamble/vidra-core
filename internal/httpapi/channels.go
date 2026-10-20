@@ -497,7 +497,7 @@ func (s *Server) handleSetFollowNotifications(c echo.Context) error {
 		}
 		return channelError(err)
 	}
-	return c.JSON(http.StatusOK, followNotificationsResponse{NotificationSetting: in.NotificationSetting})
+	return c.JSON(http.StatusOK, followNotificationsResponse(in))
 }
 
 // handleUnfollowChannel removes the authenticated user's follow. Idempotent.

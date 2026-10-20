@@ -174,11 +174,7 @@ func (f *liveFakeRepo) UpdateLiveStream(_ context.Context, a sqlcgen.UpdateLiveS
 	}
 	r.UpdatedAt = time.Now()
 	f.rows[a.ID] = r
-	return sqlcgen.UpdateLiveStreamRow{
-		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
-		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
-		StartedAt: r.StartedAt, ScheduledStartAt: r.ScheduledStartAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-	}, nil
+	return sqlcgen.UpdateLiveStreamRow(r), nil
 }
 
 func (f *liveFakeRepo) GetLiveStreamByKeyHash(_ context.Context, h string) (sqlcgen.GetLiveStreamByKeyHashRow, error) {
