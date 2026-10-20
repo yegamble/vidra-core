@@ -1,0 +1,7 @@
+min_version: 2.2.2
+pre-commit:
+  jobs:
+    - run: git diff --cached --check
+pre-push:
+  jobs:
+    - run: make quality

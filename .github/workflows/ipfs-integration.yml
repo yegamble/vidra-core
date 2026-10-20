@@ -60,7 +60,7 @@ jobs:
       - name: Assert local-only node configuration
         run: |
           set -eux
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             health=$(docker inspect -f '{{ .State.Health.Status }}' "$(docker compose ps -q ipfs)" 2>/dev/null || echo starting)
             if [ "$health" = healthy ]; then break; fi
             sleep 3
@@ -86,7 +86,7 @@ jobs:
       - name: Assert live-mode node configuration
         run: |
           set -eux
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             health=$(docker inspect -f '{{ .State.Health.Status }}' "$(docker compose ps -q ipfs)" 2>/dev/null || echo starting)
             if [ "$health" = healthy ]; then break; fi
             sleep 3

@@ -63,8 +63,7 @@ jobs:
           # image are the same source tree; building them on different compilers
           # was an unstated difference between what CI proved and what shipped.
           go-version: "1.27"
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false
 
       - name: Build vidra for the four host platforms
         env:

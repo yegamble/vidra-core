@@ -157,8 +157,9 @@ down: ## Stop the local Docker stack
 	docker compose --profile core down
 
 # govulncheck runs through the module proxy at an EXACT version, so the Go
-# checksum database pins the scanner itself and nothing needs installing. It
-# reports only vulnerabilities reachable from this module's code, against the
+# checksum database pins the scanner itself and nothing needs installing.
+# -test includes test dependencies and call roots, covering CI exposure too.
+# Reports only vulnerabilities reachable from module code and tests, against the
 # standard library of the toolchain running it — CI runs it on the release
 # image's Go line for that reason. -show verbose prints the "required but not
 # called" module findings too: informational, never hidden. Needs network, so
@@ -175,9 +176,17 @@ down: ## Stop the local Docker stack
 GOVULNCHECK_VERSION := v1.8.0
 
 .PHONY: vuln
-vuln: ## Scan for known Go vulnerabilities reachable from this module (needs network; not in `make ci`)
+vuln: ## Scan for known Go vulnerabilities reachable from module code and tests (needs network; not in `make ci`)
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) -version   # scanner, Go and database freshness, for the record
-	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) -show verbose ./...
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) -test -show verbose ./...
+
+.PHONY: quality
+quality: fmt-check vet ## Static analysis and unused declarations, including tests in every CI build-tag world
+	bash scripts/ci/go-quality.sh '' integration ipfs_integration ipfs_private_integration
+
+.PHONY: workflow-lint
+workflow-lint: ## Lint GitHub Actions and their security properties (requires Go, uv and ShellCheck)
+	bash scripts/ci/workflow-lint.sh
 
 .PHONY: check
 check: fmt vet test ## Run the standard local gate (fmt, vet, test)
@@ -187,5 +196,5 @@ check: fmt vet test ## Run the standard local gate (fmt, vet, test)
 # lock-step by adding any new required check here, never only in the workflow.
 # Assumes Postgres/Redis are reachable (run `make up` locally; CI provides them).
 .PHONY: ci
-ci: fmt-check vet migrate-lint openapi-verify sqlc-verify test-race ## Canonical CI gate (run locally to mirror GitHub exactly)
-	@echo "ci: gate passed (fmt-check, vet, migrate-lint, openapi-verify, sqlc-verify, test-race)."
+ci: quality migrate-lint openapi-verify sqlc-verify test-race ## Canonical CI gate (run locally to mirror GitHub exactly)
+	@echo "ci: gate passed (quality, migrate-lint, openapi-verify, sqlc-verify, test-race)."

@@ -90,7 +90,7 @@ jobs:
           set -eux
           for svc in kubo-private kubo-private-2 ipfs; do
             healthy=false
-            for i in $(seq 1 30); do
+            for _ in $(seq 1 30); do
               cid=$(docker compose -f docker-compose.yml -f docker-compose.ci-private.yml ps -q "$svc")
               status=$(docker inspect -f '{{ .State.Health.Status }}' "$cid" 2>/dev/null || echo starting)
               if [ "$status" = "healthy" ]; then

@@ -59,6 +59,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27"
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.28"
+      - name: Workflow syntax, shell and security analysis
+        run: bash scripts/ci/workflow-lint.sh
+
       - name: Workflow files parse the way GitHub parses them; no-cache-filters name real stages
         run: python3 scripts/ci/check-workflow-yaml.py
 
