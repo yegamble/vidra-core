@@ -190,7 +190,6 @@ func (s *Service) noteSignIn(ctx context.Context, user sqlcgen.User, userAgent s
 		defer cancel()
 		_ = nm.SendNewDeviceSignIn(sendCtx, email, n)
 	})
-	return
 }
 
 // DeviceView is one recognised device as the account owner sees it. Current is

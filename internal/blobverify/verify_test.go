@@ -299,14 +299,6 @@ func TestDeepWalksTheHLSTree(t *testing.T) {
 	}
 }
 
-// listlessBackend is a Backend with no ObjectLister, which is what --deep has
-// to degrade gracefully against rather than fail on.
-type listlessBackend struct{ storage.Backend }
-
-func (b listlessBackend) ListKeys(context.Context, string) ([]string, error) {
-	panic("must not be called: this backend does not advertise ObjectLister")
-}
-
 func TestDeepDegradesWhenTheBackendCannotList(t *testing.T) {
 	vid := uuid.New()
 	key := "streaming-playlists/" + vid.String() + "/master.m3u8"

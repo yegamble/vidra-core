@@ -245,9 +245,7 @@ func (f *fakeRepo) CountStorageMigrationObjectFailuresByCategory(_ context.Conte
 }
 
 func (f *fakeRepo) ListDestinationCopiesToRemove(ctx context.Context, arg sqlcgen.ListDestinationCopiesToRemoveParams) ([]string, error) {
-	return f.ListVerifiedStorageMigrationObjects(ctx, sqlcgen.ListVerifiedStorageMigrationObjectsParams{
-		CampaignID: arg.CampaignID, Limit: arg.Limit,
-	})
+	return f.ListVerifiedStorageMigrationObjects(ctx, sqlcgen.ListVerifiedStorageMigrationObjectsParams(arg))
 }
 
 func (f *fakeRepo) DeleteStorageMigrationObject(_ context.Context, objectKey string) error {

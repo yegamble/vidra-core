@@ -145,11 +145,6 @@ type markConversationReadRequest struct {
 	MessageID string `json:"message_id"`
 }
 
-// markConversationReadResponse echoes the resulting watermark.
-type markConversationReadResponse struct {
-	LastReadMessageID string `json:"last_read_message_id,omitempty"`
-}
-
 // handleMarkConversationRead advances the caller's read watermark in a
 // conversation (idempotent, advance-only). Behind requireAuth. Non-participant/
 // unknown conversation → 404; a message_id not in the conversation → 404.

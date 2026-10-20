@@ -143,7 +143,9 @@ jobs:
         run: go run ./cmd/api migrate up
 
       - name: Check out the previous release into a worktree
-        run: git worktree add ../n-1 "${{ steps.prev.outputs.tag }}"
+        env:
+          PREVIOUS_TAG: ${{ steps.prev.outputs.tag }}
+        run: git worktree add ../n-1 "$PREVIOUS_TAG"
 
       # The actual proof. No `migrate up` here — the N-1 tree deliberately runs
       # against the schema the step above left behind. Every service the N-1
@@ -168,6 +170,7 @@ jobs:
           DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
           CLAMAV_TEST_ADDR: localhost:3310
+          PREVIOUS_TAG: ${{ steps.prev.outputs.tag }}
         run: |
           set -euo pipefail
           rc=0
@@ -178,19 +181,19 @@ jobs:
             # N-1 carries migration 0142, so it shares the handle namespace and
             # the accepted break cannot apply. Nothing is tolerated here.
             if [ "$rc" -ne 0 ]; then
-              echo "::error::${{ steps.prev.outputs.tag }} carries the one-handle-namespace migration, so its suite must pass against this schema with no expectations. Delete the stale entries in scripts/ci/expected-prev-release-failures.txt only after reading the failures above." >&2
+              echo "::error::${PREVIOUS_TAG} carries the one-handle-namespace migration, so its suite must pass against this schema with no expectations. Delete the stale entries in scripts/ci/expected-prev-release-failures.txt only after reading the failures above." >&2
               exit 1
             fi
-            echo "::notice::${{ steps.prev.outputs.tag }} carries migration 0142 — the accepted-break register does not apply, and the suite passed clean."
+            echo "::notice::${PREVIOUS_TAG} carries migration 0142 — the accepted-break register does not apply, and the suite passed clean."
             exit 0
           fi
 
           if [ "$rc" -eq 0 ]; then
-            echo "::error::${{ steps.prev.outputs.tag }} predates migration 0142 but its suite PASSED — the probe above is wrong, or the register in scripts/ci/expected-prev-release-failures.txt is stale. Fix that before trusting this lane." >&2
+            echo "::error::${PREVIOUS_TAG} predates migration 0142 but its suite PASSED — the probe above is wrong, or the register in scripts/ci/expected-prev-release-failures.txt is stale. Fix that before trusting this lane." >&2
             exit 1
           fi
 
-          echo "::notice::${{ steps.prev.outputs.tag }} predates migration 0142 (one handle namespace, A29 parity), an ACCEPTED tightening. Auditing which tests failed against the written register."
+          echo "::notice::${PREVIOUS_TAG} predates migration 0142 (one handle namespace, A29 parity), an ACCEPTED tightening. Auditing which tests failed against the written register."
           "${{ github.workspace }}/scripts/ci/assert-prev-release-failures.sh" \
             /tmp/prev-release.log \
             "${{ github.workspace }}/scripts/ci/expected-prev-release-failures.txt"

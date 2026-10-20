@@ -77,6 +77,10 @@ curl localhost:8080/api/v1/instance/about # long-form markdown about-page conten
 
 ## Development & testing
 
+Install Go 1.27, uv and ShellCheck, then run `make hooks-install` to enforce
+code and workflow analysis before commit and push. See
+[code quality checks](docs/code-quality.md) for tool pins and setup details.
+
 No-Docker path (run the API on the host against dockerised datastores):
 
 ```bash
@@ -86,8 +90,9 @@ make migrate-up                                   # migrations are embedded in t
 make run                                           # API against local Postgres/Redis
 ```
 
-**`make ci` is the canonical gate.** It runs `fmt-check vet migrate-lint
-openapi-verify sqlc-verify test-race` — the exact set `backend-ci.yml` runs, so "passes locally"
+**`make ci` is the canonical gate.** It runs `quality migrate-lint
+openapi-verify sqlc-verify test-race` (quality includes formatting, vet and
+Staticcheck in every CI build-tag configuration) — the exact set `backend-ci.yml` runs, so "passes locally"
 == "passes in GitHub". Add any new required check there, never only in the workflow.
 
 - `make check` — fast local loop (`fmt vet test`).

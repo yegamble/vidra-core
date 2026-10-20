@@ -84,15 +84,6 @@ func (f *authFakeRepo) ListOAuthIdentitiesByUser(_ context.Context, userID uuid.
 	return out, nil
 }
 
-// linkIdentity is the test-side "this account signs in with that provider",
-// which is what a step-up refusal names and what the callback's subject check
-// consults.
-func (f *authFakeRepo) linkIdentity(userID uuid.UUID, provider, subject string) {
-	f.oauthIdents = append(f.oauthIdents, sqlcgen.OauthIdentity{
-		ID: uuid.New(), Provider: provider, Subject: subject, UserID: userID, CreatedAt: time.Now(),
-	})
-}
-
 // MoveStepUpTokensToSession mirrors the SQL that carries a live assertion onto
 // the session a refresh rotation creates — the reason the step-up works in a
 // browser at all, where the landing page load rotates before the form submits.

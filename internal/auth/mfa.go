@@ -619,14 +619,6 @@ func (s *Service) matchTOTPStep(code, secret string) (int64, bool) {
 	return 0, false
 }
 
-// validTOTPCode reports whether the code verifies at all, ignoring replay. It
-// is the ±1-skew arithmetic and nothing else; every caller that ACCEPTS a code
-// must also burn its step.
-func (s *Service) validTOTPCode(code, secret string) bool {
-	_, ok := s.matchTOTPStep(code, secret)
-	return ok
-}
-
 // looksLikeTOTPCode distinguishes a 6-digit TOTP code from a recovery code
 // (10 hex chars + dash), so the challenge knows which verifier to run.
 func looksLikeTOTPCode(code string) bool {

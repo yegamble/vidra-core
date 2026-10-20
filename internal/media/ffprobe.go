@@ -179,20 +179,6 @@ func openSource(ctx context.Context, blobs storage.Backend, key string) (source,
 	return localSource(path), cleanup, nil
 }
 
-// objectPath returns a filesystem path an external tool can read for key. It is
-// the path-or-download resolver, kept for tools that genuinely need a seekable
-// local FILE rather than any readable input. Prefer openSource.
-func objectPath(ctx context.Context, blobs storage.Backend, key string) (string, func(), error) {
-	if pp, ok := blobs.(storage.PathProvider); ok {
-		p, err := pp.Path(key)
-		if err != nil {
-			return "", func() {}, err
-		}
-		return p, func() {}, nil
-	}
-	return downloadToTemp(ctx, blobs, key)
-}
-
 // downloadToTemp streams the object at key to a temp file and returns its path
 // plus a cleanup that removes it.
 func downloadToTemp(ctx context.Context, blobs storage.Backend, key string) (string, func(), error) {

@@ -68,11 +68,7 @@ func (r *fakeRepo) InsertVideoDRMKey(_ context.Context, arg sqlcgen.InsertVideoD
 	if _, exists := r.rows[arg.VideoID]; exists {
 		return nil // ON CONFLICT DO NOTHING
 	}
-	r.rows[arg.VideoID] = sqlcgenRow{
-		VideoID:          arg.VideoID,
-		KeyID:            arg.KeyID,
-		ContentKeySealed: arg.ContentKeySealed,
-	}
+	r.rows[arg.VideoID] = sqlcgenRow(arg)
 	return nil
 }
 

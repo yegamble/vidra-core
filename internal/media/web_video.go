@@ -26,21 +26,6 @@ type WebVideoResult struct {
 	SHA256 string
 }
 
-func webVideoArgs(src source, dst string, r HLSRung, threads int) []string {
-	vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
-	if r.FPS > 0 {
-		vf += fmt.Sprintf(",fps=%d", r.FPS)
-	}
-	args := []string{"-y"}
-	args = append(args, src.inputArgs()...)
-	args = append(args, "-map", "0:v:0", "-map", "0:a:0?")
-	if threads > 0 {
-		args = append(args, "-threads", fmt.Sprintf("%d", threads))
-	}
-	args = append(args, webVideoEncodeArgs(r, vf)...)
-	return append(args, dst)
-}
-
 // webVideoEncodeArgs is one progressive MP4's encoder configuration, shared by
 // the single-rung and ladder forms so they cannot drift. vf is the scale chain
 // for the single-rung form; the ladder passes "" because its filter graph has

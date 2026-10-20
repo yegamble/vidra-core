@@ -674,14 +674,6 @@ func (io rungIO) tree() treeIO {
 
 func (io rungIO) ref(name string) string { return io.tree().ref(name) }
 
-func (io rungIO) read(ctx context.Context, name string) ([]byte, error) {
-	return io.tree().read(ctx, name)
-}
-
-func (io rungIO) write(ctx context.Context, name string, body []byte) error {
-	return io.tree().write(ctx, name, body)
-}
-
 // finalizeTrickPlay turns one rung's freshly-encoded trick-play output into the
 // playlist clients can use: FFmpeg's `iframes_only` flag emits incorrect
 // repeated @0 offsets, so the byte ranges are generated with `single_file` and

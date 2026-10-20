@@ -808,8 +808,7 @@ func TestProviderClientsNeverFollowARedirect(t *testing.T) {
 			// The host a redirect would send the credential to. It must see
 			// nothing at all.
 			sink := newProviderServer(t, http.StatusOK, `{"id":"pwned","MessageID":"pwned"}`)
-			var redirector *httptest.Server
-			redirector = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				http.Redirect(w, r, sink.srv.URL+r.URL.Path, http.StatusFound)
 			}))
 			t.Cleanup(redirector.Close)

@@ -27,7 +27,7 @@ func TestDigestIsStableAndFieldSensitive(t *testing.T) {
 	base := func() string {
 		return videoDigest(channel, "First Video", "hello", "public", "published", "1", "en", "1", 120, origPub)
 	}
-	if base() != base() {
+	if first, second := base(), base(); first != second {
 		t.Fatal("the same fields hashed twice gave different answers")
 	}
 	changed := map[string]string{

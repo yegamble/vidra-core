@@ -36,7 +36,8 @@ cannot run. Module-level "required but not called" findings are printed
 GitHub GHSA is invisible to it — those are Dependabot alerts' job. Green means
 "no reachable vuln.go.dev advisory", not "no known vulnerability". The fix is
 upgrading the named module or the Go toolchain — the one exception to
-"Dependabot owns bumps" below. Never skip or narrow the scan to get green. The
+"Dependabot owns bumps" below. `-test` includes test call roots and dependencies,
+so findings also cover CI exposure. Never skip or narrow the scan to get green. The
 scanner pin (`GOVULNCHECK_VERSION` in the Makefile) is one Dependabot cannot
 see; review it whenever you touch the lane. A red DAILY run on main blocks
 nothing by itself; it opens (or comments on) one tracking issue titled
@@ -70,7 +71,7 @@ version moves, move the workflows with it.
 ## Verification gates (run before opening any PR; paste the output tail into the PR body)
 
 ```
-make ci        # fmt-check, vet, openapi-verify, sqlc-verify, test-race
+make ci        # quality (fmt, vet, Staticcheck), openapi-verify, sqlc-verify, test-race
 ```
 
 Integration tests need live Postgres + Redis:

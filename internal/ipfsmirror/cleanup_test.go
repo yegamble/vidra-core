@@ -14,7 +14,6 @@ import (
 )
 
 type cleanupFake struct {
-	copyCleanupRepo
 	capacity            sqlcgen.IpfsCapacity
 	referenced          bool
 	finished, recovered bool

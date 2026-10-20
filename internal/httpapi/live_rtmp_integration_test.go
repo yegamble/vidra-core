@@ -42,9 +42,8 @@ func liveRTMPBaseURL() string {
 
 // rtmpAPI is a tiny JSON HTTP helper for the running api.
 type rtmpAPI struct {
-	t     *testing.T
-	base  string
-	token string
+	t    *testing.T
+	base string
 }
 
 func (a *rtmpAPI) do(method, path, token string, body any) (int, []byte) {

@@ -27,6 +27,9 @@ on:
     paths:
       - ".github/workflows/**"
       - "scripts/ci/**"
+      - "scripts/install-hooks.sh"
+      - "lefthook.yml"
+      - "Makefile"
       - ".github/required-checks.txt"
       # The Dockerfile too: check-workflow-yaml.py asserts every no-cache-filters
       # value names a real build stage, and a stage rename is a Dockerfile-only
@@ -36,6 +39,9 @@ on:
     paths:
       - ".github/workflows/**"
       - "scripts/ci/**"
+      - "scripts/install-hooks.sh"
+      - "lefthook.yml"
+      - "Makefile"
       - ".github/required-checks.txt"
       # The Dockerfile too: check-workflow-yaml.py asserts every no-cache-filters
       # value names a real build stage, and a stage rename is a Dockerfile-only
@@ -59,6 +65,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27"
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.28"
+      - name: Workflow syntax, shell and security analysis
+        run: bash scripts/ci/workflow-lint.sh
+
       - name: Workflow files parse the way GitHub parses them; no-cache-filters name real stages
         run: python3 scripts/ci/check-workflow-yaml.py
 
@@ -70,7 +85,7 @@ jobs:
       # meta-ci's own lint loop.
       - name: scripts/ci is syntax-checked and shellchecked
         run: |
-          for f in scripts/ci/*.sh; do
+          for f in scripts/ci/*.sh scripts/install-hooks.sh; do
             bash -n "$f"
             shellcheck -x "$f"
           done
