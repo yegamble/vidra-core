@@ -12,19 +12,22 @@ Install Go 1.27, uv and ShellCheck first. The existing CI guard invokes the same
 command. `make vuln` includes test code and dependencies as well as application
 code; it retains its independent PR, main and daily lane.
 
-For GrumPHP-style local hooks, install the pinned runner and opt in:
+Install the managed hooks when setting up a developer checkout:
 
 ```sh
-go install github.com/evilmartians/lefthook/v2@v2.2.2
-lefthook install
+make hooks-install
 ```
 
-The pre-commit hook checks staged whitespace without editing files. Pre-push
-runs `make quality`; it needs no database and does not run vulnerability scans.
-Hooks supplement the required hosted checks.
+Both pre-commit and pre-push run `make quality` and `make workflow-lint`;
+pre-commit also checks staged whitespace. Install Go 1.27, uv and ShellCheck
+before enabling hooks. The installer refuses to replace custom hooks or an
+existing hooks path. Hooks invoke pinned Lefthook through Go and fail if it
+cannot run. These checks do not edit files or need a database. Required hosted
+gates enforce the same analysis even when local hooks are bypassed.
 
 When updating tools, change the pin in `scripts/ci/go-quality.sh` in both Go
 repositories, and keep `scripts/ci/workflow-lint.sh` identical across all three
 repositories. The govulncheck pin lives in each Go repository's `Makefile`.
-Update Lefthook's install command here together with `min_version` in
+Keep `scripts/install-hooks.sh` identical across all three repositories.
+Update its Lefthook pin together with `lefthook` and `min_version` in
 `lefthook.yml`, then rerun the corresponding gates and hook validation.

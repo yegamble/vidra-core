@@ -1,7 +1,12 @@
 min_version: 2.2.2
+lefthook: go run github.com/evilmartians/lefthook/v2@v2.2.2
+assert_lefthook_installed: true
 pre-commit:
   jobs:
     - run: git diff --cached --check
+    - run: make quality
+    - run: make workflow-lint
 pre-push:
   jobs:
     - run: make quality
+    - run: make workflow-lint

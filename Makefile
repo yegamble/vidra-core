@@ -184,6 +184,10 @@ vuln: ## Scan for known Go vulnerabilities reachable from module code and tests 
 quality: fmt-check vet ## Static analysis and unused declarations, including tests in every CI build-tag world
 	bash scripts/ci/go-quality.sh '' integration ipfs_integration ipfs_private_integration
 
+.PHONY: hooks-install
+hooks-install: ## Install the pinned developer hooks while preserving existing custom hooks
+	bash scripts/install-hooks.sh
+
 .PHONY: workflow-lint
 workflow-lint: ## Lint GitHub Actions and their security properties (requires Go, uv and ShellCheck)
 	bash scripts/ci/workflow-lint.sh
