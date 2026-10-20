@@ -17018,6 +17018,16 @@ paths:
         player_vast_cooldown_seconds (default 300) range from 0 to 86400;
         zero removes the respective minimum. Cooldown covers all video ad breaks
         across video changes and is enforced by clients.
+        player_vast_embed_enabled and player_vast_controls default true.
+        player_vast_skip_after_seconds defaults 5 (0–300; zero disables skipping).
+        player_vast_midroll_offset_percent defaults 0 (0–100; zero uses seconds,
+        positive values use content-duration percentage). Plain-text settings
+        player_vast_skip_countdown (default "Skip in {seconds}…", max 200 bytes),
+        player_vast_skip_label (default "Skip ad", max 80 bytes), and
+        player_vast_remaining_message (default "This ad will end in {seconds}",
+        max 200 bytes) are public text, never HTML. The countdown and remaining
+        message support {seconds} substitution; empty labels/countdown allow
+        client fallback and an empty remaining message hides it.
         Google Analytics is opt-in: analytics_google_enabled defaults false,
         analytics_google_measurement_id defaults empty and must match
         ^G-[A-Z0-9]{4,20}$ when set. It is a public GA4 browser identifier,
@@ -20861,6 +20871,38 @@ components:
               maximum: 86400
               default: 300
               description: Minimum interval between all video ad breaks across video changes, enforced by clients; zero disables cooldown. Clients use 300 when absent on older servers.
+            embed_enabled:
+              type: boolean
+              default: true
+              description: Whether VAST ads may run in embedded players; clients use true when absent.
+            controls:
+              type: boolean
+              default: true
+              description: Show standard ad-player controls; clients use true when absent. Does not enable seeking or early skipping.
+            skip_after_seconds:
+              type: integer
+              minimum: 0
+              maximum: 300
+              default: 5
+              description: Minimum playback before allowing an ad skip; zero disables skipping. Clients use 5 when absent.
+            midroll_offset_percent:
+              type: integer
+              minimum: 0
+              maximum: 100
+              default: 0
+              description: Positive values place the midroll at this percentage of content duration; zero or absent uses midroll_offset_seconds.
+            skip_countdown:
+              type: string
+              default: 'Skip in {seconds}…'
+              description: Plain text, at most 200 bytes, never HTML; {seconds} is substituted by clients. Empty or absent uses the default countdown.
+            skip_label:
+              type: string
+              default: 'Skip ad'
+              description: Plain text, at most 80 bytes, never HTML; empty or absent uses the default label.
+            remaining_message:
+              type: string
+              default: 'This ad will end in {seconds}'
+              description: Plain text, at most 200 bytes, never HTML; {seconds} is substituted by clients. Empty hides the message, absent uses the default.
         broadcast:
           type: object
           description: Operator broadcast banner (W3 renders it).

@@ -2,6 +2,7 @@ package instancesettings
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -126,5 +127,53 @@ func TestVASTPlacementPolicySettings(t *testing.T) {
 	}
 	if svc.Bool("player_vast_enabled") {
 		t.Fatal("master must still default disabled")
+	}
+}
+
+func TestVASTPresentationSettings(t *testing.T) {
+	svc := NewService(newFakeRepo(), testDefaults())
+	for _, key := range []string{"player_vast_embed_enabled", "player_vast_controls"} {
+		if kind, ok := KindOf(key); !ok || kind != KindBool || !svc.Bool(key) {
+			t.Errorf("missing enabled presentation default: %s", key)
+		}
+	}
+	for _, tc := range []struct {
+		key      string
+		def, max int64
+	}{{"player_vast_skip_after_seconds", 5, 300}, {"player_vast_midroll_offset_percent", 0, 100}} {
+		if kind, ok := KindOf(tc.key); !ok || kind != KindInt || svc.Int(tc.key) != tc.def {
+			t.Errorf("incorrect integer default: %s", tc.key)
+		}
+		for _, value := range []string{"0", fmt.Sprint(tc.max)} {
+			if err := Validate(tc.key, value); err != nil {
+				t.Error(err)
+			}
+		}
+		for _, value := range []string{"-1", fmt.Sprint(tc.max + 1), "1.5"} {
+			if err := Validate(tc.key, value); err == nil {
+				t.Errorf("invalid setting accepted: %s=%s", tc.key, value)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		key, def string
+		max      int
+	}{{"player_vast_skip_countdown", "Skip in {seconds}…", 200}, {"player_vast_skip_label", "Skip ad", 80}, {"player_vast_remaining_message", "This ad will end in {seconds}", 200}} {
+		if kind, ok := KindOf(tc.key); !ok || kind != KindString || svc.String(tc.key) != tc.def {
+			t.Errorf("incorrect text default: %s", tc.key)
+		}
+		for _, value := range []string{"", strings.Repeat("a", tc.max)} {
+			if err := Validate(tc.key, value); err != nil {
+				t.Error(err)
+			}
+		}
+		if err := Validate(tc.key, strings.Repeat("a", tc.max+1)); err == nil {
+			t.Errorf("oversized public text accepted: %s", tc.key)
+		}
+	}
+	for _, entry := range svc.Snapshot() {
+		if strings.HasPrefix(entry.Key, "player_vast_") && (entry.Page != PageVOD || entry.Section != "advertising") {
+			t.Errorf("unexpected presentation metadata: %+v", entry)
+		}
 	}
 }

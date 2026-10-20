@@ -187,3 +187,66 @@ func TestVASTPlacementPolicyConfig(t *testing.T) {
 		t.Fatalf("policy reset failed: %+v", ads)
 	}
 }
+
+func TestVASTPresentationConfig(t *testing.T) {
+	e := newSettingsAuditEnv(t)
+	read := func() map[string]any {
+		t.Helper()
+		var body struct {
+			Ads map[string]any `json:"ads"`
+		}
+		if err := json.Unmarshal(getInstanceRec(e.srv).Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Ads
+	}
+	defaults := map[string]any{"embed_enabled": true, "controls": true, "skip_after_seconds": float64(5), "midroll_offset_percent": float64(0), "skip_countdown": "Skip in {seconds}…", "skip_label": "Skip ad", "remaining_message": "This ad will end in {seconds}"}
+	check := func(want map[string]any) {
+		t.Helper()
+		got := read()
+		for key, value := range want {
+			if got[key] != value {
+				t.Fatalf("%s=%v, want %v", key, got[key], value)
+			}
+		}
+	}
+	check(defaults)
+	before := getInstanceRec(e.srv).Header().Get("ETag")
+	changes, raw := e.patch(t, `{"player_vast_embed_enabled":false,"player_vast_controls":false,"player_vast_skip_after_seconds":0,"player_vast_midroll_offset_percent":50,"player_vast_skip_countdown":"Wait {seconds}","player_vast_skip_label":"<skip>","player_vast_remaining_message":""}`)
+	check(map[string]any{"embed_enabled": false, "controls": false, "skip_after_seconds": float64(0), "midroll_offset_percent": float64(50), "skip_countdown": "Wait {seconds}", "skip_label": "<skip>", "remaining_message": ""})
+	if getInstanceRec(e.srv).Header().Get("ETag") == before {
+		t.Fatal("presentation change did not update ETag")
+	}
+	for _, key := range []string{"skip_countdown", "skip_label", "remaining_message"} {
+		if change := changes["setting.player_vast_"+key]; change.Before != "" || change.After != "" {
+			t.Fatal("public presentation text must stay out of audit values")
+		}
+	}
+	if strings.Contains(raw+e.logs.String(), "Wait {seconds}") || strings.Contains(raw+e.logs.String(), "<skip>") {
+		t.Fatal("public presentation text leaked into audit/logs")
+	}
+
+	if rec := sendJSONAuth(e.srv, http.MethodPatch, "/api/v1/admin/instance-settings", `{"player_vast_skip_after_seconds":301,"player_vast_controls":true}`, e.admin); rec.Code != http.StatusUnprocessableEntity || read()["controls"] != false {
+		t.Fatal("invalid presentation must reject the entire update")
+	}
+	e.patch(t, `{"player_vast_skip_countdown":"","player_vast_skip_label":""}`)
+	check(map[string]any{"skip_countdown": "", "skip_label": ""})
+	e.patch(t, `{"player_vast_embed_enabled":null,"player_vast_controls":null,"player_vast_skip_after_seconds":null,"player_vast_midroll_offset_percent":null,"player_vast_skip_countdown":null,"player_vast_skip_label":null,"player_vast_remaining_message":null}`)
+	check(defaults)
+}
+
+func TestVASTPresentationStoredBounds(t *testing.T) {
+	repo := newInstanceSettingsFakeRepo()
+	for key, value := range map[string]string{"player_vast_skip_after_seconds": "301", "player_vast_midroll_offset_percent": "101", "player_vast_skip_countdown": strings.Repeat("a", 201), "player_vast_skip_label": strings.Repeat("a", 81), "player_vast_remaining_message": strings.Repeat("a", 201)} {
+		repo.rows[key] = sqlcgen.InstanceSetting{Key: key, Value: value}
+	}
+	svc := instancesettings.NewService(repo, instancesettings.Defaults{})
+	if err := svc.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, srv := range []*Server{New(testConfig(), nil, nil), New(testConfig(), nil, nil, WithSettingsService(svc))} {
+		if ads := publicInstance(t, srv).Ads; !ads.EmbedEnabled || !ads.Controls || ads.SkipAfterSeconds != 5 || ads.MidrollOffsetPercent != 0 || ads.SkipCountdown != "Skip in {seconds}…" || ads.SkipLabel != "Skip ad" || ads.RemainingMessage != "This ad will end in {seconds}" {
+			t.Fatalf("invalid or unwired presentation must use defaults: %+v", ads)
+		}
+	}
+}
