@@ -8,7 +8,7 @@ if git config --get core.hooksPath >/dev/null; then
 fi
 hooks=$(git rev-parse --git-path hooks)
 for name in pre-commit pre-push; do
-  if [ -e "$hooks/$name" ] && ! grep -q '^call_lefthook()$' "$hooks/$name"; then
+  if { [ -e "$hooks/$name" ] || [ -L "$hooks/$name" ]; } && ! grep -q '^call_lefthook()$' "$hooks/$name"; then
     echo "hooks-install: preserving existing $name hook; integrate it with Lefthook first" >&2
     exit 1
   fi
