@@ -3,6 +3,7 @@ package federation
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -151,5 +152,43 @@ func TestHandleInboxRejectsMalformed(t *testing.T) {
 	}
 	if err := svc.HandleInbox(context.Background(), remoteBob, []byte(`{"type":"Follow"}`)); !errors.Is(err, ErrBadResource) {
 		t.Errorf("missing id: err = %v, want ErrBadResource", err)
+	}
+}
+
+// An activity id is the processed_activities dedupe key for every peer, so it
+// must be on the signer's host: otherwise one server can mark another's
+// activity as seen before it arrives, and the real one is dropped.
+func TestHandleInboxRejectsForeignOrOversizedActivityID(t *testing.T) {
+	cases := map[string]string{
+		"foreign host": "https://victim.example/activities/follow/1",
+		"no host":      "urn:uuid:7f1c",
+		"oversized":    "https://remote.example/" + strings.Repeat("a", maxActivityIDLen),
+	}
+	for name, id := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := newInboxRepo()
+			svc := NewService(repo, WithBaseURL("https://videos.example"))
+			body := `{"id":"` + id + `","type":"Follow","actor":"` + remoteBob + `","object":"` + filmsActor + `"}`
+			if err := svc.HandleInbox(context.Background(), remoteBob, []byte(body)); !errors.Is(err, ErrBadResource) {
+				t.Fatalf("err = %v, want ErrBadResource", err)
+			}
+			if len(repo.processed) != 0 || len(repo.remoteFollows) != 0 {
+				t.Errorf("refused activity left state: processed=%v follows=%d", repo.processed, len(repo.remoteFollows))
+			}
+		})
+	}
+
+	// The legitimate activity with the poisoned id still goes through.
+	repo := newInboxRepo()
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	poison := `{"id":"` + followID + `","type":"Like","actor":"https://evil.example/accounts/eve","object":"x"}`
+	if err := svc.HandleInbox(context.Background(), "https://evil.example/accounts/eve", []byte(poison)); !errors.Is(err, ErrBadResource) {
+		t.Fatalf("poison: err = %v, want ErrBadResource", err)
+	}
+	if err := svc.HandleInbox(context.Background(), remoteBob, []byte(filmsFollow)); err != nil {
+		t.Fatalf("HandleInbox: %v", err)
+	}
+	if _, ok := repo.remoteFollows[repo.channels["films"].ID.String()+"|"+remoteBob]; !ok {
+		t.Error("the real Follow was dropped as a duplicate of the poisoned id")
 	}
 }

@@ -27,6 +27,10 @@ var ErrActorMismatch = errors.New("federation: activity actor does not match the
 var ErrSenderBlocked = errors.New("federation: sender instance is blocked")
 
 // inboxActivity is the envelope we parse from an inbound ActivityPub activity.
+// maxActivityIDLen bounds an inbound activity id, in bytes. It is checked
+// before the id is looked up or stored as a processed_activities key.
+const maxActivityIDLen = 2048
+
 type inboxActivity struct {
 	ID     string          `json:"id"`
 	Type   string          `json:"type"`
@@ -53,6 +57,15 @@ func (s *Service) HandleInbox(ctx context.Context, signerActorURL string, body [
 		return ErrBadResource
 	}
 	if act.ID == "" || act.Type == "" {
+		return ErrBadResource
+	}
+	// The id is the dedupe key below, and processed_activities is one table
+	// for every peer. An id on a host other than the signer's would let one
+	// server mark another server's activity as already seen: a peer that
+	// predicts an id (PeerTube's Like and View ids are deterministic) sends it
+	// first and the real activity is dropped as a duplicate when it arrives.
+	// Same authority rule handleFlag applies, now applied to every type.
+	if len(act.ID) > maxActivityIDLen || !sameHost(act.ID, signerActorURL) {
 		return ErrBadResource
 	}
 	// Instance blocklist (remote-content §8): activities from actors on a

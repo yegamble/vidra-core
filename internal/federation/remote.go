@@ -117,9 +117,10 @@ func (s *Service) ResolveRemoteActor(ctx context.Context, actorURL string) (sqlc
 }
 
 // InboxesOnActorHost reports whether an actor's inbox, and its shared inbox
-// when it names one, live on the actor's own host. It is the rule #361 adds as
-// inboxesOnOwnHost for instance followers; the two are the same check and
-// should be deduplicated once both are on main.
+// when it names one, live on the actor's own host. cacheFetchedActor already
+// refuses to store any other inbox; the delivery paths that fan out on a
+// follower's say-so re-check the row as it is now, because it is rewritten
+// whenever the actor's key rotates.
 func InboxesOnActorHost(ra sqlcgen.RemoteActor) bool {
 	if !sameHost(ra.InboxUrl, ra.ActorUrl) {
 		return false
@@ -161,8 +162,19 @@ func (s *Service) refetchRemoteActor(ctx context.Context, actorURL string) (sqlc
 
 // cacheFetchedActor upserts the cache row for an actor document just fetched.
 func (s *Service) cacheFetchedActor(ctx context.Context, actorURL string, fa fetchedActor) (sqlcgen.RemoteActor, error) {
+	// Only SAME-HOST inboxes are stored. Every Accept, Reject, follow-back and
+	// channel fan-out this instance signs is POSTed to them, and the document
+	// naming them is attacker-controlled text: an actor on one server naming
+	// another server's inbox would turn this instance into a signed-POST
+	// relay at a host that never federated with it. A dropped inbox reads as
+	// "no inbox", which every delivery path already treats as nowhere to send.
+	// The key is kept: verifying the actor does not depend on where it receives.
+	inbox := fa.Inbox
+	if !sameHost(inbox, actorURL) {
+		inbox = ""
+	}
 	var sharedInbox *string
-	if fa.Endpoints.SharedInbox != "" {
+	if fa.Endpoints.SharedInbox != "" && sameHost(fa.Endpoints.SharedInbox, actorURL) {
 		sharedInbox = &fa.Endpoints.SharedInbox
 	}
 	domain := ""
@@ -184,7 +196,7 @@ func (s *Service) cacheFetchedActor(ctx context.Context, actorURL string, fa fet
 		ActorType:         fa.Type,
 		PreferredUsername: fa.PreferredUsername,
 		Domain:            domain,
-		InboxUrl:          fa.Inbox,
+		InboxUrl:          inbox,
 		SharedInboxUrl:    sharedInbox,
 		PublicKeyPem:      fa.PublicKey.PublicKeyPem,
 		FollowersUrl:      fa.Followers,

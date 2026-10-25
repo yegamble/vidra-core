@@ -38,18 +38,6 @@ const channelBackfillHostChannelCap = 10
 // every live activity.
 const channelBackfillDailyCap = 50
 
-// inboxOnOwnHost reports whether a follower's inbox (and shared inbox, when it
-// has one) sit on the host of its own actor URL. Both come from a document the
-// follower wrote, and one Follow turns into up to channelBackfillLimit signed
-// POSTs, so they are re-read from the cached row NOW and never trusted from the
-// moment the Follow arrived. TWIN of inboxesOnOwnHost in core#362.
-func inboxOnOwnHost(ra sqlcgen.RemoteActor) bool {
-	if ra.InboxUrl == "" || !sameHost(ra.ActorUrl, ra.InboxUrl) {
-		return false
-	}
-	return ra.SharedInboxUrl == nil || *ra.SharedInboxUrl == "" || sameHost(ra.ActorUrl, *ra.SharedInboxUrl)
-}
-
 // backfillChannelFollower pushes the channel's newest public videos, oldest
 // first, to a follower whose Follow was just accepted. Best-effort: the Follow
 // is already recorded and Accepted, so a failure here is logged by the caller
@@ -70,7 +58,7 @@ func (s *Service) backfillChannelFollower(ctx context.Context, channelID uuid.UU
 	host := hostOf(followerActorURL)
 	// Only to the follower's own server, re-checked against the row as it is
 	// now; and never to a blocked instance or an admin-blocked actor.
-	if host == "" || !sameHost(ra.ActorUrl, followerActorURL) || !inboxOnOwnHost(ra) {
+	if host == "" || !sameHost(ra.ActorUrl, followerActorURL) || !InboxesOnActorHost(ra) {
 		return nil
 	}
 	if blocked, err := s.repo.IsInstanceBlocked(ctx, host); err != nil || blocked {

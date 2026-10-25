@@ -76,8 +76,9 @@ func (s *Service) moveIsRelevant(ctx context.Context, origin, target string) (bo
 
 // verifyMoveTarget fetches the target fresh (a cached copy may predate the
 // alsoKnownAs that proves the move) and caches it only once it vouches. Its
-// inboxes must be on its own host — the rule #361 adds as inboxesOnOwnHost;
-// dedupe once that lands.
+// inboxes must be on its own host — InboxesOnActorHost's rule, checked on the
+// document because a cross-host inbox here refuses the move outright rather
+// than being dropped from the cached row.
 func (s *Service) verifyMoveTarget(ctx context.Context, origin, target string) error {
 	fa, err := s.fetchActor(ctx, target)
 	if err != nil {

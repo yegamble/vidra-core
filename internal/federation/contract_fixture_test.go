@@ -321,10 +321,12 @@ func TestContractFixturesDispatch(t *testing.T) {
 			},
 		},
 		{
-			name:    "peertube Create{Video} signed by a foreign actor is rejected",
+			// Another actor on the SAME host: a foreign host's signer is
+			// refused earlier, by HandleInbox's activity-id host binding.
+			name:    "peertube Create{Video} signed by another actor is rejected",
 			fixture: "inbound/peertube_create_video.json",
-			signer:  ctMastoUser,
-			edges:   []string{ctPTChannel, ctMastoUser},
+			signer:  ctPTAccount,
+			edges:   []string{ctPTChannel, ctPTAccount},
 			wantErr: ErrActorMismatch,
 			check: func(t *testing.T, r fakeRepo) {
 				if len(r.remoteVideos) != 0 {

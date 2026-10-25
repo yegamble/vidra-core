@@ -40,15 +40,6 @@ func WithInstanceFollowerRequestHook(fn func(context.Context, uuid.UUID)) Option
 // carry (PeerTube's validator accepts both as instance actors).
 const actorTypeService = "Service"
 
-// inboxesOnOwnHost reports whether a remote actor's inbox, and its shared
-// inbox when it names one, live on the actor's own host.
-func inboxesOnOwnHost(ra sqlcgen.RemoteActor) bool {
-	if !sameHost(ra.InboxUrl, ra.ActorUrl) {
-		return false
-	}
-	return ra.SharedInboxUrl == nil || *ra.SharedInboxUrl == "" || sameHost(*ra.SharedInboxUrl, ra.ActorUrl)
-}
-
 // isInstanceActorID reports whether id is our served instance actor's id.
 func (s *Service) isInstanceActorID(ctx context.Context, id string) bool {
 	own, ok := s.InstanceActorAvailable(ctx)
@@ -73,7 +64,7 @@ func (s *Service) handleInstanceFollow(ctx context.Context, act inboxActivity, f
 		}
 		return err
 	}
-	if !inboxesOnOwnHost(ra) {
+	if !InboxesOnActorHost(ra) {
 		return nil // dropped unanswered: an answer would go to another server
 	}
 	if ra.ActorType != actorTypeApplication && ra.ActorType != actorTypeService {
