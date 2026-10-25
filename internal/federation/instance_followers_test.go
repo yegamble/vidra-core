@@ -122,7 +122,7 @@ func TestUndoInstanceFollowRemovesTheFollower(t *testing.T) {
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
 	undo := `{"id":"https://pt.example/undo/2","type":"Undo","actor":"` + ptInstance + `","object":{"type":"Follow","actor":"` + ptInstance + `","object":"` + ourInstance + `"}}`
 	// A third party cannot undo someone else's follow.
-	if err := svc.HandleInbox(context.Background(), "https://evil.example/accounts/peertube", []byte(undo)); !errors.Is(err, ErrActorMismatch) {
+	if err := svc.HandleInbox(context.Background(), "https://pt.example/accounts/eve", []byte(undo)); !errors.Is(err, ErrActorMismatch) {
 		t.Fatalf("spoofed Undo: err = %v, want ErrActorMismatch", err)
 	}
 	if err := svc.HandleInbox(context.Background(), ptInstance, []byte(undo)); err != nil {
@@ -137,7 +137,7 @@ func TestInstanceFollowRefusals(t *testing.T) {
 	t.Run("spoofed actor", func(t *testing.T) {
 		repo := newInstanceInboxRepo()
 		svc := NewService(repo, WithBaseURL("https://videos.example"))
-		err := svc.HandleInbox(context.Background(), "https://evil.example/accounts/peertube", instanceFollow(instanceFollowID))
+		err := svc.HandleInbox(context.Background(), "https://pt.example/accounts/eve", instanceFollow(instanceFollowID))
 		if !errors.Is(err, ErrActorMismatch) || len(repo.inst.followers) != 0 {
 			t.Errorf("err = %v, followers = %d; want ErrActorMismatch and nothing recorded", err, len(repo.inst.followers))
 		}

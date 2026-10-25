@@ -289,9 +289,9 @@ func TestHandleInboxFlagBoundsAndFailures(t *testing.T) {
 		t.Error("a failed Flag was marked processed")
 	}
 
-	// The signer must be the Flag's actor.
+	// The signer must be the Flag's actor, even another actor on its host.
 	spoof := []byte(`{"id":"` + ptFlagID + `/s","type":"Flag","actor":"` + ptActor + `","content":"x","object":"` + aliceAccount + `"}`)
-	if err := svc.HandleInbox(context.Background(), mastoActor, spoof); !errors.Is(err, ErrActorMismatch) {
+	if err := svc.HandleInbox(context.Background(), "https://peertube.example/accounts/eve", spoof); !errors.Is(err, ErrActorMismatch) {
 		t.Errorf("spoofed Flag err = %v, want ErrActorMismatch", err)
 	}
 }
