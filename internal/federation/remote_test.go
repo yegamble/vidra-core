@@ -123,3 +123,52 @@ func mustPEM(t *testing.T) string {
 	p, _ := testActorPEM(t)
 	return p
 }
+
+// An actor document names its own inboxes, and every Accept, Reject and
+// channel fan-out this instance signs is POSTed to them. A document on
+// evil.example naming victim.example's inbox would make this instance send
+// signed activities to a server that never federated with it, so only
+// same-host inboxes are cached. The key is still cached: verifying the
+// actor's signatures does not depend on where it receives.
+func TestCacheFetchedActorDropsCrossHostInboxes(t *testing.T) {
+	pubPEM, _ := testActorPEM(t)
+	for name, tc := range map[string]struct {
+		inbox, shared string
+		wantInbox     bool
+		wantShared    bool
+	}{
+		"both foreign":         {"https://victim.example/inbox", "https://victim.example/shared", false, false},
+		"shared inbox foreign": {"", "https://victim.example/shared", true, false},
+		"inbox foreign":        {"https://victim.example/inbox", "", false, true},
+		"both own host":        {"", "", true, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				own := "http://" + r.Host
+				inbox, shared := tc.inbox, tc.shared
+				if inbox == "" {
+					inbox = own + "/accounts/bob/inbox"
+				}
+				if shared == "" {
+					shared = own + "/inbox"
+				}
+				_, _ = w.Write([]byte(`{"id":"` + own + `/accounts/bob","type":"Person",` +
+					`"inbox":"` + inbox + `","endpoints":{"sharedInbox":"` + shared + `"},` +
+					`"publicKey":{"publicKeyPem":` + quote(pubPEM) + `}}`))
+			}))
+			t.Cleanup(srv.Close)
+			repo := newRemoteRepo()
+			svc := NewService(repo, WithAllowPrivateFetch(true))
+			if _, err := svc.ResolveKey(context.Background(), srv.URL+"/accounts/bob#main-key"); err != nil {
+				t.Fatalf("ResolveKey: %v", err)
+			}
+			ra := repo.remoteActors[srv.URL+"/accounts/bob"]
+			if got := ra.InboxUrl != ""; got != tc.wantInbox {
+				t.Errorf("inbox cached = %v (%q), want %v", got, ra.InboxUrl, tc.wantInbox)
+			}
+			if got := ra.SharedInboxUrl != nil; got != tc.wantShared {
+				t.Errorf("shared inbox cached = %v, want %v", got, tc.wantShared)
+			}
+		})
+	}
+}

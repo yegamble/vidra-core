@@ -101,7 +101,7 @@ func (s *Service) backfillInstanceFollower(ctx context.Context, follower string)
 	// Only to the follower's own server — both inboxes, read from the actor
 	// row as it is NOW. The inboxes come from a document the follower wrote,
 	// and one Follow turns into instanceBackfillLimit signed POSTs.
-	if inbox == "" || !sameHost(ra.ActorUrl, follower) || !inboxesOnOwnHost(ra) {
+	if inbox == "" || !sameHost(ra.ActorUrl, follower) || !InboxesOnActorHost(ra) {
 		return nil
 	}
 	ids, err := s.inst.ListInstanceOutboxVideoIDs(ctx, sqlcgen.ListInstanceOutboxVideoIDsParams{ResultLimit: instanceBackfillLimit})
