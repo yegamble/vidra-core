@@ -901,7 +901,7 @@ services:
   #    single string is run as one shell line with its flags intact. The explicit
   #    entrypoint keeps this correct even if the image is ever repointed.
   whisper:
-    image: ghcr.io/yegamble/vidra-whisper:v0.1.0@sha256:00e3f9dab7870e2cd8c858e6ef0029c6c2ed24715c59c3eb7a3230ad366ce98b
+    image: ghcr.io/yegamble/vidra-whisper:v0.1.0@sha256:7ee166ddd3c9f2d00971473c2c2329f373c90f333daeb671ef672f0835dfe882
     profiles: ["captions"]
     ports:
       - "${WHISPER_PORT:-8090}:8080"
