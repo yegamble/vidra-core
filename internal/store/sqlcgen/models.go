@@ -1112,6 +1112,7 @@ type SearchCatalogEpoch struct {
 	Epoch               uuid.UUID   `json:"epoch"`
 	ReceiverPredecessor pgtype.UUID `json:"receiver_predecessor"`
 	CreatedAt           time.Time   `json:"created_at"`
+	SourcePredecessor   pgtype.UUID `json:"source_predecessor"`
 }
 
 type SearchCatalogState struct {
@@ -1119,9 +1120,12 @@ type SearchCatalogState struct {
 	Epoch               uuid.UUID `json:"epoch"`
 	AllocatedGeneration int64     `json:"allocated_generation"`
 	// Requires an exact retained FULL manifest, not delivery acceptance or receiver staging.
-	VerifiedGeneration *int64             `json:"verified_generation"`
-	VerifiedAt         pgtype.Timestamptz `json:"verified_at"`
-	ForceFull          bool               `json:"force_full"`
+	VerifiedGeneration       *int64             `json:"verified_generation"`
+	VerifiedAt               pgtype.Timestamptz `json:"verified_at"`
+	ForceFull                bool               `json:"force_full"`
+	ForceFullAfterGeneration int64              `json:"force_full_after_generation"`
+	// Durable sanitized blocker; no raw upstream errors or document data.
+	LastErrorCode *string `json:"last_error_code"`
 }
 
 type SearchOutbox struct {
