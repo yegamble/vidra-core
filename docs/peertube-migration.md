@@ -148,9 +148,11 @@ are not there to read.** PeerTube's `object_storage` configuration covers
 exactly five families — streaming playlists, web videos, user exports, original
 files and captions — and avatars, banners, thumbnails, previews and storyboards
 are none of them. They stay on the source host's local filesystem however the
-rest of the instance is set up, so `--source-storage=s3` cannot see them at all,
-and `--source-local-root` can only see them when it points at the source host's
-own storage tree.
+rest of the instance is set up. With `--source-storage=s3`, explicitly setting
+`--source-local-root` enables read-only fallback to an existing source storage
+tree only when S3 reports an object missing. Empty-root S3 behavior is unchanged;
+permission, transport and validation failures do not fall back locally. Preserve
+the native subdirectories, including `web-videos/private/`, when staging files.
 
 So they are acquired in two steps, in this order:
 
