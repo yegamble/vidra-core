@@ -12,12 +12,31 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	MaxSnapshotBytes = 512 << 20
+	MaxDocuments     = 100000
+	MaxPages         = 1024
+)
+
+type Limits struct {
+	MaxRequestBytes  int64 `json:"max_request_bytes"`
+	MaxSnapshotBytes int64 `json:"max_snapshot_bytes"`
+	MaxDocuments     int64 `json:"max_documents"`
+	MaxPages         int64 `json:"max_pages"`
+}
+
+// Effective permits a receiver to lower resource caps, never raise source caps.
+func (l Limits) Effective() Limits {
+	return Limits{min(l.MaxRequestBytes, MaxRequestBytes), min(l.MaxSnapshotBytes, MaxSnapshotBytes), min(l.MaxDocuments, MaxDocuments), min(l.MaxPages, MaxPages)}
+}
+
 // Status reports receiver state, not proof that it matches a retained source
 // manifest. Callers must verify that durable source fence before using reads.
 type Status struct {
 	ProtocolVersion           int        `json:"protocol_version"`
 	SupportedScopes           []string   `json:"supported_scopes"`
 	SupportedEventTypes       []string   `json:"supported_event_types"`
+	Limits                    Limits     `json:"limits"`
 	Scope                     string     `json:"scope"`
 	Epoch                     *uuid.UUID `json:"epoch"`
 	Ready                     bool       `json:"ready"`
@@ -36,11 +55,11 @@ func ParseStatus(raw []byte) (Status, error) {
 	if err := d.Decode(&s); err != nil {
 		return Status{}, err
 	}
-	if err := d.Decode(new(any)); err != io.EOF {
-		return Status{}, fmt.Errorf("catalog status has trailing content")
-	}
-	fields, err := requireStatusFields(raw, []string{"protocol_version", "supported_scopes", "supported_event_types", "scope", "epoch", "ready", "highest_observed_generation", "completed_generation", "completed_at", "completed_manifest", "staged_snapshots", "oldest_staged_at"}, []string{"epoch", "completed_at", "completed_manifest", "oldest_staged_at"})
+	fields, err := requireStatusFields(raw, []string{"protocol_version", "supported_scopes", "supported_event_types", "limits", "scope", "epoch", "ready", "highest_observed_generation", "completed_generation", "completed_at", "completed_manifest", "staged_snapshots", "oldest_staged_at"}, []string{"epoch", "completed_at", "completed_manifest", "oldest_staged_at"})
 	if err != nil {
+		return Status{}, err
+	}
+	if _, err := requireStatusFields(fields["limits"], []string{"max_request_bytes", "max_snapshot_bytes", "max_documents", "max_pages"}, nil); err != nil {
 		return Status{}, err
 	}
 	if s.Epoch != nil {
@@ -61,6 +80,9 @@ func ParseStatus(raw []byte) (Status, error) {
 }
 
 func (s Status) validate() error {
+	if s.Limits.MaxRequestBytes <= 0 || s.Limits.MaxSnapshotBytes <= 0 || s.Limits.MaxDocuments <= 0 || s.Limits.MaxPages <= 0 {
+		return fmt.Errorf("catalog status requires positive resource limits")
+	}
 	if s.ProtocolVersion != ProtocolVersion || s.Scope != ScopeLocal || len(s.SupportedScopes) != 1 || s.SupportedScopes[0] != ScopeLocal || len(s.SupportedEventTypes) != 2 || !slices.Contains(s.SupportedEventTypes, TypeSnapshotPage) || !slices.Contains(s.SupportedEventTypes, TypeSnapshotEnd) {
 		return fmt.Errorf("catalog status lacks supported full-only capabilities")
 	}

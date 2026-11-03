@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const emptyStatus = `{"protocol_version":2,"supported_scopes":["local"],"supported_event_types":["catalog.snapshot.page","catalog.snapshot.end"],"scope":"local","epoch":null,"ready":false,"highest_observed_generation":"0","completed_generation":"0","completed_at":null,"completed_manifest":null,"staged_snapshots":0,"oldest_staged_at":null}`
+const emptyStatus = `{"protocol_version":2,"supported_scopes":["local"],"supported_event_types":["catalog.snapshot.page","catalog.snapshot.end"],"limits":{"max_request_bytes":1048576,"max_snapshot_bytes":536870912,"max_documents":100000,"max_pages":1024},"scope":"local","epoch":null,"ready":false,"highest_observed_generation":"0","completed_generation":"0","completed_at":null,"completed_manifest":null,"staged_snapshots":0,"oldest_staged_at":null}`
 
 func TestStatusRequiresExplicitCapabilityAndConsistentCompletion(t *testing.T) {
 	if _, err := ParseStatus([]byte(emptyStatus)); err != nil {
@@ -43,6 +43,8 @@ func TestStatusRequiresExplicitCapabilityAndConsistentCompletion(t *testing.T) {
 		t.Fatalf("completed full with newer staging: %+v, %v", got, err)
 	}
 	for name, mutate := range map[string]func(map[string]any){
+		"partial limits":    func(v map[string]any) { v["limits"] = map[string]any{"max_request_bytes": 1048576} },
+		"zero limit":        func(v map[string]any) { v["limits"].(map[string]any)["max_documents"] = 0 },
 		"version":           func(v map[string]any) { v["protocol_version"] = 1 },
 		"capability":        func(v map[string]any) { v["supported_event_types"] = []string{"catalog.snapshot.end"} },
 		"unsupported scope": func(v map[string]any) { v["supported_scopes"] = []string{"remote"} },
@@ -81,6 +83,7 @@ func TestStatusRequiresExplicitCapabilityAndConsistentCompletion(t *testing.T) {
 		t.Error("accepted trailing response")
 	}
 	for name, wire := range map[string]string{
+		"limits alias":       strings.Replace(emptyStatus, `"max_pages":1024`, `"max_pages":1024,"Max_Pages":1024`, 1),
 		"duplicate":          strings.Replace(emptyStatus, `"ready":false`, `"ready":false,"ready":false`, 1),
 		"case alias":         strings.Replace(emptyStatus, `"ready":false`, `"ready":false,"Ready":false`, 1),
 		"manifest duplicate": strings.Replace(string(raw), `"page_count":0`, `"page_count":0,"page_count":0`, 1),
@@ -88,6 +91,21 @@ func TestStatusRequiresExplicitCapabilityAndConsistentCompletion(t *testing.T) {
 	} {
 		if _, err := ParseStatus([]byte(wire)); err == nil {
 			t.Errorf("accepted ambiguous %s status", name)
+		}
+	}
+}
+
+func TestReceiverLimitsCannotRaiseSourceHardCaps(t *testing.T) {
+	for _, limits := range []Limits{
+		{MaxRequestBytes: 2 << 20, MaxSnapshotBytes: 1 << 30, MaxDocuments: 200000, MaxPages: 2048},
+		{MaxRequestBytes: 1024, MaxSnapshotBytes: 2048, MaxDocuments: 4, MaxPages: 2},
+	} {
+		want := limits
+		if limits.MaxRequestBytes > MaxRequestBytes {
+			want = Limits{MaxRequestBytes, MaxSnapshotBytes, MaxDocuments, MaxPages}
+		}
+		if got := limits.Effective(); got != want {
+			t.Fatalf("effective %+v = %+v, want %+v", limits, got, want)
 		}
 	}
 }
