@@ -1164,6 +1164,8 @@ WHERE (sqlc.narg('duration_min')::int IS NULL OR feed.duration_seconds >= sqlc.n
 -- eligibility, never per-viewer state); core hydrates + filters here and the Go
 -- layer re-applies the search order. Rows come back in arbitrary order.
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       COALESCE((SELECT array_agg(t.tag ORDER BY t.tag)
+                 FROM video_tags t WHERE t.video_id = v.id), '{}')::text[] AS tags,
        v.created_at, v.updated_at,
        COALESCE(vc.views, 0)::bigint AS views,
        EXISTS (

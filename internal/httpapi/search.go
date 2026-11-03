@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -244,21 +245,10 @@ func (s *Server) handleSearchSuggestions(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
-// filterSuggestionsByVisibility drops any suggestion carrying a video id this
-// viewer cannot actually see, re-verified against the DB under the SAME canonical
-// visibility predicate /videos/search hydrates with (video.Service.HydrateByIDs:
-// public+published, not blocked, owner not unlisted, per-viewer mutes/blocks, and
-// the hide-sensitive policy) — never the search index's static `eligible` flag.
-// This is what keeps a stale or corrupted documents row (e.g. eligible forced
-// true on a private/unlisted/blocked video) from leaking that video's title into
-// autocomplete (H1). Suggestions that carry no video id (query/tag/history and
-// channel rows) pass through unchanged — they name no per-video-authorized title.
-//
-// It re-checks in a SINGLE batched query over the distinct video ids in the
-// response, so aligning suggestions with public search does not turn autocomplete
-// into a per-row N+1. Fail closed: if the re-check query errors, every
-// video-carrying row is dropped rather than passed through unverified — a suggest
-// box that shows fewer rows is correct; one that leaks a private title is not.
+// filterSuggestionsByVisibility verifies indexed metadata against current,
+// visible source rows in one batched query. A witness authorizes only metadata
+// actually present on that video/channel; independent aggregate/history rows
+// need no witness. Missing witnesses and query failures drop derived metadata.
 func (s *Server) filterSuggestionsByVisibility(ctx context.Context, in []searchclient.Suggestion, viewerID uuid.UUID, viewerAuthed, hideSensitive bool) []searchclient.Suggestion {
 	// Collect the distinct, parseable video ids the service attached to any row.
 	ids := make([]uuid.UUID, 0, len(in))
@@ -276,27 +266,62 @@ func (s *Server) filterSuggestionsByVisibility(ctx context.Context, in []searchc
 			ids = append(ids, id)
 		}
 	}
-	if len(ids) == 0 {
-		return in // no video-bearing rows: nothing to re-check
-	}
-	visible := make(map[uuid.UUID]bool, len(ids))
+	visible := make(map[uuid.UUID]video.FeedItem, len(ids))
 	// HydrateByIDs applies the full per-viewer canonical predicate and returns
 	// only the rows this viewer may see. On error `visible` stays empty, so the
 	// filter below drops every video-carrying row (fail closed).
-	if feed, herr := s.videosvc.HydrateByIDs(ctx, ids, viewerID, viewerAuthed, hideSensitive); herr == nil {
-		for _, it := range feed {
-			visible[it.Video.ID] = true
+	if len(ids) > 0 {
+		if feed, herr := s.videosvc.HydrateByIDs(ctx, ids, viewerID, viewerAuthed, hideSensitive); herr == nil {
+			for _, it := range feed {
+				visible[it.Video.ID] = it
+			}
 		}
 	}
 	out := make([]searchclient.Suggestion, 0, len(in))
 	for _, sg := range in {
 		if sg.VideoID == nil {
-			out = append(out, sg)
+			if sg.Type == "query" || sg.Type == "history" {
+				sg.ChannelHandle = nil
+				out = append(out, sg)
+			}
 			continue
 		}
 		id, perr := uuid.Parse(*sg.VideoID)
-		if perr != nil || !visible[id] {
+		it, ok := visible[id]
+		if perr != nil || !ok {
 			continue // unverifiable or not visible to this viewer → drop
+		}
+		title := sg.Text == it.Video.Title
+		tag := slices.Contains(it.Tags, sg.Text)
+		channel := sg.Text == it.ChannelDisplayName
+		switch sg.Type {
+		case "video":
+			if !title {
+				continue
+			}
+		case "tag":
+			if !tag {
+				continue
+			}
+			sg.VideoID = nil
+		case "channel":
+			if !channel || sg.ChannelHandle == nil || *sg.ChannelHandle != it.ChannelHandle {
+				continue
+			}
+			sg.VideoID = nil
+		case "query", "history":
+			// Blending can attach a tag/channel witness to a winning aggregate.
+			if !title && !tag && !channel {
+				continue
+			}
+			if !title {
+				sg.VideoID, sg.ChannelHandle = nil, nil
+			}
+		default:
+			continue
+		}
+		if sg.Type != "channel" {
+			sg.ChannelHandle = nil
 		}
 		out = append(out, sg)
 	}
