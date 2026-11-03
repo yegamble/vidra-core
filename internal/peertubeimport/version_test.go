@@ -16,6 +16,8 @@ func TestClassifyVersion(t *testing.T) {
 		{MinSupportedSchemaVersion, VersionSupported},
 		{(MinSupportedSchemaVersion + MaxSupportedSchemaVersion) / 2, VersionSupported},
 		{MaxSupportedSchemaVersion, VersionSupported},
+		{1130, VersionSupported}, // PeerTube v8.3.1.
+		{1131, VersionTooNew},    // Future schemas still need verification.
 		{MaxSupportedSchemaVersion + 1, VersionTooNew},
 	}
 	for _, c := range cases {
@@ -52,7 +54,7 @@ func TestVersionErrorIsStructured(t *testing.T) {
 		v        int
 		wantCode string
 	}{
-		{MaxSupportedSchemaVersion + 40, CodeUnverifiedSchema}, // the 1040 case
+		{MaxSupportedSchemaVersion + 40, CodeUnverifiedSchema},
 		{MinSupportedSchemaVersion - 1, CodeUnverifiedSchema},
 		{0, CodeUndetectableSchema},
 		{-1, CodeUndetectableSchema},

@@ -24,22 +24,37 @@ column and REFUSES to run outside the verified range unless a human passes
 `--force`. Ralph/agents MUST NEVER self-pass `--force` — an unverified version is
 a hard stop requiring operator sign-off.
 
-- Supported `migrationVersion` range: **700 – 1040** (constants
+- Supported `migrationVersion` range: **700 – 1130** (constants
   `MinSupportedSchemaVersion` / `MaxSupportedSchemaVersion` in
   `internal/peertubeimport/version.go`).
-- The upper bound is pinned to **PeerTube v8.2.4**, commit
-  `30eb3cc4f8701198ec1c785aedd2fbb5db401a2f`: its
-  [LAST_MIGRATION_VERSION](https://github.com/Chocobozzz/PeerTube/blob/30eb3cc4f8701198ec1c785aedd2fbb5db401a2f/server/core/initializers/constants.ts)
-  is 1040. Verified on 2026-09-17. The older lower bound remains unchanged.
+- The upper bound is pinned to **PeerTube v8.3.1**, commit
+  `3324876a0b0f846f8b6632470b3d9d53ef74b8b7`: its
+  [LAST_MIGRATION_VERSION](https://github.com/Chocobozzz/PeerTube/blob/3324876a0b0f846f8b6632470b3d9d53ef74b8b7/server/core/initializers/constants.ts)
+  is 1130. Verified on 2026-11-03. The older lower bound remains unchanged.
 - Reviewed upstream migrations 1005–1040: download statistics rename videoView
   to videoStat (neither is imported); live DVR and ownership notifications add
   or rename unimported fields; playlist thumbnails lose their unique index
   (video artwork selection excludes playlist-only rows); varchar widening
   preserves reader types; 1040 expires OAuth tokens (never imported).
-- PostgreSQL end-to-end coverage runs both schema 800 and 1040, including
+- Reviewed upstream migrations 1045–1130: channel public email replaces the
+  unused user email-public flag; OTP encryption changes do not make source MFA
+  portable; thumbnail deduplication preserves best-size selection; separate
+  infohash storage removes no consumed field. Other additions affect deferred
+  moderation, notification, sync, device and search configuration. The
+  [manual 8.3 migration](https://github.com/Chocobozzz/PeerTube/blob/3324876a0b0f846f8b6632470b3d9d53ef74b8b7/server/scripts/migrations/peertube-8.3.ts)
+  removes legacy infohash columns, which the importer does not read.
+- PostgreSQL end-to-end coverage runs schema 800, 1040 and 1130, including
   current actor-side account/channel links, unified thumbnails, duplicate
   playlist thumbnail variants, dry-run, import, media copying, and idempotent
-  reruns. Unknown, older, and newer-than-1040 schemas remain gated.
+  reruns. The 1130 case adds separate-audio, byte-range HLS dependency hash
+  checks after repeat import. It is a constructed subset, not a real source
+  dump. Unknown, older, and newer-than-1130 schemas remain gated.
+- Independent upstream boot and source-reader evidence is recorded in
+  [the 8.3.1 compatibility report](../../docs/peertube-831-compatibility.md).
+  Source compatibility is not published-image or representative operator
+  migration acceptance. Confirm the actual source marker and inventory;
+  source MFA, custom storage layouts and retained upload originals require
+  their own preservation checks.
 - The importer reads a subset of the source, not every PeerTube feature. HLS
   copy/reference, local-video watch history and artwork are supported. Missing
   source artwork is distinct from schema incompatibility: HTTP 404/410 after
