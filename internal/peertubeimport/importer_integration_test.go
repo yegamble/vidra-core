@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -56,7 +57,7 @@ const secretPrivKeyAlice = "PRIVKEY-ALICE-DO-NOT-LOG"
 const sourceCategorySettings = `{"json-categories-as-text": "{\"add\":[{\"key\":51,\"label\":\"Giantess\"},{\"key\":52,\"label\":\"Shrunken\"}],\"delete\":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]}"}`
 
 func TestPeerTubeImportEndToEnd(t *testing.T) {
-	for _, version := range []int{800, 1040} {
+	for _, version := range []int{800, 1040, 1130} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) { testPeerTubeImportEndToEnd(t, version) })
 	}
 }
@@ -78,7 +79,7 @@ func testPeerTubeImportEndToEnd(t *testing.T, sourceVersion int) {
 	dest, _ := newScratchDB(t, ctx, base)
 	applyMigrations(t, ctx, dest)
 	seedPeerTube(t, ctx, src, string(testHash), secretPrivKeyAlice)
-	if sourceVersion == 1040 {
+	if sourceVersion >= 1040 {
 		// Current actor-side links and unified, multi-size thumbnails. Playlist
 		// thumbnails may now repeat; they must not enter the video artwork pass.
 		for _, query := range []string{
@@ -94,11 +95,30 @@ func testPeerTubeImportEndToEnd(t *testing.T, sourceVersion int) {
 			mustExec(t, ctx, src, query)
 		}
 	}
+	if sourceVersion == 1130 {
+		// Query-relevant 8.3.1 shape: public email belongs to the channel,
+		// thumbnails are unique by owner/dimensions, and no legacy infohash or
+		// user.emailPublic columns exist. This remains a constructed subset;
+		// the pinned upstream boot validation is recorded in peertube-reference.
+		for _, query := range []string{
+			`ALTER TABLE "videoChannel" ADD COLUMN "publicEmail" text`,
+			`ALTER TABLE video ADD COLUMN "firstPublishedAt" timestamptz, ADD COLUMN "sitemapContentUpdatedAt" timestamptz`,
+			`ALTER TABLE "user" ADD COLUMN "pluginAuthExternalId" text, ADD COLUMN "otpSecret" text`,
+			`CREATE UNIQUE INDEX ON thumbnail ("videoId", width, height)`,
+			`CREATE UNIQUE INDEX ON thumbnail ("videoPlaylistId", width, height)`,
+		} {
+			mustExec(t, ctx, src, query)
+		}
+	}
 	mustExec(t, ctx, src, `UPDATE application SET "migrationVersion"=$1`, sourceVersion)
 
 	srcMediaDir := t.TempDir()
 	destMediaDir := t.TempDir()
 	seedSourceMedia(t, srcMediaDir)
+	var splitAudio map[string]string
+	if sourceVersion == 1130 {
+		splitAudio = seedPeerTube831HLS(t, srcMediaDir)
+	}
 	srcMedia, err := storage.NewLocal(srcMediaDir)
 	if err != nil {
 		t.Fatal(err)
@@ -465,6 +485,20 @@ func testPeerTubeImportEndToEnd(t *testing.T, sourceVersion int) {
 	report2, err := imp.Run(ctx, version, nil)
 	if err != nil {
 		t.Fatalf("re-run: %v", err)
+	}
+	// The same copied tree must remain usable after an idempotent re-run.
+	// Separate audio and byte-range video are dependencies, not quality rungs.
+	for name, want := range splitAudio {
+		key := "streaming-playlists/hls/11111111-1111-1111-1111-111111111111/" + name
+		rc, err := destMedia.Open(ctx, key)
+		if err != nil {
+			t.Fatalf("open copied HLS dependency %s: %v", name, err)
+		}
+		got, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil || sha256.Sum256(got) != sha256.Sum256([]byte(want)) {
+			t.Fatalf("copied HLS dependency %s differs after re-run", name)
+		}
 	}
 	if report2.Entities[KindViewCount].Imported != 0 || report2.Entities[KindChapter].Imported != 0 ||
 		report2.Entities[KindRating].Imported != 0 {
@@ -2174,6 +2208,26 @@ func TestPeerTubeImportPreflightUndetectableVersion(t *testing.T) {
 // ── media fixtures ──
 
 var sourceVideoBytes = []byte("FAKE-MP4-BYTES-tiny-fixture-only")
+
+// PeerTube 8.3.1 emits separate audio and flat, byte-range fMP4 dependencies.
+// These bytes test copying, not decoding; playback needs a real media rehearsal.
+func seedPeerTube831HLS(t *testing.T, root string) map[string]string {
+	t.Helper()
+	files := map[string]string{
+		"v1-master.m3u8":          "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"v1-audio.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720,CODECS=\"avc1.64001f,mp4a.40.2\",AUDIO=\"audio\"\nv1-720.m3u8\n",
+		"v1-720.m3u8":             "#EXTM3U\n#EXT-X-MAP:URI=\"v1-720-fragmented.mp4\",BYTERANGE=\"8@0\"\n#EXTINF:4.0,\n#EXT-X-BYTERANGE:8@8\nv1-720-fragmented.mp4\n#EXT-X-ENDLIST\n",
+		"v1-720-fragmented.mp4":   "FAKE-VIDEO-BYTES!",
+		"v1-audio.m3u8":           "#EXTM3U\n#EXT-X-MAP:URI=\"v1-audio-fragmented.mp4\",BYTERANGE=\"8@0\"\n#EXTINF:4.0,\n#EXT-X-BYTERANGE:8@8\nv1-audio-fragmented.mp4\n#EXT-X-ENDLIST\n",
+		"v1-audio-fragmented.mp4": "FAKE-AUDIO-BYTES!",
+	}
+	for name, body := range files {
+		filename := filepath.Join(root, "streaming-playlists/hls/11111111-1111-1111-1111-111111111111", name)
+		if err := os.WriteFile(filename, []byte(body), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return files
+}
 
 func seedSourceMedia(t *testing.T, root string) {
 	t.Helper()
