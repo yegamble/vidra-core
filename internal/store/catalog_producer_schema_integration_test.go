@@ -76,7 +76,16 @@ func TestCatalogProducerSchemaSupportsFencesAndExactDirtyMembership(t *testing.T
 		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE search_catalog_state SET allocated_generation=7,
-		verified_generation=3, verified_at=now(),force_full_after_generation=7,last_error_code='quota_exceeded'`); err != nil {
+		force_full_after_generation=7,last_error_code='quota_exceeded'`); err != nil {
+		t.Fatal(err)
+	}
+	const empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	if _, err := tx.Exec(ctx, `INSERT INTO search_catalog_snapshots(scope,epoch,generation,pending,page_count,
+		document_count,canonical_bytes,membership_sha256,pages_sha256,end_event_id,end_request_body)
+		VALUES ('local',$1,3,false,0,0,0,$2,$2,$3,$4)`, epoch, empty, uuid.New(), []byte(`{"events":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE search_catalog_state SET verified_generation=3,verified_at=now()`); err != nil {
 		t.Fatal(err)
 	}
 	ids := make([]uuid.UUID, 3)

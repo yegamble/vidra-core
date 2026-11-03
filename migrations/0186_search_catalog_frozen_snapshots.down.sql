@@ -1,0 +1,4 @@
+ALTER TABLE search_catalog_state DROP CONSTRAINT search_catalog_verified_manifest_fkey;
+DROP TABLE IF EXISTS search_catalog_pages;
+DROP TABLE IF EXISTS search_catalog_snapshots;
+ALTER TABLE search_catalog_state DROP CONSTRAINT search_catalog_state_scope_epoch_key;
