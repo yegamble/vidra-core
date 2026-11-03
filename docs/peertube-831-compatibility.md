@@ -28,7 +28,8 @@ Runtime: native macOS/arm64, Node **24.21.0**, PostgreSQL **16.15**, Redis
 fixture applied all **183** current Vidra up-migration SQL files directly;
 this does not test the production installer or migration-ledger probes.
 
-All representative source rows came from the real PeerTube API: two local
+Upstream initialization created the root user/default channel; the real
+PeerTube API populated the remaining graph: two local
 users/channels, three published videos with public/private/unlisted privacy,
 one suspended user, two comments, one regular playlist/item, one accepted local
 follow, two chapters, one rating and one English caption. Two videos use
@@ -51,7 +52,7 @@ No production data, provider storage or cloud resources were used.
 | COPY | Expected catalogue/relationship counts, all three privacy tiers and the suspended-account hold survive; zero failed entities. Two avatars, three posters and three storyboard images/maps are carried. |
 | HLS bytes | Two ready trees, ten objects; four separate audio/video binary objects totaling 304,276 bytes match source SHA-256 values. One master is intentionally normalized to remove the source subtitle group; the caption is copied independently. |
 | Repeat | Zero new imports or failed entities; catalogue, ledger IDs and destination-media fingerprints remain unchanged. |
-| Source integrity | All 76 table fingerprints and the complete 52-object source-media inventory remain unchanged; source secrets are absent from importer logs. |
+| Source integrity | All 76 table fingerprints and the complete 52-object source-media inventory remain unchanged. Tested user emails, password hashes and account private keys are absent from importer logs; channel-key log coverage was not asserted. |
 
 Both source gates failed before the bound change: `TestClassifyVersion` rejected
 1130 and `TestPeerTubeImportEndToEnd/1130` stopped at preflight. After the fix,
