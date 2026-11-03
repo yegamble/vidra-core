@@ -495,7 +495,7 @@ func (p *peerTubeFlags) register(fs *flag.FlagSet) {
 	fs.Var(&p.on, "peertube", "configure a PeerTube source to migrate from (--peertube=false closes the import surface again)")
 	fs.StringVar(&p.sourceURL, "peertube-source-url", "", "READ-ONLY DSN of the SOURCE PeerTube database: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_PEERTUBE_SOURCE_URL)")
 	fs.StringVar(&p.storage, "peertube-source-storage", "", "where the source instance's media lives: `local|s3`")
-	fs.StringVar(&p.localRoot, "peertube-source-local-root", "", "`path` the source instance's media tree is mounted at, read-only (--peertube-source-storage local)")
+	fs.StringVar(&p.localRoot, "peertube-source-local-root", "", "read-only source media `path`; with S3, opts into local fallback only for missing objects")
 	fs.StringVar(&p.s3Endpoint, "peertube-source-s3-endpoint", "", "source S3 endpoint `host` WITHOUT a scheme")
 	fs.StringVar(&p.s3Region, "peertube-source-s3-region", "", "source S3 `region`")
 	fs.StringVar(&p.s3Bucket, "peertube-source-s3-bucket", "", "source S3 `bucket`")

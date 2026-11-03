@@ -1563,6 +1563,27 @@ func TestPeerTubeImportConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("S3 does not enable a local fallback by default", func(t *testing.T) {
+		clean(t)
+		for key, value := range map[string]string{
+			"PEERTUBE_IMPORT_ENABLED": "true", "PEERTUBE_SOURCE_DATABASE_URL": "postgres://ro:pw@source/peertube",
+			"PEERTUBE_SOURCE_STORAGE_BACKEND": "s3", "PEERTUBE_SOURCE_S3_ENDPOINT": "source.invalid",
+			"PEERTUBE_SOURCE_S3_BUCKET": "source", "PEERTUBE_SOURCE_S3_ACCESS_KEY": "test-key",
+			"PEERTUBE_SOURCE_S3_SECRET_KEY": "test-secret",
+		} {
+			t.Setenv(key, value)
+		}
+		cfg, err := Load()
+		if err != nil || cfg.PeerTubeSourceStorageLocalRoot != "" {
+			t.Fatalf("S3 silently enabled a source local fallback: %v", err)
+		}
+		t.Setenv("PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT", "/explicit-source")
+		cfg, err = Load()
+		if err != nil || cfg.PeerTubeSourceStorageLocalRoot != "/explicit-source" {
+			t.Fatalf("explicit source root was not retained: %v", err)
+		}
+	})
+
 	// The DSN's shape is checked so `vidra setup` can reject an answer at the
 	// prompt with the api's own rule rather than a friendlier second opinion.
 	t.Run("enabled with a DSN that is not one is rejected", func(t *testing.T) {

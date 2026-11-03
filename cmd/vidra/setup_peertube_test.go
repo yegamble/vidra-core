@@ -76,6 +76,7 @@ func TestSetupWritesThePeerTubeSourceFromFlags(t *testing.T) {
 		"PEERTUBE_IMPORT_ENABLED=true",
 		"PEERTUBE_SOURCE_DATABASE_URL=postgres://readonly:pw@10.0.0.5:5432/peertube_prod?sslmode=require",
 		"PEERTUBE_SOURCE_STORAGE_BACKEND=s3",
+		"PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT=\n",
 		"PEERTUBE_SOURCE_S3_ENDPOINT=s3.eu-central-003.backblazeb2.com",
 		"PEERTUBE_SOURCE_S3_BUCKET=peertube-source-media",
 		"PEERTUBE_IMPORT_CONFLICT_POLICY=rename",
