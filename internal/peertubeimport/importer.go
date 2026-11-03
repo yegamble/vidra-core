@@ -350,7 +350,7 @@ func (im *Importer) estimateBytes(ctx context.Context) (int64, error) {
 			return 0, err
 		}
 		if len(files) > 0 {
-			total += files[0].Size // highest resolution first
+			total += files[0].Size // selected retained original or best web video
 		}
 	}
 	return total, nil
@@ -531,7 +531,7 @@ func deferredFamilies() []string {
 		"moderation state (account/server blocklists, abuse reports; the video blacklist IS carried, into video_blocks)",
 		"user notification settings; remote-video watch history has no native equivalent",
 		"live sessions, plugins, themes, runners, redundancy config",
-		"original-file provenance records (videoSource)",
+		"original-file history/provenance beyond the latest retained upload (videoSource); completed video imports do not backfill newly available originals",
 		"per-day view history: the source records one lifetime total per video and no daily breakdown, so the total is carried and video_view_days is left empty rather than inventing buckets",
 	}
 }

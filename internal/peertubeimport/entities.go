@@ -502,12 +502,15 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 	if len(files) > 0 && im.srcMedia != nil && im.destMedia != nil {
 		f := files[0]
 		if !allowedVideoExt[strings.ToLower(f.Extname)] {
+			if f.KeptOriginal {
+				return fmt.Errorf("peertubeimport: retained original file type is not carried")
+			}
 			im.logger.WarnContext(ctx, "peertube import: skipping video file with disallowed extension", "source_uuid", v.UUID)
 		} else {
 			switch im.mediaMode {
 			case MediaModeCopy:
 				fileKey = "web-videos/" + mediaID.String() + f.Extname
-				size, sum, cerr := im.copyMedia(ctx, sourceWebVideoKey(f.Filename), fileKey)
+				size, sum, cerr := im.copyMedia(ctx, f.sourceKey(), fileKey)
 				if cerr != nil {
 					return cerr
 				}
@@ -515,9 +518,12 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 				fileSHA = sum
 				fileType = contentTypeForExt(f.Extname)
 				fileName = f.Filename
+				if f.OriginalName != "" {
+					fileName = f.OriginalName
+				}
 				haveFile = true
 			case MediaModeReference:
-				fileKey = sourceWebVideoKey(f.Filename)
+				fileKey = f.sourceKey()
 				fileSize = f.Size
 				fileType = contentTypeForExt(f.Extname)
 				fileName = f.Filename
@@ -528,7 +534,7 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 	if len(files) > 0 && im.mediaMode == MediaModeReference && !haveFile {
 		f := files[0]
 		if allowedVideoExt[strings.ToLower(f.Extname)] {
-			fileKey = sourceWebVideoKey(f.Filename)
+			fileKey = f.sourceKey()
 			fileSize = f.Size
 			fileType = contentTypeForExt(f.Extname)
 			fileName = f.Filename
