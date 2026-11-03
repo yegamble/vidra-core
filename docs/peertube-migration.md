@@ -291,7 +291,10 @@ reports. Missing thumbnails still need source artwork or usable video media.
 
 4. **A supported PeerTube schema version.** Preflight reads
    `application.migrationVersion` and refuses versions outside the verified range
-   (**700–1000**, ≈ PeerTube 5.x–8.x). See `.ralph/specs/peertube-reference.md`.
+   (**700–1130**, through PeerTube 8.3.1). See
+   [the compatibility evidence](peertube-831-compatibility.md) and
+   `.ralph/specs/peertube-reference.md`. This is source compatibility, not
+   qualification of a published release or a representative migration.
    The refusal is a hard stop that only a **human who has verified
    compatibility** may lift — automated agents must never lift it. Two ways to,
    and no third:
@@ -594,14 +597,14 @@ Then (admin bearer token):
 An in-process worker executes the run; start/finish are emitted as audit events
 (no secrets). The admin path never self-passes `--force`.
 
-### Unverified source schema (the 8.x case)
+### Unverified source schema
 
 A source outside the verified range fails the run rather than importing from a
 schema nobody has checked. The failed run carries the machine-readable reason and
 the number:
 
 ```json
-{ "state": "failed", "error_code": "unverified_schema", "source_version": 1040 }
+{ "state": "failed", "error_code": "unverified_schema", "source_version": 1131 }
 ```
 
 A **dry run** reaches the version check before it touches anything, so the cheap
@@ -610,7 +613,7 @@ way to find out is to preview first — it writes nothing either way.
 An administrator who accepts the risk re-launches naming that exact version:
 
 ```json
-{ "mode": "run", "conflict_policy": "skip", "acknowledged_schema_version": 1040 }
+{ "mode": "run", "conflict_policy": "skip", "acknowledged_schema_version": 1131 }
 ```
 
 - It is per-run. It is not remembered, not a setting, not a default, and every
