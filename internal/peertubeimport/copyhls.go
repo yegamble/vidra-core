@@ -46,23 +46,22 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 		limit := min(maxSourceFileBytes, (64<<30)-total)
 		manifest := strings.HasSuffix(name, ".m3u8")
 		if !manifest && im.copyMediaServer != nil && !im.copyMediaDisabled.Load() {
-			n, err := im.copyMediaServer.Copy(ctx, im.srcMedia, key, key, limit)
-			if errors.Is(err, storage.ErrNotFound) {
-				n, err = im.copyMediaServer.Copy(ctx, im.srcMedia, strings.Replace(key, ptHLSDir+"/", ptHLSDir+"/private/", 1), key, limit)
-			}
+			n, localStream, err := im.copyHLSObject(ctx, key, limit)
 			if err == nil {
 				if n < 0 || n > limit {
 					return fmt.Errorf("HLS server copy exceeded the size cap")
 				}
 				total += n
-				serverBytes += n
-				serverObjects++
+				if !localStream {
+					serverBytes += n
+					serverObjects++
+				}
 				continue
 			}
 			// Only ineligibility or a refusal before writes permits streaming.
 			// Source changes, interrupted copies and verification failures stay
 			// failures, so the DB cannot publish an incomplete/mixed HLS tree.
-			if !errors.Is(err, storage.ErrCopyUnavailable) {
+			if localStream || !errors.Is(err, storage.ErrCopyUnavailable) {
 				return err
 			}
 			// A bucket/credential mismatch will fail for every next dependency.
@@ -140,6 +139,29 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 		im.logger.InfoContext(ctx, "peertube import: HLS tree copied", "server_side_objects", serverObjects, "server_side_bytes", serverBytes, "streamed_bytes", total-serverBytes)
 	}
 	return nil
+}
+
+// A local-only object must not disable acceleration for the next S3 object.
+// The boolean also keeps any failed local destination write on the hard path.
+func (im *Importer) copyHLSObject(ctx context.Context, key string, limit int64) (int64, bool, error) {
+	for _, sourceKey := range []string{key, strings.Replace(key, ptHLSDir+"/", ptHLSDir+"/private/", 1)} {
+		n, err := im.copyMediaServer.Copy(ctx, sourceCopyPrimary(im.srcMedia), sourceKey, key, limit)
+		if !errors.Is(err, storage.ErrNotFound) {
+			return n, false, err
+		}
+		if mixed, ok := im.srcMedia.(*sourceLocalFallback); ok {
+			rc, err := mixed.openLocal(ctx, sourceKey)
+			if err == nil {
+				n, _, err := im.copyMediaReader(ctx, rc, key, limit)
+				_ = rc.Close()
+				return n, true, err
+			}
+			if !errors.Is(err, storage.ErrNotFound) {
+				return 0, false, err
+			}
+		}
+	}
+	return 0, false, storage.ErrNotFound
 }
 
 type hlsAttribute struct {

@@ -25,7 +25,8 @@ type copyProtocol struct {
 	source, destination                     *S3
 	copier                                  ServerCopier
 	size, destinationSize                   int64
-	headCode, copyCode, initCode, partCode  string
+	headCode, destinationHeadCode           string
+	copyCode, initCode, partCode            string
 	completeCode, abortCode                 string
 	destinationType, destinationETag        string
 	sourceETag                              string
@@ -76,7 +77,7 @@ func (f *copyProtocol) serve(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusForbidden
 		case "PreconditionFailed":
 			status = http.StatusPreconditionFailed
-		case "NoSuchKey":
+		case "NoSuchKey", "NoSuchBucket":
 			status = http.StatusNotFound
 		case "NotImplemented":
 			status = http.StatusNotImplemented
@@ -94,8 +95,13 @@ func (f *copyProtocol) serve(w http.ResponseWriter, r *http.Request) {
 			if errReply(f.headCode) {
 				return
 			}
-		} else if r.URL.Query().Get("versionId") != "destination-version" {
-			f.t.Errorf("destination verification did not pin returned version: %s", r.URL)
+		} else {
+			if errReply(f.destinationHeadCode) {
+				return
+			}
+			if r.URL.Query().Get("versionId") != "destination-version" {
+				f.t.Errorf("destination verification did not pin returned version: %s", r.URL)
+			}
 		}
 		if !strings.Contains(r.Header.Get("Authorization"), "Credential="+credential+"/") {
 			f.t.Error("HEAD used the wrong credential")
@@ -312,9 +318,12 @@ func TestServerCopyUnavailableDoesNotHideHardFailures(t *testing.T) {
 		{"init denied", 5 << 30, func(f *copyProtocol) { f.initCode = "AccessDenied" }, true, 0},
 		{"source denied", 10, func(f *copyProtocol) { f.headCode = "AccessDenied" }, false, 0},
 		{"source changed", 10, func(f *copyProtocol) { f.copyCode = "PreconditionFailed" }, false, 0},
+		{"copy source disappeared after HEAD", 10, func(f *copyProtocol) { f.copyCode = "NoSuchKey" }, false, 0},
+		{"destination bucket missing after copy", 10, func(f *copyProtocol) { f.destinationHeadCode = "NoSuchBucket" }, false, 0},
 		{"quota", 10, func(f *copyProtocol) { f.copyCode = "QuotaExceeded" }, false, 0},
 		{"part denied", 5 << 30, func(f *copyProtocol) { f.partCode = "AccessDenied" }, false, 1},
 		{"part changed", 5 << 30, func(f *copyProtocol) { f.partCode = "PreconditionFailed" }, false, 1},
+		{"part source disappeared", 5 << 30, func(f *copyProtocol) { f.partCode = "NoSuchKey" }, false, 1},
 		{"completion failed", 5 << 30, func(f *copyProtocol) { f.completeCode = "InvalidPart" }, false, 1},
 		{"wrong destination size", 10, func(f *copyProtocol) { f.destinationSize++ }, false, 0},
 		{"wrong destination type", 10, func(f *copyProtocol) { f.destinationType = "text/html" }, false, 0},
@@ -324,7 +333,7 @@ func TestServerCopyUnavailableDoesNotHideHardFailures(t *testing.T) {
 			f := newCopyProtocol(t, test.size)
 			test.configure(f)
 			_, err := f.copier.Copy(context.Background(), f.source, "media.mp4", "media.mp4", 16<<30)
-			if err == nil || errors.Is(err, ErrCopyUnavailable) != test.unavailable || f.aborts != test.abort {
+			if err == nil || errors.Is(err, ErrNotFound) || errors.Is(err, ErrCopyUnavailable) != test.unavailable || f.aborts != test.abort {
 				t.Fatalf("error=%v unavailable=%v aborts=%d", err, errors.Is(err, ErrCopyUnavailable), f.aborts)
 			}
 		})

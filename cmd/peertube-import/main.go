@@ -58,7 +58,7 @@ func main() {
 	var (
 		sourceDSN        = flag.String("source-dsn", "", "READ-ONLY DSN of the source PeerTube PostgreSQL (required)")
 		sourceStorage    = flag.String("source-storage", "local", "source media storage backend: local | s3")
-		sourceLocalRoot  = flag.String("source-local-root", "", "source media directory (read-only), for --source-storage=local")
+		sourceLocalRoot  = flag.String("source-local-root", "", "read-only source media root; with --source-storage=s3, enables local fallback only for missing S3 objects")
 		s3Endpoint       = flag.String("source-s3-endpoint", "", "source S3 endpoint host[:port] (no scheme), for --source-storage=s3")
 		s3Bucket         = flag.String("source-s3-bucket", "", "source S3 bucket")
 		s3AccessKey      = flag.String("source-s3-access-key", "", "source S3 access key (or PEERTUBE_SOURCE_S3_ACCESS_KEY)")

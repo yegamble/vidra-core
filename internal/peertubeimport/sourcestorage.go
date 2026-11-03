@@ -17,7 +17,7 @@ import (
 // URLs from the source database.
 type SourceStorageConfig struct {
 	Backend string // "local" | "s3"
-	// Local.
+	// Required for local; optional read-only fallback for missing S3 objects.
 	LocalRoot string
 	// S3.
 	S3Endpoint       string
@@ -58,7 +58,7 @@ func OpenSourceStorage(cfg SourceStorageConfig) (storage.Backend, error) {
 		}
 		return storage.NewLocal(cfg.LocalRoot)
 	case "s3":
-		return storage.NewS3(storage.S3Config{
+		primary, err := storage.NewS3(storage.S3Config{
 			Endpoint:       cfg.S3Endpoint,
 			Bucket:         cfg.S3Bucket,
 			AccessKey:      cfg.S3AccessKey,
@@ -67,6 +67,13 @@ func OpenSourceStorage(cfg SourceStorageConfig) (storage.Backend, error) {
 			UseSSL:         cfg.S3UseSSL,
 			ForcePathStyle: cfg.S3ForcePathStyle,
 		})
+		if err != nil {
+			return nil, err
+		}
+		if cfg.LocalRoot != "" {
+			return newSourceLocalFallback(primary, cfg.LocalRoot)
+		}
+		return primary, nil
 	default:
 		return nil, fmt.Errorf("peertubeimport: unsupported source storage backend %q", cfg.Backend)
 	}

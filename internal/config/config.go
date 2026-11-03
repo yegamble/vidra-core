@@ -1108,8 +1108,8 @@ type Config struct {
 	// Default "local".
 	PeerTubeSourceStorageBackend string
 	// PeerTubeSourceStorageLocalRoot is the directory the source instance's media
-	// tree is mounted at (read-only), used when the source storage backend is
-	// "local". Path-traversal-guarded on every read.
+	// tree is mounted at (read-only). Required for "local"; explicitly setting it
+	// with "s3" opts into confined local fallback for missing source objects.
 	PeerTubeSourceStorageLocalRoot string
 	// PeerTubeSourceS3* address the source instance's S3-compatible media store
 	// (read-only). Endpoint is host[:port] WITHOUT a scheme; AccessKey/SecretKey
