@@ -2,6 +2,7 @@ package searchevents
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -136,13 +137,7 @@ func (d *Drainer) Drain(ctx context.Context, limit int32) (int, error) {
 func (d *Drainer) sendChunk(ctx context.Context, rows []sqlcgen.ClaimDueSearchEventsRow) (int, error) {
 	batch := EventBatch{Events: make([]Envelope, 0, len(rows))}
 	for _, r := range rows {
-		batch.Events = append(batch.Events, Envelope{
-			EventID:       r.EventID,
-			Type:          r.EventType,
-			OccurredAt:    r.CreatedAt,
-			SchemaVersion: SchemaVersion,
-			Payload:       r.Payload,
-		})
+		batch.Events = append(batch.Events, envelopeFromRow(r))
 	}
 
 	result, sendErr := d.sender.SendEvents(ctx, batch)
@@ -173,7 +168,12 @@ func (d *Drainer) sendChunk(ctx context.Context, rows []sqlcgen.ClaimDueSearchEv
 	return delivered, nil
 }
 
-// chunkByPayload splits rows into groups whose summed payload stays under
+func envelopeFromRow(r sqlcgen.ClaimDueSearchEventsRow) Envelope {
+	return Envelope{EventID: r.EventID, Type: r.EventType, OccurredAt: r.CreatedAt,
+		SchemaVersion: SchemaVersion, Payload: r.Payload}
+}
+
+// chunkByPayload splits rows into groups whose encoded request stays under
 // budget. A single row larger than the budget is sent alone: it cannot be split
 // here, and sending it is strictly better than never attempting it — if the
 // receiver rejects it, that row dead-letters on its own instead of taking a
@@ -181,12 +181,22 @@ func (d *Drainer) sendChunk(ctx context.Context, rows []sqlcgen.ClaimDueSearchEv
 func chunkByPayload(rows []sqlcgen.ClaimDueSearchEventsRow, budget int) [][]sqlcgen.ClaimDueSearchEventsRow {
 	var out [][]sqlcgen.ClaimDueSearchEventsRow
 	var cur []sqlcgen.ClaimDueSearchEventsRow
-	size := 0
+	const framing = len(`{"events":[]}`)
+	size := framing
 	for _, r := range rows {
-		n := len(r.Payload)
+		raw, err := json.Marshal(envelopeFromRow(r))
+		n := len(raw)
+		if err != nil {
+			// Isolate malformed rows; the sender records their serialization error.
+			n = budget + 1
+		}
+		if len(cur) > 0 {
+			n++
+		}
 		if len(cur) > 0 && size+n > budget {
 			out = append(out, cur)
-			cur, size = nil, 0
+			cur, size = nil, framing
+			n--
 		}
 		cur = append(cur, r)
 		size += n

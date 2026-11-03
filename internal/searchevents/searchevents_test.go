@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -439,7 +440,7 @@ func TestDrainSplitsOversizedBatchAcrossRequests(t *testing.T) {
 	repo := newFakeOutbox()
 	repo.due = dueRows(rowCount)
 	for i := range repo.due {
-		repo.due[i].Payload = make([]byte, rowPayload)
+		repo.due[i].Payload, _ = json.Marshal(strings.Repeat("x", rowPayload-2))
 	}
 	sender := &fakeSender{result: EventBatchResult{Accepted: rowCount}}
 	d := NewDrainer(repo, sender, testLogger())
@@ -457,10 +458,11 @@ func TestDrainSplitsOversizedBatchAcrossRequests(t *testing.T) {
 
 	seen := 0
 	for i, b := range sender.sent {
-		size := 0
-		for _, e := range b.Events {
-			size += len(e.Payload)
+		raw, err := json.Marshal(b)
+		if err != nil {
+			t.Fatal(err)
 		}
+		size := len(raw)
 		seen += len(b.Events)
 		// A lone row over budget is allowed through (it cannot be split); any
 		// request carrying more than one event must respect the budget.
@@ -479,7 +481,7 @@ func TestDrainSplitsOversizedBatchAcrossRequests(t *testing.T) {
 func TestDrainSendsAnOversizedSingleEventAlone(t *testing.T) {
 	repo := newFakeOutbox()
 	repo.due = dueRows(3)
-	repo.due[1].Payload = make([]byte, 2*maxRequestPayloadBytes)
+	repo.due[1].Payload, _ = json.Marshal(strings.Repeat("x", 2*maxRequestPayloadBytes))
 	sender := &fakeSender{result: EventBatchResult{Accepted: 3}}
 	d := NewDrainer(repo, sender, testLogger())
 
