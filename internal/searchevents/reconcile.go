@@ -2,22 +2,17 @@ package searchevents
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// DefaultReconcilePageSize is the reconcile sweep's keyset page size.
-//
-// Lowered from the original 500 (MASTER-PLAN §2.3) so that ONE page reliably
-// fits inside maxRequestPayloadBytes. The drainer already refuses to put more
-// than a budget's worth of payload in a request, but a page bigger than the
-// whole budget has to be sent alone, and a page bigger than the RECEIVER's body
-// limit cannot be delivered at all — it would retry to the cap and dead-letter,
-// which is the failure this whole bound exists to prevent. Documents vary in
-// size (a long description is worth many short ones), so the margin is
-// deliberately wide rather than tuned to an average.
+// DefaultReconcilePageSize bounds one source read. Encoded bytes independently
+// bound the emitted pages: legal descriptions can expand sixfold in JSON.
 const DefaultReconcilePageSize = 200
 
 // RunReconcile emits a full index-reconciliation sweep to the outbox: one
@@ -57,7 +52,7 @@ func (e *Enqueuer) RunReconcile(ctx context.Context, pageSize int32) error {
 		for _, r := range rows {
 			docs = append(docs, videoDocFromPageRow(r))
 		}
-		if err := e.enqueueWithError(ctx, TypeReconcilePage, reconcilePagePayload{RunID: runID, Videos: docs}); err != nil {
+		if err := e.enqueueReconcilePages(ctx, runID, docs); err != nil {
 			return err
 		}
 		total += len(docs)
@@ -68,4 +63,45 @@ func (e *Enqueuer) RunReconcile(ctx context.Context, pageSize int32) error {
 	}
 
 	return e.enqueueWithError(ctx, TypeReconcileEnd, reconcileEndPayload{RunID: runID, Total: total})
+}
+
+func (e *Enqueuer) enqueueReconcilePages(ctx context.Context, runID uuid.UUID, docs []VideoDoc) error {
+	page := reconcilePagePayload{RunID: runID, Videos: []VideoDoc{}}
+	empty, err := json.Marshal(page)
+	if err != nil {
+		return err
+	}
+	// Reserve the real batch/envelope framing, including the longest RFC3339
+	// timestamp encoding. Outbox IDs and timestamps are assigned after enqueue.
+	frame, err := json.Marshal(EventBatch{Events: []Envelope{{
+		Type: TypeReconcilePage, SchemaVersion: SchemaVersion, Payload: empty,
+		OccurredAt: time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.FixedZone("", 3600)),
+	}}})
+	if err != nil {
+		return err
+	}
+	size := len(frame)
+	for _, doc := range docs {
+		raw, err := json.Marshal(doc)
+		if err != nil {
+			return err
+		}
+		if len(frame)+len(raw) > maxRequestPayloadBytes {
+			return fmt.Errorf("search reconcile document %s exceeds %d-byte request budget", doc.ID, maxRequestPayloadBytes)
+		}
+		n := len(raw)
+		if len(page.Videos) > 0 {
+			n++ // JSON array comma.
+		}
+		if size+n > maxRequestPayloadBytes {
+			if err := e.enqueueWithError(ctx, TypeReconcilePage, page); err != nil {
+				return err
+			}
+			page.Videos = nil
+			size, n = len(frame), len(raw)
+		}
+		page.Videos = append(page.Videos, doc)
+		size += n
+	}
+	return e.enqueueWithError(ctx, TypeReconcilePage, page)
 }
