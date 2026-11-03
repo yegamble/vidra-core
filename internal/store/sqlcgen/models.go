@@ -1100,6 +1100,34 @@ type SavedVideo struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type SearchCatalogDirty struct {
+	ID        uuid.UUID `json:"id"`
+	Scope     string    `json:"scope"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Permanent source epoch/CAS history; never pruned with dirty hints or frozen payloads.
+type SearchCatalogEpoch struct {
+	Scope               string      `json:"scope"`
+	Epoch               uuid.UUID   `json:"epoch"`
+	ReceiverPredecessor pgtype.UUID `json:"receiver_predecessor"`
+	CreatedAt           time.Time   `json:"created_at"`
+	SourcePredecessor   pgtype.UUID `json:"source_predecessor"`
+}
+
+type SearchCatalogState struct {
+	Scope               string    `json:"scope"`
+	Epoch               uuid.UUID `json:"epoch"`
+	AllocatedGeneration int64     `json:"allocated_generation"`
+	// Requires an exact retained FULL manifest, not delivery acceptance or receiver staging.
+	VerifiedGeneration       *int64             `json:"verified_generation"`
+	VerifiedAt               pgtype.Timestamptz `json:"verified_at"`
+	ForceFull                bool               `json:"force_full"`
+	ForceFullAfterGeneration int64              `json:"force_full_after_generation"`
+	// Durable sanitized blocker; no raw upstream errors or document data.
+	LastErrorCode *string `json:"last_error_code"`
+}
+
 type SearchOutbox struct {
 	ID            int64     `json:"id"`
 	EventID       uuid.UUID `json:"event_id"`
