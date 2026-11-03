@@ -1115,6 +1115,33 @@ type SearchCatalogEpoch struct {
 	SourcePredecessor   pgtype.UUID `json:"source_predecessor"`
 }
 
+type SearchCatalogPage struct {
+	Scope          string    `json:"scope"`
+	Epoch          uuid.UUID `json:"epoch"`
+	Generation     int64     `json:"generation"`
+	PageIndex      int32     `json:"page_index"`
+	EventID        uuid.UUID `json:"event_id"`
+	RequestBody    []byte    `json:"request_body"`
+	DocumentCount  int32     `json:"document_count"`
+	CanonicalBytes int64     `json:"canonical_bytes"`
+	ContentSha256  string    `json:"content_sha256"`
+}
+
+type SearchCatalogSnapshot struct {
+	Scope            string    `json:"scope"`
+	Epoch            uuid.UUID `json:"epoch"`
+	Generation       int64     `json:"generation"`
+	Pending          bool      `json:"pending"`
+	PageCount        int32     `json:"page_count"`
+	DocumentCount    int64     `json:"document_count"`
+	CanonicalBytes   int64     `json:"canonical_bytes"`
+	MembershipSha256 string    `json:"membership_sha256"`
+	PagesSha256      string    `json:"pages_sha256"`
+	EndEventID       uuid.UUID `json:"end_event_id"`
+	EndRequestBody   []byte    `json:"end_request_body"`
+	CapturedAt       time.Time `json:"captured_at"`
+}
+
 type SearchCatalogState struct {
 	Scope               string    `json:"scope"`
 	Epoch               uuid.UUID `json:"epoch"`
