@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/catalog"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/searchevents"
 )
@@ -44,6 +45,7 @@ const (
 	groupRecs
 	groupHistory
 	groupEvents
+	groupCatalog // separate v2 capability/delivery budget from legacy events
 	// groupModeration is the operator-initiated suggestion-ban surface. It is a
 	// group of its own for two reasons. (1) Deadline: nothing falls back when a
 	// ban fails, so abandoning the write at a viewer-facing 250ms and leaving the
@@ -164,6 +166,7 @@ func New(baseURL, secret string, opts ...Option) *Client {
 			groupRecs:    defaultRecsTimeout,
 			groupHistory: defaultHistoryTimeout,
 			groupEvents:  defaultEventsTimeout,
+			groupCatalog: defaultEventsTimeout,
 
 			groupModeration: defaultModerationTimeout,
 		},
@@ -178,6 +181,7 @@ func New(baseURL, secret string, opts ...Option) *Client {
 		groupRecs:    newBreaker(c.now),
 		groupHistory: newBreaker(c.now),
 		groupEvents:  newBreaker(c.now),
+		groupCatalog: newBreaker(c.now),
 
 		groupModeration: newBreaker(c.now),
 	}
@@ -258,6 +262,18 @@ func (c *Client) doPaths(ctx context.Context, g group, method, wirePath, signPat
 		return &HTTPError{Status: resp.StatusCode}
 	}
 	if out != nil {
+		if g == groupCatalog {
+			// A tiny status response must not consume unbounded memory. Reading
+			// the complete bounded JSON also rejects trailing response objects.
+			raw, err := io.ReadAll(io.LimitReader(resp.Body, catalog.MaxRequestBytes+1))
+			if err != nil {
+				return fmt.Errorf("searchclient: read catalog response: %w", err)
+			}
+			if len(raw) > catalog.MaxRequestBytes {
+				return fmt.Errorf("searchclient: catalog response exceeds byte budget")
+			}
+			return json.Unmarshal(raw, out)
+		}
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 			return fmt.Errorf("searchclient: decode %s: %w", wirePath, err)
 		}
