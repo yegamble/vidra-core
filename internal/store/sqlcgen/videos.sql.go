@@ -1644,6 +1644,8 @@ func (q *Queries) ListPublicVideosByChannel(ctx context.Context, arg ListPublicV
 
 const listPublicVideosByIDs = `-- name: ListPublicVideosByIDs :many
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       COALESCE((SELECT array_agg(t.tag ORDER BY t.tag)
+                 FROM video_tags t WHERE t.video_id = v.id), '{}')::text[] AS tags,
        v.created_at, v.updated_at,
        COALESCE(vc.views, 0)::bigint AS views,
        EXISTS (
@@ -1686,6 +1688,7 @@ type ListPublicVideosByIDsRow struct {
 	Description        string    `json:"description"`
 	Privacy            string    `json:"privacy"`
 	State              string    `json:"state"`
+	Tags               []string  `json:"tags"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 	Views              int64     `json:"views"`
@@ -1722,6 +1725,7 @@ func (q *Queries) ListPublicVideosByIDs(ctx context.Context, arg ListPublicVideo
 			&i.Description,
 			&i.Privacy,
 			&i.State,
+			&i.Tags,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Views,

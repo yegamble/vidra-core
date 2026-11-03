@@ -2579,6 +2579,7 @@ func (s *Service) ListPublicByOwner(ctx context.Context, ownerID uuid.UUID, view
 // values (a remote video has no local channel or lifecycle).
 type FeedItem struct {
 	Video              sqlcgen.Video
+	Tags               []string // Canonical metadata for ranked-id authorization.
 	Views              int64
 	HasThumbnail       bool
 	ChannelHandle      string
@@ -3125,6 +3126,7 @@ func (s *Service) HydrateByIDs(ctx context.Context, ids []uuid.UUID, viewerID uu
 	for _, r := range rows {
 		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveFlags, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
+		it.Tags = r.Tags
 		byID[r.ID] = it
 	}
 	items := make([]FeedItem, 0, len(rows))

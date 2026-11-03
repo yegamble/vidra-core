@@ -64,6 +64,7 @@ type videoFakeRepo struct {
 	// userBlocks mirrors the §13 user_blocks content filter (viewer = blocker).
 	userBlocks *blockFakeRepo
 	videos     map[uuid.UUID]sqlcgen.GetVideoByIDRow
+	hydrateErr error
 	// peertubeUUIDs mirrors videos.peertube_uuid: video id -> the UUID this video
 	// had on the PeerTube instance it was imported from. Seeded directly by the
 	// legacy-URL tests; the importer is what writes it in production.
@@ -1099,6 +1100,9 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 // ListPublicVideosByIDs hydrates a set of ids under the (simplified) canonical
 // predicate, mirroring the real query for the search-service W4 handlers.
 func (f *videoFakeRepo) ListPublicVideosByIDs(_ context.Context, a sqlcgen.ListPublicVideosByIDsParams) ([]sqlcgen.ListPublicVideosByIDsRow, error) {
+	if f.hydrateErr != nil {
+		return nil, f.hydrateErr
+	}
 	want := make(map[uuid.UUID]bool, len(a.Ids))
 	for _, id := range a.Ids {
 		want[id] = true
@@ -1117,10 +1121,12 @@ func (f *videoFakeRepo) ListPublicVideosByIDs(_ context.Context, a sqlcgen.ListP
 		if f.mutedFromFeed(a.ViewerID, r.ChannelID) || f.ownerUnlisted(r.ChannelID) {
 			continue
 		}
+		handle, name := f.channelInfo(r.ChannelID)
 		rows = append(rows, sqlcgen.ListPublicVideosByIDsRow{
 			ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			Tags: append([]string(nil), f.tags[r.ID]...), ChannelHandle: handle, ChannelDisplayName: name,
 			AuthorDisplayName: f.authorName(r.ChannelID), IsSensitive: r.IsSensitive,
 			SensitiveFlags: r.SensitiveFlags, SensitiveReason: r.SensitiveReason,
 		})
