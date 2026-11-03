@@ -32,13 +32,14 @@ type SourceStorageConfig struct {
 // PeerTube's default object buckets (subdirectories under the media root). The
 // verified 5.x–8.x layout. Documented in docs/peertube-migration.md; operators
 // on an older layout mount their tree to match.
-// Only the first and the last two are ever in a PeerTube OBJECT store; the
+// Originals, web videos, captions and HLS can live in an OBJECT store; the
 // thumbnail/preview/storyboard directories exist only on the source HOST's
 // filesystem, so they are reachable through this backend exactly when the
 // operator pointed --source-local-root at that host's storage tree. Everywhere
 // else those three families come over HTTP (see lazystatic.go).
 const (
 	ptWebVideosDir  = "web-videos"
+	ptOriginalsDir  = "original-video-files"
 	ptThumbnailDir  = "thumbnails"
 	ptPreviewDir    = "previews"
 	ptStoryboardDir = "storyboards"
@@ -77,6 +78,13 @@ func OpenSourceStorage(cfg SourceStorageConfig) (storage.Backend, error) {
 // (belt-and-braces on top of the backend's own key validation).
 func sourceWebVideoKey(filename string) string {
 	return ptWebVideosDir + "/" + path.Base(filename)
+}
+
+func (f SourceVideoFile) sourceKey() string {
+	if f.KeptOriginal {
+		return ptOriginalsDir + "/" + path.Base(f.Filename)
+	}
+	return sourceWebVideoKey(f.Filename)
 }
 func sourceThumbnailKey(filename string) string {
 	return ptThumbnailDir + "/" + path.Base(filename)

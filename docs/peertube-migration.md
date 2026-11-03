@@ -62,7 +62,15 @@ tool *moves content in*, once.
 - **Per-day view history** — see §1.1.
 - **Moderation state** (video blacklist, account/server blocklists, abuse reports).
 - **User notification settings and watch history.**
-- **Original-file provenance records** (`videoSource`).
+- **Original-file history and provenance** (`videoSource`) beyond the latest
+  retained upload. Initial imports prefer that upload's `keptOriginalFilename`
+  under `original-video-files/`, including HLS-only sources; otherwise they use
+  the highest-resolution web video. Within the existing file-type and size limits,
+  COPY preserves its bytes, checksum and input filename. A missing retained file
+  fails that video and is retryable after
+  repair; an older replacement is never substituted. The selected source backend
+  must contain this family too. Already completed video imports do not backfill
+  newly available originals, and repeat imports preserve their existing original.
 - Live sessions, plugins, themes, runners, redundancy config, any payment data.
   (The categories plugin's *taxonomy* is read — see §1.2 — but no plugin is
   installed, enabled or otherwise carried.)

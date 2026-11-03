@@ -3,6 +3,7 @@ package peertubeimport
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -297,13 +298,15 @@ type SourceVideo struct {
 	CommentsPolicy  *int
 }
 
-// SourceVideoFile is one stored media file for a video (web/webseed download).
+// SourceVideoFile is a retained upload original or a progressive web video.
 type SourceVideoFile struct {
-	ID         int64
-	Resolution int
-	Size       int64
-	Extname    string
-	Filename   string
+	ID           int64
+	Resolution   int
+	Size         int64
+	Extname      string
+	Filename     string
+	OriginalName string
+	KeptOriginal bool
 }
 
 // SourceHLSPlaylist is one PeerTube HLS playlist for a video.
@@ -574,9 +577,14 @@ func (s *Source) HasVideoBlacklist(ctx context.Context) (bool, error) {
 	return s.tableExists(ctx, "videoBlacklist")
 }
 
-// VideoFiles returns a video's web (non-HLS) media files, highest resolution
-// first. The importer copies the highest-resolution file as Vidra's original.
+// VideoFiles prefers the latest upload's kept original, otherwise web files in
+// descending resolution. HLS-only instances can retain originals independently.
 func (s *Source) VideoFiles(ctx context.Context, videoID int64) ([]SourceVideoFile, error) {
+	if original, ok, err := s.keptOriginal(ctx, videoID); err != nil {
+		return nil, err
+	} else if ok {
+		return []SourceVideoFile{original}, nil
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, resolution, size, COALESCE(extname, ''), COALESCE(filename, '')
 		FROM "videoFile"
@@ -595,6 +603,47 @@ func (s *Source) VideoFiles(ctx context.Context, videoID int64) ([]SourceVideoFi
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// videoSource is optional on older sources. Select the latest upload BEFORE
+// checking its retained file: an older replacement is not the current original.
+func (s *Source) keptOriginal(ctx context.Context, videoID int64) (SourceVideoFile, bool, error) {
+	var f SourceVideoFile
+	if present, err := s.tableExists(ctx, "videoSource"); err != nil || !present {
+		return f, false, err
+	}
+	if present, err := s.columnExists(ctx, "videoSource", "keptOriginalFilename"); err != nil || !present {
+		return f, false, err
+	}
+	size, err := s.optionalExpression(ctx, "videoSource", "size", `COALESCE(size, 0)::bigint`, `0::bigint`)
+	if err != nil {
+		return f, false, err
+	}
+	resolution, err := s.optionalExpression(ctx, "videoSource", "resolution", `COALESCE(resolution, 0)`, `0`)
+	if err != nil {
+		return f, false, err
+	}
+	name, err := s.optionalExpression(ctx, "videoSource", "inputFilename", `COALESCE("inputFilename", '')`, `''::text`)
+	if err != nil {
+		return f, false, err
+	}
+	order := "id DESC"
+	if has, err := s.columnExists(ctx, "videoSource", "createdAt"); err != nil {
+		return f, false, err
+	} else if has {
+		order = `"createdAt" DESC, id DESC`
+	}
+	err = s.pool.QueryRow(ctx, `SELECT id, COALESCE("keptOriginalFilename", ''), `+resolution+`, `+size+`, `+name+`
+		FROM "videoSource" WHERE "videoId"=$1 ORDER BY `+order+` LIMIT 1`, videoID).
+		Scan(&f.ID, &f.Filename, &f.Resolution, &f.Size, &f.OriginalName)
+	if err == pgx.ErrNoRows {
+		return f, false, nil
+	}
+	if err != nil {
+		return f, false, fmt.Errorf("peertubeimport: read retained original: %w", err)
+	}
+	f.Extname, f.KeptOriginal = extOf(f.Filename), true
+	return f, strings.TrimSpace(f.Filename) != "", nil
 }
 
 // HLSPlaylist returns the first HLS streaming playlist for a video, when present.
