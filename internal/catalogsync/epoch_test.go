@@ -74,13 +74,22 @@ func TestApplyBootstrapEpochMatchingInitialReplaysCASAfterLostConflictPersistenc
 	}
 }
 
-func TestApplyBootstrapEpochLostResponseMayResolveBut409NeverDoes(t *testing.T) {
+func TestApplyBootstrapEpochUnknownCASOutcomeRequiresExactRetry(t *testing.T) {
 	w, before, current := initialEpochFixture()
-	r := &epochReceiver{status: current, putErr: errors.New("lost response")}
-	if matched, err := ApplyBootstrapEpoch(context.Background(), r, w, before); err != nil || !matched || r.gets != 1 {
-		t.Fatalf("lost response not independently resolved: %v/%v", matched, err)
+	for _, observed := range []catalog.Status{before, current} {
+		// A lost response can hide either a successful 204 or a rejected 409.
+		// Status does not attest which predecessor established the epoch.
+		lost := errors.New("lost CAS response")
+		r := &epochReceiver{status: current, putErr: lost}
+		if matched, err := ApplyBootstrapEpoch(context.Background(), r, w, observed); !errors.Is(err, lost) || matched || r.puts != 1 || r.gets != 0 {
+			t.Fatalf("unknown CAS outcome inferred from matching status: %v/%v, %+v", matched, err, r)
+		}
+		r.putErr = nil // The exact original tuple now receives an observed 204.
+		if matched, err := ApplyBootstrapEpoch(context.Background(), r, w, current); err != nil || !matched || r.puts != 2 || r.gets != 1 || !reflect.DeepEqual(r.predecessor, w.ReceiverPredecessor) {
+			t.Fatalf("exact original CAS retry not independently verified: %v/%v, %+v", matched, err, r)
+		}
 	}
-	r = &epochReceiver{status: current, putErr: &searchclient.HTTPError{Status: 409}}
+	r := &epochReceiver{status: current, putErr: &searchclient.HTTPError{Status: 409}}
 	if matched, err := ApplyBootstrapEpoch(context.Background(), r, w, before); !errors.Is(err, catalog.ErrEpochConflict) || matched || r.gets != 0 {
 		t.Fatalf("PUT409 inferred recovery from matching GET: %v/%v", matched, err)
 	}
