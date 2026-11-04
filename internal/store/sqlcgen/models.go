@@ -1153,6 +1153,8 @@ type SearchCatalogState struct {
 	ForceFullAfterGeneration int64              `json:"force_full_after_generation"`
 	// Durable sanitized blocker; no raw upstream errors or document data.
 	LastErrorCode *string `json:"last_error_code"`
+	// Current error evidence only: rotate on each error and compare expected nullable ID in ACK/error CAS; no receipt history.
+	LastErrorID pgtype.UUID `json:"last_error_id"`
 }
 
 type SearchOutbox struct {
