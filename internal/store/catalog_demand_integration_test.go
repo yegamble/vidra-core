@@ -17,6 +17,9 @@ func TestCatalogCaptureDemandDistinguishesStaticHintsAndOutstandingLegacy(t *tes
 		if err != nil || got != want {
 			t.Fatalf("capture demand %+v want%+v: %v", got, want, err)
 		}
+		if n := s.Pool.Stat().AcquiredConns(); n != 0 {
+			t.Fatalf("poll retained %d connections", n)
+		}
 		var released bool
 		if err := s.Pool.QueryRow(ctx, `SELECT true`).Scan(&released); err != nil || !released {
 			t.Fatalf("poll retained resources: %v/%v", released, err)
