@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Release-free beta artifacts must name the source GitHub actually executed.
 set -euo pipefail
+umask 077
 die() { printf 'beta-import-cli: %s\n' "$*" >&2; exit 1; }
 : "${BETA_TAG:?}" "${EXPECTED_SHA:?}" "${OUT_DIR:?}" "${WORKFLOW_SHA:?}"
 [[ "$BETA_TAG" =~ ^beta-[A-Za-z0-9][A-Za-z0-9._-]*$ && ${#BETA_TAG} -le 128 ]] || die 'invalid beta tag'
@@ -10,8 +11,9 @@ die() { printf 'beta-import-cli: %s\n' "$*" >&2; exit 1; }
 [[ "$(git rev-parse HEAD)" == "$EXPECTED_SHA" && "$(git rev-parse "refs/tags/$BETA_TAG^{commit}")" == "$EXPECTED_SHA" ]] || die 'checkout/tag mismatch'
 [[ -z "$(git status --porcelain --untracked-files=normal)" ]] || die 'source checkout is dirty'
 [[ "$OUT_DIR" == /* && "$OUT_DIR" != "$PWD" && "$OUT_DIR" != "$PWD/"* ]] || die 'outputs must be outside the checkout'
+[[ ! -e "$OUT_DIR" && ! -L "$OUT_DIR" ]] || die 'output path already exists'
 tree=$(git rev-parse 'HEAD^{tree}')
-mkdir -p "$OUT_DIR"
+mkdir "$OUT_DIR"
 binary="peertube-import_${BETA_TAG}_linux_amd64"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOFLAGS=-mod=readonly \
   go build -trimpath -buildvcs=true -o "$OUT_DIR/$binary" ./cmd/peertube-import

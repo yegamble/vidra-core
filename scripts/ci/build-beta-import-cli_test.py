@@ -11,7 +11,7 @@ SHA = "a" * 40
 
 
 class BetaBuildTests(unittest.TestCase):
-    def run_case(self, **changes):
+    def run_case(self, existing_output=False, **changes):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             tools = root / "tools"
@@ -36,6 +36,9 @@ else:
 """)
             for tool in tools.iterdir():
                 tool.chmod(0o755)
+            if existing_output:
+                (root/"out").mkdir()
+                (root/"out"/"keep").write_bytes(b"preserved\n")
             tag = changes.get("BETA_TAG","beta-fixture")
             env = dict(os.environ, PATH=str(tools)+os.pathsep+os.environ["PATH"],
                        BETA_TAG=tag, EXPECTED_SHA=SHA, GITHUB_SHA=SHA,
@@ -51,7 +54,15 @@ else:
             output = root/"out"
             names = sorted(path.name for path in output.iterdir()) if output.exists() else []
             manifest = json.loads((output/"provenance.json").read_text()) if (output/"provenance.json").exists() else None
+            if existing_output:
+                self.assertEqual((output/"keep").read_bytes(),b"preserved\n")
             return result.returncode, called, names, manifest
+
+    def test_existing_output_is_preserved_without_compiler(self):
+        status,called,names,_ = self.run_case(existing_output=True)
+        self.assertNotEqual(status,0)
+        self.assertFalse(called)
+        self.assertEqual(names,["keep"])
 
     def test_refusals_precede_compiler(self):
         for change in ({"BETA_TAG":"v1.2.3"}, {"BETA_TAG":"beta-$(false)"}, {"GITHUB_REF":"refs/heads/main"},

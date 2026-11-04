@@ -55,7 +55,11 @@ jobs:
         id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: ${{ runner.temp }}/beta-import-cli/*
+          subject-path: |
+            ${{ runner.temp }}/beta-import-cli/peertube-import_${{ inputs.tag }}_linux_amd64
+            ${{ runner.temp }}/beta-import-cli/buildinfo.json
+            ${{ runner.temp }}/beta-import-cli/provenance.json
+            ${{ runner.temp }}/beta-import-cli/SHA256SUMS
           create-storage-record: false
       - name: Include the signature bundle after signing the checksums
         env:
@@ -68,7 +72,7 @@ jobs:
         with:
           name: beta-import-cli-${{ inputs.tag }}-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/beta-import-cli/peertube-import_*
+            ${{ runner.temp }}/beta-import-cli/peertube-import_${{ inputs.tag }}_linux_amd64
             ${{ runner.temp }}/beta-import-cli/buildinfo.json
             ${{ runner.temp }}/beta-import-cli/provenance.json
             ${{ runner.temp }}/beta-import-cli/SHA256SUMS
