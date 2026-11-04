@@ -163,3 +163,15 @@ func TestDeliverReceiptsNeverCompleteButFreshGETCanResolveLostResponse(t *testin
 		t.Fatalf("stale source ACK or completed page replay: %v/%v", acked, err)
 	}
 }
+
+func TestDeliverNeverWorksAroundDurableEpochConflict(t *testing.T) {
+	s, w, before, done := deliveryFixture(t, 201)
+	token := uuid.New()
+	w.LastErrorCode, w.LastErrorID = "epoch_conflict", &token
+	for _, observed := range []catalog.Status{before, done} {
+		r := &deliveryReceiver{status: done}
+		if acked, err := Deliver(context.Background(), s, r, w, observed); !errors.Is(err, catalog.ErrEpochConflict) || acked || len(r.sent) != 0 || len(s.reads) != 0 || s.acks != 0 {
+			t.Fatalf("delivery bypassed conflict using pages or matching completion: %v/%v", acked, err)
+		}
+	}
+}
