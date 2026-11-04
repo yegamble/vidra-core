@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,6 +17,7 @@ func TestCatalogMutationAdaptersRejectInvalidInputsBeforeDB(t *testing.T) {
 		Manifest: catalog.Manifest{MembershipSHA256: empty, PagesSHA256: empty}}
 	w := catalog.SourceWork{Evidence: catalog.SourceEvidence{Epoch: p.Identity.Epoch, AllocatedGeneration: 1, Pending: &p}}
 	s := new(Store) // Invalid inputs must refuse without acquiring a connection.
+	errorToken := uuid.New()
 	for _, change := range []func(*catalog.SourceWork){
 		func(w *catalog.SourceWork) { w.Evidence.Epoch = uuid.Nil },
 		func(w *catalog.SourceWork) { w.Evidence.AllocatedGeneration = -1 },
@@ -23,21 +25,19 @@ func TestCatalogMutationAdaptersRejectInvalidInputsBeforeDB(t *testing.T) {
 		func(w *catalog.SourceWork) { w.ForceFullAfterGeneration = 2 },
 		func(w *catalog.SourceWork) { w.LastErrorCode = "capture_failed" },
 		func(w *catalog.SourceWork) { id := uuid.Nil; w.LastErrorID, w.LastErrorCode = &id, "capture_failed" },
-		func(w *catalog.SourceWork) {
-			id := uuid.New()
-			w.LastErrorID, w.LastErrorCode = &id, "raw private failure"
-		},
+		func(w *catalog.SourceWork) { w.LastErrorID, w.LastErrorCode = &errorToken, "raw private failure" },
+		func(w *catalog.SourceWork) { w.LastErrorID, w.LastErrorCode = &errorToken, "epoch_conflict" },
 	} {
 		bad := w
 		change(&bad)
-		if changed, err := s.AcknowledgeCatalogWork(ctx, bad, p); changed || err == nil {
+		if changed, err := s.AcknowledgeCatalogWork(ctx, bad, p); changed || err == nil || bad.LastErrorCode == "epoch_conflict" && !errors.Is(err, catalog.ErrEpochConflict) {
 			t.Fatalf("invalid ACK input accepted: %v/%v", changed, err)
 		}
-		if changed, err := s.RecordCatalogDeliveryFailure(ctx, bad, "delivery_failed"); changed || err == nil {
+		if changed, err := s.RecordCatalogDeliveryFailure(ctx, bad, "delivery_failed"); changed || err == nil || bad.LastErrorCode == "epoch_conflict" && !errors.Is(err, catalog.ErrEpochConflict) {
 			t.Fatalf("invalid delivery input accepted: %v/%v", changed, err)
 		}
 		bad.Evidence.Pending = nil
-		if changed, err := s.RecordCatalogCaptureFailure(ctx, bad, "capture_failed"); changed || err == nil {
+		if changed, err := s.RecordCatalogCaptureFailure(ctx, bad, "capture_failed"); changed || err == nil || bad.LastErrorCode == "epoch_conflict" && !errors.Is(err, catalog.ErrEpochConflict) {
 			t.Fatalf("invalid capture input accepted: %v/%v", changed, err)
 		}
 	}

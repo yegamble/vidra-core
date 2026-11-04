@@ -13,11 +13,10 @@ import (
 
 var errCatalogMutation = errors.New("catalog mutation input is invalid")
 
-// AcknowledgeCatalogWork requires completion independently verified by the caller,
-// never an event receipt. The entire retained pending proof must match.
+// AcknowledgeCatalogWork requires the caller's independently verified exact pending FULL, never an intake receipt.
 func (s *Store) AcknowledgeCatalogWork(ctx context.Context, w catalog.SourceWork, completed catalog.FullProof) (bool, error) {
 	if !validCatalogMutationWork(w) || w.Evidence.Pending == nil || *w.Evidence.Pending != completed {
-		return false, errCatalogMutation
+		return false, catalogMutationError(w)
 	}
 	return s.catalogMutation(ctx, func(q *sqlcgen.Queries) (int64, error) {
 		return q.AcknowledgeCatalogFull(ctx, sqlcgen.AcknowledgeCatalogFullParams{
@@ -32,7 +31,7 @@ func (s *Store) AcknowledgeCatalogWork(ctx context.Context, w catalog.SourceWork
 
 func (s *Store) RecordCatalogDeliveryFailure(ctx context.Context, w catalog.SourceWork, code string) (bool, error) {
 	if !validCatalogMutationWork(w) || w.Evidence.Pending == nil || !catalogFailureCode(code) {
-		return false, errCatalogMutation
+		return false, catalogMutationError(w)
 	}
 	p := w.Evidence.Pending
 	return s.catalogMutation(ctx, func(q *sqlcgen.Queries) (int64, error) {
@@ -48,7 +47,7 @@ func (s *Store) RecordCatalogDeliveryFailure(ctx context.Context, w catalog.Sour
 
 func (s *Store) RecordCatalogCaptureFailure(ctx context.Context, w catalog.SourceWork, code string) (bool, error) {
 	if !validCatalogMutationWork(w) || w.Evidence.Pending != nil || !catalogFailureCode(code) {
-		return false, errCatalogMutation
+		return false, catalogMutationError(w)
 	}
 	return s.catalogMutation(ctx, func(q *sqlcgen.Queries) (int64, error) {
 		return q.RecordCatalogCaptureError(ctx, sqlcgen.RecordCatalogCaptureErrorParams{
@@ -59,8 +58,7 @@ func (s *Store) RecordCatalogCaptureFailure(ctx context.Context, w catalog.Sourc
 	})
 }
 
-// Success is returned only after COMMIT/unlock. An uncertain error returns false
-// even if committed: callers reload durable state rather than infer rollback.
+// Success follows COMMIT/unlock; uncertain errors require reloading, never assuming rollback.
 func (s *Store) catalogMutation(ctx context.Context, change func(*sqlcgen.Queries) (int64, error)) (bool, error) {
 	var changed int64
 	err := s.WithCatalogControl(ctx, func(tx pgx.Tx) error {
@@ -68,15 +66,12 @@ func (s *Store) catalogMutation(ctx context.Context, change func(*sqlcgen.Querie
 		changed, err = change(sqlcgen.New(tx))
 		return err
 	})
-	if err != nil {
-		return false, err
-	}
-	return changed == 1, nil
+	return err == nil && changed == 1, err
 }
 
 func validCatalogMutationWork(w catalog.SourceWork) bool {
 	e := w.Evidence
-	if e.Epoch == uuid.Nil || e.AllocatedGeneration < 0 || w.ForceFullAfterGeneration < 0 || w.ForceFullAfterGeneration > e.AllocatedGeneration ||
+	if w.LastErrorCode == "epoch_conflict" || e.Epoch == uuid.Nil || e.AllocatedGeneration < 0 || w.ForceFullAfterGeneration < 0 || w.ForceFullAfterGeneration > e.AllocatedGeneration ||
 		(w.LastErrorID == nil) != (w.LastErrorCode == "") || w.LastErrorID != nil && (*w.LastErrorID == uuid.Nil || !catalogFailureCode(w.LastErrorCode)) {
 		return false
 	}
@@ -88,6 +83,13 @@ func validCatalogMutationWork(w catalog.SourceWork) bool {
 	}
 	return e.Pending == nil || int64(e.Pending.Identity.Generation) == e.AllocatedGeneration &&
 		(e.Verified == nil || e.Pending.Identity.Generation > e.Verified.Identity.Generation)
+}
+
+func catalogMutationError(w catalog.SourceWork) error {
+	if w.LastErrorCode == "epoch_conflict" {
+		return catalog.ErrEpochConflict
+	}
+	return errCatalogMutation
 }
 
 func catalogFailureCode(code string) bool {

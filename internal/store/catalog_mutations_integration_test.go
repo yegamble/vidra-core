@@ -128,9 +128,13 @@ func TestCatalogMutationAdaptersFenceSoleConnectionAndStaleEvidence(t *testing.T
 	if w.ForceFull || w.Evidence.Pending != nil || w.Evidence.Verified.Identity.Generation != 2 {
 		t.Fatal("fresh higher full failed to clear the force fence")
 	}
-	canceled, stop := context.WithCancel(ctx)
-	stop()
-	if changed, err := s.RecordCatalogCaptureFailure(canceled, w, "capture_failed"); changed || !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled mutation returned success: %v/%v", changed, err)
+	changed, err = s.RecordCatalogCaptureFailure(ctx, w, "epoch_conflict")
+	expect(changed, err, true) // NEW durable conflict is allowed from ordinary work.
+	w = load()
+	if changed, err := s.RecordCatalogCaptureFailure(ctx, w, "capture_failed"); changed || !errors.Is(err, catalog.ErrEpochConflict) {
+		t.Fatalf("durable conflict was overwritten: %v/%v", changed, err)
+	}
+	if after := load(); after.LastErrorCode != "epoch_conflict" || after.LastErrorID == nil || *after.LastErrorID != *w.LastErrorID {
+		t.Fatal("conflict refusal changed durable error evidence")
 	}
 }
