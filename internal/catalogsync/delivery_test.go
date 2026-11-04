@@ -69,7 +69,8 @@ func deliveryFixture(t *testing.T, documents int) (*deliverySource, catalog.Sour
 		t.Fatal(err)
 	}
 	for i := 0; i < documents; i++ {
-		doc := searchevents.VideoDoc{ID: uuid.New(), Kind: "local", OwnerID: uuid.New(), ChannelID: uuid.New(), Title: "video", Privacy: "public", State: "published", CreatedAt: at, UpdatedAt: at}
+		doc := searchevents.VideoDoc{ID: uuid.New(), Kind: "local", OwnerID: uuid.New(), ChannelID: uuid.New(),
+			ChannelHandle: "channel", ChannelName: "Channel", Tags: []string{}, Title: "video", Privacy: "public", State: "published", CreatedAt: at, UpdatedAt: at}
 		if i == 200 {
 			doc.Description = strings.Repeat("x", 200000)
 		}
