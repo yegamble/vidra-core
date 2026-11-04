@@ -785,6 +785,8 @@ type PlaylistRef struct {
 	// MasterKey is the promoted master manifest's exact key, or '' when the
 	// transcode never produced one (a failed or dead-lettered job).
 	MasterKey string
+	// Format is the recorded delivery format, not an inferred file extension.
+	Format string
 	// Prefix is the tree's own key prefix (media.HLSKeyPrefix), the only handle
 	// on the segments and rendition playlists that have no rows of their own.
 	Prefix string
@@ -826,6 +828,7 @@ func ListReferences(ctx context.Context, repo Repository) (References, error) {
 		out.Playlists = append(out.Playlists, PlaylistRef{
 			VideoID:   r.VideoID,
 			MasterKey: strings.TrimSpace(r.MasterKey),
+			Format:    r.Format,
 			Prefix:    media.HLSKeyPrefix(r.VideoID),
 		})
 	}

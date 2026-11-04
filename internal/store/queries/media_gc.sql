@@ -29,7 +29,7 @@ SELECT id, transcode_generation FROM videos;
 -- tell which HLS GENERATION (streaming-playlists/<id>/rN/ vs the legacy
 -- in-place layout) is the live one after a source replacement (config-parity
 -- W14). Failed playlists carry master_key '' and yield no live generation.
-SELECT video_id, master_key FROM streaming_playlists;
+SELECT video_id, master_key, format FROM streaming_playlists;
 
 -- name: CountForeignLayoutMediaRefs :one
 -- How many media references this install holds that point at object keys IT DID
