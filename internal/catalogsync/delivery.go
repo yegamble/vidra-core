@@ -34,6 +34,9 @@ func Deliver(ctx context.Context, source Source, receiver Receiver, w catalog.So
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	if w.LastErrorCode == "epoch_conflict" {
+		return false, catalog.ErrEpochConflict
+	}
 	a, err := catalog.AssessReceiver(w.Evidence, observed)
 	if err != nil {
 		return false, err

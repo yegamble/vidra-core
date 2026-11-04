@@ -42,9 +42,11 @@ type deliveryReceiver struct {
 	sent   [][]byte
 	failAt int
 	reject bool
+	gets   int
 }
 
 func (r *deliveryReceiver) CatalogStatus(context.Context) (catalog.Status, error) {
+	r.gets++
 	return r.status, nil
 }
 func (r *deliveryReceiver) SendCatalogBody(_ context.Context, body []byte) (searchevents.EventBatchResult, error) {
@@ -161,5 +163,17 @@ func TestDeliverReceiptsNeverCompleteButFreshGETCanResolveLostResponse(t *testin
 	s.match, r.sent = false, nil
 	if acked, err := Deliver(context.Background(), s, r, w, done); err != nil || acked || len(r.sent) != 0 {
 		t.Fatalf("stale source ACK or completed page replay: %v/%v", acked, err)
+	}
+}
+
+func TestDeliverNeverWorksAroundDurableEpochConflict(t *testing.T) {
+	s, w, before, done := deliveryFixture(t, 201)
+	token := uuid.New()
+	w.LastErrorCode, w.LastErrorID = "epoch_conflict", &token
+	for _, observed := range []catalog.Status{before, done} {
+		r := &deliveryReceiver{status: done}
+		if acked, err := Deliver(context.Background(), s, r, w, observed); !errors.Is(err, catalog.ErrEpochConflict) || acked || len(r.sent) != 0 || r.gets != 0 || len(s.reads) != 0 || s.acks != 0 {
+			t.Fatalf("delivery bypassed conflict using pages or matching completion: %v/%v", acked, err)
+		}
 	}
 }
