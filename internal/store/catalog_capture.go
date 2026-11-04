@@ -22,8 +22,9 @@ var (
 
 // CaptureCatalog commits a frozen observation, not verified read authority.
 // It holds one reserved connection and RR snapshot only for local SQL/framing.
-// Any error returns no identity; allocation, force, pages, header and hint ACK
-// roll back together. Delivery must fetch committed bytes after this returns.
+// Failures return no identity; allocation, force, payloads and hint ACK are one
+// atomic transaction. Reload durable pending state after uncertain COMMIT/unlock
+// before retrying; delivery must fetch committed bytes after this returns.
 func (s *Store) CaptureCatalog(ctx context.Context, epoch uuid.UUID, limits catalog.Limits) (catalog.Identity, error) {
 	var captured catalog.Identity
 	err := s.WithCatalogCapture(ctx, func(tx pgx.Tx) error {
@@ -34,6 +35,9 @@ func (s *Store) CaptureCatalog(ctx context.Context, epoch uuid.UUID, limits cata
 		}
 		if epoch == uuid.Nil || state.Epoch != epoch || state.AllocatedGeneration == math.MaxInt64 {
 			return ErrCatalogEpochChanged
+		}
+		if state.LastErrorCode != nil && *state.LastErrorCode == "epoch_conflict" {
+			return catalog.ErrEpochConflict
 		}
 		if state.Pending {
 			return ErrCatalogCapturePending

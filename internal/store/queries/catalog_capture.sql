@@ -1,7 +1,7 @@
 -- name: LockCatalogCaptureState :one
 -- Must run after source session authority is acquired, inside the capture RR.
 SELECT epoch, allocated_generation, force_full, force_full_after_generation,
-       last_error_id,
+       last_error_id,last_error_code,
        EXISTS(SELECT 1 FROM search_catalog_dirty WHERE scope='local') AS dirty,
        EXISTS(SELECT 1 FROM search_catalog_snapshots WHERE scope='local' AND pending) AS pending
 FROM search_catalog_state WHERE scope='local' FOR UPDATE;
