@@ -29,6 +29,35 @@ func (q *Queries) AckCatalogVisibleDirty(ctx context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const advanceCatalogCapture = `-- name: AdvanceCatalogCapture :one
+UPDATE search_catalog_state
+SET allocated_generation=allocated_generation+1,
+    force_full=force_full OR $1::boolean,
+    force_full_after_generation=CASE WHEN $1::boolean
+        THEN GREATEST(force_full_after_generation,allocated_generation)
+        ELSE force_full_after_generation END
+WHERE scope='local' AND epoch=$2::uuid
+  AND allocated_generation=$3::bigint
+  AND NOT EXISTS(SELECT 1 FROM search_catalog_snapshots WHERE scope='local' AND pending)
+RETURNING allocated_generation
+`
+
+type AdvanceCatalogCaptureParams struct {
+	Dirty                       bool      `json:"dirty"`
+	Epoch                       uuid.UUID `json:"epoch"`
+	ExpectedAllocatedGeneration int64     `json:"expected_allocated_generation"`
+}
+
+// Dirty capture cannot make the old verified full ready when hints are ACKed.
+// All SET expressions use the prior allocator. Periodic no-dirty repair keeps
+// existing verified authority; an in-flight full is coalesced instead of replaced.
+func (q *Queries) AdvanceCatalogCapture(ctx context.Context, arg AdvanceCatalogCaptureParams) (int64, error) {
+	row := q.db.QueryRow(ctx, advanceCatalogCapture, arg.Dirty, arg.Epoch, arg.ExpectedAllocatedGeneration)
+	var allocated_generation int64
+	err := row.Scan(&allocated_generation)
+	return allocated_generation, err
+}
+
 const insertCatalogCapturePage = `-- name: InsertCatalogCapturePage :exec
 INSERT INTO search_catalog_pages(scope,epoch,generation,page_index,event_id,
     request_body,document_count,canonical_bytes,content_sha256)
@@ -57,6 +86,40 @@ func (q *Queries) InsertCatalogCapturePage(ctx context.Context, arg InsertCatalo
 		arg.DocumentCount,
 		arg.CanonicalBytes,
 		arg.ContentSha256,
+	)
+	return err
+}
+
+const insertCatalogCaptureSnapshot = `-- name: InsertCatalogCaptureSnapshot :exec
+INSERT INTO search_catalog_snapshots(scope,epoch,generation,page_count,document_count,
+    canonical_bytes,membership_sha256,pages_sha256,end_event_id,end_request_body)
+VALUES ('local',$1,$2,$3,$4,$5,$6,$7,$8,$9)
+`
+
+type InsertCatalogCaptureSnapshotParams struct {
+	Epoch            uuid.UUID `json:"epoch"`
+	Generation       int64     `json:"generation"`
+	PageCount        int32     `json:"page_count"`
+	DocumentCount    int64     `json:"document_count"`
+	CanonicalBytes   int64     `json:"canonical_bytes"`
+	MembershipSha256 string    `json:"membership_sha256"`
+	PagesSha256      string    `json:"pages_sha256"`
+	EndEventID       uuid.UUID `json:"end_event_id"`
+	EndRequestBody   []byte    `json:"end_request_body"`
+}
+
+// Header is written only after the full builder proves every staged page.
+func (q *Queries) InsertCatalogCaptureSnapshot(ctx context.Context, arg InsertCatalogCaptureSnapshotParams) error {
+	_, err := q.db.Exec(ctx, insertCatalogCaptureSnapshot,
+		arg.Epoch,
+		arg.Generation,
+		arg.PageCount,
+		arg.DocumentCount,
+		arg.CanonicalBytes,
+		arg.MembershipSha256,
+		arg.PagesSha256,
+		arg.EndEventID,
+		arg.EndRequestBody,
 	)
 	return err
 }
