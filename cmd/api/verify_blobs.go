@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,7 +42,7 @@ import (
 // verified and it is wrong" from "I could not verify", and must continue in
 // both cases: a restore that aborted here would leave the site down over a
 // media problem that no amount of not-booting fixes.
-const verifyBlobsUsage = "verify-blobs [--hash] [--deep] [--json] [--timeout <duration>]"
+const verifyBlobsUsage = "verify-blobs [--hash] [--deep] [--json] [--findings-jsonl <new-private-path>] [--timeout <duration>]"
 
 // exitInconsistent is the "verified, and it is wrong" exit code.
 const exitInconsistent = 3
@@ -78,10 +79,11 @@ func runVerifyBlobs(args []string, stdout, stderr io.Writer) int {
 		fs.PrintDefaults()
 	}
 	var (
-		hash    = fs.Bool("hash", false, "re-download every object whose row carries a content hash and compare (reads the whole library)")
-		deep    = fs.Bool("deep", false, "enumerate every HLS tree through the storage backend instead of trusting its master manifest")
-		asJSON  = fs.Bool("json", false, "print the report as one JSON document instead of a human summary")
-		timeout = fs.Duration("timeout", defaultVerifyTimeout, "abandon the run after this long")
+		hash         = fs.Bool("hash", false, "re-download every object whose row carries a content hash and compare (reads the whole library)")
+		deep         = fs.Bool("deep", false, "enumerate every HLS tree through the storage backend instead of trusting its master manifest")
+		asJSON       = fs.Bool("json", false, "print the report as one JSON document instead of a human summary")
+		timeout      = fs.Duration("timeout", defaultVerifyTimeout, "abandon the run after this long")
+		findingsPath = fs.String("findings-jsonl", "", "write every finding as private JSONL to a new exclusive file (0600); failures prevent success")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -93,6 +95,32 @@ func runVerifyBlobs(args []string, stdout, stderr io.Writer) int {
 	if *timeout <= 0 {
 		fmt.Fprintf(stderr, "verify-blobs: --timeout must be positive\n")
 		return 1
+	}
+	var requested bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "findings-jsonl" {
+			requested = true
+		}
+	})
+	if requested && strings.TrimSpace(*findingsPath) == "" {
+		fmt.Fprintln(stderr, "verify-blobs: --findings-jsonl requires a nonempty new private path")
+		return 1
+	}
+	var findings *os.File
+	var sink func(blobverify.Finding) error
+	if requested {
+		var err error
+		findings, err = openFindings(*findingsPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "verify-blobs: cannot create findings evidence: %v\n", err)
+			return 1
+		}
+		sink = func(f blobverify.Finding) error { return writeFinding(findings, f) }
+		defer func() {
+			if findings != nil {
+				_ = findings.Close()
+			}
+		}()
 	}
 
 	// SIGINT/SIGTERM cancel the run rather than killing it mid-report: an
@@ -138,7 +166,7 @@ func runVerifyBlobs(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "verify-blobs: could not tell whether a storage migration is in flight (%v) — if one is, missing objects below may simply not have been copied yet\n", merr)
 	}
 
-	rep, err := blobverify.Verify(ctx, q, blobs, blobverify.Options{Hash: *hash, Deep: *deep})
+	rep, err := blobverify.Verify(ctx, q, blobs, blobverify.Options{Hash: *hash, Deep: *deep, FindingSink: sink})
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			fmt.Fprintf(stderr, "verify-blobs: gave up after %s — nothing was verified. Re-run with a longer --timeout\n", *timeout)
@@ -152,6 +180,14 @@ func runVerifyBlobs(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	if findings != nil {
+		err := finishFindings(findings)
+		findings = nil
+		if err != nil {
+			fmt.Fprintf(stderr, "verify-blobs: cannot finalize findings evidence: %v\n", err)
+			return 1
+		}
+	}
 	code := 0
 	if !rep.Consistent() {
 		code = exitInconsistent
