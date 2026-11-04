@@ -59,8 +59,18 @@ func TestCatalogDurableEpochConflictRequiresExplicitNewEpochAndCurrentToken(t *t
 	if _, err := s.AcceptCatalogBootstrap(ctx, r, p, actor); !errors.Is(err, ErrCatalogBusy) {
 		t.Fatalf("ordinary matching pair was reset: %v", err)
 	}
-	if _, err := s.Pool.Exec(ctx, `UPDATE search_catalog_state SET last_error_code='epoch_conflict',last_error_id=$1 WHERE epoch=$2`, oldToken, current); err != nil {
+	if _, err := s.Pool.Exec(ctx, `UPDATE search_catalog_state SET force_full=false,last_error_code='epoch_conflict',last_error_id=$1 WHERE epoch=$2`, oldToken, current); err != nil {
 		t.Fatal(err)
+	}
+	if coalesced, err := s.AcceptCatalogFullRequest(ctx, catalog.FullRequest{Scope: "local", ExpectedEpoch: current}, actor); err == nil || coalesced {
+		t.Fatalf("full request accepted across durable epoch conflict: %v/%v", coalesced, err)
+	}
+	var rejected bool
+	if err := s.Pool.QueryRow(ctx, `SELECT NOT force_full AND last_error_id=$2 AND
+		(SELECT count(*) FROM audit_log WHERE resource_id=$1::text AND result='failure'
+		 AND metadata->>'outcome'='catalog_recovery_required')=1 FROM search_catalog_state WHERE epoch=$1::uuid`,
+		current.String(), oldToken).Scan(&rejected); err != nil || !rejected {
+		t.Fatalf("conflicted full request changed intent or lost rejection audit: %v/%v", rejected, err)
 	}
 	w = load()
 	if _, err := s.Pool.Exec(ctx, `UPDATE search_catalog_state SET last_error_id=$1 WHERE epoch=$2`, newToken, current); err != nil {
