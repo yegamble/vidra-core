@@ -117,7 +117,10 @@ func TestCatalogFrozenTransportPreservesBytesAndValidatesBoundedReceipts(t *test
 }
 
 func TestCatalogWriteTransportHonorsCancellationAndDeadline(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
+	}))
 	defer srv.Close()
 	for _, epochCall := range []bool{false, true} {
 		c := New(srv.URL, testSecret)
