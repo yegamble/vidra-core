@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,15 +17,15 @@ import (
 
 type hlsObservedBackend struct {
 	storage.Backend // deliberately hides ObjectLister
-	exists, opens   map[string]int
+	exists, opens   map[string]*atomic.Int32
 }
 
 func (b hlsObservedBackend) Exists(ctx context.Context, key string) (bool, error) {
-	b.exists[key]++
+	b.exists[key].Add(1)
 	return b.Backend.Exists(ctx, key)
 }
 func (b hlsObservedBackend) Open(ctx context.Context, key string) (io.ReadCloser, error) {
-	b.opens[key]++
+	b.opens[key].Add(1)
 	return b.Backend.Open(ctx, key)
 }
 
@@ -33,14 +34,14 @@ func TestDeepVerifyReusesRecordedHashesWithoutLosingMediaRole(t *testing.T) {
 	prefix := "streaming-playlists/hls/source/"
 	root, variant, shared := prefix+"master.m3u8", prefix+"video.m3u8", prefix+"shared.mp4"
 	repo := &fakeRepo{videoIDs: []uuid.UUID{vid}, playlists: []sqlcgen.ListStreamingPlaylistRefsRow{{VideoID: vid, MasterKey: root, Format: media.HLSFormatTS}}, videoFiles: []sqlcgen.ListAllVideoFileHashesRow{{StorageKey: shared, Sha256: digestOf("same bytes")}}}
-	blobs := hlsObservedBackend{Backend: newStore(t, map[string]string{root: "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nvideo.m3u8\n", variant: "#EXTM3U\n#EXT-X-MAP:URI=\"shared.mp4\"\n#EXTINF:4,\nshared.mp4\n", shared: "same bytes"}), exists: map[string]int{}, opens: map[string]int{}}
+	blobs := hlsObservedBackend{Backend: newStore(t, map[string]string{root: "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nvideo.m3u8\n", variant: "#EXTM3U\n#EXT-X-MAP:URI=\"shared.mp4\"\n#EXTINF:4,\nshared.mp4\n", shared: "same bytes"}), exists: map[string]*atomic.Int32{root: {}, variant: {}, shared: {}}, opens: map[string]*atomic.Int32{root: {}, variant: {}, shared: {}}}
 	rep := verify(t, repo, blobs, Options{Deep: true, Hash: true})
 	if !rep.Consistent() || rep.Checked != 3 || rep.Verified != 1 || rep.Unhashed != 2 || len(rep.Trees) != 1 || !rep.Trees[0].Complete || rep.Trees[0].ObservedMedia != 1 || rep.DeepUnsupported {
 		t.Fatalf("deep classes/closure wrong: %+v", rep)
 	}
 	for _, key := range []string{root, variant, shared} {
-		if blobs.exists[key] != 1 || blobs.opens[key] != 1 {
-			t.Errorf("object inspected twice: %q HEAD=%d GET=%d", key, blobs.exists[key], blobs.opens[key])
+		if blobs.exists[key].Load() != 1 || blobs.opens[key].Load() != 1 {
+			t.Errorf("object inspected twice: %q HEAD=%d GET=%d", key, blobs.exists[key].Load(), blobs.opens[key].Load())
 		}
 	}
 }
@@ -79,8 +80,7 @@ func TestDeepVerifyEvidenceFailurePreventsSuccessfulReport(t *testing.T) {
 
 func TestDeepVerificationVersionIncludesEmptyCatalogue(t *testing.T) {
 	for version, deep := range map[int]bool{0: false, 1: true} {
-		rep := verify(t, &fakeRepo{}, newStore(t, nil), Options{Deep: deep})
-		if rep.DeepVerificationVersion != version {
+		if rep := verify(t, &fakeRepo{}, newStore(t, nil), Options{Deep: deep}); rep.DeepVerificationVersion != version {
 			t.Fatalf("deep=%t version=%d; want %d", deep, rep.DeepVerificationVersion, version)
 		}
 	}
