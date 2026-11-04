@@ -99,7 +99,8 @@ func TestCatalogProducerSchemaSupportsFencesAndExactDirtyMembership(t *testing.T
 	}
 	var count int64
 	var remaining string
-	if err := tx.QueryRow(ctx, `SELECT count(*), min(id::text) FROM search_catalog_dirty WHERE scope='local'`).Scan(&count, &remaining); err != nil || count != 1 || remaining != ids[2].String() {
+	if err := tx.QueryRow(ctx, `SELECT count(*), min(id::text) FROM search_catalog_dirty
+		WHERE scope='local' AND id=ANY($1::uuid[])`, ids).Scan(&count, &remaining); err != nil || count != 1 || remaining != ids[2].String() {
 		t.Fatalf("exact membership acknowledgement changed retained intent: %d/%s, %v", count, remaining, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
