@@ -44,7 +44,7 @@ func TestHLSCopyPreservesConcurrentReadyPlaylist(t *testing.T) {
 			}
 			im := &Importer{dest: db, q: q, srcMedia: src, destMedia: dst, copyMediaServer: copyFunc(func(ctx context.Context, _ storage.Backend, _, _ string, _ int64) (int64, error) {
 				if scenario == "media-fails" {
-					return 0, errors.New("fixture media failure")
+					return 0, errors.New("fixture media failure https://media.invalid/?token=fixture-private-detail")
 				}
 				if scenario == "native-wins" {
 					// The initial ready check has already happened; Vidra's own
@@ -58,15 +58,18 @@ func TestHLSCopyPreservesConcurrentReadyPlaylist(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var ledgerStatus string
+			var ledgerStatus, ledgerNote string
 			var ledgerCount int
-			if err := db.QueryRow(ctx, `SELECT count(*), COALESCE(min(status),'') FROM peertube_import_ledger WHERE entity_kind='hls_playlist' AND source_id=$1`, id.String()).Scan(&ledgerCount, &ledgerStatus); err != nil {
+			if err := db.QueryRow(ctx, `SELECT count(*), COALESCE(min(status),''), COALESCE(min(note),'') FROM peertube_import_ledger WHERE entity_kind='hls_playlist' AND source_id=$1`, id.String()).Scan(&ledgerCount, &ledgerStatus, &ledgerNote); err != nil {
 				t.Fatal(err)
 			}
 			if scenario == "media-fails" {
 				ready, err := q.ImportVideoHasReadyPlaylist(ctx, id)
 				if err != nil || ready || counts.Failed != 1 || ledgerStatus != "failed" {
 					t.Fatalf("media failure published or lost ledger: ready=%v counts=%+v ledger=%s error=%v", ready, counts, ledgerStatus, err)
+				}
+				if !strings.Contains(ledgerNote, "(server_copy/other)") || strings.Contains(ledgerNote, "fixture-private-detail") {
+					t.Fatalf("copy failure lost safe stage/class or leaked provider detail: %q", ledgerNote)
 				}
 				return
 			}

@@ -144,7 +144,7 @@ func (im *Importer) copyHLSTarget(ctx context.Context, target hlsCopyTarget) (hl
 		if ctx.Err() != nil {
 			return hlsCopyFailed, ctx.Err()
 		}
-		return hlsCopyFailed, recordLedger(ctx, im.q, KindHLSPlaylist, target.sourceID, uuid.Nil, "failed", "HLS copy incomplete; rerun required")
+		return hlsCopyFailed, recordLedger(ctx, im.q, KindHLSPlaylist, target.sourceID, uuid.Nil, "failed", hlsCopyFailureNote(err))
 	}
 	var published int64
 	err := im.withTx(ctx, func(q *sqlcgen.Queries) (err error) {
