@@ -91,6 +91,11 @@ func TestApplyBootstrapEpochRefusesProgressConflictOrChangedPredecessor(t *testi
 	for _, change := range []func(*catalog.SourceWork, *catalog.Status){
 		func(w *catalog.SourceWork, _ *catalog.Status) { w.Evidence.AllocatedGeneration = 1 },
 		func(w *catalog.SourceWork, _ *catalog.Status) { w.ForceFull = false },
+		func(w *catalog.SourceWork, _ *catalog.Status) { w.ForceFullAfterGeneration = 1 },
+		func(w *catalog.SourceWork, s *catalog.Status) {
+			id := uuid.Nil
+			w.ReceiverPredecessor, s.Epoch = &id, &id
+		},
 		func(_ *catalog.SourceWork, s *catalog.Status) { id := uuid.New(); s.Epoch = &id },
 		func(_ *catalog.SourceWork, s *catalog.Status) { s.ProtocolVersion = 1 },
 		func(w *catalog.SourceWork, s *catalog.Status) {
