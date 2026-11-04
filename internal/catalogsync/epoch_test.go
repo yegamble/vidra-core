@@ -55,9 +55,22 @@ func TestApplyBootstrapEpochUsesExactIntentAndIndependentAssessment(t *testing.T
 			t.Fatalf("epoch intent not independently observed: %v/%v, %+v", matched, err, r)
 		}
 		r.puts, r.gets = 0, 0
-		if matched, err := ApplyBootstrapEpoch(context.Background(), r, w, current); err != nil || !matched || r.puts != 0 || r.gets != 0 {
-			t.Fatalf("matching observed epoch was reset: %v/%v", matched, err)
+		if matched, err := ApplyBootstrapEpoch(context.Background(), r, w, current); err != nil || !matched || r.puts != 1 || r.gets != 1 {
+			t.Fatalf("initial matching epoch skipped original-tuple verification: %v/%v", matched, err)
 		}
+	}
+}
+
+func TestApplyBootstrapEpochMatchingInitialReplaysCASAfterLostConflictPersistence(t *testing.T) {
+	w, _, current := initialEpochFixture()
+	r := &epochReceiver{status: current, putErr: &searchclient.HTTPError{Status: 409}}
+	if matched, err := ApplyBootstrapEpoch(context.Background(), r, w, current); !errors.Is(err, catalog.ErrEpochConflict) || matched || r.puts != 1 || r.gets != 0 {
+		t.Fatalf("matching initial epoch bypassed original predecessor conflict: %v/%v, %+v", matched, err, r)
+	}
+	w.Evidence.AllocatedGeneration = 1 // Capture progress changes the phase.
+	r = &epochReceiver{status: current}
+	if matched, err := ApplyBootstrapEpoch(context.Background(), r, w, current); err != nil || !matched || r.puts != 0 || r.gets != 0 {
+		t.Fatalf("matching progressed epoch performed bootstrap CAS: %v/%v", matched, err)
 	}
 }
 
