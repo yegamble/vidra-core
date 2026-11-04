@@ -41,6 +41,7 @@ type deliveryReceiver struct {
 	status catalog.Status
 	sent   [][]byte
 	failAt int
+	reject bool
 }
 
 func (r *deliveryReceiver) CatalogStatus(context.Context) (catalog.Status, error) {
@@ -50,6 +51,9 @@ func (r *deliveryReceiver) SendCatalogBody(_ context.Context, body []byte) (sear
 	r.sent = append(r.sent, bytes.Clone(body))
 	if len(r.sent) == r.failAt {
 		return searchevents.EventBatchResult{}, errors.New("lost response")
+	}
+	if r.reject {
+		return searchevents.EventBatchResult{Failed: []searchevents.FailedEvent{{Code: "invalid", Message: "private upstream detail"}}}, nil
 	}
 	return searchevents.EventBatchResult{Accepted: 1}, nil
 }
@@ -113,6 +117,9 @@ func TestDeliverPreflightsThenReplaysAllFrozenBodiesAndVerifiesCompletion(t *tes
 func TestDeliverRefusesLateOversizeMissingPageOrQuotaBeforeAnyPOST(t *testing.T) {
 	for _, change := range []func(*deliverySource, *catalog.SourceWork, *catalog.Status){
 		func(s *deliverySource, _ *catalog.SourceWork, r *catalog.Status) {
+			if len(s.pages[1]) <= len(s.pages[0]) {
+				t.Fatal("late-page budget fixture does not fit its first page")
+			}
 			r.Limits.MaxRequestBytes = int64(len(s.pages[1]) - 1)
 		},
 		func(s *deliverySource, _ *catalog.SourceWork, _ *catalog.Status) { delete(s.pages, 1) },
@@ -138,6 +145,11 @@ func TestDeliverReceiptsNeverCompleteButFreshGETCanResolveLostResponse(t *testin
 	if acked, err := Deliver(context.Background(), s, r, w, before); err == nil || acked || s.acks != 0 {
 		t.Fatalf("accepted staging granted completion: %v/%v", acked, err)
 	}
+	r.sent, r.reject = nil, true
+	if acked, err := Deliver(context.Background(), s, r, w, before); err == nil || acked || len(r.sent) != 1 || strings.Contains(err.Error(), "private upstream detail") {
+		t.Fatalf("rejected staging granted completion or leaked upstream detail: %v/%v", acked, err)
+	}
+	r.reject = false
 	s.reads, r.sent, r.status, r.failAt = nil, nil, done, 1
 	if acked, err := Deliver(context.Background(), s, r, w, before); err != nil || !acked || s.acks != 1 || len(r.sent) != 1 {
 		t.Fatalf("lost response was not resolved by exact fresh completion: %v/%v", acked, err)
