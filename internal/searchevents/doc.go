@@ -103,3 +103,9 @@ func videoDocFromPageRow(r sqlcgen.ListVideoSearchDocsPageRow) VideoDoc {
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Views: r.Views, Likes: r.Likes,
 	})
 }
+
+// CatalogVideoDoc preserves the existing canonical projection while the new
+// capture cursor can represent a true first page separately from a zero UUID.
+func CatalogVideoDoc(r sqlcgen.ListCatalogSourcePageRow) VideoDoc {
+	return videoDocFromPageRow(sqlcgen.ListVideoSearchDocsPageRow(r))
+}
