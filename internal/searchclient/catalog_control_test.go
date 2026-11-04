@@ -66,12 +66,15 @@ func TestCatalogFrozenTransportPreservesBytesAndValidatesBoundedReceipts(t *test
 		valid  bool
 	}{
 		{200, ok, true}, {200, failure, true}, {204, "", false}, {404, `{}`, false}, {503, `{}`, false},
+		{200, strings.Replace(ok, `"accepted":1,"duplicates":0`, `"accepted":0,"duplicates":1`, 1), true},
 		{200, `{}`, false}, {200, `{"accepted":1,"duplicates":0,"failed":null}`, false},
 		{200, strings.Replace(ok, `"accepted":1`, `"accepted":1,"Accepted":1`, 1), false},
 		{200, strings.Replace(ok, `"accepted":1`, `"accepted":1,"accepted":1`, 1), false},
 		{200, strings.Replace(ok, `"accepted":1`, `"accepted":-1`, 1), false},
 		{200, strings.Replace(ok, `"accepted":1`, `"accepted":0`, 1), false},
 		{200, strings.Replace(failure, id.String(), uuid.NewString(), 1), false},
+		{200, strings.Replace(failure, id.String(), strings.ToUpper(id.String()), 1), false},
+		{200, strings.Replace(failure, "catalog_conflict", "", 1), false},
 		{200, strings.Replace(failure, `"code":`, `"Code":`, 1), false},
 		{200, strings.Replace(failure, `"code":`, `"code":"other","code":`, 1), false},
 		{200, ok + `{}`, false},
@@ -113,6 +116,15 @@ func TestCatalogFrozenTransportPreservesBytesAndValidatesBoundedReceipts(t *test
 	}
 	if _, err := c.SendCatalogBody(context.Background(), nil); err == nil {
 		t.Fatal("empty frozen request accepted")
+	}
+	duplicateRequest := []byte(`{"events":[{"event_id":"` + id.String() + `"},{"event_id":"` + id.String() + `"}]}`)
+	if _, err := c.SendCatalogBody(context.Background(), duplicateRequest); err == nil {
+		t.Fatal("duplicate request identities accepted")
+	}
+	entry := `{"event_id":"` + id.String() + `","code":"catalog_conflict","message":"stale"}`
+	duplicateFailures := []byte(`{"accepted":0,"duplicates":0,"failed":[` + entry + `,` + entry + `]}`)
+	if _, err := catalog.ParseEventReceipt(duplicateFailures, []uuid.UUID{id, uuid.New()}); err == nil {
+		t.Fatal("duplicate failure identities with valid count accepted")
 	}
 }
 
