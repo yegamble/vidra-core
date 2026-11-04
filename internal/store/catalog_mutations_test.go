@@ -41,7 +41,7 @@ func TestCatalogMutationAdaptersRejectInvalidInputsBeforeDB(t *testing.T) {
 			t.Fatalf("invalid capture input accepted: %v/%v", changed, err)
 		}
 	}
-	for _, id := range []catalog.Identity{{"remote", p.Identity.Epoch, 1}, {"local", uuid.New(), 1}, {"local", p.Identity.Epoch, 2}} {
+	for _, id := range []catalog.Identity{{Scope: "remote", Epoch: p.Identity.Epoch, Generation: 1}, {Scope: "local", Epoch: uuid.New(), Generation: 1}, {Scope: "local", Epoch: p.Identity.Epoch, Generation: 2}} {
 		badProof := p
 		badProof.Identity = id
 		bad := w
