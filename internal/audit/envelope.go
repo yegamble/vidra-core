@@ -74,6 +74,8 @@ var (
 	allowedMetadataKeys = stringSet(
 		"added", "attempt", "attempts", "auth_method", "breaker_tripped", "changed_key",
 		"changed_keys", "count", "dry_run", "failed", "ipfs_rearmed",
+		"catalog_scope", "catalog_source_predecessor", "catalog_receiver_predecessor",
+		"catalog_expected_generation", "catalog_required_after_generation", "coalesced",
 		"ipfs_unpinned", "mode", "network",
 		"outcome", "policy", "provider", "purged", "reason_code", "removed",
 		"reason_provided", "resolver", "secret_changed", "source_version",
@@ -85,6 +87,7 @@ var (
 	// are intentionally absent.
 	allowedChangeFields = stringSet(
 		"account_enabled", "bypass_quarantine", "comments_enabled",
+		"catalog_epoch",
 		"daily_quota_bytes", "download_enabled", "email_verified", "imports_enabled", "is_owner",
 		"live_enabled", "mfa_enabled", "privacy", "role", "state",
 		"storage_quota_bytes",
