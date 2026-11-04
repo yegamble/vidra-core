@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,10 +17,11 @@ import (
 )
 
 type deliverySource struct {
-	pages map[int32][]byte
-	reads []int32
-	acks  int
-	match bool
+	pages     map[int32][]byte
+	reads     []int32
+	acks      int
+	match     bool
+	ackedWork *catalog.SourceWork
 }
 
 func (s *deliverySource) LoadCatalogPage(_ context.Context, _ catalog.Identity, index int32) ([]byte, error) {
@@ -31,6 +33,7 @@ func (s *deliverySource) LoadCatalogPage(_ context.Context, _ catalog.Identity, 
 }
 func (s *deliverySource) AcknowledgeCatalogWork(_ context.Context, w catalog.SourceWork, completed catalog.FullProof) (bool, error) {
 	s.acks++
+	s.ackedWork = &w
 	if w.Evidence.Pending == nil || *w.Evidence.Pending != completed {
 		return false, errors.New("ACK did not use exact pending completion")
 	}
@@ -60,12 +63,16 @@ func (r *deliveryReceiver) SendCatalogBody(_ context.Context, body []byte) (sear
 	return searchevents.EventBatchResult{Accepted: 1}, nil
 }
 
-func deliveryFixture(t *testing.T, documents int) (*deliverySource, catalog.SourceWork, catalog.Status, catalog.Status) {
+func deliveryFixture(t *testing.T, documents int, generations ...catalog.Generation) (*deliverySource, catalog.SourceWork, catalog.Status, catalog.Status) {
 	t.Helper()
+	generation := catalog.Generation(1)
+	if len(generations) != 0 {
+		generation = generations[0]
+	}
 	epoch, at := uuid.New(), time.Now().UTC()
 	limits := catalog.Limits{MaxRequestBytes: catalog.MaxRequestBytes, MaxSnapshotBytes: catalog.MaxSnapshotBytes, MaxDocuments: catalog.MaxDocuments, MaxPages: catalog.MaxPages}
 	s := &deliverySource{pages: make(map[int32][]byte), match: true}
-	full, err := catalog.NewFullBuilder(catalog.Identity{Scope: "local", Epoch: epoch, Generation: 1}, at, limits,
+	full, err := catalog.NewFullBuilder(catalog.Identity{Scope: "local", Epoch: epoch, Generation: generation}, at, limits,
 		func(p catalog.FrozenPage) error { s.pages[p.PageIndex] = p.RequestBody; return nil })
 	if err != nil {
 		t.Fatal(err)
@@ -87,14 +94,14 @@ func deliveryFixture(t *testing.T, documents int) (*deliverySource, catalog.Sour
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := catalog.SourceWork{Evidence: catalog.SourceEvidence{Epoch: epoch, AllocatedGeneration: 1,
-		Pending: &catalog.FullProof{Identity: catalog.Identity{Scope: "local", Epoch: epoch, Generation: 1}, Manifest: end.Manifest}},
+	w := catalog.SourceWork{Evidence: catalog.SourceEvidence{Epoch: epoch, AllocatedGeneration: int64(generation),
+		Pending: &catalog.FullProof{Identity: catalog.Identity{Scope: "local", Epoch: epoch, Generation: generation}, Manifest: end.Manifest}},
 		ForceFull: true, PendingCanonicalBytes: end.CanonicalBytes, PendingEndRequestBody: end.RequestBody}
 	before := catalog.Status{ProtocolVersion: 2, Scope: "local", Epoch: &epoch, Limits: limits,
 		SupportedScopes: []string{"local"}, SupportedEventTypes: []string{catalog.TypeSnapshotPage, catalog.TypeSnapshotEnd},
 		HighestObservedGeneration: "0", CompletedGeneration: "0"}
 	done := before
-	done.Ready, done.HighestObservedGeneration, done.CompletedGeneration = true, "1", "1"
+	done.Ready, done.HighestObservedGeneration, done.CompletedGeneration = true, strconv.FormatInt(int64(generation), 10), strconv.FormatInt(int64(generation), 10)
 	done.CompletedManifest, done.CompletedAt = &end.Manifest, &at
 	return s, w, before, done
 }
