@@ -9,7 +9,7 @@ import (
 )
 
 func TestParseBootstrapRequestPreservesExactNullableRetryTuple(t *testing.T) {
-	epoch, previous, receiver := uuid.New(), uuid.New(), uuid.New()
+	epoch, previous, receiver := uuid.MustParse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"), uuid.New(), uuid.New()
 	for _, nullable := range []bool{false, true} {
 		a, b := `"`+previous.String()+`"`, `"`+receiver.String()+`"`
 		if nullable {
