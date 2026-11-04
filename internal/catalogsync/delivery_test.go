@@ -42,9 +42,11 @@ type deliveryReceiver struct {
 	sent   [][]byte
 	failAt int
 	reject bool
+	gets   int
 }
 
 func (r *deliveryReceiver) CatalogStatus(context.Context) (catalog.Status, error) {
+	r.gets++
 	return r.status, nil
 }
 func (r *deliveryReceiver) SendCatalogBody(_ context.Context, body []byte) (searchevents.EventBatchResult, error) {
@@ -170,7 +172,7 @@ func TestDeliverNeverWorksAroundDurableEpochConflict(t *testing.T) {
 	w.LastErrorCode, w.LastErrorID = "epoch_conflict", &token
 	for _, observed := range []catalog.Status{before, done} {
 		r := &deliveryReceiver{status: done}
-		if acked, err := Deliver(context.Background(), s, r, w, observed); !errors.Is(err, catalog.ErrEpochConflict) || acked || len(r.sent) != 0 || len(s.reads) != 0 || s.acks != 0 {
+		if acked, err := Deliver(context.Background(), s, r, w, observed); !errors.Is(err, catalog.ErrEpochConflict) || acked || len(r.sent) != 0 || r.gets != 0 || len(s.reads) != 0 || s.acks != 0 {
 			t.Fatalf("delivery bypassed conflict using pages or matching completion: %v/%v", acked, err)
 		}
 	}
