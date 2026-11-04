@@ -57,9 +57,11 @@ func TestCatalogRecoveryFencePreservesProofsAndRequiresCurrentEvidence(t *testin
 				return err
 			}
 			if generation == 1 {
-				if _, err := tx.Exec(ctx, `UPDATE search_catalog_snapshots SET pending=false WHERE epoch=$1;
-					UPDATE search_catalog_state SET verified_generation=1,verified_at=now() WHERE epoch=$1`, epoch); err != nil {
-					return err
+				for _, statement := range []string{`UPDATE search_catalog_snapshots SET pending=false WHERE epoch=$1`,
+					`UPDATE search_catalog_state SET verified_generation=1,verified_at=now() WHERE epoch=$1`} {
+					if _, err := tx.Exec(ctx, statement, epoch); err != nil {
+						return err
+					}
 				}
 			}
 		}
