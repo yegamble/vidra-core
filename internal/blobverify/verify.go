@@ -102,6 +102,9 @@ type Report struct {
 	Hash bool `json:"hash"`
 	Deep bool `json:"deep"`
 
+	// Version 1 identifies a completed run of the bounded exact-dependency walk.
+	DeepVerificationVersion int `json:"deep_verification_version"`
+
 	// Checked is how many distinct object keys were looked for.
 	Checked int `json:"checked"`
 	// Present is how many of them the store has.
@@ -241,6 +244,7 @@ func Verify(ctx context.Context, repo Repository, blobs storage.Backend, opt Opt
 		if err := deepWalk(ctx, walker, playlists, &rep); err != nil {
 			return Report{}, err
 		}
+		rep.DeepVerificationVersion = 1
 	}
 	keys := make([]string, 0, len(cache))
 	for key := range cache {

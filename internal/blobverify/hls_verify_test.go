@@ -71,8 +71,17 @@ func TestDeepVerifyEvidenceFailurePreventsSuccessfulReport(t *testing.T) {
 	root := "streaming-playlists/" + vid.String() + "/master.m3u8"
 	repo := &fakeRepo{playlists: []sqlcgen.ListStreamingPlaylistRefsRow{{VideoID: vid, MasterKey: root, Format: media.HLSFormatTS}}}
 	stop := errors.New("evidence unavailable")
-	_, err := Verify(context.Background(), repo, newStore(t, map[string]string{root: "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n720p/playlist.m3u8\n"}), Options{Deep: true, FindingSink: func(Finding) error { return stop }})
-	if !errors.Is(err, stop) {
+	rep, err := Verify(context.Background(), repo, newStore(t, map[string]string{root: "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n720p/playlist.m3u8\n"}), Options{Deep: true, FindingSink: func(Finding) error { return stop }})
+	if !errors.Is(err, stop) || rep.DeepVerificationVersion != 0 {
 		t.Fatalf("evidence failure ignored: %v", err)
+	}
+}
+
+func TestDeepVerificationVersionIncludesEmptyCatalogue(t *testing.T) {
+	for version, deep := range map[int]bool{0: false, 1: true} {
+		rep := verify(t, &fakeRepo{}, newStore(t, nil), Options{Deep: deep})
+		if rep.DeepVerificationVersion != version {
+			t.Fatalf("deep=%t version=%d; want %d", deep, rep.DeepVerificationVersion, version)
+		}
 	}
 }
