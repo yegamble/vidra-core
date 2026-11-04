@@ -206,7 +206,13 @@ func (c *Client) authHeader(method, path string) string {
 // path must contain no characters needing escaping (wire path == sign path);
 // the one endpoint embedding a caller-supplied path segment uses doPaths.
 func (c *Client) do(ctx context.Context, g group, method, path string, q url.Values, body, out any) error {
-	return c.doPaths(ctx, g, method, path, path, q, body, out, 0)
+	return c.doPaths(ctx, g, method, path, path, q, body, out, 0, catalog.Identity{})
+}
+
+// doCatalogRead carries a caller-verified fence by value. Transport success
+// does not replace the caller's source proof before and after hydration.
+func (c *Client) doCatalogRead(ctx context.Context, g group, path string, q url.Values, out any, fence catalog.Identity) error {
+	return c.doPaths(ctx, g, http.MethodGet, path, path, q, nil, out, 0, fence)
 }
 
 // doPaths is do with the wire path (the escaped form placed in the request URI)
@@ -214,7 +220,12 @@ func (c *Client) do(ctx context.Context, g group, method, path string, q url.Val
 // verifies over r.URL.Path — Go's decoded form — so a path segment carrying
 // percent-escapes on the wire MUST be signed unescaped or the signature will
 // never match (401).
-func (c *Client) doPaths(ctx context.Context, g group, method, wirePath, signPath string, q url.Values, body, out any, requiredStatus int) error {
+func (c *Client) doPaths(ctx context.Context, g group, method, wirePath, signPath string, q url.Values, body, out any, requiredStatus int, fence catalog.Identity) error {
+	if fence != (catalog.Identity{}) {
+		if err := fence.Validate(); err != nil {
+			return err
+		}
+	}
 	b := c.breakers[g]
 	if !b.allow() {
 		return ErrCircuitOpen
@@ -243,6 +254,10 @@ func (c *Client) doPaths(ctx context.Context, g group, method, wirePath, signPat
 		return err
 	}
 	req.Header.Set(authHeaderName, c.authHeader(method, signPath))
+	if fence != (catalog.Identity{}) {
+		req.Header.Set("X-Vidra-Catalog-Epoch", fence.Epoch.String())
+		req.Header.Set("X-Vidra-Catalog-Generation", strconv.FormatInt(int64(fence.Generation), 10))
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -307,7 +322,7 @@ func (c *Client) Suggestions(ctx context.Context, p SuggestParams) (SuggestionsR
 		q.Set("lang", p.Lang)
 	}
 	var out SuggestionsResponse
-	err := c.do(ctx, groupSuggest, http.MethodGet, "/internal/v1/suggestions", q, nil, &out)
+	err := c.doCatalogRead(ctx, groupSuggest, "/internal/v1/suggestions", q, &out, p.CatalogFence)
 	return out, err
 }
 
@@ -341,7 +356,7 @@ func (c *Client) Search(ctx context.Context, p SearchParams) (SearchResponse, er
 		q.Set("mode", p.Mode)
 	}
 	var out SearchResponse
-	err := c.do(ctx, groupSearch, http.MethodGet, "/internal/v1/search", q, nil, &out)
+	err := c.doCatalogRead(ctx, groupSearch, "/internal/v1/search", q, &out, p.CatalogFence)
 	return out, err
 }
 
@@ -369,14 +384,14 @@ func recsQuery(p RecsParams) url.Values {
 // RecommendationsHome fetches the personalized/trending home rail id list.
 func (c *Client) RecommendationsHome(ctx context.Context, p RecsParams) (RecommendationsResponse, error) {
 	var out RecommendationsResponse
-	err := c.do(ctx, groupRecs, http.MethodGet, "/internal/v1/recommendations/home", recsQuery(p), nil, &out)
+	err := c.doCatalogRead(ctx, groupRecs, "/internal/v1/recommendations/home", recsQuery(p), &out, p.CatalogFence)
 	return out, err
 }
 
 // RecommendationsRelated fetches the related-videos id list for a watch page.
 func (c *Client) RecommendationsRelated(ctx context.Context, p RecsParams) (RecommendationsResponse, error) {
 	var out RecommendationsResponse
-	err := c.do(ctx, groupRecs, http.MethodGet, "/internal/v1/recommendations/related", recsQuery(p), nil, &out)
+	err := c.doCatalogRead(ctx, groupRecs, "/internal/v1/recommendations/related", recsQuery(p), &out, p.CatalogFence)
 	return out, err
 }
 
@@ -404,7 +419,7 @@ func (c *Client) DeleteUserHistory(ctx context.Context, userID uuid.UUID) error 
 func (c *Client) DeleteUserHistoryQuery(ctx context.Context, userID uuid.UUID, normalizedQuery string) error {
 	base := "/internal/v1/users/" + userID.String() + "/search-history/"
 	return c.doPaths(ctx, groupHistory, http.MethodDelete,
-		base+url.PathEscape(normalizedQuery), base+normalizedQuery, nil, nil, nil, 0)
+		base+url.PathEscape(normalizedQuery), base+normalizedQuery, nil, nil, nil, 0, catalog.Identity{})
 }
 
 // DeleteUser purges all of a user's search-side data (best-effort account-delete
@@ -429,7 +444,7 @@ func (c *Client) BanSuggestion(ctx context.Context, query string) (SuggestionBan
 	base := suggestionBansPath + "/"
 	var out SuggestionBan
 	err := c.doPaths(ctx, groupModeration, http.MethodPut,
-		base+url.PathEscape(query), base+query, nil, nil, &out, 0)
+		base+url.PathEscape(query), base+query, nil, nil, &out, 0, catalog.Identity{})
 	return out, err
 }
 
@@ -440,7 +455,7 @@ func (c *Client) BanSuggestion(ctx context.Context, query string) (SuggestionBan
 func (c *Client) UnbanSuggestion(ctx context.Context, query string) error {
 	base := suggestionBansPath + "/"
 	return c.doPaths(ctx, groupModeration, http.MethodDelete,
-		base+url.PathEscape(query), base+query, nil, nil, nil, 0)
+		base+url.PathEscape(query), base+query, nil, nil, nil, 0, catalog.Identity{})
 }
 
 // ListSuggestionBans reads a page of currently-banned queries — the surface that
