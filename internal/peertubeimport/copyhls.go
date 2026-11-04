@@ -63,7 +63,11 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 			// Source changes, interrupted copies and verification failures stay
 			// failures, so the DB cannot publish an incomplete/mixed HLS tree.
 			if localStream || !errors.Is(err, storage.ErrCopyUnavailable) {
-				return err
+				stage := hlsServerCopy
+				if localStream {
+					stage = hlsStreamCopy
+				}
+				return &hlsCopyFailure{stage: stage, cause: err}
 			}
 			// A bucket/credential mismatch will fail for every next dependency.
 			// Keep the read-only source and normal destination keys as the fallback.
@@ -79,14 +83,14 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 			rc, err = im.srcMedia.Open(ctx, srcKey)
 		}
 		if err != nil {
-			return err
+			return &hlsCopyFailure{stage: hlsSourceOpen, cause: err}
 		}
 		var reader io.Reader = rc
 		if manifest {
 			body, e := io.ReadAll(io.LimitReader(rc, (1<<20)+1))
 			_ = rc.Close()
 			if e != nil {
-				return e
+				return &hlsCopyFailure{stage: hlsManifestRead, cause: e}
 			}
 			if len(body) > 1<<20 {
 				return fmt.Errorf("HLS manifest exceeds 1 MiB")
@@ -129,7 +133,7 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 		n, _, err := im.copyMediaReader(ctx, reader, key, limit)
 		_ = rc.Close()
 		if err != nil {
-			return err
+			return &hlsCopyFailure{stage: hlsStreamCopy, cause: err}
 		}
 		total += n
 		if total > 64<<30 {
