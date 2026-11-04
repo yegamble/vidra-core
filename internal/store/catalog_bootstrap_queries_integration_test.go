@@ -72,7 +72,10 @@ func TestCatalogBootstrapQueriesRetainOriginalTupleAndIndependentDirtyIntent(t *
 		EndEventID: end.EventID, EndRequestBody: end.RequestBody}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, `UPDATE search_catalog_state SET verified_generation=7,verified_at=now() WHERE epoch=$1`, first); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE search_catalog_snapshots SET pending=false WHERE epoch=$1`, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE search_catalog_state SET verified_generation=7,verified_at=now(),force_full=false WHERE epoch=$1`, first); err != nil {
 		t.Fatal(err)
 	}
 	if err := q.InsertCatalogEpoch(ctx, sqlcgen.InsertCatalogEpochParams{Epoch: second,
