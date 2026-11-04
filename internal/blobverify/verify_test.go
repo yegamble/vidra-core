@@ -265,17 +265,17 @@ func TestDeepWalksTheHLSTree(t *testing.T) {
 	repo := &fakeRepo{
 		videoIDs: []uuid.UUID{whole, hollow},
 		playlists: []sqlcgen.ListStreamingPlaylistRefsRow{
-			{VideoID: whole, MasterKey: master(whole)},
-			{VideoID: hollow, MasterKey: master(hollow)},
+			{VideoID: whole, MasterKey: master(whole), Format: "hls-ts"},
+			{VideoID: hollow, MasterKey: master(hollow), Format: "hls-ts"},
 			// A dead-lettered transcode: no master to ask about at all.
 			{VideoID: uuid.New(), MasterKey: ""},
 		},
 	}
 	blobs := newStore(t, map[string]string{
-		master(whole):  "#EXTM3U",
+		master(whole):  "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n720p/playlist.m3u8\n",
 		master(hollow): "#EXTM3U",
-		"streaming-playlists/" + whole.String() + "/720p.m3u8":   "#EXTM3U",
-		"streaming-playlists/" + whole.String() + "/720p-000.ts": "segment",
+		"streaming-playlists/" + whole.String() + "/720p/playlist.m3u8": "#EXTM3U\n#EXTINF:4,\nseg_0.ts\n",
+		"streaming-playlists/" + whole.String() + "/720p/seg_0.ts":      "segment",
 	})
 
 	// Fast pass: both masters are there, so both trees look fine.
@@ -299,26 +299,27 @@ func TestDeepWalksTheHLSTree(t *testing.T) {
 	}
 }
 
-func TestDeepDegradesWhenTheBackendCannotList(t *testing.T) {
+func TestDeepWalksWithoutBackendListing(t *testing.T) {
 	vid := uuid.New()
 	key := "streaming-playlists/" + vid.String() + "/master.m3u8"
 	repo := &fakeRepo{
 		videoIDs:  []uuid.UUID{vid},
-		playlists: []sqlcgen.ListStreamingPlaylistRefsRow{{VideoID: vid, MasterKey: key}},
+		playlists: []sqlcgen.ListStreamingPlaylistRefsRow{{VideoID: vid, MasterKey: key, Format: "hls-ts"}},
 	}
 	// Wrapped in a struct that does NOT implement ObjectLister.
-	base := newStore(t, map[string]string{key: "#EXTM3U"})
+	prefix := "streaming-playlists/" + vid.String() + "/720p/"
+	base := newStore(t, map[string]string{key: "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n720p/playlist.m3u8\n", prefix + "playlist.m3u8": "#EXTM3U\n#EXTINF:4,\nseg_0.ts\n", prefix + "seg_0.ts": "segment"})
 	blobs := struct{ storage.Backend }{Backend: base}
 
 	rep := verify(t, repo, blobs, Options{Deep: true})
-	if !rep.DeepUnsupported {
-		t.Fatalf("deep on a listless backend must report that it could not walk: %+v", rep)
+	if rep.DeepUnsupported || rep.Checked != 3 {
+		t.Fatalf("listless backend did not walk exact dependencies: %+v", rep)
 	}
 	if !rep.Consistent() {
-		t.Fatalf("an unsupported capability is not an inconsistency: %+v", rep)
+		t.Fatalf("complete listless graph failed: %+v", rep)
 	}
-	if !strings.Contains(rep.Text(), "cannot list objects") {
-		t.Fatalf("the summary hides the degradation:\n%s", rep.Text())
+	if !strings.Contains(rep.Text(), "admitted object reference(s)") {
+		t.Fatalf("summary does not describe exact traversal:\n%s", rep.Text())
 	}
 }
 

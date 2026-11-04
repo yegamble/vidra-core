@@ -19,7 +19,7 @@
 // on its own: the API 404s one video at a time, forever, and an operator finds
 // out from a report.
 //
-// IT IS READ-ONLY, ALWAYS. It calls Exists, Open and ListKeys and nothing else.
+// IT IS READ-ONLY, ALWAYS. It calls Exists and Open and nothing else.
 // There is no repair mode and no --fix: every plausible repair (delete the row,
 // re-derive the object) destroys information, and the only party who can say
 // which of the two stores is the stale one is the operator who knows what
@@ -33,7 +33,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path"
 	"sort"
 	"strings"
 
@@ -81,16 +80,17 @@ type Options struct {
 	// compares. It is the expensive mode — it reads the whole library — and it
 	// is the only mode that can detect corruption rather than absence.
 	Hash bool
-	// Deep enumerates each HLS tree through the backend's ObjectLister instead
-	// of trusting that a present master manifest implies a present ladder.
+	// Deep follows exact stored HLS dependencies with explicit traversal limits.
 	Deep bool
+	// FindingSink receives complete diagnostics; a writer failure aborts the run.
+	FindingSink func(Finding) error
 	// Concurrency is how many objects are inspected at once; 0 means
 	// DefaultConcurrency. Clamped to [1, DefaultConcurrency].
 	Concurrency int
 }
 
-// Report is what one run found. Every count is complete; every key list is
-// capped at SampleLimit.
+// Report counts inspected keys. Tree metrics describe admitted graphs;
+// unresolved descendants remain unknown. Sample key lists are capped.
 //
 // The classes are deliberately not collapsed into one "bad" number. "The object
 // is gone" and "the object is there and its bytes changed" have different
@@ -101,6 +101,9 @@ type Report struct {
 	// into an issue says what was and was not checked.
 	Hash bool `json:"hash"`
 	Deep bool `json:"deep"`
+
+	// Version 1 identifies a completed run of the bounded exact-dependency walk.
+	DeepVerificationVersion int `json:"deep_verification_version"`
 
 	// Checked is how many distinct object keys were looked for.
 	Checked int `json:"checked"`
@@ -128,8 +131,8 @@ type Report struct {
 	// wrong and the backfill will never revisit it, because the sentinel is a
 	// terminal state.
 	StaleSentinel int `json:"stale_sentinel"`
-	// Incomplete is HLS trees whose master manifest is present but whose
-	// directory holds nothing else. Only ever non-zero with Deep.
+	// Incomplete counts trees with missing, invalid, unreadable or bounded-away
+	// dependencies, or a fully read graph with no media role. Deep only.
 	Incomplete int `json:"incomplete"`
 	// Skipped is references that could not be turned into a question: a
 	// streaming playlist whose transcode never produced a master.
@@ -139,13 +142,14 @@ type Report struct {
 	// object must never be reported as a lost one.
 	Errors int `json:"errors"`
 
-	// DeepListed / DeepPlaylists are what the deep pass enumerated: objects
-	// found under the trees, and how many trees it walked.
+	// DeepListed keeps its legacy JSON name: admitted references, deduplicated
+	// per tree, rather than directory-listing results. DeepPlaylists is attempts.
 	DeepListed    int `json:"deep_listed"`
 	DeepPlaylists int `json:"deep_playlists"`
-	// DeepUnsupported means --deep was asked for and the backend cannot list
-	// objects, so the trees were checked by their master manifest only.
-	DeepUnsupported bool `json:"deep_unsupported"`
+	// DeepUnsupported is retained for compatibility and is always false: Open
+	// and Exists suffice, including on backends without listing support.
+	DeepUnsupported bool            `json:"deep_unsupported"`
+	Trees           []HLSTreeReport `json:"trees,omitempty"`
 
 	// Sample keys, capped at SampleLimit each.
 	MissingKeys        []string `json:"missing_keys,omitempty"`
@@ -187,7 +191,6 @@ func Verify(ctx context.Context, repo Repository, blobs storage.Backend, opt Opt
 		return Report{}, err
 	}
 	rep.Skipped = skipped
-	rep.Checked = len(targets)
 
 	workers := opt.Concurrency
 	if workers <= 0 {
@@ -205,15 +208,61 @@ func Verify(ctx context.Context, repo Repository, blobs storage.Backend, opt Opt
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
 	}
+	cache, emitted := make(map[string]outcome, len(results)), map[string]bool{}
 	for _, res := range results {
-		rep.fold(res)
+		cache[res.key] = res
 	}
-
 	if opt.Deep {
-		deepWalk(ctx, blobs, playlists, &rep)
-		if err := ctx.Err(); err != nil {
+		walker := hlsTreeWalker{blobs: blobs, limits: defaultHLSLimits,
+			probe: func(key string) outcome {
+				if res, ok := cache[key]; ok {
+					return res
+				}
+				res := inspect(ctx, blobs, target{key: key}, opt.Hash)
+				cache[key] = res
+				return res
+			},
+			finding: func(f Finding) error {
+				if res, ok := cache[f.Key]; ok {
+					switch f.Reason {
+					case "missing":
+						if res.cls != classKnownMissing {
+							res.cls = classMissing
+						}
+					case "playlist_read_error":
+						res.cls = classError
+					}
+					cache[f.Key] = res
+					emitted[f.Key] = true
+				}
+				if opt.FindingSink != nil {
+					return opt.FindingSink(f)
+				}
+				return nil
+			},
+		}
+		if err := deepWalk(ctx, walker, playlists, &rep); err != nil {
 			return Report{}, err
 		}
+		rep.DeepVerificationVersion = 1
+	}
+	keys := make([]string, 0, len(cache))
+	for key := range cache {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	rep.Checked = len(keys)
+	for _, key := range keys {
+		res := cache[key]
+		rep.fold(res)
+		if reason := findingReasons[res.cls]; reason != "" && !emitted[key] && opt.FindingSink != nil {
+			if err := opt.FindingSink(Finding{Key: key, Reason: reason}); err != nil {
+				return Report{}, err
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return Report{}, err
 	}
 
 	sort.Strings(rep.MissingKeys)
@@ -386,51 +435,6 @@ func hashObject(ctx context.Context, blobs storage.Backend, key string) (string,
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// deepWalk enumerates each HLS tree instead of inferring it from its master.
-//
-// It exists because the master manifest is the ONLY object in a tree that has a
-// database row behind it. Everything a viewer actually downloads — the rendition
-// playlists and every segment under them — is unrecorded, so a partial restore
-// that brought back one small text file per video and none of the segments
-// passes the fast pass with a clean bill of health and plays nothing.
-func deepWalk(ctx context.Context, blobs storage.Backend, playlists []mediagc.PlaylistRef, rep *Report) {
-	lister, ok := blobs.(storage.ObjectLister)
-	if !ok {
-		rep.DeepUnsupported = true
-		return
-	}
-	for _, pl := range playlists {
-		if err := ctx.Err(); err != nil {
-			return
-		}
-		dir := path.Dir(pl.MasterKey)
-		if dir == "." || dir == "/" || dir == "" {
-			// A master key with no directory part is not a shape this layout
-			// produces; fall back to the video's own tree prefix rather than
-			// listing the bucket root.
-			dir = pl.Prefix
-		}
-		keys, err := lister.ListKeys(ctx, dir)
-		if err != nil {
-			rep.Errors++
-			rep.sample(&rep.ErrorKeys, dir)
-			continue
-		}
-		rep.DeepPlaylists++
-		rep.DeepListed += len(keys)
-		others := 0
-		for _, k := range keys {
-			if k != pl.MasterKey {
-				others++
-			}
-		}
-		if others == 0 {
-			rep.Incomplete++
-			rep.sample(&rep.IncompletePrefixes, dir)
-		}
-	}
-}
-
 func (r *Report) fold(res outcome) {
 	switch res.cls {
 	case classPresent:
@@ -507,7 +511,7 @@ func (r Report) Text() string {
 		if r.DeepUnsupported {
 			b.WriteString("  HLS trees:      not walked — this storage backend cannot list objects\n")
 		} else {
-			fmt.Fprintf(&b, "  HLS trees:      %d walked, %d object(s) listed, %d with a master and nothing else\n",
+			fmt.Fprintf(&b, "  HLS trees:      %d attempted, %d admitted object reference(s), %d incomplete\n",
 				r.DeepPlaylists, r.DeepListed, r.Incomplete)
 		}
 	}
@@ -518,7 +522,7 @@ func (r Report) Text() string {
 	writeSamples(&b, "mismatched (CORRUPT)", r.Mismatched, r.MismatchedKeys)
 	writeSamples(&b, "known missing", r.KnownMissing, r.KnownMissingKeys)
 	writeSamples(&b, "sentinel stale", r.StaleSentinel, r.StaleSentinelKeys)
-	writeSamples(&b, "HLS trees with no objects besides the master", r.Incomplete, r.IncompletePrefixes)
+	writeSamples(&b, "incomplete HLS trees", r.Incomplete, r.IncompletePrefixes)
 	writeSamples(&b, "unreadable", r.Errors, r.ErrorKeys)
 
 	switch {
