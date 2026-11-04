@@ -16,6 +16,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/delivery"
+	"github.com/vidra/vidra-core/internal/hlsmanifest"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/mediaroute"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -25,7 +26,7 @@ import (
 // maxPlaylistBytes bounds an m3u8 read while references are rewritten. Dense
 // trick-play indexes add one byte-range entry per second, so multi-hour videos
 // can legitimately be larger than an ordinary variant playlist.
-const maxPlaylistBytes = 16 << 20
+const maxPlaylistBytes = hlsmanifest.MaxPlaylistBytes
 
 // HLS media content types (RFC 8216).
 const (
