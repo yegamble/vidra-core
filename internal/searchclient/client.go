@@ -73,8 +73,8 @@ const (
 // caller degrades exactly as it would on any other error.
 var ErrCircuitOpen = fmt.Errorf("searchclient: circuit open")
 
-// HTTPError is a non-2xx, non-5xx (i.e. 4xx) response — the service is up but
-// rejected the request. Distinct from transport/5xx errors so a 404 on
+// HTTPError is a rejected request or unexpected required success status.
+// Distinct from transport/5xx errors so a 404 on
 // delete-history can be told from an outage.
 type HTTPError struct {
 	Status int
@@ -206,7 +206,7 @@ func (c *Client) authHeader(method, path string) string {
 // path must contain no characters needing escaping (wire path == sign path);
 // the one endpoint embedding a caller-supplied path segment uses doPaths.
 func (c *Client) do(ctx context.Context, g group, method, path string, q url.Values, body, out any) error {
-	return c.doPaths(ctx, g, method, path, path, q, body, out)
+	return c.doPaths(ctx, g, method, path, path, q, body, out, 0)
 }
 
 // doPaths is do with the wire path (the escaped form placed in the request URI)
@@ -214,7 +214,7 @@ func (c *Client) do(ctx context.Context, g group, method, path string, q url.Val
 // verifies over r.URL.Path — Go's decoded form — so a path segment carrying
 // percent-escapes on the wire MUST be signed unescaped or the signature will
 // never match (401).
-func (c *Client) doPaths(ctx context.Context, g group, method, wirePath, signPath string, q url.Values, body, out any) error {
+func (c *Client) doPaths(ctx context.Context, g group, method, wirePath, signPath string, q url.Values, body, out any, requiredStatus int) error {
 	b := c.breakers[g]
 	if !b.allow() {
 		return ErrCircuitOpen
@@ -224,9 +224,13 @@ func (c *Client) doPaths(ctx context.Context, g group, method, wirePath, signPat
 
 	var reader io.Reader
 	if body != nil {
-		buf, err := json.Marshal(body)
-		if err != nil {
-			return err
+		buf, raw := body.(frozenCatalogBody)
+		if !raw {
+			encoded, err := json.Marshal(body)
+			if err != nil {
+				return err
+			}
+			buf = encoded
 		}
 		reader = bytes.NewReader(buf)
 	}
@@ -259,6 +263,10 @@ func (c *Client) doPaths(ctx context.Context, g group, method, wirePath, signPat
 	}
 	b.success()
 	if resp.StatusCode >= 400 {
+		return &HTTPError{Status: resp.StatusCode}
+	}
+	if requiredStatus != 0 && resp.StatusCode != requiredStatus {
+		// A generic 200 cannot acknowledge an explicit epoch CAS.
 		return &HTTPError{Status: resp.StatusCode}
 	}
 	if out != nil {
@@ -396,7 +404,7 @@ func (c *Client) DeleteUserHistory(ctx context.Context, userID uuid.UUID) error 
 func (c *Client) DeleteUserHistoryQuery(ctx context.Context, userID uuid.UUID, normalizedQuery string) error {
 	base := "/internal/v1/users/" + userID.String() + "/search-history/"
 	return c.doPaths(ctx, groupHistory, http.MethodDelete,
-		base+url.PathEscape(normalizedQuery), base+normalizedQuery, nil, nil, nil)
+		base+url.PathEscape(normalizedQuery), base+normalizedQuery, nil, nil, nil, 0)
 }
 
 // DeleteUser purges all of a user's search-side data (best-effort account-delete
@@ -421,7 +429,7 @@ func (c *Client) BanSuggestion(ctx context.Context, query string) (SuggestionBan
 	base := suggestionBansPath + "/"
 	var out SuggestionBan
 	err := c.doPaths(ctx, groupModeration, http.MethodPut,
-		base+url.PathEscape(query), base+query, nil, nil, &out)
+		base+url.PathEscape(query), base+query, nil, nil, &out, 0)
 	return out, err
 }
 
@@ -432,7 +440,7 @@ func (c *Client) BanSuggestion(ctx context.Context, query string) (SuggestionBan
 func (c *Client) UnbanSuggestion(ctx context.Context, query string) error {
 	base := suggestionBansPath + "/"
 	return c.doPaths(ctx, groupModeration, http.MethodDelete,
-		base+url.PathEscape(query), base+query, nil, nil, nil)
+		base+url.PathEscape(query), base+query, nil, nil, nil, 0)
 }
 
 // ListSuggestionBans reads a page of currently-banned queries — the surface that
