@@ -1,0 +1,88 @@
+name: publish-beta-import-cli
+
+# Private rehearsals need an official importer without creating a stable release.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing immutable beta-* tag containing this workflow
+        required: true
+        type: string
+      expected_sha:
+        description: Reviewed full commit SHA shared with the beta API image
+        required: true
+        type: string
+
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  importer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      BETA_TAG: ${{ inputs.tag }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      WORKFLOW_SHA: ${{ github.workflow_sha }}
+    steps:
+      - name: Reject a mismatched dispatch before checkout
+        run: |
+          set -euo pipefail
+          [[ "$BETA_TAG" =~ ^beta-[A-Za-z0-9][A-Za-z0-9._-]*$ && ${#BETA_TAG} -le 128 ]]
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_REF" == "refs/tags/$BETA_TAG" && "$GITHUB_SHA" == "$EXPECTED_SHA" ]]
+          [[ "$GITHUB_WORKFLOW_REF" == "$GITHUB_REPOSITORY/.github/workflows/publish-beta-import-cli.yml@refs/tags/$BETA_TAG" && "$WORKFLOW_SHA" == "$EXPECTED_SHA" ]]
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27"
+          cache: false
+      - name: Build, inspect and checksum the standalone importer
+        env:
+          OUT_DIR: ${{ runner.temp }}/beta-import-cli
+        run: bash scripts/ci/build-beta-import-cli.sh
+      - name: Attest the exact binary and metadata
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/beta-import-cli/peertube-import_${{ inputs.tag }}_linux_amd64
+            ${{ runner.temp }}/beta-import-cli/buildinfo.json
+            ${{ runner.temp }}/beta-import-cli/provenance.json
+            ${{ runner.temp }}/beta-import-cli/SHA256SUMS
+          create-storage-record: false
+      - name: Include the signature bundle after signing the checksums
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          OUT_DIR: ${{ runner.temp }}/beta-import-cli
+        run: cp -- "$BUNDLE" "$OUT_DIR/attestation.sigstore.json"
+      - name: Retain only binary, metadata and signature
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beta-import-cli-${{ inputs.tag }}-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/beta-import-cli/peertube-import_${{ inputs.tag }}_linux_amd64
+            ${{ runner.temp }}/beta-import-cli/buildinfo.json
+            ${{ runner.temp }}/beta-import-cli/provenance.json
+            ${{ runner.temp }}/beta-import-cli/SHA256SUMS
+            ${{ runner.temp }}/beta-import-cli/attestation.sigstore.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record the immutable artifact identity
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARCHIVE_SHA: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          printf 'Beta importer: %s source %s, artifact %s, archive SHA256 %s.\n' \
+            "$BETA_TAG" "$EXPECTED_SHA" "$ARTIFACT_ID" "$ARCHIVE_SHA" >> "$GITHUB_STEP_SUMMARY"

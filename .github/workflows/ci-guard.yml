@@ -90,6 +90,9 @@ jobs:
             shellcheck -x "$f"
           done
 
+      - name: Beta importer publication stays source-bound and fail-closed
+        run: python3 scripts/ci/build-beta-import-cli_test.py
+
       - name: External actions use immutable commit pins
         run: |
           bad=$(
