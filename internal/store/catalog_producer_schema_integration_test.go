@@ -75,8 +75,9 @@ func TestCatalogProducerSchemaSupportsFencesAndExactDirtyMembership(t *testing.T
 			t.Errorf("accepted invalid producer state: %s", statement)
 		}
 	}
+	evidence := uuid.New()
 	if _, err := tx.Exec(ctx, `UPDATE search_catalog_state SET allocated_generation=7,
-		force_full_after_generation=7,last_error_code='quota_exceeded'`); err != nil {
+		force_full_after_generation=7,last_error_code='quota_exceeded',last_error_id=$1`, evidence); err != nil {
 		t.Fatal(err)
 	}
 	const empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -128,8 +129,9 @@ func TestCatalogProducerSchemaSupportsFencesAndExactDirtyMembership(t *testing.T
 	})
 	var after int64
 	var code string
-	if err := restarted.Pool.QueryRow(ctx, `SELECT force_full_after_generation,last_error_code FROM search_catalog_state
-		WHERE scope='local' AND epoch=$1`, epoch).Scan(&after, &code); err != nil || after != 7 || code != "quota_exceeded" {
+	var gotEvidence uuid.UUID
+	if err := restarted.Pool.QueryRow(ctx, `SELECT force_full_after_generation,last_error_code,last_error_id FROM search_catalog_state
+		WHERE scope='local' AND epoch=$1`, epoch).Scan(&after, &code, &gotEvidence); err != nil || after != 7 || code != "quota_exceeded" || gotEvidence != evidence {
 		t.Fatalf("fresh connection lost durable blocked state: %d/%s, %v", after, code, err)
 	}
 	if _, err := restarted.Pool.Exec(ctx, `DELETE FROM search_catalog_state WHERE scope='local' AND epoch=$1`, epoch); err != nil {
