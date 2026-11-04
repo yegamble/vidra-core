@@ -126,7 +126,7 @@ func (q *Queries) InsertCatalogCaptureSnapshot(ctx context.Context, arg InsertCa
 
 const lockCatalogCaptureState = `-- name: LockCatalogCaptureState :one
 SELECT epoch, allocated_generation, force_full, force_full_after_generation,
-       last_error_id,
+       last_error_id,last_error_code,
        EXISTS(SELECT 1 FROM search_catalog_dirty WHERE scope='local') AS dirty,
        EXISTS(SELECT 1 FROM search_catalog_snapshots WHERE scope='local' AND pending) AS pending
 FROM search_catalog_state WHERE scope='local' FOR UPDATE
@@ -138,6 +138,7 @@ type LockCatalogCaptureStateRow struct {
 	ForceFull                bool        `json:"force_full"`
 	ForceFullAfterGeneration int64       `json:"force_full_after_generation"`
 	LastErrorID              pgtype.UUID `json:"last_error_id"`
+	LastErrorCode            *string     `json:"last_error_code"`
 	Dirty                    bool        `json:"dirty"`
 	Pending                  bool        `json:"pending"`
 }
@@ -152,6 +153,7 @@ func (q *Queries) LockCatalogCaptureState(ctx context.Context) (LockCatalogCaptu
 		&i.ForceFull,
 		&i.ForceFullAfterGeneration,
 		&i.LastErrorID,
+		&i.LastErrorCode,
 		&i.Dirty,
 		&i.Pending,
 	)

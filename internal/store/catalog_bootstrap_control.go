@@ -116,7 +116,9 @@ func checkCatalogBootstrapPreflight(ctx context.Context, q *sqlcgen.Queries, cur
 	if !reflect.DeepEqual(source, p.Source) {
 		return "catalog_conflict", ErrCatalogConflict
 	}
-	if source != nil {
+	// A durable CAS conflict needs an explicit new operator decision even if
+	// epoch names now match. Its exact current error token was rechecked above.
+	if source != nil && source.LastErrorCode != "epoch_conflict" {
 		_, err := catalog.AssessReceiver(source.Evidence, p.Receiver)
 		switch {
 		case errors.Is(err, catalog.ErrReceiverEpochMismatch), errors.Is(err, catalog.ErrProducerBehindReceiver),

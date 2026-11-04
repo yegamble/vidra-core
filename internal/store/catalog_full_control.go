@@ -31,6 +31,8 @@ func (s *Store) AcceptCatalogFullRequest(ctx context.Context, r catalog.FullRequ
 		outcome := "accepted"
 		if errors.Is(err, pgx.ErrNoRows) || state.Epoch != r.ExpectedEpoch || state.AllocatedGeneration != r.ExpectedAllocatedGeneration {
 			refusal, outcome = ErrCatalogConflict, "catalog_conflict"
+		} else if state.LastErrorCode != nil && *state.LastErrorCode == "epoch_conflict" {
+			refusal, outcome = catalog.ErrEpochConflict, "catalog_recovery_required"
 		} else {
 			coalesced = state.ForceFull && state.ForceFullAfterGeneration == state.AllocatedGeneration
 		}

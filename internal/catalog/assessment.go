@@ -8,6 +8,7 @@ import (
 )
 
 var (
+	ErrEpochConflict          = errors.New("catalog durable epoch conflict requires explicit operator recovery")
 	ErrReceiverEpochMismatch  = errors.New("catalog receiver epoch requires explicit bootstrap or recovery")
 	ErrProducerBehindReceiver = errors.New("catalog receiver observed a generation beyond the source allocator")
 	ErrPendingExpired         = errors.New("catalog pending generation expired; capture a higher generation")

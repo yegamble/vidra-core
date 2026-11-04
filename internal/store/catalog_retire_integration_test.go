@@ -65,6 +65,16 @@ func TestExpiredCatalogPendingRetirementFencesEvidenceAndCapturesHigherSameEpoch
 		t.Fatalf("live pending retired without expiry proof: %v/%v", changed, err)
 	}
 	receiver.HighestObservedGeneration = "1"
+	if _, err := s.Pool.Exec(ctx, `UPDATE search_catalog_state SET last_error_code='epoch_conflict' WHERE epoch=$1`, epoch); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := s.RetireExpiredCatalogPending(ctx, load(), receiver); err == nil || changed {
+		t.Fatalf("same-epoch retirement bypassed durable epoch conflict: %v/%v", changed, err)
+	}
+	// Restore ordinary fixture evidence for the independent stale-token cases.
+	if _, err := s.Pool.Exec(ctx, `UPDATE search_catalog_state SET last_error_code='delivery_failed' WHERE epoch=$1`, epoch); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.Pool.Exec(ctx, `UPDATE search_catalog_state SET last_error_id=$1 WHERE epoch=$2`, newError, epoch); err != nil {
 		t.Fatal(err)
 	}
