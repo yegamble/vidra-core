@@ -26,7 +26,7 @@ func TestCatalogBootstrapControlRechecksRecoveryAndAuditsExactRetry(t *testing.T
 	first, second, refused, failed := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	ids := []uuid.UUID{first, second, refused, failed}
 	defer func() {
-		for _, statement := range []string{`DELETE FROM audit_log WHERE resource_id::uuid=ANY($1) AND resource_type='search_catalog'`,
+		for _, statement := range []string{`DELETE FROM audit_log WHERE resource_type='search_catalog' AND resource_id IN (SELECT unnest($1::uuid[])::text)`,
 			`DELETE FROM search_catalog_state WHERE epoch=ANY($1)`, `DELETE FROM search_catalog_epochs WHERE epoch=ANY($1)`} {
 			if _, err := s.Pool.Exec(context.Background(), statement, ids); err != nil {
 				t.Error(err)
@@ -97,7 +97,11 @@ func TestCatalogBootstrapControlRechecksRecoveryAndAuditsExactRetry(t *testing.T
 	if _, err := s.Pool.Exec(ctx, `ALTER TABLE audit_log ADD CONSTRAINT `+constraint+` CHECK(resource_id<>'`+failed.String()+`') NOT VALID`); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _, _ = s.Pool.Exec(context.Background(), `ALTER TABLE audit_log DROP CONSTRAINT `+constraint) }()
+	defer func() {
+		if _, err := s.Pool.Exec(context.Background(), `ALTER TABLE audit_log DROP CONSTRAINT `+constraint); err != nil {
+			t.Error(err)
+		}
+	}()
 	if coalesced, err := s.AcceptCatalogBootstrap(ctx, r, preflight, actor); err == nil || coalesced {
 		t.Fatalf("failed bootstrap audit accepted: %v/%v", coalesced, err)
 	}
