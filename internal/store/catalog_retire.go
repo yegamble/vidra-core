@@ -18,6 +18,9 @@ var ErrCatalogPendingNotExpired = errors.New("catalog pending full lacks receive
 // leaves a fresh-full fence before removing expired pending payloads. The next
 // CaptureCatalog must allocate a higher generation; no expired body is retried.
 func (s *Store) RetireExpiredCatalogPending(ctx context.Context, w catalog.SourceWork, receiver catalog.Status) (bool, error) {
+	if w.LastErrorCode == "epoch_conflict" {
+		return false, catalog.ErrEpochConflict
+	}
 	_, err := catalog.AssessReceiver(w.Evidence, receiver)
 	if !errors.Is(err, catalog.ErrPendingExpired) {
 		return false, errors.Join(ErrCatalogPendingNotExpired, err)
