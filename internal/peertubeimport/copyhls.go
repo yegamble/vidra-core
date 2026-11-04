@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vidra/vidra-core/internal/hlsmanifest"
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
@@ -169,56 +170,14 @@ type hlsAttribute struct {
 	quoted           bool
 }
 
-// Attribute commas inside quotes (notably CODECS and language names) are not
-// separators. Reject ambiguity before removing anything from a source manifest.
 func parseHLSAttributes(list string) ([]hlsAttribute, error) {
-	var attributes []hlsAttribute
-	seen := map[string]bool{}
-	invalid := fmt.Errorf("invalid HLS attribute list")
-	for list != "" {
-		name, rest, found := strings.Cut(list, "=")
-		if !found || name == "" || rest == "" || seen[name] {
-			return nil, invalid
-		}
-		for _, c := range name {
-			if !(c >= 'A' && c <= 'Z') && !(c >= '0' && c <= '9') && c != '-' {
-				return nil, invalid
-			}
-		}
-		seen[name] = true
-		attribute := hlsAttribute{name: name, quoted: rest[0] == '"'}
-		end := strings.IndexByte(rest, ',')
-		if attribute.quoted {
-			end = strings.IndexByte(rest[1:], '"')
-			if end < 0 {
-				return nil, invalid
-			}
-			end += 2
-			attribute.value = rest[1 : end-1]
-		} else {
-			if end < 0 {
-				end = len(rest)
-			}
-			attribute.value = rest[:end]
-			if attribute.value == "" || strings.ContainsAny(attribute.value, "\"= \t") {
-				return nil, invalid
-			}
-		}
-		if strings.ContainsAny(attribute.value, "\r\n\x00") || (end < len(rest) && rest[end] != ',') {
-			return nil, invalid
-		}
-		attribute.raw = name + "=" + rest[:end]
-		attributes = append(attributes, attribute)
-		list = rest[end:]
-		if list != "" {
-			list = list[1:]
-			if list == "" {
-				return nil, invalid
-			}
-		}
+	parsed, err := hlsmanifest.ParseAttributes(list)
+	if err != nil {
+		return nil, err
 	}
-	if len(attributes) == 0 {
-		return nil, invalid
+	attributes := make([]hlsAttribute, 0, len(parsed))
+	for _, attribute := range parsed {
+		attributes = append(attributes, hlsAttribute{name: attribute.Name, value: attribute.Value, raw: attribute.Raw, quoted: attribute.Quoted})
 	}
 	return attributes, nil
 }
