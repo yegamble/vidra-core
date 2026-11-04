@@ -80,7 +80,7 @@ func runVerifyBlobs(args []string, stdout, stderr io.Writer) int {
 	}
 	var (
 		hash         = fs.Bool("hash", false, "re-download every object whose row carries a content hash and compare (reads the whole library)")
-		deep         = fs.Bool("deep", false, "enumerate every HLS tree through the storage backend instead of trusting its master manifest")
+		deep         = fs.Bool("deep", false, "follow exact stored HLS dependencies with bounded traversal")
 		asJSON       = fs.Bool("json", false, "print the report as one JSON document instead of a human summary")
 		timeout      = fs.Duration("timeout", defaultVerifyTimeout, "abandon the run after this long")
 		findingsPath = fs.String("findings-jsonl", "", "write every finding as private JSONL to a new exclusive file (0600); failures prevent success")
