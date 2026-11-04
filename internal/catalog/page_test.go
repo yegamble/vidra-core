@@ -164,6 +164,33 @@ func TestPageUsesExactFramingAndRejectsScalarOverflowWithoutMutation(t *testing.
 	}
 }
 
+func TestPageDefersLowerCanonicalSnapshotBudgetToFreeze(t *testing.T) {
+	identity, eventID, at := Identity{ScopeLocal, uuid.New(), 1}, uuid.New(), time.Now().UTC()
+	limits := Limits{MaxRequestBytes, MaxSnapshotBytes, MaxDocuments, MaxPages}
+	doc := framingDoc()
+	doc.Description = strings.Repeat("<&>\u2028", 100)
+	p, _ := NewPageBuilder(identity, 0, eventID, at, limits)
+	_, _ = p.Add(doc)
+	full, err := p.Freeze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, delta := range []int64{0, -1} {
+		limits.MaxSnapshotBytes = full.CanonicalBytes + delta
+		p, err = NewPageBuilder(identity, 0, eventID, at, limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fits, err := p.Add(doc); err != nil || !fits {
+			t.Fatalf("Add applied a non-wire quota: %v", err)
+		}
+		_, err = p.Freeze()
+		if delta == 0 && err != nil || delta < 0 && !errors.Is(err, ErrQuotaExceeded) {
+			t.Fatalf("canonical quota delta%d: %v", delta, err)
+		}
+	}
+}
+
 func framingDoc() searchevents.VideoDoc {
 	return searchevents.VideoDoc{ID: uuid.New(), Kind: ScopeLocal, ChannelID: uuid.New(), OwnerID: uuid.New(),
 		ChannelHandle: "handle", ChannelName: "channel", Title: "title <&>\u2028", Tags: []string{"tag"},

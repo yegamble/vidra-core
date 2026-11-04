@@ -80,7 +80,7 @@ func (p *PageBuilder) Add(doc searchevents.VideoDoc) (bool, error) {
 	if p.count > 0 {
 		next++
 	}
-	if int64(p.base+next-2) > p.limits.MaxRequestBytes || int64(next) > p.limits.MaxSnapshotBytes || int64(p.count)+1 > p.limits.MaxDocuments {
+	if int64(p.base+next-2) > p.limits.MaxRequestBytes || int64(p.count)+1 > p.limits.MaxDocuments {
 		return false, nil
 	}
 	if p.count > 0 {
