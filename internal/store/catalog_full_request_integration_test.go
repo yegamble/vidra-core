@@ -29,8 +29,10 @@ func TestCatalogFullRequestRequiresCurrentAllocatorAndNewerVerifiedFull(t *testi
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	epoch, errorID := uuid.New(), uuid.New()
-	if _, err := tx.Exec(ctx, `INSERT INTO search_catalog_epochs(scope,epoch) VALUES ('local',$1);
-		INSERT INTO search_catalog_state(scope,epoch,force_full,last_error_code,last_error_id)
+	if _, err := tx.Exec(ctx, `INSERT INTO search_catalog_epochs(scope,epoch) VALUES ('local',$1)`, epoch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO search_catalog_state(scope,epoch,force_full,last_error_code,last_error_id)
 		VALUES ('local',$1,false,'delivery_failed',$2)`, epoch, errorID); err != nil {
 		t.Fatal(err)
 	}
