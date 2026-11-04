@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/catalog"
 )
 
 // SuggestParams are the GET /internal/v1/suggestions inputs. The personalization/
@@ -11,6 +13,9 @@ import (
 // AND signed-in) and passed here — the search service receives flags, never
 // policy (MASTER-PLAN §0.5).
 type SuggestParams struct {
+	// CatalogFence is the caller's verified local FULL identity, copied per
+	// request. Only the entirely zero identity preserves legacy reads.
+	CatalogFence   catalog.Identity
 	Query          string
 	Limit          int
 	UserID         *uuid.UUID
@@ -40,6 +45,7 @@ type SuggestionsResponse struct {
 
 // SearchParams are the GET /internal/v1/search inputs.
 type SearchParams struct {
+	CatalogFence  catalog.Identity // verified by the caller; zero preserves legacy reads
 	Query         string
 	Limit         int
 	Offset        int
@@ -90,7 +96,8 @@ type SearchResponse struct {
 
 // RecsParams are the recommendation-endpoint inputs (home + related share it).
 type RecsParams struct {
-	VideoID       *uuid.UUID // set for /related, nil for /home
+	CatalogFence  catalog.Identity // verified by the caller; zero preserves legacy reads
+	VideoID       *uuid.UUID       // set for /related, nil for /home
 	UserID        *uuid.UUID
 	SessionID     string
 	Limit         int

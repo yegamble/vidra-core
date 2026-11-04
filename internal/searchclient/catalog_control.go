@@ -25,7 +25,7 @@ func (c *Client) SetCatalogEpoch(ctx context.Context, epoch uuid.UUID, expectedE
 		ExpectedEpoch *uuid.UUID `json:"expected_epoch"`
 	}{catalog.ScopeLocal, epoch, expectedEpoch}
 	path := "/internal/v2/catalog/epoch"
-	return c.doPaths(ctx, groupCatalog, http.MethodPut, path, path, nil, body, nil, http.StatusNoContent)
+	return c.doPaths(ctx, groupCatalog, http.MethodPut, path, path, nil, body, nil, http.StatusNoContent, catalog.Identity{})
 }
 
 // SendCatalogBody sends frozen bytes verbatim. Receipt counts never establish
@@ -47,7 +47,7 @@ func (c *Client) SendCatalogBody(ctx context.Context, frozen []byte) (searcheven
 	}
 	var raw json.RawMessage
 	path := "/internal/v2/catalog/events"
-	if err := c.doPaths(ctx, groupCatalog, http.MethodPost, path, path, nil, frozenCatalogBody(frozen), &raw, http.StatusOK); err != nil {
+	if err := c.doPaths(ctx, groupCatalog, http.MethodPost, path, path, nil, frozenCatalogBody(frozen), &raw, http.StatusOK, catalog.Identity{}); err != nil {
 		return searchevents.EventBatchResult{}, err
 	}
 	return catalog.ParseEventReceipt(raw, ids)
