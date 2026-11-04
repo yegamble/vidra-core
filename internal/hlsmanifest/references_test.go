@@ -17,6 +17,8 @@ func TestReferencesVisitEveryMasterAndMediaDependency(t *testing.T) {
 		{"media", "#EXTM3U\n#EXT-X-MAP:URI=\"video.mp4\",BYTERANGE=\"12@0\"\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.mp4\"\n#EXTINF:4,\n#EXT-X-BYTERANGE:16@12\nvideo.mp4\n#EXT-X-KEY:METHOD=NONE\n#EXTINF:4,\nvideo.mp4\n#EXT-X-ENDLIST\n",
 			[]Reference{{URI: "video.mp4", Kind: MapReference, Line: 2}, {URI: "key.mp4", Kind: KeyReference, Line: 3}, {URI: "video.mp4", Kind: MediaReference, Line: 6}, {URI: "video.mp4", Kind: MediaReference, Line: 9}}},
 		{"muxed audio", "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\"\n", nil},
+		{"metadata URI", "#EXTM3U\n#EXT-X-SESSION-DATA:DATA-ID=\"metadata\",URI=\"object.mp4\"\n",
+			[]Reference{{URI: "object.mp4", Kind: AuxiliaryReference, Line: 2}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []Reference

@@ -15,10 +15,11 @@ const MaxPlaylistBytes = 16 << 20
 type ReferenceKind string
 
 const (
-	PlaylistReference ReferenceKind = "playlist"
-	MapReference      ReferenceKind = "map"
-	KeyReference      ReferenceKind = "key"
-	MediaReference    ReferenceKind = "media"
+	PlaylistReference  ReferenceKind = "playlist"
+	MapReference       ReferenceKind = "map"
+	KeyReference       ReferenceKind = "key"
+	MediaReference     ReferenceKind = "media"
+	AuxiliaryReference ReferenceKind = "auxiliary"
 )
 
 // Reference is an immediate dependency, not an assertion about its descendants.
@@ -73,6 +74,7 @@ func VisitReferences(body []byte, visit func(Reference) error) error {
 		case "#EXT-X-KEY", "#EXT-X-SESSION-KEY":
 			kind, required = KeyReference, true
 		default:
+			kind = AuxiliaryReference
 			if !strings.Contains(list, "URI=") {
 				continue
 			}
