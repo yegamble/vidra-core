@@ -13,6 +13,7 @@ import (
 var (
 	ErrCompletionPending = errors.New("catalog completed manifest is not yet verified")
 	ErrReceiptRejected   = errors.New("catalog frozen event was rejected")
+	ErrRecoveryFence     = errors.New("catalog recovery drain lacks a current durable fresh-full fence")
 )
 
 type Source interface {
@@ -31,6 +32,17 @@ type Receiver interface {
 // the durable controller. Every attempt preflights and replays ALL frozen pages;
 // no page receipt/cursor survives a receiver restore or establishes completion.
 func Deliver(ctx context.Context, source Source, receiver Receiver, w catalog.SourceWork, observed catalog.Status) (bool, error) {
+	return deliver(ctx, source, receiver, w, observed, false)
+}
+
+// DeliverRecovery drains behind-verified work only after the controller commits
+// force-after=current allocator and reloads Work. This drain cannot clear that
+// threshold; a strictly newer independently completed FULL is still required.
+func DeliverRecovery(ctx context.Context, source Source, receiver Receiver, w catalog.SourceWork, observed catalog.Status) (bool, error) {
+	return deliver(ctx, source, receiver, w, observed, true)
+}
+
+func deliver(ctx context.Context, source Source, receiver Receiver, w catalog.SourceWork, observed catalog.Status, recovery bool) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -38,7 +50,15 @@ func Deliver(ctx context.Context, source Source, receiver Receiver, w catalog.So
 		return false, catalog.ErrEpochConflict
 	}
 	a, err := catalog.AssessReceiver(w.Evidence, observed)
-	if err != nil {
+	if recovery {
+		if !errors.Is(err, catalog.ErrReceiverBehindVerified) || !w.ForceFull ||
+			w.ForceFullAfterGeneration != w.Evidence.AllocatedGeneration || w.Evidence.Pending == nil {
+			return false, errors.Join(ErrRecoveryFence, err)
+		}
+		// Preserve the actual receiver status and original source Work. Only this
+		// initial behind refusal is bypassed; completion uses normal assessment.
+		a.CanDeliver = true
+	} else if err != nil {
 		return false, err
 	}
 	if a.PendingCompleted {
