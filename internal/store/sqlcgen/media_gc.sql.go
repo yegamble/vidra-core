@@ -131,12 +131,13 @@ func (q *Queries) ListPlaylistThumbnailRefs(ctx context.Context) ([]ListPlaylist
 }
 
 const listStreamingPlaylistRefs = `-- name: ListStreamingPlaylistRefs :many
-SELECT video_id, master_key FROM streaming_playlists
+SELECT video_id, master_key, format FROM streaming_playlists
 `
 
 type ListStreamingPlaylistRefsRow struct {
 	VideoID   uuid.UUID `json:"video_id"`
 	MasterKey string    `json:"master_key"`
+	Format    string    `json:"format"`
 }
 
 // video id + master key of every recorded streaming playlist, so the GC can
@@ -152,7 +153,7 @@ func (q *Queries) ListStreamingPlaylistRefs(ctx context.Context) ([]ListStreamin
 	var items []ListStreamingPlaylistRefsRow
 	for rows.Next() {
 		var i ListStreamingPlaylistRefsRow
-		if err := rows.Scan(&i.VideoID, &i.MasterKey); err != nil {
+		if err := rows.Scan(&i.VideoID, &i.MasterKey, &i.Format); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
