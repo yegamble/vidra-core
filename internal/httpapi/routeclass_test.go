@@ -30,6 +30,10 @@ func TestMediaRouteTemplatesAreRegistered(t *testing.T) {
 		if !registered["GET "+tmpl] {
 			t.Errorf("mediaRouteTemplates lists %q but no GET route is registered for it — update the set in the same change as the route", tmpl)
 		}
+		// The CORS preflight advertises HEAD for these, so it must be answered.
+		if !registered["HEAD "+tmpl] {
+			t.Errorf("media route %q has no HEAD registration — register it with mediaGET", tmpl)
+		}
 	}
 }
 

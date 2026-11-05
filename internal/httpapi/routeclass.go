@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -83,11 +84,11 @@ var uploadRouteTemplates = map[string]struct{}{
 	peertubeImportRoutePath:   {}, // POST /api/v1/me/import/peertube
 }
 
-// isMediaRoute reports whether the matched route is a media GET. The method
+// isMediaRoute reports whether the matched route is a media GET (or its HEAD). The method
 // check matters: POST /videos/:id/thumbnail shares its template with the GET but
 // is an owner-only write that belongs on the API budget.
 func isMediaRoute(c echo.Context) bool {
-	if c.Request().Method != http.MethodGet {
+	if m := c.Request().Method; m != http.MethodGet && m != http.MethodHead {
 		return false
 	}
 	_, ok := mediaRouteTemplates[c.Path()]
@@ -104,3 +105,29 @@ func isStreamingRoute(c echo.Context) bool {
 	_, ok := uploadRouteTemplates[c.Path()]
 	return ok
 }
+
+// mediaGET registers a media read for GET and HEAD. The CORS preflight already
+// advertises HEAD for these routes; without a registration a HEAD (download
+// helpers send one per segment) fell to the group's not-found handler on the API
+// budget, so such a viewer 429'd their own search and page loads.
+func mediaGET(g *echo.Group, path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) {
+	g.GET(path, h, m...)
+	g.HEAD(path, headOf(h), m...)
+}
+
+// headOf runs the GET handler with a body-refusing writer: headers and status
+// go out as for GET, and the first body write fails fast — as net/http does for
+// HEAD — so a stored object is never read just to be thrown away.
+func headOf(h echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		c.Response().Writer = headWriter{c.Response().Writer}
+		if err := h(c); err != nil && !errors.Is(err, http.ErrBodyNotAllowed) {
+			return err
+		}
+		return nil
+	}
+}
+
+type headWriter struct{ http.ResponseWriter }
+
+func (headWriter) Write([]byte) (int, error) { return 0, http.ErrBodyNotAllowed }
