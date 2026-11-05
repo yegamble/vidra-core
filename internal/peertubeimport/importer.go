@@ -585,6 +585,9 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		// accounts an earlier release already imported. See entities_actorimages.go.
 		{"actor images", im.importActorImages},
 		{"videos", im.importVideos},
+		// Originals for videos an earlier run imported without one. See
+		// entities_originals.go.
+		{"original files", im.importOriginalBackfill},
 		{"HLS copies", im.importHLSCopies},
 		// Captions added on the source after a video's first import. See
 		// entities_captions.go.
