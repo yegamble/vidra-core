@@ -4375,3 +4375,80 @@ func TestPeerTubeImportHoldsSourceMFAAccounts(t *testing.T) {
 		t.Error("a re-run reactivated the held MFA account")
 	}
 }
+
+// The web-video original used to be carried ONLY inside a video's first import.
+// A metadata-only run (or one whose source bucket was not yet reachable) marks
+// the video done, and no later copy-mode run ever revisited it: HLS, captions,
+// posters and storyboards all have passes of their own, the original did not.
+// On a catalogue with progressive files that is the only playable media gone.
+func TestPeerTubeImportBackfillsOriginalAfterMetadataOnlyRun(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	meta := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip, MediaMode: MediaModeNone})
+	version, err := meta.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if _, err := meta.Run(ctx, version, nil); err != nil {
+		t.Fatalf("metadata run: %v", err)
+	}
+	if n := countRows(t, ctx, dest, "video_files WHERE kind='original'"); n != 0 {
+		t.Fatalf("metadata-only run wrote %d originals, want 0", n)
+	}
+
+	srcMediaDir := t.TempDir()
+	seedSourceMedia(t, srcMediaDir)
+	srcMedia, err := storage.NewLocal(srcMediaDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destMedia, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip, SrcMedia: srcMedia, DestMedia: destMedia})
+	report, err := cp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("copy run: %v", err)
+	}
+	if got := report.Entities[KindVideoFile].Imported; got != 1 {
+		t.Errorf("originals backfilled = %d, want 1 (First Video's 720p web video)", got)
+	}
+	var key string
+	var size int64
+	if err := dest.QueryRow(ctx, `SELECT f.storage_key, f.size_bytes FROM video_files f JOIN videos v ON v.id=f.video_id
+		WHERE v.title='First Video' AND f.kind='original'`).Scan(&key, &size); err != nil {
+		t.Fatalf("First Video has no original after the copy run: %v", err)
+	}
+	if size != int64(len(sourceVideoBytes)) {
+		t.Errorf("original size = %d, want %d", size, len(sourceVideoBytes))
+	}
+	rc, err := destMedia.Open(ctx, key)
+	if err != nil {
+		t.Fatalf("original row points at %q, which the destination store does not hold: %v", key, err)
+	}
+	_ = rc.Close()
+
+	// Idempotent: a further run neither copies again nor adds a row.
+	again, err := cp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("third run: %v", err)
+	}
+	if got := again.Entities[KindVideoFile].Imported; got != 0 {
+		t.Errorf("third run backfilled %d originals, want 0", got)
+	}
+	if n := countRows(t, ctx, dest, "video_files WHERE kind='original'"); n != 1 {
+		t.Errorf("original rows after re-run = %d, want 1", n)
+	}
+}
