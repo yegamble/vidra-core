@@ -1766,7 +1766,7 @@ func (s *Server) routes() {
 		api.DELETE("/admin/users/:id", s.handleAdminDeleteUser, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/me/export", s.handleRequestAccountExport, s.requireAuth)
 		api.GET("/me/export", s.handleGetAccountExport, s.requireAuth)
-		api.GET("/me/export/download", s.handleDownloadAccountExport, s.requireAuth)
+		mediaGET(api, "/me/export/download", s.handleDownloadAccountExport, s.requireAuth)
 		api.POST("/me/import", s.handleImportAccount, s.requireAuth, s.requireScannerGate)
 		if s.peertubeArchive != nil {
 			api.POST("/me/import/peertube", s.handlePeerTubeArchiveImport, s.requireAuth, s.peertubeImportRateLimit(), s.peertubeImportBodyLimit())
@@ -1850,11 +1850,11 @@ func (s *Server) routes() {
 		for _, kind := range []string{profileimage.KindAvatar, profileimage.KindBanner} {
 			api.POST("/me/"+kind, s.handleSetMyImage(kind), s.requireAuth, s.requireScannerGate)
 			api.DELETE("/me/"+kind, s.handleDeleteMyImage(kind), s.requireAuth)
-			api.GET("/users/:id/"+kind, s.handleGetUserImage(kind))
+			mediaGET(api, "/users/:id/"+kind, s.handleGetUserImage(kind))
 			if s.channelsvc != nil {
 				api.POST("/channels/:handle/"+kind, s.handleSetChannelImage(kind), s.requireAuth, s.requireScannerGate)
 				api.DELETE("/channels/:handle/"+kind, s.handleDeleteChannelImage(kind), s.requireAuth)
-				api.GET("/channels/:handle/"+kind, s.handleGetChannelImage(kind))
+				mediaGET(api, "/channels/:handle/"+kind, s.handleGetChannelImage(kind))
 			}
 		}
 
@@ -1868,9 +1868,9 @@ func (s *Server) routes() {
 		api.DELETE("/admin/instance-banner", s.handleDeleteInstanceImage(profileimage.KindBanner), s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/instance-logo/:type", s.handleSetInstanceLogo, s.requireAuth, s.requireRole(admin.RoleAdmin), s.requireScannerGate)
 		api.DELETE("/admin/instance-logo/:type", s.handleDeleteInstanceLogo, s.requireAuth, s.requireRole(admin.RoleAdmin))
-		api.GET("/instance/avatar", s.handleGetInstanceImage(profileimage.KindAvatar))
-		api.GET("/instance/banner", s.handleGetInstanceImage(profileimage.KindBanner))
-		api.GET("/instance/logo/:type", s.handleGetInstanceLogo)
+		mediaGET(api, "/instance/avatar", s.handleGetInstanceImage(profileimage.KindAvatar))
+		mediaGET(api, "/instance/banner", s.handleGetInstanceImage(profileimage.KindBanner))
+		mediaGET(api, "/instance/logo/:type", s.handleGetInstanceLogo)
 	}
 
 	// Video creation needs both the video and channel services (channel for
@@ -1918,27 +1918,27 @@ func (s *Server) routes() {
 		api.GET("/videos/:id/recommendations", s.handleVideoRecommendations, s.optionalAuth)
 		api.POST("/search/events", s.handleSearchEvents, s.optionalAuth)
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
-		api.GET("/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)
+		mediaGET(api, "/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)
 		api.GET("/videos/:id/download", s.handleGetVideoDownloads, s.optionalAuth)
-		api.GET("/videos/:id/download/original", s.handleDownloadVideoOriginal, s.optionalAuth)
-		api.GET("/videos/:id/download/webm", s.handleDownloadVideoWebM, s.optionalAuth)
-		api.GET("/videos/:id/download/audio", s.handleDownloadHLSAudio, s.optionalAuth)
-		api.GET("/videos/:id/download/hls/:height", s.handleDownloadHLSRendition, s.optionalAuth)
-		api.GET("/videos/:id/download/subtitles/:lang", s.handleDownloadVideoSubtitle, s.optionalAuth)
+		mediaGET(api, "/videos/:id/download/original", s.handleDownloadVideoOriginal, s.optionalAuth)
+		mediaGET(api, "/videos/:id/download/webm", s.handleDownloadVideoWebM, s.optionalAuth)
+		mediaGET(api, "/videos/:id/download/audio", s.handleDownloadHLSAudio, s.optionalAuth)
+		mediaGET(api, "/videos/:id/download/hls/:height", s.handleDownloadHLSRendition, s.optionalAuth)
+		mediaGET(api, "/videos/:id/download/subtitles/:lang", s.handleDownloadVideoSubtitle, s.optionalAuth)
 
 		// HLS playback (transcoded ladder): the master playlist plus per-rendition
 		// variant playlists/segments, same visibility as /original. Registered only
 		// when the transcode read side is wired.
 		if s.transcodesvc != nil {
-			api.GET("/videos/:id/hls/master.m3u8", s.handleGetHLSMaster, s.optionalAuth)
-			api.GET("/videos/:id/hls/:rendition/:file", s.handleGetHLSFile, s.optionalAuth)
+			mediaGET(api, "/videos/:id/hls/master.m3u8", s.handleGetHLSMaster, s.optionalAuth)
+			mediaGET(api, "/videos/:id/hls/:rendition/:file", s.handleGetHLSFile, s.optionalAuth)
 		}
-		api.GET("/videos/:id/thumbnail", s.handleGetVideoThumbnail, s.optionalAuth)
+		mediaGET(api, "/videos/:id/thumbnail", s.handleGetVideoThumbnail, s.optionalAuth)
 		api.POST("/videos/:id/thumbnail", s.handleSetVideoThumbnail, s.requireAuth, s.requireScannerGate)
 		// Seek-preview storyboard (sprite sheet + WebVTT map), same visibility as
 		// the detail endpoint. detail exposes has_storyboard.
-		api.GET("/videos/:id/storyboard.jpg", s.handleGetVideoStoryboardImage, s.optionalAuth)
-		api.GET("/videos/:id/storyboard.vtt", s.handleGetVideoStoryboardVTT, s.optionalAuth)
+		mediaGET(api, "/videos/:id/storyboard.jpg", s.handleGetVideoStoryboardImage, s.optionalAuth)
+		mediaGET(api, "/videos/:id/storyboard.vtt", s.handleGetVideoStoryboardVTT, s.optionalAuth)
 		// Seek-bar chapters (CORE-15): public read with the detail's visibility;
 		// owner-only whole-set replace. detail exposes has_chapters.
 		api.GET("/videos/:id/chapters", s.handleGetVideoChapters, s.optionalAuth)
@@ -2030,7 +2030,7 @@ func (s *Server) routes() {
 		// Captions: the owner uploads/removes WebVTT tracks (any state); anyone
 		// lists/downloads them on a public, published video.
 		api.GET("/videos/:id/captions", s.handleListCaptions, s.optionalAuth)
-		api.GET("/videos/:id/captions/:lang", s.handleDownloadCaption, s.optionalAuth)
+		mediaGET(api, "/videos/:id/captions/:lang", s.handleDownloadCaption, s.optionalAuth)
 		api.POST("/videos/:id/captions", s.handleUploadCaption, s.requireAuth, s.requireScannerGate)
 		api.DELETE("/videos/:id/captions/:lang", s.handleDeleteCaption, s.requireAuth)
 
@@ -2119,7 +2119,7 @@ func (s *Server) routes() {
 		api.DELETE("/playlists/:id/videos/:videoId", s.handleRemovePlaylistItem, s.requireAuth)
 		api.POST("/playlists/:id/videos/:videoId/move", s.handleMovePlaylistItem, s.requireAuth)
 		// Playlist cover image: owner upload/remove + public (visibility-gated) get.
-		api.GET("/playlists/:id/thumbnail", s.handleGetPlaylistThumbnail, s.optionalAuth)
+		mediaGET(api, "/playlists/:id/thumbnail", s.handleGetPlaylistThumbnail, s.optionalAuth)
 		api.POST("/playlists/:id/thumbnail", s.handleSetPlaylistThumbnail, s.requireAuth, s.requireScannerGate)
 		api.DELETE("/playlists/:id/thumbnail", s.handleDeletePlaylistThumbnail, s.requireAuth)
 	}
@@ -2248,7 +2248,7 @@ func (s *Server) routes() {
 	// the per-video remote block-list is excluded at the query.
 	if s.remotevideosvc != nil {
 		api.GET("/remote-videos/:id", s.handleGetRemoteVideo)
-		api.GET("/remote-videos/:id/thumbnail", s.handleGetRemoteVideoThumbnail)
+		mediaGET(api, "/remote-videos/:id/thumbnail", s.handleGetRemoteVideoThumbnail)
 		// The MIRRORED comment thread (A29-F8). Read-only by design — see
 		// remote_video_comments.go — and mounted with the federation service
 		// because that is what stores it. optionalAuth so a signed-in viewer's
@@ -2496,7 +2496,7 @@ func (s *Server) routes() {
 	// (stable contract): status + kick a reconcile. Both answer 503 ipfs_disabled
 	// when neither the public nor private tier is enabled. Config-gated inside the
 	// handler, so no service wiring is needed when both tiers are off.
-	api.GET("/ipfs/gateway/authorize", s.handleIPFSGatewayAuthorize)
+	mediaGET(api, "/ipfs/gateway/authorize", s.handleIPFSGatewayAuthorize)
 	api.GET("/ipfs/status", s.handleIPFSStatus, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	api.GET("/admin/ipfs/config", s.handleGetIPFSConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	api.PATCH("/admin/ipfs/config", s.handleUpdateIPFSConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
@@ -2532,7 +2532,7 @@ func (s *Server) routes() {
 		// attachment limiter is unset). Both endpoints return 503 when blob
 		// storage is not configured.
 		api.POST("/conversations/:id/attachments", s.handleUploadAttachment, s.requireAuth, s.requireMessaging, s.requireScannerGate, s.attachmentUploadRateLimit())
-		api.GET("/attachments/:id", s.handleDownloadAttachment, s.requireAuth, s.requireMessaging)
+		mediaGET(api, "/attachments/:id", s.handleDownloadAttachment, s.requireAuth, s.requireMessaging)
 	}
 
 	// E2EE key directory (ciphertext-only encrypted messaging, P11.2): own
@@ -2585,8 +2585,8 @@ func (s *Server) routes() {
 		// Live HLS serving: the media server writes segments into LIVE_HLS_ROOT
 		// keyed by stream ID; the api serves them privacy/state-gated (404 when
 		// LIVE_HLS_ROOT is unset). Mirrors the VOD /hls routes.
-		api.GET("/live/:id/hls/master.m3u8", s.handleGetLiveHLSMaster, s.optionalAuth)
-		api.GET("/live/:id/hls/:file", s.handleGetLiveHLSFile, s.optionalAuth)
+		mediaGET(api, "/live/:id/hls/master.m3u8", s.handleGetLiveHLSMaster, s.optionalAuth)
+		mediaGET(api, "/live/:id/hls/:file", s.handleGetLiveHLSFile, s.optionalAuth)
 		// RTMP ingest boundary (media-server-facing): authenticated by the ingest
 		// shared secret, not a user token. 404 unless LIVE_INGEST_SECRET is set.
 		api.POST("/live/ingest/start", s.handleLiveIngestStart)

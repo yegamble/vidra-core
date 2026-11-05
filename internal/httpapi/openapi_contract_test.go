@@ -203,6 +203,14 @@ func routeOperations(srv *Server) map[string]bool {
 		}
 		ops[r.Method+" "+echoParam.ReplaceAllString(r.Path, "{$1}")] = true
 	}
+	// A HEAD beside a GET on the same path is that GET's metadata form (RFC 9110
+	// §9.3.2), not a separate operation; mediaGET registers one for every media
+	// read. A HEAD with no GET is still a real operation and still must be documented.
+	for op := range ops {
+		if path, ok := strings.CutPrefix(op, "HEAD "); ok && ops["GET "+path] {
+			delete(ops, op)
+		}
+	}
 	return ops
 }
 

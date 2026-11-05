@@ -156,3 +156,32 @@ func TestNoLimiterMeansNoRateLimiting(t *testing.T) {
 		}
 	}
 }
+
+// A HEAD for a media URL is the same cheap probe as the GET — browser download
+// helpers and link checkers send one per segment. It used to match no route,
+// fall to the group's not-found handler on the API budget, and so a viewer with
+// such an extension spent their search/API budget on 404s until everything 429'd.
+func TestMediaHeadUsesTheMediaBudget(t *testing.T) {
+	fc := &fakeCounter{}
+	srv := New(testConfig(), nil, nil,
+		WithRateLimiter(ratelimit.NewLimiter(fc, 1, time.Minute)),
+		WithMediaRateLimiter(ratelimit.NewLimiter(fc, 5, time.Minute)),
+		WithVideoService(video.NewService(nil, nil)),
+		WithChannelService(channel.NewService(nil)),
+	)
+	for i := 1; i <= 4; i++ {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/api/v1/videos/not-a-uuid/thumbnail", nil))
+		if got := rec.Header().Get("X-RateLimit-Limit"); got != "5" {
+			t.Fatalf("HEAD thumbnail #%d X-RateLimit-Limit = %q (status %d), want the media budget 5", i, got, rec.Code)
+		}
+		if rec.Body.Len() != 0 {
+			t.Fatalf("HEAD thumbnail #%d wrote a %d-byte body", i, rec.Body.Len())
+		}
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/nodeinfo", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("API request status = %d, want 200 — media HEADs must not spend the API budget", rec.Code)
+	}
+}
