@@ -238,7 +238,9 @@ func (im *Importer) importOneUser(ctx context.Context, u SourceUser, r *Report, 
 			// The source's SUSPENSION, carried (see ImportInsertUser). This was a
 			// hardcoded true, so a blocked account arrived active with the source's
 			// working bcrypt hash beside it.
-			IsActive:    !u.Blocked,
+			// A source MFA enrollment cannot be carried, so the account is held
+			// rather than left signing in on its password alone.
+			IsActive:    !u.Blocked && !u.MFAEnrolled,
 			DisplayName: u.DisplayName,
 			CreatedAt:   u.CreatedAt,
 			// Copy this preference only on creation; later changes belong to the user.
@@ -273,6 +275,8 @@ func (im *Importer) importOneUser(ctx context.Context, u SourceUser, r *Report, 
 	r.count(KindUserQuotaUnlimited).Imported++
 	if u.Blocked {
 		r.count(KindUserSuspension).Imported++
+	} else if u.MFAEnrolled {
+		r.count(KindUserMFAHold).Imported++
 	}
 	return nil
 }

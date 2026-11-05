@@ -382,6 +382,8 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 		// too rather than leaving the kind at zero until the real run.
 		if u.Blocked {
 			r.count(KindUserSuspension).Planned++
+		} else if u.MFAEnrolled {
+			r.count(KindUserMFAHold).Planned++
 		}
 		if note, collides, err := im.userConflict(ctx, u); err != nil {
 			return nil, err
