@@ -4313,3 +4313,65 @@ func TestPeerTubeImportCarriesSupportText(t *testing.T) {
 		t.Errorf("support from a source without the column = %q, want NULL", *got)
 	}
 }
+
+// PeerTube's TOTP enrollment (user.otpSecret) has no carrier here: the secret is
+// sealed with the source's own key, and Vidra's MFA is enrolled on Vidra. An
+// enrolled account imported active would sign in with the carried password alone
+// — its second factor silently removed. It must arrive held instead, without the
+// importer ever selecting the secret itself.
+func TestPeerTubeImportHoldsSourceMFAAccounts(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+	mustExec(t, ctx, src, `ALTER TABLE "user" ADD COLUMN "otpSecret" text`)
+	mustExec(t, ctx, src, `UPDATE "user" SET "otpSecret"='SEALED-TOTP-SECRET' WHERE username='alice'`)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip, MediaMode: MediaModeNone})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	plan, err := imp.Plan(ctx, version)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if got := plan.Entities[KindUserMFAHold].Planned; got != 1 {
+		t.Errorf("plan MFA holds = %d, want 1 (alice has TOTP enrolled on the source)", got)
+	}
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if readUserActive(t, ctx, dest, "alice") {
+		t.Error("alice has MFA on the source but imported is_active=true — her second factor was dropped")
+	}
+	svc := auth.NewService(sqlcgen.New(dest),
+		auth.NewTokenIssuer("test-signing-secret-not-a-real-one", "vidra", "vidra", time.Hour), time.Hour)
+	if _, err := svc.Login(ctx, auth.LoginInput{Identifier: "alice@example.test", Password: testPassword}, "test"); !errors.Is(err, auth.ErrAccountDisabled) {
+		t.Errorf("password-only login as the MFA-enrolled account = %v, want ErrAccountDisabled", err)
+	}
+	if got := report.Entities[KindUserMFAHold].Imported; got != 1 {
+		t.Errorf("MFA holds = %d, want 1", got)
+	}
+	// bob is suspended, not enrolled: he stays a suspension and is not double-counted.
+	if got := report.Entities[KindUserSuspension].Imported; got != 1 {
+		t.Errorf("suspensions = %d, want 1", got)
+	}
+
+	// A re-run must not release the hold.
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("re-run: %v", err)
+	}
+	if readUserActive(t, ctx, dest, "alice") {
+		t.Error("a re-run reactivated the held MFA account")
+	}
+}

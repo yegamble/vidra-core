@@ -52,7 +52,12 @@ const (
 	KindUserSensitivePolicy = "user_sensitive_policy"
 	KindVideoCommentPolicy  = "video_comment_policy"
 	KindUserSuspension      = "user_suspension"
-	KindVideoSensitive      = "video_sensitive"
+	// KindUserMFAHold counts USERS imported inactive because the source has TOTP
+	// enrolled for them (user.otpSecret) and the secret cannot be carried. An
+	// administrator reactivates each one once the person can re-enroll here.
+	// A user who is also suspended is counted as a suspension only.
+	KindUserMFAHold    = "user_mfa_hold"
+	KindVideoSensitive = "video_sensitive"
 	// KindUserQuotaUnlimited counts USERS the import CREATED and therefore gave
 	// an unlimited storage quota (users.storage_quota_bytes = 0). It is a kind of
 	// its own because it is the one place the tool decides a policy on the
@@ -98,7 +103,7 @@ const (
 // (parents before children).
 var orderedKinds = []string{
 	KindCategoryTaxonomy,
-	KindUser, KindUserSensitivePolicy, KindUserSuspension, KindUserQuotaUnlimited, KindChannel, KindActorAvatar, KindActorBanner,
+	KindUser, KindUserSensitivePolicy, KindUserSuspension, KindUserMFAHold, KindUserQuotaUnlimited, KindChannel, KindActorAvatar, KindActorBanner,
 	KindVideo, KindVideoCommentPolicy, KindVideoSensitive, KindVideoBlock, KindVideoFile,
 	KindHLSPlaylist, KindVideoNoMedia, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
 	KindVideoOriginalDate, KindChapter, KindRating, KindRendition, KindComment,

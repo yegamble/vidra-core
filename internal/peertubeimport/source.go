@@ -229,7 +229,11 @@ type SourceUser struct {
 	// Blocked is the source's user.blocked — its account SUSPENSION, and the one
 	// column that says this person must not be able to sign in. It is carried
 	// INVERTED into users.is_active; false when the source schema predates it.
-	Blocked        bool
+	Blocked bool
+	// MFAEnrolled is whether the source holds a TOTP secret (user.otpSecret).
+	// Only the boolean is read: the secret is sealed with the source's key and
+	// cannot be carried, so an enrolled account is imported HELD instead.
+	MFAEnrolled    bool
 	HistoryEnabled bool    // Initial preference only; reruns preserve destination choices.
 	NSFWPolicy     *string // nil means the source has no opinion.
 	GranularNSFW   bool    // Category restrictions have no exact native equivalent.
@@ -394,6 +398,10 @@ func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
 	if err != nil {
 		return nil, err
 	}
+	mfaExpr, err := s.optionalExpression(ctx, "user", "otpSecret", `COALESCE(u."otpSecret", '') <> ''`, "false")
+	if err != nil {
+		return nil, err
+	}
 	granularExpr := "false"
 	for _, column := range []string{"nsfwFlagsHidden", "nsfwFlagsWarned", "nsfwFlagsBlurred"} {
 		expr, err := s.optionalExpression(ctx, "user", column, `COALESCE(u."`+column+`", 0) <> 0`, "false")
@@ -407,7 +415,7 @@ func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
 		       u.role, COALESCE(u."emailVerified", false),
 		       COALESCE(acc.name, u.username), u."createdAt",
 		       COALESCE(act."publicKey", ''), COALESCE(act."privateKey", ''),
-		       `+blockedExpr+`, `+historyExpr+`, `+policyExpr+`, (`+granularExpr+`)
+		       `+blockedExpr+`, `+historyExpr+`, `+policyExpr+`, (`+granularExpr+`), (`+mfaExpr+`)
 		FROM "user" u
 		JOIN account acc ON acc."userId" = u.id
 		JOIN actor act ON `+actorJoin+`
@@ -422,7 +430,7 @@ func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
 		var u SourceUser
 		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Role,
 			&u.EmailVerified, &u.DisplayName, &u.CreatedAt, &u.PublicKeyPEM, &u.PrivateKeyPEM,
-			&u.Blocked, &u.HistoryEnabled, &u.NSFWPolicy, &u.GranularNSFW); err != nil {
+			&u.Blocked, &u.HistoryEnabled, &u.NSFWPolicy, &u.GranularNSFW, &u.MFAEnrolled); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan user: %w", err)
 		}
 		out = append(out, u)
