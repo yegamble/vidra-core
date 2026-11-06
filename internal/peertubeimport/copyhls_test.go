@@ -297,3 +297,59 @@ func TestCopyHLSParallelFallbackDisablesCopierOnce(t *testing.T) {
 		}
 	}
 }
+
+// PeerTube writes single-file fMP4 HLS: every segment is an EXT-X-BYTERANGE line
+// naming the same file, so a long video repeats one name thousands of times per
+// rendition. The reference cap bounds distinct objects, not repeated lines.
+func TestCopyHLSTreeCountsDistinctByteRangeReferences(t *testing.T) {
+	ctx := context.Background()
+	src, _ := storage.NewLocal(t.TempDir())
+	dst, _ := storage.NewLocal(t.TempDir())
+	prefix := "streaming-playlists/hls/long"
+	master := "#EXTM3U\n"
+	objects := map[string]string{}
+	for _, r := range []string{"720", "480", "360"} {
+		var b strings.Builder
+		b.WriteString("#EXTM3U\n#EXT-X-MAP:URI=\"" + r + "-fragmented.mp4\",BYTERANGE=\"800@0\"\n")
+		for i := 0; i < 4000; i++ {
+			fmt.Fprintf(&b, "#EXTINF:4.000000,\n#EXT-X-BYTERANGE:100@%d\n%s-fragmented.mp4\n", 800+i*100, r)
+		}
+		objects[r+".m3u8"] = b.String()
+		objects[r+"-fragmented.mp4"] = "media bytes"
+		master += "#EXT-X-STREAM-INF:BANDWIDTH=1\n" + r + ".m3u8\n"
+	}
+	objects["master.m3u8"] = master
+	for name, body := range objects {
+		if _, err := src.Put(ctx, prefix+"/"+name, strings.NewReader(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	im := &Importer{srcMedia: &singleReadSource{Backend: src, opened: map[string]int{}}, destMedia: dst}
+	if err := im.copyHLSTree(ctx, prefix, "master.m3u8"); err != nil {
+		t.Fatalf("12,000 repeated byte-range lines naming 7 objects were refused: %v", err)
+	}
+	for name := range objects {
+		if ok, err := dst.Exists(ctx, prefix+"/"+name); err != nil || !ok {
+			t.Fatalf("%s not copied (exists=%v): %v", name, ok, err)
+		}
+	}
+}
+
+func TestCopyHLSTreeStillCapsDistinctReferences(t *testing.T) {
+	ctx := context.Background()
+	src, _ := storage.NewLocal(t.TempDir())
+	dst, _ := storage.NewLocal(t.TempDir())
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n")
+	for i := 0; i <= 10000; i++ {
+		fmt.Fprintf(&b, "segment-%d.mp4\n", i)
+	}
+	if _, err := src.Put(ctx, "streaming-playlists/hls/wide/master.m3u8", strings.NewReader(b.String())); err != nil {
+		t.Fatal(err)
+	}
+	im := &Importer{srcMedia: src, destMedia: dst}
+	err := im.copyHLSTree(ctx, "streaming-playlists/hls/wide", "master.m3u8")
+	if err == nil || !strings.Contains(err.Error(), "reference limit") {
+		t.Fatalf("10,001 distinct references must hit the reference limit, got %v", err)
+	}
+}

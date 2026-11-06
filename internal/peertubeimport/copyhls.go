@@ -24,6 +24,14 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 	defer cancel()
 	queue := []string{master}
 	seen := map[string]bool{}
+	// Byte-range HLS names one file per segment line; queue and cap distinct names.
+	queued := map[string]bool{master: true}
+	enqueue := func(name string) {
+		if !queued[name] {
+			queued[name] = true
+			queue = append(queue, name)
+		}
+	}
 	var total int64
 	var serverBytes int64
 	var serverObjects int
@@ -108,7 +116,7 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 					continue
 				}
 				if !strings.HasPrefix(line, "#") {
-					queue = append(queue, line)
+					enqueue(line)
 				} else if strings.Contains(line, "URI=") {
 					_, list, _ := strings.Cut(line, ":")
 					attributes, err := parseHLSAttributes(list)
@@ -120,12 +128,12 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 							if !attribute.quoted {
 								return fmt.Errorf("invalid HLS URI attribute")
 							}
-							queue = append(queue, attribute.value)
+							enqueue(attribute.value)
 						}
 					}
 				}
 			}
-			if len(queue) > 10000 {
+			if len(queued) > 10000 {
 				return fmt.Errorf("HLS manifest exceeds reference limit")
 			}
 			reader = bytes.NewReader(body)
