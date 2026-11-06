@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/instancesettings"
@@ -107,7 +107,7 @@ func (s *Server) cdnDeliveryEnabled() bool {
 // grants the sender nothing: all it can do is decline a redirect and take the
 // authoritative path, which every media route authorises exactly as it always
 // did.
-func (s *Server) edgeOriginRequest(c echo.Context) bool {
+func (s *Server) edgeOriginRequest(c *echo.Context) bool {
 	return s.cdnConfigured() && c.QueryParam(delivery.EdgeOriginParam) == delivery.EdgeOriginValue
 }
 
@@ -119,7 +119,7 @@ func (s *Server) edgeOriginRequest(c echo.Context) bool {
 // answered with a signed URL — a redirect would hand out a second, longer-lived
 // credential in exchange for the first, and ?pt= tokens must not reach an
 // intermediary's access log (risks.md §6).
-func credentialedMediaRequest(c echo.Context) bool {
+func credentialedMediaRequest(c *echo.Context) bool {
 	return c.Get(ctxVideoCookieUsed) == true || c.QueryParam(playbackTokenParam) != "" || c.Request().Header.Get("Authorization") != ""
 }
 
@@ -130,7 +130,7 @@ func credentialedMediaRequest(c echo.Context) bool {
 // streaming the authoritative bytes. A source the resolver could not build
 // simply is not in the list, so there is no error path here that could turn an
 // optional delivery hop into a failed media request.
-func (s *Server) serveMediaAsset(c echo.Context, a mediaAsset) error {
+func (s *Server) serveMediaAsset(c *echo.Context, a mediaAsset) error {
 	// FILL A MISSING CONTENT TYPE FROM THE KEY. Not every media row carries
 	// one: the resumable upload path stores an original with an EMPTY
 	// content_type, and every PeerTube-era row predates the column being
@@ -204,7 +204,7 @@ func (s *Server) serveMediaAsset(c echo.Context, a mediaAsset) error {
 // nothing for any browser that had already cached the failure, which is how a
 // transient gap becomes a permanently unplayable video. The BYTES behind a
 // versioned URL are immutable; their ABSENCE is not, and must never be cached.
-func mediaObjectNotFound(c echo.Context, msg string) error {
+func mediaObjectNotFound(c *echo.Context, msg string) error {
 	c.Response().Header().Set("Cache-Control", delivery.CacheNoStore)
 	return echo.NewHTTPError(http.StatusNotFound, msg)
 }
@@ -215,7 +215,7 @@ func mediaObjectNotFound(c echo.Context, msg string) error {
 // a storage key, and the live HLS spool). eligible carries the same meaning it
 // does everywhere else: "these bytes are servable to an anonymous public
 // visitor".
-func setMediaCacheControl(c echo.Context, class delivery.Class, eligible bool) {
+func setMediaCacheControl(c *echo.Context, class delivery.Class, eligible bool) {
 	// shared=false unconditionally: these routes never expose a storage key, so
 	// they are never handed to the edge and an edge can never be the caller.
 	c.Response().Header().Set("Cache-Control",

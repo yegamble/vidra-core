@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/searchclient"
@@ -98,7 +98,7 @@ type searchUserPref struct {
 // searchUserPrefs resolves the caller's id + prefs. ok is false for anonymous
 // callers; an authenticated caller whose row cannot be loaded returns ok=true
 // with all-false prefs (fail closed — never personalize on unknown state).
-func (s *Server) searchUserPrefs(c echo.Context) (uuid.UUID, searchUserPref, bool) {
+func (s *Server) searchUserPrefs(c *echo.Context) (uuid.UUID, searchUserPref, bool) {
 	id, _, authed := principalFromContext(c)
 	if !authed {
 		return uuid.Nil, searchUserPref{}, false
@@ -142,13 +142,13 @@ const searchEventsHeader = "X-Vidra-Search-Events"
 // caller emits its own search.submitted. Anything but the one token means no —
 // an unrecognised value must fail toward RECORDING the search, which is what
 // every client that never heard of this header already does.
-func clientEmitsSearchSubmitted(c echo.Context) bool {
+func clientEmitsSearchSubmitted(c *echo.Context) bool {
 	return strings.EqualFold(strings.TrimSpace(c.Request().Header.Get(searchEventsHeader)), "client")
 }
 
 // sessionIDFromRequest returns the sanitized X-Vidra-Session id (a UUID) or "".
 // A non-UUID value is dropped so a client cannot inject an arbitrary session key.
-func sessionIDFromRequest(c echo.Context) string {
+func sessionIDFromRequest(c *echo.Context) string {
 	raw := strings.TrimSpace(c.Request().Header.Get("X-Vidra-Session"))
 	if raw == "" {
 		return ""
@@ -191,7 +191,7 @@ type suggestionsResponse struct {
 // personalization/history flags. optionalAuth. Disabled/off/empty-query/timeout/
 // error all degrade to a 200 {query, suggestions:[]} — a suggestion box never
 // errors.
-func (s *Server) handleSearchSuggestions(c echo.Context) error {
+func (s *Server) handleSearchSuggestions(c *echo.Context) error {
 	q := strings.TrimSpace(c.QueryParam("q"))
 	limit := parseLimit(c, 10, 20)
 	resp := suggestionsResponse{Query: q, Suggestions: []suggestionView{}}
@@ -391,7 +391,7 @@ func (s *Server) recsPersonalized(authed bool, prefs searchUserPref) bool {
 // handleHomeRecommendations returns the "for you"/trending home rail. optionalAuth.
 // Tries vidra-search (personalized when the instance + user allow it and the
 // caller is signed in); on disable/error/empty falls back to the trending feed.
-func (s *Server) handleHomeRecommendations(c echo.Context) error {
+func (s *Server) handleHomeRecommendations(c *echo.Context) error {
 	limit := parseLimit(c, 20, 50)
 	ctx := c.Request().Context()
 	viewerID, _, authed := principalFromContext(c)
@@ -419,7 +419,7 @@ func (s *Server) handleHomeRecommendations(c echo.Context) error {
 
 // homeRecommendationsFallback serves the trending feed when vidra-search is
 // unavailable or returns nothing.
-func (s *Server) homeRecommendationsFallback(c echo.Context, limit int, viewerID uuid.UUID, authed bool) error {
+func (s *Server) homeRecommendationsFallback(c *echo.Context, limit int, viewerID uuid.UUID, authed bool) error {
 	ctx := c.Request().Context()
 	items, _, err := s.videosvc.ListPublic(ctx, "trending", "local",
 		video.FeedFilter{HideSensitive: s.effectiveHideSensitive(c)}, viewerID, authed, int32(limit), 0)
@@ -441,7 +441,7 @@ func (s *Server) homeRecommendationsFallback(c echo.Context, limit int, viewerID
 // handleVideoRecommendations returns the related-videos rail for a watch page.
 // optionalAuth. Tries vidra-search; on disable/error/empty falls back to the
 // server-side same-channel + same-category heuristic.
-func (s *Server) handleVideoRecommendations(c echo.Context) error {
+func (s *Server) handleVideoRecommendations(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -474,7 +474,7 @@ func (s *Server) handleVideoRecommendations(c echo.Context) error {
 
 // videoRecommendationsFallback serves the same-channel + same-category related
 // heuristic (server-side version of the frontend's current logic).
-func (s *Server) videoRecommendationsFallback(c echo.Context, id uuid.UUID, limit int, viewerID uuid.UUID, authed bool) error {
+func (s *Server) videoRecommendationsFallback(c *echo.Context, id uuid.UUID, limit int, viewerID uuid.UUID, authed bool) error {
 	ctx := c.Request().Context()
 	v, err := s.videosvc.GetByID(ctx, id)
 	if err != nil {
@@ -552,7 +552,7 @@ type searchEventsRequest struct {
 // the caller's own user_id / session / subject / allow_history, and enqueues them
 // to the outbox. Always 202 on success; never blocks on the search service.
 // optionalAuth, rate-limited.
-func (s *Server) handleSearchEvents(c echo.Context) error {
+func (s *Server) handleSearchEvents(c *echo.Context) error {
 	var in searchEventsRequest
 	if err := c.Bind(&in); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "malformed or invalid request body")
@@ -660,7 +660,7 @@ func (s *Server) searchHistoryGate() error {
 // handleGetSearchHistory proxies the caller's stored search history from
 // vidra-search. requireAuth. Admin-off → 403 feature_disabled; unwired/unreachable
 // → 503 search_unavailable (an honest failure, not a fake empty history).
-func (s *Server) handleGetSearchHistory(c echo.Context) error {
+func (s *Server) handleGetSearchHistory(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -717,7 +717,7 @@ func (s *Server) handleGetSearchHistory(c echo.Context) error {
 // codes are unchanged; what changed is that the erasure is no longer contingent
 // on them. A failure of core's OWN delete is neither of those: it is a 500,
 // because answering 204 would leave the data AND tell the user it was gone.
-func (s *Server) handleClearSearchHistory(c echo.Context) error {
+func (s *Server) handleClearSearchHistory(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -758,7 +758,7 @@ func (s *Server) handleClearSearchHistory(c echo.Context) error {
 // user.history_deleted that vidra-search honours — not a core-only one. Until
 // then this stays an honest proxy: it succeeds only when the service does, and
 // "Clear all" is the control that is now exact.
-func (s *Server) handleDeleteSearchHistoryQuery(c echo.Context) error {
+func (s *Server) handleDeleteSearchHistoryQuery(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -800,7 +800,7 @@ type searchServicePaging struct {
 // tag/category/language/license facets it accepts. Nothing here re-checks that, and nothing here post-filters —
 // a filter the service did not apply would produce a page that disagreed with the
 // total, so such requests never reach this function.
-func (s *Server) searchViaService(c echo.Context, q string, filter video.SearchFilter, limit, offset int, viewerID uuid.UUID, authed bool) ([]videoView, searchServicePaging, bool) {
+func (s *Server) searchViaService(c *echo.Context, q string, filter video.SearchFilter, limit, offset int, viewerID uuid.UUID, authed bool) ([]videoView, searchServicePaging, bool) {
 	ctx := c.Request().Context()
 	userID, prefs, _ := s.searchUserPrefs(c)
 	personalized := s.searchAdvanced() && s.instancePersonalizedSearch() && authed && prefs.Personalized
@@ -977,7 +977,7 @@ func (s *Server) purgeUserFromSearch(ctx context.Context, userID uuid.UUID) {
 // longer reaches this function at all — but setting it here is a change to what
 // an API consumer's searches DO, not merely to how many rows they write, so it
 // stays a separate slice with its own evidence.
-func (s *Server) emitSearchSubmitted(c echo.Context, query string, resultsCount int, source string) {
+func (s *Server) emitSearchSubmitted(c *echo.Context, query string, resultsCount int, source string) {
 	if s.searchEvents == nil {
 		return
 	}

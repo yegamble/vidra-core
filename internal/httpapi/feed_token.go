@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/feedtoken"
 	"github.com/vidra/vidra-core/internal/instancesettings"
@@ -37,7 +37,7 @@ type feedTokenIssued struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func (s *Server) handleGetFeedToken(c echo.Context) error {
+func (s *Server) handleGetFeedToken(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -52,7 +52,7 @@ func (s *Server) handleGetFeedToken(c echo.Context) error {
 	return c.JSON(http.StatusOK, feedTokenStatus{Configured: true, CreatedAt: &at})
 }
 
-func (s *Server) handleRotateFeedToken(c echo.Context) error {
+func (s *Server) handleRotateFeedToken(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -69,7 +69,7 @@ func (s *Server) handleRotateFeedToken(c echo.Context) error {
 	return c.JSON(http.StatusCreated, out)
 }
 
-func (s *Server) handleRevokeFeedToken(c echo.Context) error {
+func (s *Server) handleRevokeFeedToken(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -80,7 +80,7 @@ func (s *Server) handleRevokeFeedToken(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-func (s *Server) handleSubscriptionsFeed(c echo.Context) error {
+func (s *Server) handleSubscriptionsFeed(c *echo.Context) error {
 	notFound := echo.NewHTTPError(http.StatusNotFound, "feed not found")
 	ctx := c.Request().Context()
 	userID, ok, err := s.feedtokensvc.Owner(ctx, c.QueryParam("token"))

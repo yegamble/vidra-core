@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 const (
@@ -17,7 +17,7 @@ const (
 // mode mirrors that short-lived access token in an HttpOnly, video-path cookie.
 // Only a private/unpublished read consults it: public playback must retain its
 // anonymous CDN/cache behavior, and writes must still require explicit bearers.
-func (s *Server) restoreVideoReadPrincipal(c echo.Context) {
+func (s *Server) restoreVideoReadPrincipal(c *echo.Context) {
 	req := c.Request()
 	if s.authsvc == nil || (req.Method != http.MethodGet && req.Method != http.MethodHead) ||
 		!strings.HasPrefix(req.URL.Path, videoAccessCookiePath) || req.Header.Get("Authorization") != "" {

@@ -15,7 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/delivery"
@@ -390,7 +390,7 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 }
 
 // handleCreateVideo creates a draft video under a channel owned by the caller.
-func (s *Server) handleCreateVideo(c echo.Context) error {
+func (s *Server) handleCreateVideo(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -553,7 +553,7 @@ func (s *Server) attachIPFSPinned(ctx context.Context, views []videoView) {
 // content. Invisible videos are reported as 404 so their existence is not
 // leaked. This exception is metadata-detail only: media/playback routes keep
 // their own narrower authorization.
-func (s *Server) handleGetVideo(c echo.Context) error {
+func (s *Server) handleGetVideo(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -583,7 +583,7 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 // never 400 — per pathUUID's rule. Distinguishing them would let an
 // unauthenticated caller tell a real unknown code from a badly-formed one, and
 // an unlisted video is protected by the obscurity of its code alone.
-func (s *Server) handleResolveVideo(c echo.Context) error {
+func (s *Server) handleResolveVideo(c *echo.Context) error {
 	code, legacy := c.QueryParam("code"), c.QueryParam("legacy_uuid")
 	switch {
 	case code != "" && legacy != "":
@@ -616,7 +616,7 @@ func (s *Server) handleResolveVideo(c echo.Context) error {
 // uuid) share one body. Privacy, quarantine and password semantics are decided
 // here exactly once, so a new naming scheme cannot accidentally expose a video
 // the canonical route would have refused.
-func (s *Server) respondVideo(c echo.Context, id uuid.UUID) error {
+func (s *Server) respondVideo(c *echo.Context, id uuid.UUID) error {
 	v, err := s.videoVisibleForDetail(c, id)
 	if err != nil {
 		return err
@@ -663,7 +663,7 @@ func (s *Server) respondVideo(c echo.Context, id uuid.UUID) error {
 // returned for the Manage workflow. It is deliberately used only by
 // handleGetVideo; sharing it with media/playback helpers would widen access to
 // the underlying files.
-func (s *Server) videoVisibleForDetail(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+func (s *Server) videoVisibleForDetail(c *echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	_, role, ok := principalFromContext(c)
 	if !ok || !isStaff(role) {
 		v, err := s.videoVisibleForRead(c, videoID)
@@ -758,7 +758,7 @@ func feedItemView(it video.FeedItem) videoView {
 // filter-controls contract). Each item carries its view count and whether a
 // poster image exists. Pagination via ?limit (1–100, default 20) and ?offset
 // (>=0).
-func (s *Server) handleListPublicVideos(c echo.Context) error {
+func (s *Server) handleListPublicVideos(c *echo.Context) error {
 	sort := video.NormalizeFeedSort(c.QueryParam("sort"))
 	scope := video.NormalizeFeedScope(c.QueryParam("scope"))
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
@@ -808,7 +808,7 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 // handleListSubscriptionVideos returns the authenticated user's "subscriptions"
 // feed: public, published videos from the channels they follow, newest first,
 // with discovery-card data. Pagination via ?limit (1–100, default 20) and ?offset.
-func (s *Server) handleListSubscriptionVideos(c echo.Context) error {
+func (s *Server) handleListSubscriptionVideos(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -878,7 +878,7 @@ type videoSearchResponse struct {
 // the default relevance sort with none of the new filters active. Everything
 // else runs on local SQL — on BOTH sides of the healthy/unhealthy line, so the
 // result set does not change with the search service's mood.
-func (s *Server) handleSearchVideos(c echo.Context) error {
+func (s *Server) handleSearchVideos(c *echo.Context) error {
 	q := strings.TrimSpace(c.QueryParam("q"))
 	if q == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "query parameter q is required")
@@ -1063,7 +1063,7 @@ func serviceAnsweredNothingOnPageOne(views []videoView, offset int) bool {
 // published_at (oldest first) or -published_at (newest first, the default and
 // the previous fixed behaviour) — the Latest/Oldest chips the channel page
 // already shows.
-func (s *Server) handleListChannelVideos(c echo.Context) error {
+func (s *Server) handleListChannelVideos(c *echo.Context) error {
 	ctx := c.Request().Context()
 	ch, err := s.channelsvc.GetByHandle(ctx, c.Param("handle"))
 	if err != nil {
@@ -1197,7 +1197,7 @@ func (r updateVideoRequest) Validate() []FieldError {
 
 // handleUpdateVideo updates a video owned by the authenticated user. A
 // moderator/admin may manage any local video.
-func (s *Server) handleUpdateVideo(c echo.Context) error {
+func (s *Server) handleUpdateVideo(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -1226,7 +1226,7 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 // post-write purge. The bulk path calls THIS, never a parallel copy, so every
 // side effect of a single edit still fires per item. Errors come back already
 // mapped to their HTTP form (videoError / ValidationError).
-func (s *Server) applyVideoUpdate(c echo.Context, userID uuid.UUID, role string, id uuid.UUID, in updateVideoRequest) (sqlcgen.Video, error) {
+func (s *Server) applyVideoUpdate(c *echo.Context, userID uuid.UUID, role string, id uuid.UUID, in updateVideoRequest) (sqlcgen.Video, error) {
 	// Staff (admin/moderator) manage any local video via the moderation escape;
 	// an editor collaborator (migration 0097) manages their channel's videos.
 	// managedOther gates the moderation audit — it stays staff-only, so an
@@ -1398,7 +1398,7 @@ func updateVideoFieldNames(in updateVideoRequest) []string {
 // handleDeleteVideo deletes a video owned by the authenticated user. A
 // moderator/admin may delete any local video; the audit actor remains the
 // authenticated caller, never the video's owner.
-func (s *Server) handleDeleteVideo(c echo.Context) error {
+func (s *Server) handleDeleteVideo(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -1418,7 +1418,7 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 // the edge-purge snapshot, DeleteForActor (whose onDelete hooks drive the
 // federation Delete, search outbox and storage cleanup), the audit row and the
 // post-delete purge. Errors come back already mapped to their HTTP form.
-func (s *Server) applyVideoDelete(c echo.Context, userID uuid.UUID, role string, id uuid.UUID) error {
+func (s *Server) applyVideoDelete(c *echo.Context, userID uuid.UUID, role string, id uuid.UUID) error {
 	// Staff delete any local video (moderation escape); an editor collaborator
 	// (migration 0097) deletes their channel's videos.
 	ctx := c.Request().Context()
@@ -1480,7 +1480,7 @@ type uploadVideoFileResponse struct {
 // storage quota applies to the caller, an upload that would not fit is refused
 // up front with 422 quota_exceeded — the multipart part is already buffered by
 // the form parse, so its size is authoritative (not a client-declared header).
-func (s *Server) handleUploadVideoFile(c echo.Context) error {
+func (s *Server) handleUploadVideoFile(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -1557,7 +1557,7 @@ type thumbnailFrameRequest struct {
 // server-side (frame-pick); otherwise a multipart form field "file" stores a
 // creator-supplied image, replacing any previous or auto-generated thumbnail (a
 // non-image extension → 415). The 8M global body limit bounds the upload.
-func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
+func (s *Server) handleSetVideoThumbnail(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -1613,7 +1613,7 @@ func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
 // and stores it as the poster. A missing/malformed body → 400; not owner/unknown
 // → 404; no processed original yet → 409; at_seconds outside [0, duration) → 422;
 // no server-side frame extractor → 503.
-func (s *Server) setThumbnailFromFrame(c echo.Context, userID, id uuid.UUID) error {
+func (s *Server) setThumbnailFromFrame(c *echo.Context, userID, id uuid.UUID) error {
 	var in thumbnailFrameRequest
 	if err := c.Bind(&in); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "malformed or invalid request body")
@@ -1634,7 +1634,7 @@ func (s *Server) setThumbnailFromFrame(c echo.Context, userID, id uuid.UUID) err
 // detail exception does not apply, and a video without a stored original is
 // 404. Range requests are honoured for seeking when the backend exposes a
 // filesystem path.
-func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
+func (s *Server) handleStreamVideoOriginal(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -1659,7 +1659,7 @@ func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 
 // handleGetVideoThumbnail serves a video's generated poster image under the
 // ordinary media visibility policy; a video without a stored thumbnail is 404.
-func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
+func (s *Server) handleGetVideoThumbnail(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -1696,7 +1696,7 @@ func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
 // A backend without a path can still return a seekable reader from Open (the
 // S3 backend does — seeks become ranged GETs), which gets the same
 // http.ServeContent treatment; only a plain reader degrades to a full-body 200.
-func (s *Server) serveStoredObjectNamed(c echo.Context, key, contentType, notFoundMsg string) error {
+func (s *Server) serveStoredObjectNamed(c *echo.Context, key, contentType, notFoundMsg string) error {
 	if s.media == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
 	}
@@ -1745,7 +1745,7 @@ func (s *Server) serveStoredObjectNamed(c echo.Context, key, contentType, notFou
 // handleRecordVideoView records a view of a video (deduped per viewer per window
 // when Redis is wired). Behind optionalAuth, it retains ordinary playback
 // visibility. Always 204 on success — whether or not the view was newly counted.
-func (s *Server) handleRecordVideoView(c echo.Context) error {
+func (s *Server) handleRecordVideoView(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -1760,7 +1760,7 @@ func (s *Server) handleRecordVideoView(c echo.Context) error {
 // viewerKey derives a stable, non-identifying key for the viewer: the user id
 // when authenticated, else the client IP. It is hashed so raw IPs/ids are not
 // used as Redis keys (PII minimisation).
-func viewerKey(c echo.Context, viewerID uuid.UUID, authed bool) string {
+func viewerKey(c *echo.Context, viewerID uuid.UUID, authed bool) string {
 	var raw string
 	if authed {
 		raw = "u:" + viewerID.String()
@@ -1775,7 +1775,7 @@ func viewerKey(c echo.Context, viewerID uuid.UUID, authed bool) string {
 // this caller. A blocked video is hidden from everyone except moderators/admins
 // (who may still view it, e.g. to confirm before unblocking). When no moderation
 // service is wired (some tests), nothing is blocked.
-func (s *Server) videoHiddenByBlock(c echo.Context, videoID uuid.UUID) (bool, error) {
+func (s *Server) videoHiddenByBlock(c *echo.Context, videoID uuid.UUID) (bool, error) {
 	if s.moderationsvc == nil {
 		return false, nil
 	}
@@ -1792,7 +1792,7 @@ func (s *Server) videoHiddenByBlock(c echo.Context, videoID uuid.UUID) (bool, er
 
 // quarantineHidesVideo reports whether a quarantined video is hidden from this
 // caller. Owners and moderation staff may inspect it.
-func quarantineHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
+func quarantineHidesVideo(c *echo.Context, state string, ownerID uuid.UUID) bool {
 	if state != "quarantined" {
 		return false
 	}
@@ -1802,7 +1802,7 @@ func quarantineHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool 
 
 // scheduledHidesVideo keeps a scheduled video private until the publish
 // sweeper flips it to published. Its owner may preview it meanwhile.
-func scheduledHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
+func scheduledHidesVideo(c *echo.Context, state string, ownerID uuid.UUID) bool {
 	if state != "scheduled" {
 		return false
 	}
@@ -1814,7 +1814,7 @@ func scheduledHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
 // surfaces until its transcode completes and the release path publishes it.
 // Owners and moderation staff may inspect it meanwhile (like quarantine — NOT
 // scheduled's owner-only rule).
-func transcodingHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
+func transcodingHidesVideo(c *echo.Context, state string, ownerID uuid.UUID) bool {
 	if state != "transcoding" {
 		return false
 	}
@@ -1828,7 +1828,7 @@ func transcodingHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool
 // scheduled → owner. GET /videos/{id} layers its metadata-only manager exception
 // separately. On any failure this returns an *echo.HTTPError; otherwise it
 // returns the joined video row.
-func (s *Server) videoVisibleForRead(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+func (s *Server) videoVisibleForRead(c *echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	v, err := s.videoReadBase(c, videoID)
 	if err != nil {
 		return sqlcgen.GetVideoByIDRow{}, err
@@ -1847,7 +1847,7 @@ func (s *Server) videoVisibleForRead(c echo.Context, videoID uuid.UUID) (sqlcgen
 // visibility. Draft/processing/failed public rows may remain readable as
 // metadata for compatibility, but their stored bytes must never be public by
 // UUID. Owners and moderation staff may inspect non-published media.
-func (s *Server) videoVisibleForMedia(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+func (s *Server) videoVisibleForMedia(c *echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	v, err := s.videoVisibleForRead(c, videoID)
 	if err != nil {
 		return sqlcgen.GetVideoByIDRow{}, err
@@ -1868,7 +1868,7 @@ func (s *Server) videoVisibleForMedia(c echo.Context, videoID uuid.UUID) (sqlcge
 // scheduled → owner) WITHOUT the password gate. GET /embed-privacy uses it so the
 // embed page can read a password video's embed policy pre-unlock; every other
 // read path wraps it via videoVisibleForRead (which adds the password gate).
-func (s *Server) videoReadBase(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+func (s *Server) videoReadBase(c *echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	v, err := s.videosvc.GetByID(c.Request().Context(), videoID)
 	if err != nil {
 		if errors.Is(err, video.ErrNotFound) {
@@ -1924,7 +1924,7 @@ func (s *Server) videoReadBase(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVi
 // metadata by the compatibility rule videoVisibleForMedia documents, and the
 // detail route answers 200 for them too. The two routes must agree, which is the
 // whole point of the fix.
-func rejectedHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
+func rejectedHidesVideo(c *echo.Context, state string, ownerID uuid.UUID) bool {
 	if state != "failed" {
 		return false
 	}
@@ -1948,7 +1948,7 @@ func (r blockVideoRequest) Validate() []FieldError {
 // handleBlockVideo blocks a video so it disappears from public surfaces. Behind
 // requireRole(admin, moderator). An unknown video is 404. Idempotent. Emits an
 // audit event.
-func (s *Server) handleBlockVideo(c echo.Context) error {
+func (s *Server) handleBlockVideo(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -2023,7 +2023,7 @@ func (s *Server) handleBlockVideo(c echo.Context) error {
 // handleUnblockVideo lifts a video's block. Behind requireRole(admin, moderator).
 // Idempotent (unblocking a video that is not blocked still succeeds). Emits an
 // audit event.
-func (s *Server) handleUnblockVideo(c echo.Context) error {
+func (s *Server) handleUnblockVideo(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -2146,7 +2146,7 @@ type blockedVideoListResponse struct {
 // handleListBlockedVideos returns currently-blocked videos (newest block first)
 // for the moderation block-list. Behind requireRole(admin, moderator).
 // Pagination via ?limit (1–100, default 20) and ?offset.
-func (s *Server) handleListBlockedVideos(c echo.Context) error {
+func (s *Server) handleListBlockedVideos(c *echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.moderationsvc.ListBlocked(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {

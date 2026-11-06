@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/video"
@@ -162,7 +162,7 @@ type activeUploadsResponse struct {
 // query narrows the list to sessions whose file_fingerprint matches, so a client
 // can ask "am I already uploading this exact file?". Auth required; only the
 // caller's own sessions are ever returned.
-func (s *Server) handleListMyUploads(c echo.Context) error {
+func (s *Server) handleListMyUploads(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -195,7 +195,7 @@ func (s *Server) handleListMyUploads(c echo.Context) error {
 // 415, a size beyond UPLOAD_MAX_SIZE is 413, and a size that would exceed the
 // caller's storage quota is 422 quota_exceeded. Returns the upload id, the fixed
 // chunk size to send, and the 24h expiry.
-func (s *Server) handleCreateUploadSession(c echo.Context) error {
+func (s *Server) handleCreateUploadSession(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -262,7 +262,7 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 // status. Non-owner/unknown session → 404; a session that already
 // completed/cancelled → 409; an out-of-range index or wrong-sized chunk → 422; a
 // chunk larger than its slot → 413.
-func (s *Server) handlePutUploadChunk(c echo.Context) error {
+func (s *Server) handlePutUploadChunk(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -286,7 +286,7 @@ func (s *Server) handlePutUploadChunk(c echo.Context) error {
 // state — the resume contract a client reads to know which chunks to (re)send
 // before completing, and the poll it reads after. Owner only;
 // non-owner/unknown → 404.
-func (s *Server) handleGetUploadSession(c echo.Context) error {
+func (s *Server) handleGetUploadSession(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -323,7 +323,7 @@ func (s *Server) handleGetUploadSession(c echo.Context) error {
 // is queued/processing it answers 202 with the current state without queueing a
 // second run, and on a session that already finished it answers 200 with the
 // terminal state.
-func (s *Server) handleCompleteUploadSession(c echo.Context) error {
+func (s *Server) handleCompleteUploadSession(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -418,7 +418,7 @@ func (s *Server) handleCompleteUploadSession(c echo.Context) error {
 // reporting "cancelled" would be a lie — and dropping the chunk blobs under a
 // running assembly would corrupt it. Cancel before completing, or delete the
 // video afterwards.
-func (s *Server) handleCancelUploadSession(c echo.Context) error {
+func (s *Server) handleCancelUploadSession(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

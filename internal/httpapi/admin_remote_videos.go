@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -20,7 +20,7 @@ import (
 
 // handleReportRemoteVideo files a report against an ingested remote video.
 // Behind requireAuth. An unknown remote video is 404. Idempotent.
-func (s *Server) handleReportRemoteVideo(c echo.Context) error {
+func (s *Server) handleReportRemoteVideo(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -47,7 +47,7 @@ func (s *Server) handleReportRemoteVideo(c echo.Context) error {
 // handleBlockRemoteVideo hides a remote video from all local surfaces. Behind
 // requireRole(admin, moderator). An unknown remote video is 404. Idempotent.
 // Emits an audit event.
-func (s *Server) handleBlockRemoteVideo(c echo.Context) error {
+func (s *Server) handleBlockRemoteVideo(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -73,7 +73,7 @@ func (s *Server) handleBlockRemoteVideo(c echo.Context) error {
 
 // handleUnblockRemoteVideo lifts a remote video's block. Behind
 // requireRole(admin, moderator). Idempotent. Emits an audit event.
-func (s *Server) handleUnblockRemoteVideo(c echo.Context) error {
+func (s *Server) handleUnblockRemoteVideo(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -112,7 +112,7 @@ type blockedRemoteVideoListResponse struct {
 // handleListBlockedRemoteVideos returns currently-blocked remote videos
 // (newest block first). Behind requireRole(admin, moderator). Pagination via
 // ?limit (1–100, default 20) and ?offset.
-func (s *Server) handleListBlockedRemoteVideos(c echo.Context) error {
+func (s *Server) handleListBlockedRemoteVideos(c *echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.moderationsvc.ListBlockedRemote(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {

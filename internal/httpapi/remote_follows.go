@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/federation"
 )
@@ -85,7 +85,7 @@ func (r createRemoteFollowRequest) target() string {
 // sending a second Follow. Resolution failures (bad handle, unresolvable
 // WebFinger/actor, a local target) are 422; when federation is disabled on
 // this instance the endpoint is 503 (no outbound fetches are made).
-func (s *Server) handleCreateRemoteFollow(c echo.Context) error {
+func (s *Server) handleCreateRemoteFollow(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -118,7 +118,7 @@ func (s *Server) handleCreateRemoteFollow(c echo.Context) error {
 // handleListRemoteFollows returns the caller's remote-channel follows, newest
 // first, with the followed actor's identity and follow state. Behind
 // requireAuth. Pagination via ?limit (1–100, default 20)/?offset.
-func (s *Server) handleListRemoteFollows(c echo.Context) error {
+func (s *Server) handleListRemoteFollows(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -139,7 +139,7 @@ func (s *Server) handleListRemoteFollows(c echo.Context) error {
 // row is deleted immediately (local intent wins) and a signed Undo{Follow} is
 // queued to the remote inbox. Behind requireAuth. Unknown — or another user's —
 // id is 404.
-func (s *Server) handleDeleteRemoteFollow(c echo.Context) error {
+func (s *Server) handleDeleteRemoteFollow(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

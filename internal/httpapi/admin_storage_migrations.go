@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/storagemigration"
@@ -138,7 +138,7 @@ func (s *Server) storageMigrationControlError(err error) error {
 // operator-driven environment change precisely because it is the step that
 // cannot be undone by cancelling a job — see docs/operations.md, "Moving the
 // media store".
-func (s *Server) handleAdminStartStorageMigration(c echo.Context) error {
+func (s *Server) handleAdminStartStorageMigration(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -177,7 +177,7 @@ func (s *Server) handleAdminStartStorageMigration(c echo.Context) error {
 // previewStorageMigration answers what a campaign WOULD copy. 200, not 201: it
 // creates nothing, so there is nothing to point a Location at and nothing to
 // cancel if the operator decides against it.
-func (s *Server) previewStorageMigration(c echo.Context, userID uuid.UUID) error {
+func (s *Server) previewStorageMigration(c *echo.Context, userID uuid.UUID) error {
 	pv, err := s.storagemigrationsvc.Preview(c.Request().Context())
 	switch {
 	case errors.Is(err, storagemigration.ErrNoTarget),
@@ -201,7 +201,7 @@ func (s *Server) previewStorageMigration(c echo.Context, userID uuid.UUID) error
 // handleAdminPauseStorageMigration parks a live campaign at an operator's
 // request. Nothing is undone and nothing is deleted: the copy worker stops
 // claiming objects and the ledger stands exactly where it is.
-func (s *Server) handleAdminPauseStorageMigration(c echo.Context) error {
+func (s *Server) handleAdminPauseStorageMigration(c *echo.Context) error {
 	return s.storageMigrationControl(c, observability.ActionStorageMigrationPause,
 		func(ctx context.Context, id uuid.UUID) (storagemigration.Campaign, string, error) {
 			camp, err := s.storagemigrationsvc.Pause(ctx, id, storagemigration.PauseReasonOperator)
@@ -211,7 +211,7 @@ func (s *Server) handleAdminPauseStorageMigration(c echo.Context) error {
 
 // handleAdminResumeStorageMigration puts a paused campaign back in the phase it
 // came out of.
-func (s *Server) handleAdminResumeStorageMigration(c echo.Context) error {
+func (s *Server) handleAdminResumeStorageMigration(c *echo.Context) error {
 	return s.storageMigrationControl(c, observability.ActionStorageMigrationResume,
 		func(ctx context.Context, id uuid.UUID) (storagemigration.Campaign, string, error) {
 			camp, err := s.storagemigrationsvc.Resume(ctx, id)
@@ -221,7 +221,7 @@ func (s *Server) handleAdminResumeStorageMigration(c echo.Context) error {
 
 // handleAdminAbortStorageMigration cancels a campaign and, when asked with the
 // typed confirmation, removes the partial copies it wrote to the destination.
-func (s *Server) handleAdminAbortStorageMigration(c echo.Context) error {
+func (s *Server) handleAdminAbortStorageMigration(c *echo.Context) error {
 	var in abortStorageMigrationRequest
 	_ = c.Bind(&in)
 	if in.CleanDestination && in.Confirm != purgeConfirmation {
@@ -242,7 +242,7 @@ func (s *Server) handleAdminAbortStorageMigration(c echo.Context) error {
 // performed in the environment, instead of waiting up to a minute for the
 // leader sweep to notice it — and says exactly why not when the swap has not
 // taken effect in this process.
-func (s *Server) handleAdminSwitchStorageMigration(c echo.Context) error {
+func (s *Server) handleAdminSwitchStorageMigration(c *echo.Context) error {
 	return s.storageMigrationControl(c, observability.ActionStorageMigrationSwitch,
 		func(ctx context.Context, id uuid.UUID) (storagemigration.Campaign, string, error) {
 			camp, err := s.storagemigrationsvc.Switch(ctx, id)
@@ -252,7 +252,7 @@ func (s *Server) handleAdminSwitchStorageMigration(c echo.Context) error {
 
 // handleAdminReleaseStorageMigrationSource ends the grace window early and opens
 // the delete-source phase. This is the act that makes a move irreversible.
-func (s *Server) handleAdminReleaseStorageMigrationSource(c echo.Context) error {
+func (s *Server) handleAdminReleaseStorageMigrationSource(c *echo.Context) error {
 	return s.storageMigrationControl(c, observability.ActionStorageMigrationRelease,
 		func(ctx context.Context, id uuid.UUID) (storagemigration.Campaign, string, error) {
 			camp, err := s.storagemigrationsvc.Release(ctx, id)
@@ -265,7 +265,7 @@ func (s *Server) handleAdminReleaseStorageMigrationSource(c echo.Context) error 
 // stands afterwards. Written once so a new control cannot arrive without an
 // audit row, which is how one of them would eventually.
 func (s *Server) storageMigrationControl(
-	c echo.Context,
+	c *echo.Context,
 	action string,
 	do func(ctx context.Context, id uuid.UUID) (storagemigration.Campaign, string, error),
 ) error {
@@ -315,7 +315,7 @@ func storageMigrationRefusal(err error) string {
 // keys, so they are inert until some future campaign re-verifies them, and
 // deleting them would be a destructive action taken on the way OUT of a
 // destructive operation.
-func (s *Server) handleAdminCancelStorageMigration(c echo.Context) error {
+func (s *Server) handleAdminCancelStorageMigration(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -337,7 +337,7 @@ func (s *Server) handleAdminCancelStorageMigration(c echo.Context) error {
 }
 
 // handleAdminListStorageMigrations returns the campaign history, newest first.
-func (s *Server) handleAdminListStorageMigrations(c echo.Context) error {
+func (s *Server) handleAdminListStorageMigrations(c *echo.Context) error {
 	camps, err := s.storagemigrationsvc.List(c.Request().Context(), 50)
 	if err != nil {
 		return err
@@ -351,7 +351,7 @@ func (s *Server) handleAdminListStorageMigrations(c echo.Context) error {
 
 // handleAdminGetStorageMigration returns one campaign with its per-state object
 // breakdown — the numbers that say whether it is safe to cut over yet.
-func (s *Server) handleAdminGetStorageMigration(c echo.Context) error {
+func (s *Server) handleAdminGetStorageMigration(c *echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid storage migration id")

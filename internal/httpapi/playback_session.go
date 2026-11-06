@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/playback"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -114,7 +114,7 @@ type playbackSessionResponse struct {
 // transcoding is not wired at all), and progressive /original playback still
 // works. A 404 here would be indistinguishable from "no such video" and would
 // break the progressive path.
-func (s *Server) handleCreatePlaybackSession(c echo.Context) error {
+func (s *Server) handleCreatePlaybackSession(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err

@@ -17,7 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -212,7 +212,7 @@ func quietContractServer(t *testing.T) *Server {
 	t.Helper()
 	opts := append(fullRouteOptions(), WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 	srv := New(testConfig(), nil, nil, opts...)
-	srv.echo.Logger.SetOutput(io.Discard)
+	srv.echo.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	return srv
 }
 

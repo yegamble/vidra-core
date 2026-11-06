@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/instancedocs"
@@ -364,7 +364,7 @@ type instanceResponse struct {
 // The one exception is the owner_claim_pending probe, which hits the DB only
 // until it settles false (see ownerClaimPending) — i.e. only on a first-run
 // instance that has no traffic yet.
-func (s *Server) handleInstance(c echo.Context) error {
+func (s *Server) handleInstance(c *echo.Context) error {
 	body, err := json.Marshal(s.instanceDocument(c.Request().Context()))
 	if err != nil {
 		return err
@@ -703,7 +703,7 @@ func (s *Server) hideSensitiveVideos() bool {
 // (0100): a signed-in caller's non-NULL per-user override wins, else the instance
 // policy. An anonymous request (optionalAuth with no token) resolves to the
 // instance policy, so its behaviour is unchanged.
-func (s *Server) effectiveSensitivePolicy(c echo.Context) string {
+func (s *Server) effectiveSensitivePolicy(c *echo.Context) string {
 	if userID, _, ok := principalFromContext(c); ok {
 		return s.sensitivePolicyForUser(c.Request().Context(), userID)
 	}
@@ -734,7 +734,7 @@ func (s *Server) sensitivePolicyForUser(ctx context.Context, userID uuid.UUID) s
 // applied: sensitive videos are excluded only under the server-enforced "hide"
 // policy (warn/blur/display stay presentation-only). Used by the per-viewer
 // browse/search surfaces (all optionalAuth).
-func (s *Server) effectiveHideSensitive(c echo.Context) bool {
+func (s *Server) effectiveHideSensitive(c *echo.Context) bool {
 	return s.effectiveSensitivePolicy(c) == instancesettings.SensitiveContentPolicyHide
 }
 
@@ -754,7 +754,7 @@ func (v viewerSensitivity) hides(isSensitive bool, flags []string) bool {
 // viewerSensitivity resolves the settings for THIS request. If the viewer's
 // overrides cannot be read it fails CLOSED (every flag hides), like
 // sensitivePolicyForUser.
-func (s *Server) viewerSensitivity(c echo.Context) viewerSensitivity {
+func (s *Server) viewerSensitivity(c *echo.Context) viewerSensitivity {
 	v := viewerSensitivity{base: s.effectiveSensitivePolicy(c)}
 	if userID, _, ok := principalFromContext(c); ok && s.viewerprefssvc != nil {
 		p, err := s.viewerprefssvc.Get(c.Request().Context(), userID)

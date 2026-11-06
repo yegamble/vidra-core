@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -62,7 +62,7 @@ func (r claimOwnerRequest) Validate() []FieldError {
 // credential — constant-time compared and single-winner at the database in
 // the auth service. Wrong/redeemed/absent tokens all answer the same 403
 // owner_claim_invalid, so the endpoint reveals nothing about claim state.
-func (s *Server) handleClaimOwner(c echo.Context) error {
+func (s *Server) handleClaimOwner(c *echo.Context) error {
 	var in claimOwnerRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err

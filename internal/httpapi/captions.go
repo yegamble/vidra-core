@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -38,7 +38,7 @@ type captionListResponse struct {
 // handleUploadCaption stores a WebVTT caption track for a video owned by the
 // authenticated user (multipart: "file" + "language" [+ "label"]). Owner-only; a
 // non-owner/unknown video is 404, a bad language or non-WebVTT file is 422.
-func (s *Server) handleUploadCaption(c echo.Context) error {
+func (s *Server) handleUploadCaption(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -90,7 +90,7 @@ func (s *Server) handleUploadCaption(c echo.Context) error {
 // captionVideoID shares the media visibility gate. Captions are playback assets,
 // so an unlisted link or an owner's private video must retain its tracks; the
 // public-interaction gate used by comments intentionally has narrower semantics.
-func (s *Server) captionVideoID(c echo.Context) (uuid.UUID, error) {
+func (s *Server) captionVideoID(c *echo.Context) (uuid.UUID, error) {
 	id, _, err := s.captionVideo(c)
 	return id, err
 }
@@ -98,7 +98,7 @@ func (s *Server) captionVideoID(c echo.Context) (uuid.UUID, error) {
 // captionVideo is captionVideoID plus the row the visibility decision was made
 // on, so a caption byte response can carry the same public-media assertion every
 // other media route derives from its own gate (never a second lookup).
-func (s *Server) captionVideo(c echo.Context) (uuid.UUID, sqlcgen.GetVideoByIDRow, error) {
+func (s *Server) captionVideo(c *echo.Context) (uuid.UUID, sqlcgen.GetVideoByIDRow, error) {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return uuid.UUID{}, sqlcgen.GetVideoByIDRow{}, err
@@ -108,7 +108,7 @@ func (s *Server) captionVideo(c echo.Context) (uuid.UUID, sqlcgen.GetVideoByIDRo
 }
 
 // handleListCaptions lists tracks under the same visibility gate as playback.
-func (s *Server) handleListCaptions(c echo.Context) error {
+func (s *Server) handleListCaptions(c *echo.Context) error {
 	videoID, err := s.captionVideoID(c)
 	if err != nil {
 		return err
@@ -126,7 +126,7 @@ func (s *Server) handleListCaptions(c echo.Context) error {
 
 // handleDownloadCaption serves a WebVTT track under the playback visibility
 // gate. An unknown language is 404.
-func (s *Server) handleDownloadCaption(c echo.Context) error {
+func (s *Server) handleDownloadCaption(c *echo.Context) error {
 	videoID, v, err := s.captionVideo(c)
 	if err != nil {
 		return err
@@ -152,7 +152,7 @@ func (s *Server) handleDownloadCaption(c echo.Context) error {
 
 // handleDeleteCaption removes a caption track from a video owned by the caller.
 // Behind requireAuth. Non-owner/unknown video → 404. Idempotent.
-func (s *Server) handleDeleteCaption(c echo.Context) error {
+func (s *Server) handleDeleteCaption(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

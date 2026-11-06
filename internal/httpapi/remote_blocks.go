@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/federation"
 )
@@ -42,7 +42,7 @@ type remoteBlockListResponse struct {
 
 // handleBlockRemoteActor blocks one remote actor for the caller. Behind
 // requireAuth. Idempotent; a local identity → 422; an unresolvable handle → 422.
-func (s *Server) handleBlockRemoteActor(c echo.Context) error {
+func (s *Server) handleBlockRemoteActor(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -68,7 +68,7 @@ func (s *Server) handleBlockRemoteActor(c echo.Context) error {
 // the stored URL: unblocking must work on exactly what the list showed, so no
 // handle resolution runs on this path (a WebFinger that has since started
 // failing must never strand a viewer with a block they cannot lift).
-func (s *Server) handleUnblockRemoteActor(c echo.Context) error {
+func (s *Server) handleUnblockRemoteActor(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -85,7 +85,7 @@ func (s *Server) handleUnblockRemoteActor(c echo.Context) error {
 
 // handleListRemoteBlocks returns the remote actors the caller has blocked,
 // newest block first. Behind requireAuth.
-func (s *Server) handleListRemoteBlocks(c echo.Context) error {
+func (s *Server) handleListRemoteBlocks(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -109,7 +109,7 @@ func (s *Server) handleListRemoteBlocks(c echo.Context) error {
 
 // resolveRemoteBlockTarget maps the supplied identity to a canonical actor URL,
 // turning the service's typed refusals into the HTTP answers this API uses.
-func (s *Server) resolveRemoteBlockTarget(c echo.Context, identity string) (string, error) {
+func (s *Server) resolveRemoteBlockTarget(c *echo.Context, identity string) (string, error) {
 	if identity == "" {
 		return "", echo.NewHTTPError(http.StatusUnprocessableEntity, `"actor" is required`)
 	}

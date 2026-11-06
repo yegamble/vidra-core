@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/remotevideo"
@@ -15,7 +15,7 @@ import (
 // the origin (which owns the count) as a View signed by the instance actor,
 // once per viewer per window. Behind optionalAuth. Always 204 for a visible
 // video — with federation disabled nothing is sent; unknown or blocked is 404.
-func (s *Server) handleRecordRemoteVideoView(c echo.Context) error {
+func (s *Server) handleRecordRemoteVideoView(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "remote video not found")
 	if err != nil {
 		return err

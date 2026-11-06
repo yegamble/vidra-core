@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -57,7 +57,7 @@ var resetLinkRefusals = []struct {
 // withdraws the token just minted, so it cannot be redeemed unseen. Neither the
 // token nor the link is ever logged or audited; the response body is the only
 // place it exists.
-func (s *Server) handleAdminPasswordResetLink(c echo.Context) error {
+func (s *Server) handleAdminPasswordResetLink(c *echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

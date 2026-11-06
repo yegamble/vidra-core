@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -115,7 +115,7 @@ func wordListError(err error) error {
 	return err
 }
 
-func (s *Server) listWordLists(c echo.Context, owner uuid.UUID) error {
+func (s *Server) listWordLists(c *echo.Context, owner uuid.UUID) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.watchwordsvc.ListLists(c.Request().Context(), owner, page.Limit32(), page.Offset32())
 	if err != nil {
@@ -128,7 +128,7 @@ func (s *Server) listWordLists(c echo.Context, owner uuid.UUID) error {
 	return c.JSON(http.StatusOK, watchedWordListsPage{Lists: views, pageMeta: page.meta(total)})
 }
 
-func (s *Server) getWordList(c echo.Context, owner uuid.UUID) error {
+func (s *Server) getWordList(c *echo.Context, owner uuid.UUID) error {
 	id, err := pathUUID(c, "id", "watched-word list not found")
 	if err != nil {
 		return err
@@ -140,7 +140,7 @@ func (s *Server) getWordList(c echo.Context, owner uuid.UUID) error {
 	return c.JSON(http.StatusOK, newWatchedWordListView(l))
 }
 
-func (s *Server) createWordList(c echo.Context, owner uuid.UUID) error {
+func (s *Server) createWordList(c *echo.Context, owner uuid.UUID) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -159,7 +159,7 @@ func (s *Server) createWordList(c echo.Context, owner uuid.UUID) error {
 	return c.JSON(http.StatusCreated, newWatchedWordListView(l))
 }
 
-func (s *Server) updateWordList(c echo.Context, owner uuid.UUID) error {
+func (s *Server) updateWordList(c *echo.Context, owner uuid.UUID) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -186,7 +186,7 @@ func (s *Server) updateWordList(c echo.Context, owner uuid.UUID) error {
 	return c.JSON(http.StatusOK, newWatchedWordListView(l))
 }
 
-func (s *Server) deleteWordList(c echo.Context, owner uuid.UUID) error {
+func (s *Server) deleteWordList(c *echo.Context, owner uuid.UUID) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -204,7 +204,7 @@ func (s *Server) deleteWordList(c echo.Context, owner uuid.UUID) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-func (s *Server) auditWordList(c echo.Context, action string, actor, listID uuid.UUID) {
+func (s *Server) auditWordList(c *echo.Context, action string, actor, listID uuid.UUID) {
 	s.auditEvent(c, audit.Event{
 		Action: action, Result: observability.ResultSuccess,
 		ActorID: actor.String(), ResourceType: "watched_word_list", ResourceID: listID.String(),
@@ -212,48 +212,48 @@ func (s *Server) auditWordList(c echo.Context, action string, actor, listID uuid
 }
 
 // Instance scope (requireRole admin|moderator at the route).
-func (s *Server) handleAdminListWordLists(c echo.Context) error { return s.listWordLists(c, uuid.Nil) }
-func (s *Server) handleAdminGetWordList(c echo.Context) error   { return s.getWordList(c, uuid.Nil) }
-func (s *Server) handleAdminCreateWordList(c echo.Context) error {
+func (s *Server) handleAdminListWordLists(c *echo.Context) error { return s.listWordLists(c, uuid.Nil) }
+func (s *Server) handleAdminGetWordList(c *echo.Context) error   { return s.getWordList(c, uuid.Nil) }
+func (s *Server) handleAdminCreateWordList(c *echo.Context) error {
 	return s.createWordList(c, uuid.Nil)
 }
-func (s *Server) handleAdminUpdateWordList(c echo.Context) error {
+func (s *Server) handleAdminUpdateWordList(c *echo.Context) error {
 	return s.updateWordList(c, uuid.Nil)
 }
-func (s *Server) handleAdminDeleteWordList(c echo.Context) error {
+func (s *Server) handleAdminDeleteWordList(c *echo.Context) error {
 	return s.deleteWordList(c, uuid.Nil)
 }
 
 // Account scope: the owner is always the authenticated caller.
-func (s *Server) handleMyListWordLists(c echo.Context) error {
+func (s *Server) handleMyListWordLists(c *echo.Context) error {
 	uid, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
 	}
 	return s.listWordLists(c, uid)
 }
-func (s *Server) handleMyGetWordList(c echo.Context) error {
+func (s *Server) handleMyGetWordList(c *echo.Context) error {
 	uid, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
 	}
 	return s.getWordList(c, uid)
 }
-func (s *Server) handleMyCreateWordList(c echo.Context) error {
+func (s *Server) handleMyCreateWordList(c *echo.Context) error {
 	uid, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
 	}
 	return s.createWordList(c, uid)
 }
-func (s *Server) handleMyUpdateWordList(c echo.Context) error {
+func (s *Server) handleMyUpdateWordList(c *echo.Context) error {
 	uid, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
 	}
 	return s.updateWordList(c, uid)
 }
-func (s *Server) handleMyDeleteWordList(c echo.Context) error {
+func (s *Server) handleMyDeleteWordList(c *echo.Context) error {
 	uid, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

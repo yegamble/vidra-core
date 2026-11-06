@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -32,7 +32,7 @@ func (r runVideoTranscodingRequest) Validate() []FieldError {
 // The source key is resolved from video_files.kind='original' on the server;
 // clients cannot submit a derivative key, so repeated runs never transcode an
 // already-transcoded file and therefore cannot accumulate generation loss.
-func (s *Server) handleRunVideoTranscoding(c echo.Context) error {
+func (s *Server) handleRunVideoTranscoding(c *echo.Context) error {
 	actorID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -157,7 +157,7 @@ type adminVideoListResponse struct {
 //
 // An unrecognised value for any of these is a 400 rather than a silent
 // no-op — see parseEnumParam.
-func (s *Server) handleListAdminVideos(c echo.Context) error {
+func (s *Server) handleListAdminVideos(c *echo.Context) error {
 	filter, err := parseAdminVideoFilter(c)
 	if err != nil {
 		return err
@@ -206,7 +206,7 @@ func (s *Server) handleListAdminVideos(c echo.Context) error {
 //
 // There is deliberately no storage-location filter here; see the comment on
 // adminVideoView.ObjectStorage.
-func parseAdminVideoFilter(c echo.Context) (video.AdminFilter, error) {
+func parseAdminVideoFilter(c *echo.Context) (video.AdminFilter, error) {
 	f := video.AdminFilter{
 		Query:   strings.TrimSpace(c.QueryParam("q")),
 		Channel: strings.TrimSpace(c.QueryParam("channel")),
@@ -271,7 +271,7 @@ type quarantinedVideoListResponse struct {
 // handleListQuarantinedVideos returns quarantined uploads newest first for the
 // moderation review queue (§11). Behind requireRole(admin, moderator).
 // Pagination via ?limit (1–100, default 20) and ?offset.
-func (s *Server) handleListQuarantinedVideos(c echo.Context) error {
+func (s *Server) handleListQuarantinedVideos(c *echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.videosvc.ListQuarantined(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
@@ -298,7 +298,7 @@ func (s *Server) handleListQuarantinedVideos(c echo.Context) error {
 // transcode-enqueue hooks fire at approval time. Behind requireRole(admin,
 // moderator). Unknown id → 404; a video not in quarantine → 409. Emits an
 // audit event.
-func (s *Server) handleApproveQuarantinedVideo(c echo.Context) error {
+func (s *Server) handleApproveQuarantinedVideo(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -344,7 +344,7 @@ func (r rejectQuarantinedVideoRequest) Validate() []FieldError {
 // Unknown id → 404; a video not in quarantine → 409. Emits an audit event with a
 // stable rejection classification; moderator prose remains outside the security
 // ledger and lives in video_rejections instead (0130).
-func (s *Server) handleRejectQuarantinedVideo(c echo.Context) error {
+func (s *Server) handleRejectQuarantinedVideo(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

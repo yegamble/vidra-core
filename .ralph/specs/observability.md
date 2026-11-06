@@ -12,7 +12,7 @@
 > enforcement; no Makefile change was needed). Centralized logger construction
 > (`NewLogger`) + `LOG_LEVEL`/`LOG_FORMAT` config are built too (P17.1).
 > OpenTelemetry **tracing** is built (P17.3): `SetupTracing` (OTLP, no-op when
-> off), `otelecho` HTTP spans, inbound W3C `traceparent`, and `trace_id`/`span_id`
+> off), `echo-otel` HTTP spans, inbound W3C `traceparent`, and `trace_id`/`span_id`
 > in request logs. **Datastore + outbound spans are built** (P17.3): pgx query
 > spans (`store.WithTracing`), Redis command spans (`cache.WithTracing`), and
 > outbound client spans + W3C `traceparent` INJECTION on every SSRF-guarded client
@@ -138,7 +138,7 @@ return to a client:
   docs/operations.md instead. Operators must network-scope it (do not expose it
   publicly). The recording rides the request-logger choke point (final,
   error-handler-resolved status) and is gated by `METRICS_ENABLED`, mirroring how
-  `otelecho` is gated by `OTEL_ENABLED`.
+  `echo-otel` is gated by `OTEL_ENABLED`.
 
 ### Logs ↔ traces
 - When `OTEL_ENABLED`, every slog line emitted within a request must include

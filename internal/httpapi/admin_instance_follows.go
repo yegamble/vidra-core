@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -38,7 +38,7 @@ type instanceFollowListResponse struct {
 var instanceFollowStates = map[string]bool{"": true, "pending": true, "accepted": true, "rejected": true}
 
 // listInstanceFollows serves a page of instance follows from list.
-func (s *Server) listInstanceFollows(c echo.Context, list func(context.Context, string, int32, int32) ([]federation.InstanceFollow, int64, error)) error {
+func (s *Server) listInstanceFollows(c *echo.Context, list func(context.Context, string, int32, int32) ([]federation.InstanceFollow, int64, error)) error {
 	state := c.QueryParam("state")
 	if !instanceFollowStates[state] {
 		return &ValidationError{Fields: []FieldError{{Field: "state", Message: "must be pending, accepted or rejected"}}}
@@ -57,7 +57,7 @@ func (s *Server) listInstanceFollows(c echo.Context, list func(context.Context, 
 }
 
 // handleListInstanceFollowers lists the instances following ours.
-func (s *Server) handleListInstanceFollowers(c echo.Context) error {
+func (s *Server) handleListInstanceFollowers(c *echo.Context) error {
 	return s.listInstanceFollows(c, s.fedsvc.ListInstanceFollowers)
 }
 
@@ -66,7 +66,7 @@ func (s *Server) handleListInstanceFollowers(c echo.Context) error {
 // does not apply to, and one audit row — success or failure — carrying the
 // safe row id only.
 func (s *Server) instanceFollowDecision(do func(context.Context, uuid.UUID) error, action string) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		adminID, _, err := mustPrincipal(c)
 		if err != nil {
 			return err
@@ -88,7 +88,7 @@ func (s *Server) instanceFollowDecision(do func(context.Context, uuid.UUID) erro
 }
 
 // handleListInstanceFollowing lists the instances ours follows.
-func (s *Server) handleListInstanceFollowing(c echo.Context) error {
+func (s *Server) handleListInstanceFollowing(c *echo.Context) error {
 	return s.listInstanceFollows(c, s.fedsvc.ListInstanceFollowing)
 }
 
@@ -101,7 +101,7 @@ type followInstanceRequest struct {
 // actor — PeerTube's POST /server/following. 201 with the follow (pending
 // until the remote Accepts; an existing follow is returned as it is). The
 // host is never echoed back in an error.
-func (s *Server) handleFollowInstance(c echo.Context) error {
+func (s *Server) handleFollowInstance(c *echo.Context) error {
 	adminID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

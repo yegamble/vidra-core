@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -72,7 +72,7 @@ func repinError(err error) error {
 // handleStartIPFSRepin starts the bulk re-pin of already-pinned HLS trees to the
 // playback-only set. The work runs in the leader's mirror worker, bounded and paused
 // by the capacity gates; this only records the request. Admin-only and audited.
-func (s *Server) handleStartIPFSRepin(c echo.Context) error {
+func (s *Server) handleStartIPFSRepin(c *echo.Context) error {
 	p, err := s.ipfsRepin()
 	if err != nil {
 		return err
@@ -91,7 +91,7 @@ func (s *Server) handleStartIPFSRepin(c echo.Context) error {
 }
 
 // handleGetIPFSRepin reports the current or last run.
-func (s *Server) handleGetIPFSRepin(c echo.Context) error {
+func (s *Server) handleGetIPFSRepin(c *echo.Context) error {
 	p, err := s.ipfsRepin()
 	if err != nil {
 		return err
@@ -105,7 +105,7 @@ func (s *Server) handleGetIPFSRepin(c echo.Context) error {
 
 // handleCancelIPFSRepin stops the run from arming further rows. Rows already armed
 // finish through the normal pin path. Works from running and paused. Admin-only, audited.
-func (s *Server) handleCancelIPFSRepin(c echo.Context) error {
+func (s *Server) handleCancelIPFSRepin(c *echo.Context) error {
 	p, err := s.ipfsRepin()
 	if err != nil {
 		return err

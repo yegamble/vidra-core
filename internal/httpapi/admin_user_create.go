@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/audit"
@@ -78,7 +78,7 @@ type adminCreateUserResponse struct {
 // appears in the response. The audit row is checked on BOTH paths, and a failure
 // at any later step deactivates the new account rather than leave a password-less
 // (possibly staff) account that nothing can give a password.
-func (s *Server) handleAdminCreateUser(c echo.Context) error {
+func (s *Server) handleAdminCreateUser(c *echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

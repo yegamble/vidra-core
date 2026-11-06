@@ -32,7 +32,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -88,11 +88,11 @@ func (s *Server) openATProtoState(sealed string) (atprotoStatePayload, bool) {
 
 // setATProtoStateCookie parks the sealed attempt for the round trip to the auth
 // server. Lax: it must still ride the top-level GET back from it.
-func (s *Server) setATProtoStateCookie(c echo.Context, sealed string) {
+func (s *Server) setATProtoStateCookie(c *echo.Context, sealed string) {
 	s.writeStateCookie(c, atprotoStateCookieName, atprotoStateCookiePath, sealed, atprotoStateTTL)
 }
 
-func (s *Server) clearATProtoStateCookie(c echo.Context) {
+func (s *Server) clearATProtoStateCookie(c *echo.Context) {
 	s.clearStateCookie(c, atprotoStateCookieName, atprotoStateCookiePath)
 }
 
@@ -124,7 +124,7 @@ type atprotoLoginStartResponse struct {
 // state into the signed cookie and returns the authorization URL for a top-level
 // navigation. 503 when disabled, 422 for a bad handle/return_to, 502 for
 // resolution/upstream failures.
-func (s *Server) handleATProtoLoginStart(c echo.Context) error {
+func (s *Server) handleATProtoLoginStart(c *echo.Context) error {
 	var in atprotoLoginStartRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
@@ -153,7 +153,7 @@ func (s *Server) handleATProtoLoginStart(c echo.Context) error {
 // violations (missing/forged/expired state, missing code) are 400; user-actionable
 // outcomes (denied, identity mismatch, upstream, conflict, disabled account)
 // redirect with ?oauth_error=<code>.
-func (s *Server) handleATProtoLoginCallback(c echo.Context) error {
+func (s *Server) handleATProtoLoginCallback(c *echo.Context) error {
 	ck, err := c.Cookie(atprotoStateCookieName)
 	if err != nil || ck == nil || ck.Value == "" {
 		s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "atproto_state_missing")
@@ -294,7 +294,7 @@ func (s *Server) handleATProtoLoginCallback(c echo.Context) error {
 
 // finishATProtoLink renders the outcome of an ATProto link attempt with the
 // same codes the OIDC twin uses, so a client renders one vocabulary.
-func (s *Server) finishATProtoLink(c echo.Context, returnTo string, userID uuid.UUID, outcome auth.OAuthOutcome, err error, errorKey string) error {
+func (s *Server) finishATProtoLink(c *echo.Context, returnTo string, userID uuid.UUID, outcome auth.OAuthOutcome, err error, errorKey string) error {
 	if err != nil {
 		code := "link_failed"
 		switch {
@@ -324,7 +324,7 @@ func (s *Server) finishATProtoLink(c echo.Context, returnTo string, userID uuid.
 // it rather than leave every proxy and PDS to guess. 60s is short enough that an
 // admin's flip shows up promptly and long enough that a PDS re-fetching during a
 // login burst does not hit the API once per authorization.
-func (s *Server) handleATProtoClientMetadata(c echo.Context) error {
+func (s *Server) handleATProtoClientMetadata(c *echo.Context) error {
 	c.Response().Header().Set("Cache-Control", "public, max-age=60")
 	return c.JSON(http.StatusOK, s.atprotologinsvc.ClientMetadata())
 }
@@ -332,7 +332,7 @@ func (s *Server) handleATProtoClientMetadata(c echo.Context) error {
 // atprotoLoginSuccessRedirect sends the browser back to the (already validated)
 // return_to path with ?oauth=1 so the SPA knows to fetch its access token,
 // preserving any query the path already carried.
-func atprotoLoginSuccessRedirect(c echo.Context, returnTo string) error {
+func atprotoLoginSuccessRedirect(c *echo.Context, returnTo string) error {
 	u, err := url.Parse(returnTo)
 	if err != nil {
 		u = &url.URL{Path: "/"}

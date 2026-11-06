@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"net/http"
 	"net/http/httptest"
 	"testing"

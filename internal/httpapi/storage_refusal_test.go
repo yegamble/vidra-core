@@ -48,7 +48,7 @@ func TestClassifiedStorageRefusalsAnswer503WithTheirClass(t *testing.T) {
 			}
 			rec := httptest.NewRecorder()
 			c := srv.echo.NewContext(httptest.NewRequest(http.MethodPost, "/api/v1/videos/x/file", nil), rec)
-			srv.echo.HTTPErrorHandler(err, c)
+			srv.echo.HTTPErrorHandler(c, err)
 
 			if rec.Code != http.StatusServiceUnavailable {
 				t.Fatalf("status = %d, want 503; body=%s", rec.Code, rec.Body.String())
@@ -91,8 +91,8 @@ func TestFiveHundredLogLineRedactsTheStorageKey(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	c := srv.echo.NewContext(httptest.NewRequest(http.MethodPost, "/api/v1/videos/x/file", nil), rec)
-	srv.echo.HTTPErrorHandler(fmt.Errorf(`storage: s3: put %q: Access Denied.`,
-		"web-videos/2f1c6a9e-0000-4000-8000-000000000000.mp4"), c)
+	srv.echo.HTTPErrorHandler(c, fmt.Errorf(`storage: s3: put %q: Access Denied.`,
+		"web-videos/2f1c6a9e-0000-4000-8000-000000000000.mp4"))
 
 	line := buf.String()
 	if line == "" {

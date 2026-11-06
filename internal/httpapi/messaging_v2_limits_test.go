@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/ratelimit"
 )
@@ -81,9 +81,9 @@ func invokeAttachLimit(s *Server, e *echo.Echo, id uuid.UUID) (int, string) {
 	c := e.NewContext(req, rec)
 	c.Set(ctxKeyUserID, id)
 	c.Set(ctxKeyRole, "user")
-	h := s.attachmentUploadRateLimit()(func(c echo.Context) error { return c.NoContent(http.StatusCreated) })
+	h := s.attachmentUploadRateLimit()(func(c *echo.Context) error { return c.NoContent(http.StatusCreated) })
 	if err := h(c); err != nil {
-		e.HTTPErrorHandler(err, c)
+		e.HTTPErrorHandler(c, err)
 	}
 	return rec.Code, rec.Header().Get("Retry-After")
 }

@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/drm"
 )
@@ -94,7 +94,7 @@ func (s *Server) drmOrNone() drm.Provider {
 // and the honest degraded answer for "we could not determine protection" is the
 // same as for unprotected media: no drm block, and a player that tries to play
 // it in the clear and fails loudly at the CDM instead of silently at the API.
-func (s *Server) sessionDRM(c echo.Context, videoID, sessionID uuid.UUID) *playbackSessionDRM {
+func (s *Server) sessionDRM(c *echo.Context, videoID, sessionID uuid.UUID) *playbackSessionDRM {
 	ctx := c.Request().Context()
 	provider := s.drmOrNone()
 
@@ -167,7 +167,7 @@ func (r clearKeyLicenseRequest) Validate() []FieldError {
 // no keys. Distinguishing them would tell an unauthorised-but-visible caller
 // whether a given video is DRM-protected, which is not their business, and
 // would tell an attacker which instances to bother probing.
-func (s *Server) handleClearKeyLicense(c echo.Context) error {
+func (s *Server) handleClearKeyLicense(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err

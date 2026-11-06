@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/hlsmanifest"
@@ -82,7 +82,7 @@ const hlsCMAFManifestFile = "stream.mpd"
 // the SAME row the gate used to decide whether these bytes are public — deriving
 // that from a second lookup is how an eligibility fence and an auth check drift
 // apart.
-func (s *Server) hlsPlaylistForView(c echo.Context, id uuid.UUID) (sqlcgen.StreamingPlaylist, sqlcgen.GetVideoByIDRow, error) {
+func (s *Server) hlsPlaylistForView(c *echo.Context, id uuid.UUID) (sqlcgen.StreamingPlaylist, sqlcgen.GetVideoByIDRow, error) {
 	notFound := echo.NewHTTPError(http.StatusNotFound, "video not found")
 	if s.transcodesvc == nil {
 		return sqlcgen.StreamingPlaylist{}, sqlcgen.GetVideoByIDRow{}, notFound
@@ -102,7 +102,7 @@ func (s *Server) hlsPlaylistForView(c echo.Context, id uuid.UUID) (sqlcgen.Strea
 // visibility mirrors the /original endpoint (private → owner only, else 404); a
 // video whose playlist is not ready is 404 — the detail response's hls_url
 // tells clients when one exists.
-func (s *Server) handleGetHLSMaster(c echo.Context) error {
+func (s *Server) handleGetHLSMaster(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -129,7 +129,7 @@ func (s *Server) handleGetHLSMaster(c echo.Context) error {
 // request back to this same route. Same visibility as the master playlist; path
 // parts that do not match the transcoder's fixed naming are 404 (nothing else
 // under the prefix is reachable).
-func (s *Server) handleGetHLSFile(c echo.Context) error {
+func (s *Server) handleGetHLSFile(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -205,7 +205,7 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 // Every response also rewrites relative references with the playlist generation
 // version. That makes variant and segment URLs immutable within a generation;
 // the unversioned compatibility route remains revalidated on every use.
-func (s *Server) serveHLSPlaylist(c echo.Context, key string, sp sqlcgen.StreamingPlaylist, eligible bool) error {
+func (s *Server) serveHLSPlaylist(c *echo.Context, key string, sp sqlcgen.StreamingPlaylist, eligible bool) error {
 	token := c.QueryParam(playbackTokenParam)
 	version := hlsCacheVersion(sp)
 	setHLSCacheControl(c, sp, eligible)
@@ -241,7 +241,7 @@ func (s *Server) serveHLSPlaylist(c echo.Context, key string, sp sqlcgen.Streami
 // Origin-served rather than presign-redirected for the same reason playlists
 // are: a manifest is the thing that decides what a client asks for next, so it
 // stays on the authoritative path.
-func (s *Server) serveCMAFManifest(c echo.Context, key string, sp sqlcgen.StreamingPlaylist, eligible bool) error {
+func (s *Server) serveCMAFManifest(c *echo.Context, key string, sp sqlcgen.StreamingPlaylist, eligible bool) error {
 	setHLSCacheControl(c, sp, eligible)
 	if s.media == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
@@ -261,7 +261,7 @@ func (s *Server) serveCMAFManifest(c echo.Context, key string, sp sqlcgen.Stream
 	return c.Blob(http.StatusOK, contentTypeMPD, data)
 }
 
-func (s *Server) servePeerTubeHLSMaster(c echo.Context, sp sqlcgen.StreamingPlaylist, eligible bool) error {
+func (s *Server) servePeerTubeHLSMaster(c *echo.Context, sp sqlcgen.StreamingPlaylist, eligible bool) error {
 	setHLSCacheControl(c, sp, eligible)
 	if s.media == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
@@ -391,7 +391,7 @@ func hlsCacheVersion(sp sqlcgen.StreamingPlaylist) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-func validateHLSVersion(c echo.Context, sp sqlcgen.StreamingPlaylist) error {
+func validateHLSVersion(c *echo.Context, sp sqlcgen.StreamingPlaylist) error {
 	requested := c.QueryParam(hlsVersionParam)
 	if requested == "" || requested == hlsCacheVersion(sp) {
 		return nil
@@ -418,7 +418,7 @@ func validateHLSVersion(c echo.Context, sp sqlcgen.StreamingPlaylist) error {
 // if a request arrived carrying the edge marker, a playlist must not become a
 // shared cache entry: it is the one URL whose bytes have to change the instant
 // a new transcode generation is promoted.
-func setHLSCacheControl(c echo.Context, sp sqlcgen.StreamingPlaylist, eligible bool) {
+func setHLSCacheControl(c *echo.Context, sp sqlcgen.StreamingPlaylist, eligible bool) {
 	c.Response().Header().Set("Cache-Control", delivery.CacheControl(
 		delivery.ClassHLSPlaylist,
 		hlsVersionMatches(c, sp),
@@ -434,7 +434,7 @@ func setHLSCacheControl(c echo.Context, sp sqlcgen.StreamingPlaylist, eligible b
 
 // hlsVersionMatches reports whether the request carries this playlist
 // generation's version, which is what makes an HLS URL immutable.
-func hlsVersionMatches(c echo.Context, sp sqlcgen.StreamingPlaylist) bool {
+func hlsVersionMatches(c *echo.Context, sp sqlcgen.StreamingPlaylist) bool {
 	return c.QueryParam(hlsVersionParam) == hlsCacheVersion(sp)
 }
 
@@ -498,7 +498,7 @@ type playbackTree struct {
 // the streaming-playlist row it already has in hand for the format rather than
 // making the caller look it up again — a second readiness decision is how a
 // detail response and a session response drift apart.
-func (s *Server) hlsDetail(c echo.Context, id uuid.UUID) (playbackTree, bool) {
+func (s *Server) hlsDetail(c *echo.Context, id uuid.UUID) (playbackTree, bool) {
 	if s.transcodesvc == nil {
 		return playbackTree{}, false
 	}

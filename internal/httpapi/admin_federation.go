@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -55,7 +55,7 @@ type federationFollowerRequestListResponse struct {
 // handleListFederationFollowerRequests returns the pending follower-approval
 // queue, newest first. Behind requireRole(admin). Pagination via ?limit
 // (1–100, default 20) and ?offset.
-func (s *Server) handleListFederationFollowerRequests(c echo.Context) error {
+func (s *Server) handleListFederationFollowerRequests(c *echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.fedsvc.ListFollowerRequests(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
@@ -73,7 +73,7 @@ func (s *Server) handleListFederationFollowerRequests(c echo.Context) error {
 // follower (with the auto follow-back when federation_auto_follow_back is on).
 // Behind requireRole(admin). Unknown/already-resolved id → 404. Emits an audit
 // event (safe row id only).
-func (s *Server) handleApproveFederationFollowerRequest(c echo.Context) error {
+func (s *Server) handleApproveFederationFollowerRequest(c *echo.Context) error {
 	adminID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -96,7 +96,7 @@ func (s *Server) handleApproveFederationFollowerRequest(c echo.Context) error {
 // the pending follow is removed and a Reject activity is delivered to the
 // follower. Behind requireRole(admin). Unknown/already-resolved id → 404.
 // Emits an audit event (safe row id only).
-func (s *Server) handleRejectFederationFollowerRequest(c echo.Context) error {
+func (s *Server) handleRejectFederationFollowerRequest(c *echo.Context) error {
 	adminID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

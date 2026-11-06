@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/moderation"
 )
@@ -46,7 +46,7 @@ type myReportListResponse struct {
 
 // handleListMyReports returns the caller's own reports, most recently active
 // first. Behind requireAuth.
-func (s *Server) handleListMyReports(c echo.Context) error {
+func (s *Server) handleListMyReports(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -65,7 +65,7 @@ func (s *Server) handleListMyReports(c echo.Context) error {
 
 // handleGetMyReport returns one of the caller's own reports; anyone else's
 // (staff included) is the same 404 as an unknown one. Behind requireAuth.
-func (s *Server) handleGetMyReport(c echo.Context) error {
+func (s *Server) handleGetMyReport(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

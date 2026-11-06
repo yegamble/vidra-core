@@ -3,10 +3,9 @@ package httpapi
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/ipfscontrol"
 	"github.com/vidra/vidra-core/internal/jobstatus"
@@ -86,8 +85,8 @@ type ErrorBody struct {
 // (including *echo.HTTPError raised by handlers and middleware) into the
 // consistent ErrorResponse envelope, logs 5xx errors, and never exposes raw
 // internal error text to clients on a 500.
-func (s *Server) httpErrorHandler(err error, c echo.Context) {
-	if c.Response().Committed {
+func (s *Server) httpErrorHandler(c *echo.Context, err error) {
+	if resp, _ := echo.UnwrapResponse(c.Response()); resp != nil && resp.Committed {
 		return
 	}
 
@@ -100,6 +99,9 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var fields []FieldError
 
 	var he *echo.HTTPError
+	// Echo v5's sentinel errors (ErrNotFound from the router, the body limit's
+	// 413, …) are not *echo.HTTPError; they only carry a status code.
+	var sc echo.HTTPStatusCoder
 	var ve *ValidationError
 	var qe *QuotaExceededError
 	var dqe *DailyQuotaExceededError
@@ -347,11 +349,8 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		code = "foreign_media_layout"
 	case errors.As(err, &he):
 		status = he.Code
-		if he.Message != nil {
-			message = fmt.Sprintf("%v", he.Message)
-		}
-		if he.Internal != nil {
-			err = he.Internal
+		if he.Message != "" {
+			message = he.Message
 		}
 		// 501 Not Implemented is a documented, client-safe response (e.g. a
 		// donation network without a signing path). Give it a stable code so
@@ -359,6 +358,9 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		if status == http.StatusNotImplemented {
 			code = "not_implemented"
 		}
+	case errors.As(err, &sc) && sc.StatusCode() != 0:
+		status = sc.StatusCode()
+		message = http.StatusText(status)
 	case errors.Is(err, context.DeadlineExceeded):
 		status = http.StatusServiceUnavailable
 		message = "the request timed out"

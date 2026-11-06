@@ -3,7 +3,7 @@ package httpapi
 import (
 	"io"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/labstack/gommon/bytes"
 )
 
@@ -41,7 +41,7 @@ func (s *Server) peertubeImportBodyLimit() echo.MiddlewareFunc {
 // limitBodyTo is the shared body-limit seam; limit is resolved per request.
 func limitBodyTo(limitFn func() int64) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			limit := limitFn()
 			if limit <= 0 {
 				return next(c)
@@ -81,3 +81,16 @@ func (l *limitedReadCloser) Read(p []byte) (int, error) {
 }
 
 func (l *limitedReadCloser) Close() error { return l.r.Close() }
+
+// httpBodyLimitBytes converts HTTP_BODY_LIMIT ("2M") to bytes for echo v5's
+// BodyLimitConfig. Config validation rejects an unparsable value at boot; the
+// fallback only covers a zero Config built in tests.
+func httpBodyLimitBytes(limit string) int64 {
+	n, err := bytes.Parse(limit)
+	if err != nil || n <= 0 {
+		return defaultHTTPBodyLimitBytes
+	}
+	return n
+}
+
+const defaultHTTPBodyLimitBytes = 8 << 20 // config default HTTP_BODY_LIMIT=8M

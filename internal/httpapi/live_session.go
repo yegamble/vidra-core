@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/media"
@@ -52,7 +52,7 @@ import (
 // than an oversight. A VOD session with no ready tree is a 200 with no manifest
 // because progressive playback still works; a live stream that is not live has
 // nothing to play by any route, and a 200 would advertise an hls_url that 404s.
-func (s *Server) handleCreateLivePlaybackSession(c echo.Context) error {
+func (s *Server) handleCreateLivePlaybackSession(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "live stream not found")
 	if err != nil {
 		return err

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // searchSubjectDomainSeparation binds the anonymous search-subject key to this
@@ -52,7 +52,7 @@ const searchSubjectDomainSeparation = "vidra/search-anon-subject/v1"
 // or logged; only the day-scoped pseudonym leaves this function, and
 // "subject_id" is on the observability sensitive-key denylist so it cannot be
 // used as a structured-log key either.
-func (s *Server) unattributedSearchSubject(c echo.Context) string {
+func (s *Server) unattributedSearchSubject(c *echo.Context) string {
 	// No address to derive from (an unusual transport, a malformed RemoteAddr) is
 	// no subject, not a digest of the empty string — otherwise every such request
 	// would silently share one subject, which is the wrong kind of collapse.

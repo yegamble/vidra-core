@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -23,7 +23,7 @@ type limitRule struct {
 	// was wired (an embedder that never configured this budget) or the request
 	// carries no principal for a per-user budget. Both are deliberate
 	// passthroughs, not denials.
-	resolve func(c echo.Context) (limiter *ratelimit.Limiter, key string, ok bool)
+	resolve func(c *echo.Context) (limiter *ratelimit.Limiter, key string, ok bool)
 	// unavailable is the warning logged when the backing store errors and the
 	// request is let through. One line per budget so the log says which one.
 	unavailable string
@@ -36,7 +36,7 @@ type limitRule struct {
 	auditReason string
 	// auditActor supplies the actor id for that event ("" for IP-keyed budgets,
 	// where there is no authenticated principal to name).
-	auditActor func(c echo.Context) string
+	auditActor func(c *echo.Context) string
 }
 
 // limitBy enforces one budget. It FAILS OPEN on the limiter's backing store
@@ -48,7 +48,7 @@ type limitRule struct {
 // "Retry-After: 0", which clients read as "retry immediately".
 func (s *Server) limitBy(rule limitRule) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			limiter, key, ok := rule.resolve(c)
 			if !ok {
 				return next(c)
@@ -107,7 +107,7 @@ func (s *Server) limitBy(rule limitRule) echo.MiddlewareFunc {
 // there. Without that, this and every other per-IP budget is header-spoofable.
 func (s *Server) rateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+		resolve: func(c *echo.Context) (*ratelimit.Limiter, string, bool) {
 			// Locals, never the captured parameter: reassigning `limiter` here
 			// would permanently swap the general limiter for the media one on the
 			// first media request.
@@ -130,7 +130,7 @@ func (s *Server) rateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
 // defensive fallback).
 func (s *Server) attachmentUploadRateLimit() echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+		resolve: func(c *echo.Context) (*ratelimit.Limiter, string, bool) {
 			if s.attachmentLimit == nil {
 				return nil, "", false
 			}
@@ -153,7 +153,7 @@ func (s *Server) attachmentUploadRateLimit() echo.MiddlewareFunc {
 // and FAIL OPEN when the backing store is down.
 func (s *Server) contactRateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+		resolve: func(c *echo.Context) (*ratelimit.Limiter, string, bool) {
 			return limiter, "contact:" + c.RealIP(), true
 		},
 		unavailable: "contact rate limiter unavailable, failing open",
@@ -175,7 +175,7 @@ func (s *Server) contactRateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFun
 // admins behind one office address should not fight over one budget.
 func (s *Server) mailTestRateLimit() echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+		resolve: func(c *echo.Context) (*ratelimit.Limiter, string, bool) {
 			if s.mailTestLimit == nil {
 				return nil, "", false
 			}
@@ -189,7 +189,7 @@ func (s *Server) mailTestRateLimit() echo.MiddlewareFunc {
 		unavailable: "mail test rate limiter unavailable, failing open",
 		denied:      "you have sent several test messages recently; wait before sending another",
 		auditReason: "mail_test_rate_limited",
-		auditActor: func(c echo.Context) string {
+		auditActor: func(c *echo.Context) string {
 			userID, _, _ := principalFromContext(c)
 			return userID.String()
 		},
@@ -203,7 +203,7 @@ func (s *Server) mailTestRateLimit() echo.MiddlewareFunc {
 // and returns 429. Like the general limiter it FAILS OPEN if the store is down.
 func (s *Server) authRateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+		resolve: func(c *echo.Context) (*ratelimit.Limiter, string, bool) {
 			return limiter, "auth:" + limiterIPKey(c.RealIP()), true
 		},
 		unavailable: "auth rate limiter unavailable, failing open",
@@ -244,7 +244,7 @@ const (
 // USER. It runs after requireAuth.
 func (s *Server) remoteRatingRateLimit() echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+		resolve: func(c *echo.Context) (*ratelimit.Limiter, string, bool) {
 			userID, _, ok := principalFromContext(c)
 			if !ok || s.remoteRatingLimit == nil {
 				return nil, "", false
@@ -268,7 +268,7 @@ const (
 // (an IPv6 client by its /64), signed in or not.
 func (s *Server) remoteViewRateLimit() echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+		resolve: func(c *echo.Context) (*ratelimit.Limiter, string, bool) {
 			if s.remoteViewLimit == nil {
 				return nil, "", false
 			}
@@ -283,7 +283,7 @@ func (s *Server) remoteViewRateLimit() echo.MiddlewareFunc {
 // mailTestRateLimit. It runs after requireAuth.
 func (s *Server) bulkVideosRateLimit() echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+		resolve: func(c *echo.Context) (*ratelimit.Limiter, string, bool) {
 			userID, _, ok := principalFromContext(c)
 			if !ok || s.bulkVideosLimit == nil {
 				return nil, "", false
@@ -307,7 +307,7 @@ const (
 // after requireAuth.
 func (s *Server) peertubeImportRateLimit() echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+		resolve: func(c *echo.Context) (*ratelimit.Limiter, string, bool) {
 			userID, _, ok := principalFromContext(c)
 			if !ok || s.peertubeImportLimit == nil {
 				return nil, "", false

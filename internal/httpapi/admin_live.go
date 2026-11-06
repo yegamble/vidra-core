@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/live"
 )
@@ -86,7 +86,7 @@ type terminateLiveResponse struct {
 
 // handleTerminateLiveStream ends a live broadcast as a moderation action.
 // Behind requireAuth + requireRole(admin, moderator).
-func (s *Server) handleTerminateLiveStream(c echo.Context) error {
+func (s *Server) handleTerminateLiveStream(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -126,7 +126,7 @@ func (s *Server) handleTerminateLiveStream(c echo.Context) error {
 // the creator's own end can never be mistaken for a takedown by the UI that
 // renders it. Behind requireAuth; owner or a channel content manager only, and
 // 404 (not 403) to anyone else, matching every other owner-scoped live route.
-func (s *Server) handleEndOwnLiveStream(c echo.Context) error {
+func (s *Server) handleEndOwnLiveStream(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err

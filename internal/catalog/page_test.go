@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 
 	"github.com/vidra/vidra-core/internal/searchevents"
 )
@@ -91,8 +91,8 @@ func TestFrozenPageBoundsEscapedLegalDocumentsWithActualMiddleware(t *testing.T)
 		t.Fatal("fixture failed to exercise page splitting")
 	}
 	e := echo.New()
-	e.Use(middleware.BodyLimit("2M"))
-	e.POST("/", func(c echo.Context) error {
+	e.Use(middleware.BodyLimit(2 << 20))
+	e.POST("/", func(c *echo.Context) error {
 		_, err := io.Copy(io.Discard, c.Request().Body)
 		if err != nil {
 			return err

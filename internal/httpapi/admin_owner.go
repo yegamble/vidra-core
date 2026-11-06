@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -62,7 +62,7 @@ type ownerTransferView struct {
 // a wrong password. 404 for an unknown account. 422 `owner_target_invalid` when
 // the target is not an active, non-tombstoned administrator, or is the caller.
 // 409 `owner_transfer_conflict` when another transfer committed first.
-func (s *Server) handleTransferOwnership(c echo.Context) error {
+func (s *Server) handleTransferOwnership(c *echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

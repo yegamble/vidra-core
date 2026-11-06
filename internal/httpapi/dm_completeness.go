@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -28,7 +28,7 @@ func parseUUIDList(raw []string) ([]uuid.UUID, error) {
 // conversationEncrypted reports whether a conversation is encrypted, when the
 // e2ee service is wired. Used to reject plaintext-only operations (attachments,
 // tombstone, report) on encrypted conversations with a documented 422.
-func (s *Server) conversationEncrypted(c echo.Context, userID, convID uuid.UUID) (bool, error) {
+func (s *Server) conversationEncrypted(c *echo.Context, userID, convID uuid.UUID) (bool, error) {
 	if s.e2eesvc == nil {
 		return false, nil
 	}
@@ -53,7 +53,7 @@ type uploadAttachmentResponse struct {
 // send. Behind requireAuth. Non-participant/unknown conversation → 404; an
 // encrypted conversation → 422 (attachments are ciphertext-external); an
 // unsupported type → 415; oversize → 413; a failed malware scan → 422.
-func (s *Server) handleUploadAttachment(c echo.Context) error {
+func (s *Server) handleUploadAttachment(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -117,7 +117,7 @@ func (s *Server) handleUploadAttachment(c echo.Context) error {
 // handleDownloadAttachment streams a DM attachment's bytes, participant-gated.
 // Behind requireAuth. Unknown attachment or a caller who is not a participant of
 // its conversation → 404.
-func (s *Server) handleDownloadAttachment(c echo.Context) error {
+func (s *Server) handleDownloadAttachment(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -148,7 +148,7 @@ type markConversationReadRequest struct {
 // handleMarkConversationRead advances the caller's read watermark in a
 // conversation (idempotent, advance-only). Behind requireAuth. Non-participant/
 // unknown conversation → 404; a message_id not in the conversation → 404.
-func (s *Server) handleMarkConversationRead(c echo.Context) error {
+func (s *Server) handleMarkConversationRead(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -182,7 +182,7 @@ func (s *Server) handleMarkConversationRead(c echo.Context) error {
 
 // handleDeleteMessage tombstones the caller's own message. Behind requireAuth.
 // A non-sender or unknown message → 404; already-deleted is idempotent 204.
-func (s *Server) handleDeleteMessage(c echo.Context) error {
+func (s *Server) handleDeleteMessage(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -204,7 +204,7 @@ func (s *Server) handleDeleteMessage(c echo.Context) error {
 // handleReportMessage files a report against a DM message. Behind requireAuth.
 // Either participant may report; a non-participant or unknown message → 404.
 // Idempotent per (reporter, message).
-func (s *Server) handleReportMessage(c echo.Context) error {
+func (s *Server) handleReportMessage(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -252,7 +252,7 @@ type updateMessagingPrefsRequest struct {
 
 // handleGetMessagingPrefs returns the caller's DM privacy toggles. Behind
 // requireAuth. Currently just the read-receipts toggle (default enabled).
-func (s *Server) handleGetMessagingPrefs(c echo.Context) error {
+func (s *Server) handleGetMessagingPrefs(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -266,7 +266,7 @@ func (s *Server) handleGetMessagingPrefs(c echo.Context) error {
 
 // handleUpdateMessagingPrefs updates the caller's DM privacy toggles. Behind
 // requireAuth.
-func (s *Server) handleUpdateMessagingPrefs(c echo.Context) error {
+func (s *Server) handleUpdateMessagingPrefs(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

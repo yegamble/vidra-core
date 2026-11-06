@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/media"
@@ -53,7 +53,7 @@ type videoDownloadResponse struct {
 // (privacy, scheduled/quarantine/block, and password gate). It also returns the
 // identity FileForView should use; privileged callers impersonate the real
 // owner only for that storage lookup.
-func (s *Server) videoForDownload(c echo.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, uuid.UUID, bool, error) {
+func (s *Server) videoForDownload(c *echo.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, uuid.UUID, bool, error) {
 	viewerID, role, authed := principalFromContext(c)
 	privileged := authed && isStaff(role)
 	if !privileged && !s.downloadsEnabled() {
@@ -85,7 +85,7 @@ func (s *Server) videoForDownload(c echo.Context, id uuid.UUID) (sqlcgen.GetVide
 // handleGetVideoDownloads lists only actual single-file download assets. HLS
 // playback manifests are intentionally absent: every HLS row is a progressive
 // MP4 remux at that rung, with a companion video-only URL when available.
-func (s *Server) handleGetVideoDownloads(c echo.Context) error {
+func (s *Server) handleGetVideoDownloads(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -192,15 +192,15 @@ func (s *Server) handleGetVideoDownloads(c echo.Context) error {
 	return c.JSON(http.StatusOK, videoDownloadResponse{Files: files})
 }
 
-func (s *Server) handleDownloadVideoOriginal(c echo.Context) error {
+func (s *Server) handleDownloadVideoOriginal(c *echo.Context) error {
 	return s.downloadStoredVideoFile(c, "original", "video-original")
 }
 
-func (s *Server) handleDownloadVideoWebM(c echo.Context) error {
+func (s *Server) handleDownloadVideoWebM(c *echo.Context) error {
 	return s.downloadStoredVideoFile(c, "webm", "video-vp9.webm")
 }
 
-func (s *Server) downloadStoredVideoFile(c echo.Context, kind, fallbackName string) error {
+func (s *Server) downloadStoredVideoFile(c *echo.Context, kind, fallbackName string) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -248,7 +248,7 @@ func (s *Server) publicDownloadOf(privacy, state string, downloadEnabled bool) b
 	return publicVideoForIPFS(privacy, state) && s.downloadsEnabled() && downloadEnabled
 }
 
-func (s *Server) handleDownloadHLSRendition(c echo.Context) error {
+func (s *Server) handleDownloadHLSRendition(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -280,7 +280,7 @@ func (s *Server) handleDownloadHLSRendition(c echo.Context) error {
 	})
 }
 
-func (s *Server) handleDownloadHLSAudio(c echo.Context) error {
+func (s *Server) handleDownloadHLSAudio(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -339,7 +339,7 @@ func (s *Server) resolveHLSDownload(ctx context.Context, id uuid.UUID, height in
 	return sqlcgen.VideoRendition{}, "", echo.NewHTTPError(http.StatusNotFound, "download not found")
 }
 
-func (s *Server) handleDownloadVideoSubtitle(c echo.Context) error {
+func (s *Server) handleDownloadVideoSubtitle(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -370,7 +370,7 @@ func (s *Server) handleDownloadVideoSubtitle(c echo.Context) error {
 // playback. It follows the ordinary media visibility policy (unlike official
 // download routes, the downloads_enabled toggle and moderator bypass do not
 // apply to playback).
-func (s *Server) handleStreamVideoWebM(c echo.Context) error {
+func (s *Server) handleStreamVideoWebM(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -443,6 +443,6 @@ func attachmentHeader(filename string) string {
 	return header
 }
 
-func setAttachmentHeader(c echo.Context, filename string) {
+func setAttachmentHeader(c *echo.Context, filename string) {
 	c.Response().Header().Set(echo.HeaderContentDisposition, attachmentHeader(filename))
 }

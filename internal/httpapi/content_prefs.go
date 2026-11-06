@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/viewerprefs"
 )
@@ -23,7 +23,7 @@ type updateContentPrefsRequest struct {
 	PreferredLanguages    *[]string         `json:"preferred_languages"`
 }
 
-func (s *Server) handleGetContentPrefs(c echo.Context) error {
+func (s *Server) handleGetContentPrefs(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -35,7 +35,7 @@ func (s *Server) handleGetContentPrefs(c echo.Context) error {
 	return c.JSON(http.StatusOK, contentPrefsResponse{SensitiveFlagPolicies: p.SensitiveFlagPolicies, PreferredLanguages: p.PreferredLanguages})
 }
 
-func (s *Server) handleUpdateContentPrefs(c echo.Context) error {
+func (s *Server) handleUpdateContentPrefs(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

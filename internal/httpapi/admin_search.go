@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -97,7 +97,7 @@ func queryFingerprint(normalizedQuery string) string {
 
 // suggestionBanTarget reads the query path segment. Echo has already decoded it;
 // a segment that is blank (or only whitespace) is a client error, not a call.
-func suggestionBanTarget(c echo.Context) (string, error) {
+func suggestionBanTarget(c *echo.Context) (string, error) {
 	q := strings.TrimSpace(c.Param("query"))
 	if q == "" {
 		return "", &ValidationError{Fields: []FieldError{{
@@ -110,7 +110,7 @@ func suggestionBanTarget(c echo.Context) (string, error) {
 // handleListSuggestionBans serves GET /admin/search/suggestion-bans: the queries
 // currently suppressed from instance-wide autosuggest. Moderator/admin. A read
 // is not a moderation action and writes no audit event.
-func (s *Server) handleListSuggestionBans(c echo.Context) error {
+func (s *Server) handleListSuggestionBans(c *echo.Context) error {
 	gw, err := s.searchModerationGate()
 	if err != nil {
 		return err
@@ -143,7 +143,7 @@ func (s *Server) handleListSuggestionBans(c echo.Context) error {
 //
 // PUT, not POST: banning the same query twice is one end state, so a client that
 // retries a timed-out ban cannot double-apply anything.
-func (s *Server) handleBanSuggestion(c echo.Context) error {
+func (s *Server) handleBanSuggestion(c *echo.Context) error {
 	actorID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -176,7 +176,7 @@ func (s *Server) handleBanSuggestion(c echo.Context) error {
 // lift a ban. Idempotent. It does not re-suggest the query — vidra-search
 // re-earns suggestibility from real distinct-user counts, so an unban can never
 // promote a string that never cleared the aggregation threshold.
-func (s *Server) handleUnbanSuggestion(c echo.Context) error {
+func (s *Server) handleUnbanSuggestion(c *echo.Context) error {
 	actorID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -204,7 +204,7 @@ func (s *Server) handleUnbanSuggestion(c echo.Context) error {
 // auditSuggestionBan records one ban/unban attempt. Failures are recorded too:
 // after an outage an operator has to be able to see that a ban was ATTEMPTED and
 // did not land, which is precisely the state a silent 503 would hide.
-func (s *Server) auditSuggestionBan(c echo.Context, action, result, actorID, normalizedQuery string, cause error) {
+func (s *Server) auditSuggestionBan(c *echo.Context, action, result, actorID, normalizedQuery string, cause error) {
 	reason := ""
 	if cause != nil {
 		reason = suggestionBanFailureReason(cause)

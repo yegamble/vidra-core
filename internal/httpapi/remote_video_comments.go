@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/authoredremotecomment"
@@ -121,7 +121,7 @@ func newAuthoredRemoteCommentView(c sqlcgen.AuthoredRemoteComment, username, dis
 // handleListRemoteVideoComments returns a remote video's mirrored thread (paged)
 // AND the locally-authored comments on it. Public (optionalAuth); an unknown or
 // origin-blocked remote video is 404, the same answer its detail route gives.
-func (s *Server) handleListRemoteVideoComments(c echo.Context) error {
+func (s *Server) handleListRemoteVideoComments(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "remote video not found")
 	if err != nil {
 		return err
@@ -166,7 +166,7 @@ func (s *Server) handleListRemoteVideoComments(c echo.Context) error {
 // listAuthoredRemoteComments loads the complete local-authored set for a remote
 // video (best-effort; a nil write service or a read error yields an empty array —
 // the mirrored thread is still served).
-func (s *Server) listAuthoredRemoteComments(c echo.Context, remoteVideoID, viewerID uuid.UUID, authed bool) []authoredRemoteCommentView {
+func (s *Server) listAuthoredRemoteComments(c *echo.Context, remoteVideoID, viewerID uuid.UUID, authed bool) []authoredRemoteCommentView {
 	if s.authoredrcsvc == nil {
 		return []authoredRemoteCommentView{}
 	}
@@ -219,7 +219,7 @@ func (r createRemoteVideoCommentRequest) Validate() []FieldError {
 // handleCreateRemoteVideoComment authors a comment on a remote video. Behind
 // requireAuth. The comment is stored + displayed locally and federated to the
 // origin (the ruling: the home instance hosts and moderates it).
-func (s *Server) handleCreateRemoteVideoComment(c echo.Context) error {
+func (s *Server) handleCreateRemoteVideoComment(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -288,7 +288,7 @@ func (r updateRemoteVideoCommentRequest) Validate() []FieldError {
 // handleUpdateRemoteVideoComment edits the caller's OWN authored remote comment.
 // Behind requireAuth. Only the author may edit; another user's is 403, unknown is
 // 404. The edit re-federates as an Update{Note}.
-func (s *Server) handleUpdateRemoteVideoComment(c echo.Context) error {
+func (s *Server) handleUpdateRemoteVideoComment(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -337,7 +337,7 @@ func (s *Server) handleUpdateRemoteVideoComment(c echo.Context) error {
 // requireAuth. The author may always delete their own; a moderator/admin may
 // delete anyone's (the home instance owns moderation). The delete re-federates as
 // a Delete of the local Note.
-func (s *Server) handleDeleteRemoteVideoComment(c echo.Context) error {
+func (s *Server) handleDeleteRemoteVideoComment(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err

@@ -29,7 +29,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -81,11 +81,11 @@ func (s *Server) openOAuthState(sealed string) (oauthStatePayload, bool) {
 
 // setOAuthStateCookie parks the sealed attempt for the round trip to the
 // provider. Lax: it must still ride the top-level GET back from the provider.
-func (s *Server) setOAuthStateCookie(c echo.Context, sealed string) {
+func (s *Server) setOAuthStateCookie(c *echo.Context, sealed string) {
 	s.writeStateCookie(c, oauthStateCookieName, oauthStateCookiePath, sealed, oauthStateTTL)
 }
 
-func (s *Server) clearOAuthStateCookie(c echo.Context) {
+func (s *Server) clearOAuthStateCookie(c *echo.Context) {
 	s.clearStateCookie(c, oauthStateCookieName, oauthStateCookiePath)
 }
 
@@ -119,7 +119,7 @@ func safeReturnPath(p string) (string, bool) {
 // oauthErrorRedirect sends the browser back to the (already validated)
 // return_to path with a machine-readable oauth_error code the frontend can
 // render, preserving any query the path already carried.
-func oauthErrorRedirect(c echo.Context, returnTo, code string) error {
+func oauthErrorRedirect(c *echo.Context, returnTo, code string) error {
 	u, err := url.Parse(returnTo)
 	if err != nil {
 		u = &url.URL{Path: "/"}
@@ -133,7 +133,7 @@ func oauthErrorRedirect(c echo.Context, returnTo, code string) error {
 // handleOAuthBegin starts the OIDC login flow for one provider: it seals the
 // attempt state into the signed cookie and redirects to the provider's
 // authorization endpoint. 404 for a provider that is not configured.
-func (s *Server) handleOAuthBegin(c echo.Context) error {
+func (s *Server) handleOAuthBegin(c *echo.Context) error {
 	name := c.Param("provider")
 	// An instance with NO providers answers a typed 503, like ATProto's
 	// disabled path: "this instance does not do single sign-on" and "you named
@@ -194,7 +194,7 @@ func (s *Server) handleOAuthBegin(c echo.Context) error {
 // Protocol violations (missing/forged/expired state, nonce mismatch) are 400;
 // provider-side failures are 502; user-actionable outcomes (denied consent,
 // email conflict, disabled account) redirect with ?oauth_error=<code>.
-func (s *Server) handleOAuthCallback(c echo.Context) error {
+func (s *Server) handleOAuthCallback(c *echo.Context) error {
 	name := c.Param("provider")
 	if s.oauthsvc == nil || len(s.oauthsvc.ProviderNames()) == 0 {
 		return &OAuthNotConfiguredError{}
@@ -348,7 +348,7 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 // failure is a typed 502 for a login and a redirect code for a link, because
 // the browser mid-link is on a settings page that can render an answer, while a
 // login lands on a page whose whole job is to show one.
-func (s *Server) oauthVerifyFailure(c echo.Context, returnTo, purpose string, err error) error {
+func (s *Server) oauthVerifyFailure(c *echo.Context, returnTo, purpose string, err error) error {
 	if errors.Is(err, auth.ErrOAuthNonceMismatch) {
 		s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_nonce_mismatch")
 		return echo.NewHTTPError(http.StatusBadRequest, "oauth nonce mismatch")
@@ -385,7 +385,7 @@ type oauthIdentitiesResponse struct {
 }
 
 // handleListOAuthIdentities returns the caller's linked OAuth identities.
-func (s *Server) handleListOAuthIdentities(c echo.Context) error {
+func (s *Server) handleListOAuthIdentities(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -404,7 +404,7 @@ func (s *Server) handleListOAuthIdentities(c echo.Context) error {
 // handleUnlinkOAuthIdentity removes the caller's identity for one provider.
 // 404 when that provider is not linked; 422 when it is the account's last
 // sign-in method (no password set) — set a password first.
-func (s *Server) handleUnlinkOAuthIdentity(c echo.Context) error {
+func (s *Server) handleUnlinkOAuthIdentity(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/delivery"
 )
@@ -289,7 +289,7 @@ func TestNonMediaRoutePreflightIsUnchanged(t *testing.T) {
 func TestPublicMediaRoutesAreRegistered(t *testing.T) {
 	registered := map[string]bool{}
 	for _, srv := range mediaCORSHarnesses(t) {
-		for _, r := range srv.Handler().Routes() {
+		for _, r := range srv.Handler().Router().Routes() {
 			registered[r.Path] = true
 		}
 	}

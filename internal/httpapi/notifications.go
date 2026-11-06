@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/notification"
 )
@@ -84,7 +84,7 @@ type unreadCountResponse struct {
 // handleListNotifications returns the caller's notifications, newest first.
 // Behind requireAuth. ?unread=true returns only unread ones. Pagination via
 // ?limit (1–100, default 20) and ?offset.
-func (s *Server) handleListNotifications(c echo.Context) error {
+func (s *Server) handleListNotifications(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -111,7 +111,7 @@ func (s *Server) handleListNotifications(c echo.Context) error {
 
 // handleUnreadNotificationCount returns just the caller's unread count (cheap,
 // for a header badge). Behind requireAuth.
-func (s *Server) handleUnreadNotificationCount(c echo.Context) error {
+func (s *Server) handleUnreadNotificationCount(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -126,7 +126,7 @@ func (s *Server) handleUnreadNotificationCount(c echo.Context) error {
 // handleMarkNotificationRead marks one of the caller's notifications read
 // (idempotent). Behind requireAuth. An unknown id, or one belonging to another
 // user, is 404.
-func (s *Server) handleMarkNotificationRead(c echo.Context) error {
+func (s *Server) handleMarkNotificationRead(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -146,7 +146,7 @@ func (s *Server) handleMarkNotificationRead(c echo.Context) error {
 
 // handleMarkAllNotificationsRead marks all of the caller's notifications read
 // (idempotent). Behind requireAuth.
-func (s *Server) handleMarkAllNotificationsRead(c echo.Context) error {
+func (s *Server) handleMarkAllNotificationsRead(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

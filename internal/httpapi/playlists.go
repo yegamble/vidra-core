@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
@@ -134,7 +134,7 @@ func (r createPlaylistRequest) Validate() []FieldError {
 }
 
 // handleCreatePlaylist creates a playlist owned by the authenticated user.
-func (s *Server) handleCreatePlaylist(c echo.Context) error {
+func (s *Server) handleCreatePlaylist(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -173,7 +173,7 @@ type playlistListResponse struct {
 // handleListMyPlaylists lists the authenticated user's playlists, newest first,
 // paginated via ?limit (1–100, default 20)/?offset with a true total. It
 // previously returned every playlist unbounded.
-func (s *Server) handleListMyPlaylists(c echo.Context) error {
+func (s *Server) handleListMyPlaylists(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -204,7 +204,7 @@ func (s *Server) handleListMyPlaylists(c echo.Context) error {
 // handleListChannelPlaylists lists a channel's playlists (the channel page's
 // Playlists tab). optionalAuth: anyone gets the public ones, a playlist's owner
 // also sees their own unlisted/private ones; paginated like every list here.
-func (s *Server) handleListChannelPlaylists(c echo.Context) error {
+func (s *Server) handleListChannelPlaylists(c *echo.Context) error {
 	ctx := c.Request().Context()
 	ch, err := s.channelsvc.GetByHandle(ctx, c.Param("handle"))
 	if err != nil {
@@ -239,7 +239,7 @@ type playlistDetailResponse struct {
 // handleGetPlaylist returns a playlist and its videos. Behind optionalAuth:
 // public/unlisted playlists are visible to anyone; a private playlist is visible
 // only to its owner and is reported as 404 to everyone else.
-func (s *Server) handleGetPlaylist(c echo.Context) error {
+func (s *Server) handleGetPlaylist(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "playlist not found")
 	if err != nil {
 		return err
@@ -325,7 +325,7 @@ func (r updatePlaylistRequest) Validate() []FieldError {
 }
 
 // handleUpdatePlaylist updates a playlist owned by the authenticated user.
-func (s *Server) handleUpdatePlaylist(c echo.Context) error {
+func (s *Server) handleUpdatePlaylist(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -370,7 +370,7 @@ func (s *Server) handleUpdatePlaylist(c echo.Context) error {
 }
 
 // handleDeletePlaylist deletes a playlist owned by the authenticated user.
-func (s *Server) handleDeletePlaylist(c echo.Context) error {
+func (s *Server) handleDeletePlaylist(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -407,7 +407,7 @@ func (r addPlaylistItemRequest) Validate() []FieldError {
 // playlist owned by the caller (idempotent). A non-public/unpublished, blocked
 // or unknown video is 404 — one answer, so the route is not an existence oracle
 // for content a moderator has taken down.
-func (s *Server) handleAddPlaylistItem(c echo.Context) error {
+func (s *Server) handleAddPlaylistItem(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -451,7 +451,7 @@ func (s *Server) handleAddPlaylistItem(c echo.Context) error {
 
 // handleRemovePlaylistItem removes a video from a playlist owned by the caller
 // (idempotent).
-func (s *Server) handleRemovePlaylistItem(c echo.Context) error {
+func (s *Server) handleRemovePlaylistItem(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -492,7 +492,7 @@ func (r reorderPlaylistItemsRequest) Validate() []FieldError {
 // handleReorderPlaylistItems rewrites the order of a playlist's items. Owner-only
 // (a non-owner or unknown playlist is 404, hiding existence); the body must be
 // exactly the playlist's current items in the new order, else 422.
-func (s *Server) handleReorderPlaylistItems(c echo.Context) error {
+func (s *Server) handleReorderPlaylistItems(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -540,7 +540,7 @@ func (r movePlaylistItemRequest) Validate() []FieldError {
 // and a client holds one page. Owner-only (a non-owner or unknown playlist is
 // 404, hiding existence); a video or anchor that is not an item is 409 (the
 // client's copy is stale); an item anchored on itself is 422.
-func (s *Server) handleMovePlaylistItem(c echo.Context) error {
+func (s *Server) handleMovePlaylistItem(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -578,7 +578,7 @@ func (s *Server) handleMovePlaylistItem(c echo.Context) error {
 // form field "file") for a playlist, replacing any previous cover. Behind
 // requireAuth; non-owner/unknown → 404; a non-image extension → 415. The 8M
 // global body limit bounds the upload.
-func (s *Server) handleSetPlaylistThumbnail(c echo.Context) error {
+func (s *Server) handleSetPlaylistThumbnail(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -632,7 +632,7 @@ func (s *Server) handleSetPlaylistThumbnail(c echo.Context) error {
 
 // handleDeletePlaylistThumbnail removes a playlist's cover (owner-only,
 // idempotent).
-func (s *Server) handleDeletePlaylistThumbnail(c echo.Context) error {
+func (s *Server) handleDeletePlaylistThumbnail(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -655,7 +655,7 @@ func (s *Server) handleDeletePlaylistThumbnail(c echo.Context) error {
 // optionalAuth: public/unlisted playlists' covers are visible to anyone; a
 // private playlist's cover is visible only to its owner (else 404). A playlist
 // without a cover is 404.
-func (s *Server) handleGetPlaylistThumbnail(c echo.Context) error {
+func (s *Server) handleGetPlaylistThumbnail(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "playlist not found")
 	if err != nil {
 		return err

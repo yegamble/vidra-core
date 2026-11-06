@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/video"
@@ -32,7 +32,7 @@ func (r giveOwnershipRequest) Validate() []FieldError {
 // handleGiveVideoOwnership: POST /videos/{id}/give-ownership. Owner only; an
 // unknown and an ineligible recipient (the giver included) answer the same 404. 204 on success, and
 // the recipient is notified (best-effort) unless they muted the giver.
-func (s *Server) handleGiveVideoOwnership(c echo.Context) error {
+func (s *Server) handleGiveVideoOwnership(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -61,7 +61,7 @@ func (s *Server) handleGiveVideoOwnership(c echo.Context) error {
 // handleCancelVideoOwnership: DELETE /videos/{id}/give-ownership — the giver
 // withdraws their pending offer. Anything else (no such video, not theirs, no
 // pending offer from them) is the same 404.
-func (s *Server) handleCancelVideoOwnership(c echo.Context) error {
+func (s *Server) handleCancelVideoOwnership(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -102,7 +102,7 @@ type videoOwnershipChangeListResponse struct {
 
 // handleListVideoOwnershipChanges: GET /me/video-ownership-changes — the
 // requests addressed to the caller, newest first, standard page envelope.
-func (s *Server) handleListVideoOwnershipChanges(c echo.Context) error {
+func (s *Server) handleListVideoOwnershipChanges(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -138,7 +138,7 @@ func (r acceptOwnershipRequest) Validate() []FieldError {
 // {channel_id}. The recipient takes the video into one of their channels,
 // within their storage quota (the gate uploads use). 204 on success; the move
 // is audited exactly like a same-owner one (content.video.move, ids only).
-func (s *Server) handleAcceptVideoOwnership(c echo.Context) error {
+func (s *Server) handleAcceptVideoOwnership(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -163,7 +163,7 @@ func (s *Server) handleAcceptVideoOwnership(c echo.Context) error {
 }
 
 // handleRefuseVideoOwnership: POST /me/video-ownership-changes/{id}/refuse.
-func (s *Server) handleRefuseVideoOwnership(c echo.Context) error {
+func (s *Server) handleRefuseVideoOwnership(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

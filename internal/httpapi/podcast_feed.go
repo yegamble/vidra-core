@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/media"
 )
@@ -79,7 +79,7 @@ type podcastItem struct {
 }
 
 // podcastEnclosure picks the downloadable media file for a video, or ok=false.
-func (s *Server) podcastEnclosure(c echo.Context, id uuid.UUID) (rssEnclosure, bool, error) {
+func (s *Server) podcastEnclosure(c *echo.Context, id uuid.UUID) (rssEnclosure, bool, error) {
 	ctx := c.Request().Context()
 	if s.transcodesvc == nil || s.media == nil {
 		return rssEnclosure{}, false, nil
@@ -116,7 +116,7 @@ func (s *Server) podcastEnclosure(c echo.Context, id uuid.UUID) (rssEnclosure, b
 	return rssEnclosure{URL: base + "/hls/" + strconv.Itoa(int(best)), Length: bestSize, Type: "video/mp4"}, true, nil
 }
 
-func (s *Server) handlePodcastFeed(c echo.Context) error {
+func (s *Server) handlePodcastFeed(c *echo.Context) error {
 	ctx := c.Request().Context()
 	scope, err := s.resolveFeedScope(c)
 	if err != nil {

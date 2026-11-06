@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
@@ -80,7 +80,7 @@ type peertubeImportListResponse struct {
 // schema is a HARD STOP that only a human may lift, and this endpoint has no code
 // path that sets it. It is read from the body, range-checked, and stored on the
 // run beside started_by — who signed off, and on what.
-func (s *Server) handleLaunchPeerTubeImport(c echo.Context) error {
+func (s *Server) handleLaunchPeerTubeImport(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -146,7 +146,7 @@ func (s *Server) handleLaunchPeerTubeImport(c echo.Context) error {
 
 // handleListPeerTubeImports returns recent import runs newest-first (admin-only),
 // so the UI can render history + the active run's live progress.
-func (s *Server) handleListPeerTubeImports(c echo.Context) error {
+func (s *Server) handleListPeerTubeImports(c *echo.Context) error {
 	runs, err := s.peertubeimportsvc.ListRuns(c.Request().Context(), 20, 0)
 	if err != nil {
 		return err
@@ -159,7 +159,7 @@ func (s *Server) handleListPeerTubeImports(c echo.Context) error {
 
 // handleGetPeerTubeImport returns one run by id (admin-only) — the progress-poll
 // endpoint. 404 when the id is unknown.
-func (s *Server) handleGetPeerTubeImport(c echo.Context) error {
+func (s *Server) handleGetPeerTubeImport(c *echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid run id")

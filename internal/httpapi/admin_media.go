@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/mediagc"
@@ -80,7 +80,7 @@ type mediaGCConfigResponse struct {
 // a tripped orphan-ratio breaker downgrades the sweep to a dry run rather than
 // failing it, because the orphan list is the answer the operator needs in order
 // to decide what to do about it.
-func (s *Server) handleAdminMediaGC(c echo.Context) error {
+func (s *Server) handleAdminMediaGC(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -135,7 +135,7 @@ func (s *Server) handleAdminMediaGC(c echo.Context) error {
 // Behind requireRole(admin), like the POSTs beside it. Read-only, no audit (the
 // same treatment as the other admin read pages — auditing reads records the
 // admin's curiosity, not a state change).
-func (s *Server) handleAdminMediaGCConfig(c echo.Context) error {
+func (s *Server) handleAdminMediaGCConfig(c *echo.Context) error {
 	if s.mediagcsvc == nil {
 		// Unreachable in cmd/api (the service is wired unconditionally), but a
 		// read-only facts page must degrade to an honest 503 for an embedder,
@@ -157,7 +157,7 @@ func (s *Server) handleAdminMediaGCConfig(c echo.Context) error {
 // because the only bucket that needs adopting is one that already holds objects
 // whose owner boot could not establish — an operator saying "yes, that media is
 // mine" is the missing piece of evidence, and nothing else can supply it.
-func (s *Server) handleAdminAdoptBucket(c echo.Context) error {
+func (s *Server) handleAdminAdoptBucket(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

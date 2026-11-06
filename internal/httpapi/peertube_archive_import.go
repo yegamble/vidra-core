@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/peertubearchive"
 	"github.com/vidra/vidra-core/internal/peertubefollows"
@@ -61,7 +61,7 @@ func WithPeerTubeArchiveImporter(im *peertubearchive.Importer) Option {
 // scanner it is not stored. Any change that persists anything else from the
 // archive (e.g. the bundled videos) must add requireScannerGate and
 // scanBeforeStore, as POST /me/import does.
-func (s *Server) handlePeerTubeArchiveImport(c echo.Context) error {
+func (s *Server) handlePeerTubeArchiveImport(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -106,7 +106,7 @@ func WithPeerTubeFollowStatus(svc *peertubefollows.Service) Option {
 
 // handlePeerTubeFollowStatus reports on a background follow import the caller
 // started. Another user's id and an unknown id are the same 404.
-func (s *Server) handlePeerTubeFollowStatus(c echo.Context) error {
+func (s *Server) handlePeerTubeFollowStatus(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -135,9 +135,8 @@ func nextArchivePart(mr *multipart.Reader) (*multipart.Part, error) {
 	for i := 0; i < 8; i++ {
 		p, err := mr.NextPart()
 		if err != nil {
-			var he *echo.HTTPError
-			if errors.As(err, &he) {
-				return nil, he
+			if se := statusError(err); se != nil {
+				return nil, se
 			}
 			break
 		}

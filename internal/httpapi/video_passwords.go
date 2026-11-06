@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/playback"
 	"github.com/vidra/vidra-core/internal/video"
@@ -36,7 +36,7 @@ const playbackTokenParam = "pt"
 // param takes precedence (the header-less path), else the Bearer token. A Bearer
 // here may actually be an ACCOUNT token — that is harmless, it simply fails
 // playback-token verification (the two token types are cryptographically distinct).
-func playbackTokenFromRequest(c echo.Context) string {
+func playbackTokenFromRequest(c *echo.Context) string {
 	if pt := c.QueryParam(playbackTokenParam); pt != "" {
 		return pt
 	}
@@ -50,7 +50,7 @@ func playbackTokenFromRequest(c echo.Context) string {
 // playback token granting scope on subjectID — a video id for
 // playback.ScopePlayback, a live stream id for playback.ScopeLive. The scope is
 // named by the caller so one gate's credential can never open another's.
-func (s *Server) hasPlaybackToken(c echo.Context, subjectID uuid.UUID, scope playback.Scope) bool {
+func (s *Server) hasPlaybackToken(c *echo.Context, subjectID uuid.UUID, scope playback.Scope) bool {
 	if s.playbackSigner == nil {
 		return false
 	}
@@ -67,7 +67,7 @@ func (s *Server) hasPlaybackToken(c echo.Context, subjectID uuid.UUID, scope pla
 // moderator/admin, or presents a valid playback token for this video; otherwise
 // it returns a 401 password_required. The token/hash/password are never logged or
 // echoed.
-func (s *Server) passwordGate(c echo.Context, videoID uuid.UUID, privacy, shortCode string, ownerID uuid.UUID) error {
+func (s *Server) passwordGate(c *echo.Context, videoID uuid.UUID, privacy, shortCode string, ownerID uuid.UUID) error {
 	if privacy != video.PrivacyPassword {
 		return nil
 	}
@@ -104,7 +104,7 @@ type unlockResponse struct {
 // password; 404 for an unknown video or one that is not privacy=password (so the
 // endpoint reveals nothing about non-password videos). Never logs the password or
 // the token.
-func (s *Server) handleUnlockVideo(c echo.Context) error {
+func (s *Server) handleUnlockVideo(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -175,7 +175,7 @@ type replaceVideoPasswordsRequest struct {
 
 // handleListVideoPasswords lists a video's passwords (owner only; id + created_at
 // only). A non-owner or unknown id is 404.
-func (s *Server) handleListVideoPasswords(c echo.Context) error {
+func (s *Server) handleListVideoPasswords(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -194,7 +194,7 @@ func (s *Server) handleListVideoPasswords(c echo.Context) error {
 // handleAddVideoPassword stores one new password for a video (owner only; 6–100
 // chars → else 400). Returns the new row (id + created_at) with 201. Never logs
 // or echoes the plaintext.
-func (s *Server) handleAddVideoPassword(c echo.Context) error {
+func (s *Server) handleAddVideoPassword(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -216,7 +216,7 @@ func (s *Server) handleAddVideoPassword(c echo.Context) error {
 
 // handleReplaceVideoPasswords replaces a video's whole password set (owner only;
 // 1–20 entries, each 6–100 chars → else 400). Returns the stored set (GET shape).
-func (s *Server) handleReplaceVideoPasswords(c echo.Context) error {
+func (s *Server) handleReplaceVideoPasswords(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -239,7 +239,7 @@ func (s *Server) handleReplaceVideoPasswords(c echo.Context) error {
 // handleDeleteVideoPassword removes one password (owner only). 204 on success;
 // 404 for an unknown passwordId; 409 when it is the last password of a
 // privacy=password video.
-func (s *Server) handleDeleteVideoPassword(c echo.Context) error {
+func (s *Server) handleDeleteVideoPassword(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

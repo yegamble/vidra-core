@@ -12,10 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
-	//lint:ignore SA1019 Echo v4 instrumentation remains pinned until the replacement middleware receives a compatibility review.
-	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
+	echootel "github.com/labstack/echo-otel/v5"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/vidra/vidra-core/internal/account"
@@ -81,6 +80,7 @@ type Pinger interface {
 // Server holds the Echo instance and its dependencies.
 type Server struct {
 	echo      *echo.Echo
+	httpSrv   *http.Server
 	cfg       *config.Config
 	db        Pinger
 	rdb       Pinger
@@ -888,7 +888,7 @@ func WithFederationHealth(read func(context.Context) (FederationHealth, error)) 
 
 // WithMetrics attaches the Prometheus RED-metrics registry. When set AND
 // cfg.MetricsEnabled is true, the request choke point records per-request
-// counters/histograms and GET /metrics serves the scrape. Mirrors the otelecho
+// counters/histograms and GET /metrics serves the scrape. Mirrors the echo-otel
 // gating: off by default, zero cost. When nil, no metrics are recorded and the
 // scrape route is absent.
 func WithMetrics(m *observability.Metrics) Option {
@@ -1159,8 +1159,6 @@ func WithDevMailCapture(c *auth.CaptureMailer) Option {
 // It uses the process-wide slog default logger for request and error logging.
 func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	e := echo.New()
-	e.HideBanner = true
-	e.HidePort = true
 	// Client-IP extraction. Echo's DEFAULT RealIP() takes the FIRST entry of
 	// X-Forwarded-For from ANY caller, so without this every per-IP budget on the
 	// instance — the auth limiter, the contact-form limiter, the video-password
@@ -1215,12 +1213,16 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// HTTP_READ_TIMEOUT into the keep-alive idle budget too, which is a different
 	// decision with different consequences (connection churn for HLS players
 	// polling a playlist).
-	e.Server.ReadHeaderTimeout = cfg.HTTPReadTimeout
-	e.Server.ReadTimeout = cfg.HTTPReadTimeout
-	e.Server.WriteTimeout = cfg.HTTPWriteTimeout
-	e.Server.IdleTimeout = idleTimeout
+	httpSrv := &http.Server{
+		Addr:              cfg.HTTPAddr(),
+		Handler:           e,
+		ReadHeaderTimeout: cfg.HTTPReadTimeout,
+		ReadTimeout:       cfg.HTTPReadTimeout,
+		WriteTimeout:      cfg.HTTPWriteTimeout,
+		IdleTimeout:       idleTimeout,
+	}
 
-	s := &Server{echo: e, cfg: cfg, db: db, rdb: rdb, startedAt: time.Now(), logger: slog.Default(), lookPath: exec.LookPath, measureDisk: diskspace.Measure}
+	s := &Server{echo: e, httpSrv: httpSrv, cfg: cfg, db: db, rdb: rdb, startedAt: time.Now(), logger: slog.Default(), lookPath: exec.LookPath, measureDisk: diskspace.Measure}
 	// Playback-token signer for password-protected videos (CORE-17). Its key is
 	// derived from the JWT secret via domain separation, so a playback token is
 	// cryptographically independent of an account access token.
@@ -1290,7 +1292,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// runs before the request logger so the active span's trace_id/span_id are in
 	// context when the line is emitted, and it accepts inbound W3C traceparent.
 	if cfg.OTelEnabled {
-		e.Use(otelecho.Middleware(cfg.OTelServiceName))
+		e.Use(echootel.NewMiddleware(cfg.OTelServiceName))
 	}
 	e.Use(s.requestLogger())
 	// Cookie-mode auth sessions need credentialed CORS so the browser attaches
@@ -1319,7 +1321,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 		// including a viewer's own cross-origin media read, is unchanged.
 		Skipper:          s.edgeMediaRequest,
 		AllowOrigins:     cfg.CORSAllowedOrigins,
-		AllowMethods:     []string{echo.GET, echo.POST, echo.PUT, echo.PATCH, echo.DELETE, echo.OPTIONS},
+		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
 		AllowCredentials: corsAllowCredentials,
 	}))
 	e.Use(requestDeadline(cfg.HTTPRequestTimeout, cfg.HTTPStreamRequestTimeout))
@@ -1327,7 +1329,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// route is exempted here and gets its own (larger) UploadMaxSize limit at
 	// registration, so media uploads have headroom without widening the rest.
 	e.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{
-		Skipper: func(c echo.Context) bool {
+		Skipper: func(c *echo.Context) bool {
 			r := c.Request()
 			if r.Method == http.MethodPost && (c.Path() == uploadRoutePath || c.Path() == replaceRoutePath) {
 				return true
@@ -1343,7 +1345,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 			// the upload service bounds each chunk itself.
 			return r.Method == http.MethodPut && c.Path() == uploadChunkRoutePath
 		},
-		Limit: cfg.HTTPBodyLimit,
+		LimitBytes: httpBodyLimitBytes(cfg.HTTPBodyLimit),
 	}))
 
 	// Delivery-source resolver (interfaces.md §4). Built AFTER the options so it
@@ -1364,9 +1366,8 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 		LogMethod:    true,
 		LogLatency:   true,
 		LogRequestID: true,
-		LogError:     true,
 		HandleError:  true,
-		LogValuesFunc: func(c echo.Context, v middleware.RequestLoggerValues) error {
+		LogValuesFunc: func(c *echo.Context, v middleware.RequestLoggerValues) error {
 			level := slog.LevelInfo
 			switch {
 			case v.Status >= 500:
@@ -1396,7 +1397,7 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 			}
 			s.logger.Log(c.Request().Context(), level, "request", attrs...)
 			// RED metrics ride this same choke point (gated by METRICS_ENABLED, like
-			// otelecho is gated by OTEL_ENABLED): Echo's RequestLogger runs the error
+			// echo-otel is gated by OTEL_ENABLED): Echo's RequestLogger runs the error
 			// handler first (HandleError:true), so v.Status is the FINAL status here.
 			// c.Path() is the bounded route TEMPLATE — never the raw URL — so label
 			// cardinality stays small.
@@ -1408,7 +1409,7 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 	})
 }
 
-func requestLogPath(c echo.Context) string {
+func requestLogPath(c *echo.Context) string {
 	if path := c.Path(); path != "" {
 		return path
 	}
@@ -1448,7 +1449,7 @@ func requestDeadline(d, stream time.Duration) echo.MiddlewareFunc {
 		stream = d
 	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			// SSE owns a bounded (and token-expiry-capped) lifetime in its handler.
 			// Exempt only this exact path; every REST request keeps a deadline and
 			// the stream still reconnects/re-authenticates periodically. The socket
@@ -1486,7 +1487,7 @@ func requestDeadline(d, stream time.Duration) echo.MiddlewareFunc {
 // httptest.ResponseRecorder, which every handler test uses — and a missing
 // deadline extension must never fail a request. On a real connection the
 // underlying *http.response implements both setters.
-func setSocketDeadlines(c echo.Context, t time.Time) {
+func setSocketDeadlines(c *echo.Context, t time.Time) {
 	rc := http.NewResponseController(c.Response())
 	_ = rc.SetReadDeadline(t)
 	_ = rc.SetWriteDeadline(t)
@@ -1499,7 +1500,7 @@ func setSocketDeadlines(c echo.Context, t time.Time) {
 // become an authentication oracle — and both re-read the setting per request,
 // so flipping the toggle takes effect without a restart.
 func (s *Server) requireMessaging(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		if !s.messagingEnabled() {
 			return &FeatureDisabledError{Feature: "messaging"}
 		}
@@ -1508,7 +1509,7 @@ func (s *Server) requireMessaging(next echo.HandlerFunc) echo.HandlerFunc {
 }
 
 func (s *Server) requireE2EE(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		if !s.messagingE2EEEnabled() {
 			return &FeatureDisabledError{Feature: "messaging_e2ee"}
 		}
@@ -2600,7 +2601,7 @@ func (s *Server) Handler() *echo.Echo { return s.echo }
 // Start begins listening on the configured address. It blocks until the server
 // is shut down.
 func (s *Server) Start() error {
-	return s.echo.Start(s.cfg.HTTPAddr())
+	return s.httpSrv.ListenAndServe()
 }
 
 // Drain marks this process as going away WITHOUT closing the listener: from
@@ -2627,5 +2628,5 @@ func (s *Server) Draining() bool { return s.draining.Load() }
 
 // Shutdown gracefully drains in-flight requests, bounded by ctx.
 func (s *Server) Shutdown(ctx context.Context) error {
-	return s.echo.Shutdown(ctx)
+	return s.httpSrv.Shutdown(ctx)
 }

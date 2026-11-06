@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 )
@@ -57,7 +57,7 @@ type auditLogListResponse struct {
 // handleListAuditLog returns the durable security audit trail, newest first.
 // Behind requireRole(admin). ?action filters by a specific action id; pagination
 // via ?limit (1–100, default 20) and ?offset.
-func (s *Server) handleListAuditLog(c echo.Context) error {
+func (s *Server) handleListAuditLog(c *echo.Context) error {
 	action := c.QueryParam("action")
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	entries, total, err := s.auditLog.List(c.Request().Context(), action, page.Limit32(), page.Offset32())

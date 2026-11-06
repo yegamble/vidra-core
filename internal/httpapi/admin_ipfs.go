@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/ipfscontrol"
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
@@ -144,7 +144,7 @@ func toIPFSStatusView(st ipfsmirror.Status) ipfsStatusView {
 
 // handleIPFSStatus reports the mirror's status to an admin (P19.2): enabled, node
 // reachability, gateway URL, cluster config, and pin counts overall + per class.
-func (s *Server) handleIPFSStatus(c echo.Context) error {
+func (s *Server) handleIPFSStatus(c *echo.Context) error {
 	if !s.ipfsConfigured() && s.ipfscontrolsvc == nil {
 		return &IPFSDisabledError{}
 	}
@@ -185,7 +185,7 @@ type ipfsReconcileResultView struct {
 // enqueued. Idempotent: a second run over an unchanged catalog enqueues zero.
 // Admin-gated and audit-logged. Returns 503 ipfs_disabled when off, 501 when the
 // mirror subsystem is not wired on this build.
-func (s *Server) handleIPFSReconcile(c echo.Context) error {
+func (s *Server) handleIPFSReconcile(c *echo.Context) error {
 	if !s.ipfsConfigured() {
 		return &IPFSDisabledError{}
 	}

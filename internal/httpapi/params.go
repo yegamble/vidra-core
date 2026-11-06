@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // pathUUID parses a UUID path parameter, answering 404 with the caller's
@@ -17,7 +17,7 @@ import (
 // existence leak the 404-instead-of-403 convention elsewhere exists to close.
 // The few admin routes that DO return 400 are behind requireRole, where the
 // caller is already trusted to know what exists.
-func pathUUID(c echo.Context, param, notFoundMsg string) (uuid.UUID, error) {
+func pathUUID(c *echo.Context, param, notFoundMsg string) (uuid.UUID, error) {
 	id, err := uuid.Parse(c.Param(param))
 	if err != nil {
 		return uuid.Nil, echo.NewHTTPError(http.StatusNotFound, notFoundMsg)

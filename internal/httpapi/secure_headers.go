@@ -1,6 +1,6 @@
 package httpapi
 
-import "github.com/labstack/echo/v4"
+import "github.com/labstack/echo/v5"
 
 // secureHeaders sets conservative security response headers on every response.
 // These are safe defaults for a JSON API + media server (see fix_plan P15):
@@ -23,7 +23,7 @@ import "github.com/labstack/echo/v4"
 // handled by the dedicated CORS middleware.
 func secureHeaders(httpsOrigin bool) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			h := c.Response().Header()
 			h.Set("X-Content-Type-Options", "nosniff")
 			h.Set("X-Frame-Options", "DENY")

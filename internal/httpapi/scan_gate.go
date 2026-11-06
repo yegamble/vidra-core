@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -176,7 +176,7 @@ func (s *Server) auditScanSkipped(ctx context.Context, kind string) {
 // frame-pick poster, and the Whisper transcript — which are produced by this
 // instance from bytes the scanner already cleared.
 func (s *Server) requireScannerGate(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		if err := s.requireScanner(); err != nil {
 			return err
 		}

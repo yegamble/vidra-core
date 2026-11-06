@@ -52,7 +52,7 @@ func TestAnonymousReadDuringADatabaseOutageIsATyped503(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c := srv.echo.NewContext(httptest.NewRequest(http.MethodGet, "/api/v1/videos", nil), rec)
-			srv.echo.HTTPErrorHandler(tc.err, c)
+			srv.echo.HTTPErrorHandler(c, tc.err)
 
 			if rec.Code != http.StatusServiceUnavailable {
 				t.Fatalf("status = %d, want 503; body=%s", rec.Code, rec.Body.String())
@@ -103,7 +103,7 @@ func TestQueriesThatANSWEREDAreNotOutages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c := srv.echo.NewContext(httptest.NewRequest(http.MethodGet, "/api/v1/videos", nil), rec)
-			srv.echo.HTTPErrorHandler(tc.err, c)
+			srv.echo.HTTPErrorHandler(c, tc.err)
 
 			if rec.Code == http.StatusServiceUnavailable {
 				t.Fatalf("status = 503 for %s; a query that answered is not an outage", tc.name)

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // sampleRequest is a test DTO exercising the Validatable contract.
@@ -31,7 +31,7 @@ func (r sampleRequest) Validate() []FieldError {
 func validatingServer(t *testing.T) *Server {
 	t.Helper()
 	srv := New(testConfig(), nil, nil)
-	srv.echo.POST("/v", func(c echo.Context) error {
+	srv.echo.POST("/v", func(c *echo.Context) error {
 		var in sampleRequest
 		if err := bindAndValidate(c, &in); err != nil {
 			return err

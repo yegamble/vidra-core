@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -71,7 +71,7 @@ const defaultReportMessageRateLimit = 20
 // message notifies all staff), in the mailTestRateLimit style.
 func (s *Server) reportMessageRateLimit() echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+		resolve: func(c *echo.Context) (*ratelimit.Limiter, string, bool) {
 			userID, _, ok := principalFromContext(c)
 			if !ok || s.reportMessageLimit == nil {
 				return nil, "", false
@@ -81,7 +81,7 @@ func (s *Server) reportMessageRateLimit() echo.MiddlewareFunc {
 		unavailable: "report message rate limiter unavailable, failing open",
 		denied:      "you have sent several report messages recently; wait before sending another",
 		auditReason: "report_message_rate_limited",
-		auditActor: func(c echo.Context) string {
+		auditActor: func(c *echo.Context) string {
 			userID, _, _ := principalFromContext(c)
 			return userID.String()
 		},
@@ -103,7 +103,7 @@ func reportThreadError(err error) error {
 
 // handleListReportMessages returns a page of a report's thread. Behind
 // requireAuth; open to the report's local reporter and to admins/moderators.
-func (s *Server) handleListReportMessages(c echo.Context) error {
+func (s *Server) handleListReportMessages(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -127,7 +127,7 @@ func (s *Server) handleListReportMessages(c echo.Context) error {
 // handleCreateReportMessage posts to a report's thread and tells the other side
 // (best-effort); a remote Flag report is 409. A staff message is audited by id,
 // never the body.
-func (s *Server) handleCreateReportMessage(c echo.Context) error {
+func (s *Server) handleCreateReportMessage(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err

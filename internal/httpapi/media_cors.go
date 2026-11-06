@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/delivery"
 )
@@ -61,7 +61,7 @@ import (
 // cross-origin; replacing it with a wildcard would break every credentialed
 // media read from the instance's own frontend, because a browser rejects `*`
 // together with credentials.
-func setMediaCORS(c echo.Context, eligible bool) {
+func setMediaCORS(c *echo.Context, eligible bool) {
 	header := c.Response().Header()
 	if header.Get(echo.HeaderAccessControlAllowOrigin) != "" {
 		return
@@ -106,7 +106,7 @@ func setMediaCORS(c echo.Context, eligible bool) {
 // It is not an authorization decision: the marker grants nothing (see
 // delivery.EdgeOriginParam), and the response's readability is still decided by
 // delivery.AllowOrigin from the route's own eligibility.
-func (s *Server) edgeMediaRequest(c echo.Context) bool {
+func (s *Server) edgeMediaRequest(c *echo.Context) bool {
 	return isPublicMediaRoute(c.Path()) && s.edgeOriginRequest(c)
 }
 
@@ -158,7 +158,7 @@ const (
 // preflight must not carry one origin's echo either.
 func (s *Server) mediaPreflight() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			if c.Request().Method != http.MethodOptions || !isPublicMediaRoute(c.Path()) {
 				return next(c)
 			}

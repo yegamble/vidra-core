@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -136,7 +136,7 @@ type followedChannelsResponse struct {
 // handleCreateChannel creates a channel owned by the authenticated user. 422
 // when the caller is at the operator's per-user channel limit
 // (max_channels_per_user, W8; 0 = unlimited).
-func (s *Server) handleCreateChannel(c echo.Context) error {
+func (s *Server) handleCreateChannel(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -174,7 +174,7 @@ func (s *Server) handleCreateChannel(c echo.Context) error {
 // with the caller's role. Paginated via ?limit (1–100, default 20)/?offset with
 // a true total — it previously returned every channel unbounded and issued one
 // follower-count query per row.
-func (s *Server) handleListMyChannels(c echo.Context) error {
+func (s *Server) handleListMyChannels(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -199,7 +199,7 @@ func (s *Server) handleListMyChannels(c echo.Context) error {
 // handleListFollowedChannels lists the LOCAL channels the authenticated user
 // follows (the "FOLLOWING" list), most recently followed first. Paginated via
 // ?limit (1–100, default 20) and ?offset.
-func (s *Server) handleListFollowedChannels(c echo.Context) error {
+func (s *Server) handleListFollowedChannels(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -262,7 +262,7 @@ func (r updateChannelRequest) Validate() []FieldError {
 }
 
 // handleUpdateChannel updates a channel owned by the authenticated user.
-func (s *Server) handleUpdateChannel(c echo.Context) error {
+func (s *Server) handleUpdateChannel(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -295,7 +295,7 @@ func (s *Server) handleUpdateChannel(c echo.Context) error {
 }
 
 // handleDeleteChannel deletes a channel owned by the authenticated user.
-func (s *Server) handleDeleteChannel(c echo.Context) error {
+func (s *Server) handleDeleteChannel(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -379,7 +379,7 @@ func channelError(err error) error {
 }
 
 // handleGetChannel returns a channel by its public handle. No auth required.
-func (s *Server) handleGetChannel(c echo.Context) error {
+func (s *Server) handleGetChannel(c *echo.Context) error {
 	ctx := c.Request().Context()
 	handle := c.Param("handle")
 	ch, err := s.channelsvc.GetByHandle(ctx, handle)
@@ -454,7 +454,7 @@ func (s *Server) atprotoActiveForOwner(ctx context.Context, ownerID uuid.UUID) *
 }
 
 // handleFollowChannel makes the authenticated user follow a channel. Idempotent.
-func (s *Server) handleFollowChannel(c echo.Context) error {
+func (s *Server) handleFollowChannel(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -480,7 +480,7 @@ func (s *Server) handleFollowChannel(c echo.Context) error {
 // caller does not follow it — the bell is part of a subscription, so there is
 // nothing to set otherwise, and the two cases are deliberately indistinguishable.
 // 422 for an unsupported mode.
-func (s *Server) handleSetFollowNotifications(c echo.Context) error {
+func (s *Server) handleSetFollowNotifications(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -501,7 +501,7 @@ func (s *Server) handleSetFollowNotifications(c echo.Context) error {
 }
 
 // handleUnfollowChannel removes the authenticated user's follow. Idempotent.
-func (s *Server) handleUnfollowChannel(c echo.Context) error {
+func (s *Server) handleUnfollowChannel(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

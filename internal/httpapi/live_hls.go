@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/live"
@@ -73,7 +73,7 @@ func isAllDigits(s string) bool {
 // everyone: a playback token widens WHO may watch, never WHEN. That is what
 // bounds the credential — it grants nothing once the broadcast ends, so ending a
 // stream revokes every token outstanding against it.
-func (s *Server) liveStreamForHLS(c echo.Context, id uuid.UUID) (live.Stream, error) {
+func (s *Server) liveStreamForHLS(c *echo.Context, id uuid.UUID) (live.Stream, error) {
 	notFound := echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 	if s.livesvc == nil || s.cfg.LiveHLSRoot == "" {
 		return live.Stream{}, notFound
@@ -133,7 +133,7 @@ func liveStreamRequiresPlaybackToken(stream live.Stream) bool {
 // `password` privacy tier — validateLiveFields allows only public/unlisted/
 // private — so before this there was no way to let one other person watch a
 // private broadcast, and no way to hand out an access that expires.
-func (s *Server) liveViewerAuthorized(c echo.Context, stream live.Stream) bool {
+func (s *Server) liveViewerAuthorized(c *echo.Context, stream live.Stream) bool {
 	if userID, _, ok := principalFromContext(c); ok && userID == stream.OwnerID {
 		return true
 	}
@@ -144,7 +144,7 @@ func (s *Server) liveViewerAuthorized(c echo.Context, stream live.Stream) bool {
 // exposed at the stable master.m3u8 path (a single-bitrate live playlist is
 // served directly). Behind optionalAuth; gated by privacy + live state; 404 when
 // LIVE_HLS_ROOT is unset.
-func (s *Server) handleGetLiveHLSMaster(c echo.Context) error {
+func (s *Server) handleGetLiveHLSMaster(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "live stream not found")
 	if err != nil {
 		return err
@@ -160,7 +160,7 @@ func (s *Server) handleGetLiveHLSMaster(c echo.Context) error {
 // handleGetLiveHLSFile serves one live HLS file: the media playlist referenced as
 // "<id>.m3u8" or a numbered segment "<id>-<n>.ts". Names outside that fixed shape
 // are 404. Same visibility/state gate as the master.
-func (s *Server) handleGetLiveHLSFile(c echo.Context) error {
+func (s *Server) handleGetLiveHLSFile(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "live stream not found")
 	if err != nil {
 		return err
@@ -200,7 +200,7 @@ func (s *Server) handleGetLiveHLSFile(c echo.Context) error {
 // nothing to mirror and nothing to version, so a delivery.Request describing them
 // would have to invent a non-storage source kind. See docs/operations.md, "The
 // live plane is single-host".
-func (s *Server) serveLiveHLSFile(c echo.Context, name string, eligible bool) error {
+func (s *Server) serveLiveHLSFile(c *echo.Context, name string, eligible bool) error {
 	notFound := echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 	root, err := filepath.Abs(s.cfg.LiveHLSRoot)
 	if err != nil {
@@ -263,7 +263,7 @@ func (s *Server) serveLiveHLSFile(c echo.Context, name string, eligible bool) er
 // It is served with c.Blob rather than http.ServeContent for the same reason the
 // VOD playlists are: the bytes on the wire are not the bytes on disk, so the
 // file's size and mtime are not validators for what is being sent.
-func (s *Server) serveLiveHLSPlaylist(c echo.Context, file *os.File, eligible bool) error {
+func (s *Server) serveLiveHLSPlaylist(c *echo.Context, file *os.File, eligible bool) error {
 	data, err := io.ReadAll(io.LimitReader(file, maxPlaylistBytes))
 	if err != nil {
 		return err
@@ -319,7 +319,7 @@ func (s *Server) serveLiveHLSPlaylist(c echo.Context, file *os.File, eligible bo
 // change exists to stop under-counting. What keeps it proportionate is what the
 // number is for: a creator-facing estimate on a page, never an input to billing,
 // ranking or moderation.
-func (s *Server) liveViewerDigest(c echo.Context, now time.Time) string {
+func (s *Server) liveViewerDigest(c *echo.Context, now time.Time) string {
 	if s.liveViewers == nil {
 		return ""
 	}
@@ -345,7 +345,7 @@ func (s *Server) liveViewerDigest(c echo.Context, now time.Time) string {
 // live audience, the fix is one byte. The UA is bounded because it is
 // attacker-controlled and a header-sized principal has no reason to reach the
 // MAC.
-func anonymousViewerPrincipal(c echo.Context) string {
+func anonymousViewerPrincipal(c *echo.Context) string {
 	ua := strings.TrimSpace(c.Request().UserAgent())
 	if len(ua) > maxViewerUserAgentBytes {
 		ua = ua[:maxViewerUserAgentBytes]
@@ -368,7 +368,7 @@ const maxViewerUserAgentBytes = 256
 // It is fire-and-forget: a Redis failure degrades the count, never the
 // playback, so the error is logged at debug and the playlist is served
 // regardless. Nothing downstream waits on it.
-func (s *Server) countLiveViewer(c echo.Context, streamID uuid.UUID) {
+func (s *Server) countLiveViewer(c *echo.Context, streamID uuid.UUID) {
 	if s.livesvc == nil {
 		return
 	}

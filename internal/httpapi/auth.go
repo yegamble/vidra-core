@@ -9,7 +9,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/vidra/vidra-core/internal/audit"
@@ -20,7 +20,7 @@ import (
 )
 
 // audit preserves the legacy call shape while writing the typed v2 envelope.
-func (s *Server) audit(c echo.Context, action, result, actorID, reason string) {
+func (s *Server) audit(c *echo.Context, action, result, actorID, reason string) {
 	s.auditEvent(c, audit.Event{
 		Action: action, Result: result, ActorID: actorID, Reason: reason,
 	})
@@ -30,7 +30,7 @@ func (s *Server) audit(c echo.Context, action, result, actorID, reason string) {
 // current request. Request/correlation/trace fields are attached centrally so
 // individual handlers cannot accidentally omit them. Resource ids and metadata
 // still come from explicit, allowlisted event construction at the call site.
-func (s *Server) auditEvent(c echo.Context, ev audit.Event) {
+func (s *Server) auditEvent(c *echo.Context, ev audit.Event) {
 	if err := s.auditEventErr(c, ev); err != nil {
 		s.logger.WarnContext(c.Request().Context(), "audit log persist failed", "error", err, "action", ev.Action)
 	}
@@ -40,7 +40,7 @@ func (s *Server) auditEvent(c echo.Context, ev audit.Event) {
 // returns the durable write's error so the caller can withhold what the audit
 // row was meant to account for. nil when no durable log is wired (callers that
 // need one check s.auditLog themselves).
-func (s *Server) auditEventErr(c echo.Context, ev audit.Event) error {
+func (s *Server) auditEventErr(c *echo.Context, ev audit.Event) error {
 	ctx := c.Request().Context()
 	if ev.RequestID == "" {
 		ev.RequestID = c.Response().Header().Get(echo.HeaderXRequestID)
@@ -315,7 +315,7 @@ type authResponse struct {
 	User         userView `json:"user"`
 }
 
-func (s *Server) authResponse(status int, c echo.Context, user sqlcgen.User, tokens auth.Tokens, cookieMode bool) error {
+func (s *Server) authResponse(status int, c *echo.Context, user sqlcgen.User, tokens auth.Tokens, cookieMode bool) error {
 	resp := authResponse{
 		Token:        tokens.AccessToken,
 		RefreshToken: tokens.RefreshToken,
@@ -337,7 +337,7 @@ func (s *Server) authResponse(status int, c echo.Context, user sqlcgen.User, tok
 // handleRegister creates an account and returns it with an access + refresh
 // token. Config-parity W7 gates run in order: registration open → user limit
 // → age attestation → approval queue → email-verification hold → plain signup.
-func (s *Server) handleRegister(c echo.Context) error {
+func (s *Server) handleRegister(c *echo.Context) error {
 	if !s.registrationEnabled() {
 		return echo.NewHTTPError(http.StatusForbidden, "registration is disabled on this instance")
 	}
@@ -434,7 +434,7 @@ func (s *Server) handleRegister(c echo.Context) error {
 // handleMe returns the authenticated account. It runs behind requireAuth, so the
 // principal is always present; it reloads the user so the response reflects the
 // current database state (role, email_verified, …) rather than stale token claims.
-func (s *Server) handleMe(c echo.Context) error {
+func (s *Server) handleMe(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -500,7 +500,7 @@ func (r updateProfileRequest) Validate() []FieldError {
 }
 
 // handleUpdateMe updates the authenticated account's profile (display name, bio).
-func (s *Server) handleUpdateMe(c echo.Context) error {
+func (s *Server) handleUpdateMe(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -562,7 +562,7 @@ type mfaRequiredResponse struct {
 // handleLogin verifies credentials and returns an access + refresh token — or,
 // when the account has TOTP MFA enabled, an MFA challenge (mfa_required +
 // mfa_token) WITHOUT any session tokens.
-func (s *Server) handleLogin(c echo.Context) error {
+func (s *Server) handleLogin(c *echo.Context) error {
 	var in loginRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
@@ -630,7 +630,7 @@ func errRefreshTokenRequired() error {
 // handleRefresh rotates a refresh token, returning a new access + refresh pair.
 // The token comes from the body or, when absent, from the vidra_refresh cookie;
 // in cookie mode rotation re-sets the cookie and the body omits the raw token.
-func (s *Server) handleRefresh(c echo.Context) error {
+func (s *Server) handleRefresh(c *echo.Context) error {
 	var in refreshRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
@@ -658,7 +658,7 @@ func (s *Server) handleRefresh(c echo.Context) error {
 // handleLogoutAll revokes every active session for the authenticated user
 // ("sign out everywhere"). It runs behind requireAuth, so the principal is
 // always present, and returns 204.
-func (s *Server) handleLogoutAll(c echo.Context) error {
+func (s *Server) handleLogoutAll(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -676,7 +676,7 @@ func (s *Server) handleLogoutAll(c echo.Context) error {
 // body or, when absent, from the vidra_refresh cookie. It is idempotent and
 // always returns 204, never revealing whether the token existed. The response
 // clears the cookie so a browser is always left signed out.
-func (s *Server) handleLogout(c echo.Context) error {
+func (s *Server) handleLogout(c *echo.Context) error {
 	var in refreshRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
@@ -711,7 +711,7 @@ func (r passwordResetRequest) Validate() []FieldError {
 // 202 Accepted — it never reveals whether the email belongs to an account, so it
 // cannot be used to enumerate registered users. A matching, active account is
 // issued a single-use reset token delivered by the mailer adapter.
-func (s *Server) handleRequestPasswordReset(c echo.Context) error {
+func (s *Server) handleRequestPasswordReset(c *echo.Context) error {
 	var in passwordResetRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
@@ -760,7 +760,7 @@ func (r passwordResetConfirmRequest) Validate() []FieldError {
 // handleConfirmPasswordReset completes the reset: a valid token sets the new
 // password and signs the account out everywhere (all sessions revoked). An
 // unknown, used, or expired token is a 400; the token is never echoed back.
-func (s *Server) handleConfirmPasswordReset(c echo.Context) error {
+func (s *Server) handleConfirmPasswordReset(c *echo.Context) error {
 	var in passwordResetConfirmRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
@@ -779,7 +779,7 @@ func (s *Server) handleConfirmPasswordReset(c echo.Context) error {
 // handleRequestEmailVerification issues a verification message for the
 // authenticated account. It runs behind requireAuth, so the principal is always
 // present. It always returns 202, and is a no-op for an already-verified account.
-func (s *Server) handleRequestEmailVerification(c echo.Context) error {
+func (s *Server) handleRequestEmailVerification(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -822,7 +822,7 @@ func (r emailVerificationResendRequest) Validate() []FieldError {
 // strict auth limiter (10/min per IP) like every other unauthenticated
 // credential endpoint, and the service applies a per-address send cooldown on
 // top, which is what bounds what a distributed caller can do to one inbox.
-func (s *Server) handleResendEmailVerification(c echo.Context) error {
+func (s *Server) handleResendEmailVerification(c *echo.Context) error {
 	var in emailVerificationResendRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
@@ -860,7 +860,7 @@ func (r emailVerificationConfirmRequest) Validate() []FieldError {
 // handleConfirmEmailVerification marks the account's email verified given a valid
 // token. It is public — the user may follow the link while logged out. 204 on
 // success; an unknown, used, or expired token is a 400.
-func (s *Server) handleConfirmEmailVerification(c echo.Context) error {
+func (s *Server) handleConfirmEmailVerification(c *echo.Context) error {
 	var in emailVerificationConfirmRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
@@ -914,7 +914,7 @@ func (r changePasswordRequest) Validate() []FieldError {
 // route, which a step-up authorises — the reset flow it used to name can never
 // complete for that account shape.
 // The passwords are never logged, echoed, or included in the audit event.
-func (s *Server) handleChangePassword(c echo.Context) error {
+func (s *Server) handleChangePassword(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -960,7 +960,7 @@ func (r deactivateAccountRequest) Validate() []FieldError {
 // its password, signing it out everywhere. Behind requireAuth. 204 on success;
 // a wrong password is 403. Deactivation is reversible by an administrator; hard
 // deletion is a separate, policy-gated flow.
-func (s *Server) handleDeactivateAccount(c echo.Context) error {
+func (s *Server) handleDeactivateAccount(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

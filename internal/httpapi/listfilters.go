@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // Shared query-filter parsing for list endpoints. parseJobFilter
@@ -27,7 +27,7 @@ const (
 // Absent or empty yields def; anything else must be in allowed or the request
 // is rejected. This is the antidote to the `== "open"` idiom, where every
 // unrecognised value silently collapsed into the "no filter" branch.
-func parseEnumParam(c echo.Context, name string, allowed []string, def string) (string, error) {
+func parseEnumParam(c *echo.Context, name string, allowed []string, def string) (string, error) {
 	raw := strings.TrimSpace(c.QueryParam(name))
 	if raw == "" {
 		return def, nil
@@ -42,7 +42,7 @@ func parseEnumParam(c echo.Context, name string, allowed []string, def string) (
 
 // parseScopeParam reads the shared ?scope=local|remote|all filter, defaulting
 // to all.
-func parseScopeParam(c echo.Context) (string, error) {
+func parseScopeParam(c *echo.Context) (string, error) {
 	return parseEnumParam(c, "scope", []string{scopeLocal, scopeRemote, scopeAll}, scopeAll)
 }
 
@@ -50,7 +50,7 @@ func parseScopeParam(c echo.Context) (string, error) {
 // (no filter), otherwise the parsed value. A malformed value is an error rather
 // than a silent "false", which would filter rows the caller never asked to
 // exclude.
-func parseBoolParam(c echo.Context, name string) (*bool, error) {
+func parseBoolParam(c *echo.Context, name string) (*bool, error) {
 	raw := strings.TrimSpace(c.QueryParam(name))
 	if raw == "" {
 		return nil, nil
@@ -63,7 +63,7 @@ func parseBoolParam(c echo.Context, name string) (*bool, error) {
 }
 
 // parseTimeParam reads an optional RFC3339 timestamp filter.
-func parseTimeParam(c echo.Context, name string) (*time.Time, error) {
+func parseTimeParam(c *echo.Context, name string) (*time.Time, error) {
 	raw := strings.TrimSpace(c.QueryParam(name))
 	if raw == "" {
 		return nil, nil
@@ -78,7 +78,7 @@ func parseTimeParam(c echo.Context, name string) (*time.Time, error) {
 // parseTimeRangeParams reads an inclusive [after, before] window and rejects an
 // inverted one, which is always a client bug and would otherwise return an
 // empty page that looks like "no data".
-func parseTimeRangeParams(c echo.Context, afterName, beforeName string) (after, before *time.Time, err error) {
+func parseTimeRangeParams(c *echo.Context, afterName, beforeName string) (after, before *time.Time, err error) {
 	if after, err = parseTimeParam(c, afterName); err != nil {
 		return nil, nil, err
 	}
@@ -94,7 +94,7 @@ func parseTimeRangeParams(c echo.Context, afterName, beforeName string) (after, 
 // parseCSVParam reads a repeatable and/or comma-separated multi-value filter
 // (?tag=a&tag=b and ?tag=a,b are equivalent) with no constrained value set.
 // Blanks are dropped and duplicates collapse; nil means "no filter".
-func parseCSVParam(c echo.Context, name string) []string {
+func parseCSVParam(c *echo.Context, name string) []string {
 	values := c.QueryParams()[name]
 	if len(values) == 0 {
 		return nil
@@ -117,7 +117,7 @@ func parseCSVParam(c echo.Context, name string) []string {
 // parseCSVEnumParam is parseCSVParam constrained to a fixed value set: every
 // value must be in allowed, or the request is rejected rather than silently
 // narrowed.
-func parseCSVEnumParam(c echo.Context, name string, allowed []string) ([]string, error) {
+func parseCSVEnumParam(c *echo.Context, name string, allowed []string) ([]string, error) {
 	out := parseCSVParam(c, name)
 	for _, v := range out {
 		ok := false
@@ -141,7 +141,7 @@ func parseCSVEnumParam(c echo.Context, name string, allowed []string) ([]string,
 // absent; a malformed or negative value is an error rather than a silent zero,
 // which for a lower bound would be a no-op and for an upper bound would filter
 // away every row.
-func parseInt32Param(c echo.Context, name string) (*int32, error) {
+func parseInt32Param(c *echo.Context, name string) (*int32, error) {
 	raw := strings.TrimSpace(c.QueryParam(name))
 	if raw == "" {
 		return nil, nil
@@ -157,7 +157,7 @@ func parseInt32Param(c echo.Context, name string) (*int32, error) {
 // parseInt32RangeParams reads an inclusive [min, max] window and rejects an
 // inverted one. Like parseTimeRangeParams, an inverted range is always a client
 // bug and would otherwise return an empty page indistinguishable from "no data".
-func parseInt32RangeParams(c echo.Context, minName, maxName string) (lo, hi *int32, err error) {
+func parseInt32RangeParams(c *echo.Context, minName, maxName string) (lo, hi *int32, err error) {
 	if lo, err = parseInt32Param(c, minName); err != nil {
 		return nil, nil, err
 	}
@@ -174,6 +174,6 @@ func parseInt32RangeParams(c echo.Context, minName, maxName string) (lo, hi *int
 // orderings. Unlike a free-form sort this can never reach the SQL layer as
 // anything but one of `allowed`, which is what lets the query use a
 // CASE-over-a-bound-parameter ORDER BY instead of string concatenation.
-func parseSortParam(c echo.Context, allowed []string, def string) (string, error) {
+func parseSortParam(c *echo.Context, allowed []string, def string) (string, error) {
 	return parseEnumParam(c, "sort", allowed, def)
 }

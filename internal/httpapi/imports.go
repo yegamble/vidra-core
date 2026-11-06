@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/videoimport"
@@ -79,7 +79,7 @@ func newImportJobResponse(row sqlcgen.ImportJob) importJobResponse {
 // missing/malformed/non-public URL is 422. The actual SSRF-guarded fetch,
 // size/quota enforcement, and AttachOriginal → Process pipeline run in the
 // background worker; watch progress via GET /videos/:id/import.
-func (s *Server) handleImportVideoFile(c echo.Context) error {
+func (s *Server) handleImportVideoFile(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -133,7 +133,7 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 // handleGetVideoImport reports the status of a video's most recent URL import
 // (owner only). Non-owner/unknown video → 404; a video that was never imported
 // → 404.
-func (s *Server) handleGetVideoImport(c echo.Context) error {
+func (s *Server) handleGetVideoImport(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

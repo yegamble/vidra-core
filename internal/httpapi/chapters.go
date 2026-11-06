@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -45,7 +45,7 @@ func chapterViews(chapters []video.Chapter) []chapterView {
 // visibility is identical to GET /videos/{id} (private → owner only, blocked →
 // moderators, scheduled/quarantined gated, else 404). 200 with a sorted list
 // ({"chapters": []} when none); 404 when the video is not visible.
-func (s *Server) handleGetVideoChapters(c echo.Context) error {
+func (s *Server) handleGetVideoChapters(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -67,7 +67,7 @@ func (s *Server) handleGetVideoChapters(c echo.Context) error {
 //   - 400 on non-ascending/duplicate starts, a start < 0, a start >= the probed
 //     duration, a title not 1..120 chars after trim, or more than 100 chapters;
 //   - 200 with the stored set (GET shape) on success.
-func (s *Server) handleSetVideoChapters(c echo.Context) error {
+func (s *Server) handleSetVideoChapters(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

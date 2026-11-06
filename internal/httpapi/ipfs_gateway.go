@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/vidra/vidra-core/internal/ipfs"
 )
 
@@ -16,7 +16,7 @@ type ipfsGatewayAuthorizer interface {
 
 // Caddy overwrites the two forwarded headers before this read-only precheck.
 // A direct call grants no bearer token and never returns a CID or media bytes.
-func (s *Server) handleIPFSGatewayAuthorize(c echo.Context) error {
+func (s *Server) handleIPFSGatewayAuthorize(c *echo.Context) error {
 	c.Response().Header().Set("Cache-Control", "no-store")
 	method := c.Request().Header.Get("X-Forwarded-Method")
 	uri := c.Request().Header.Get("X-Forwarded-Uri")

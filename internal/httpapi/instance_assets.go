@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/profileimage"
@@ -17,7 +17,7 @@ import (
 
 // instanceLogoKind maps the /instance-logo/{type} path segment to the stored
 // kind. The path enum IS the kind set, so this is a validation gate.
-func instanceLogoKind(c echo.Context) (string, error) {
+func instanceLogoKind(c *echo.Context) (string, error) {
 	t := c.Param("type")
 	for _, k := range profileimage.InstanceLogoKinds {
 		if t == k {
@@ -32,7 +32,7 @@ func instanceLogoKind(c echo.Context) (string, error) {
 // user/channel avatars), replacing any previous one. Behind
 // requireRole(admin); audited with the asset kind.
 func (s *Server) handleSetInstanceImage(kind string) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		return s.setInstanceImage(c, kind)
 	}
 }
@@ -40,14 +40,14 @@ func (s *Server) handleSetInstanceImage(kind string) echo.HandlerFunc {
 // handleDeleteInstanceImage removes an instance avatar/banner (row + stored
 // object). Behind requireRole(admin); 404 when none is set.
 func (s *Server) handleDeleteInstanceImage(kind string) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		return s.deleteInstanceImage(c, kind)
 	}
 }
 
 // handleSetInstanceLogo / handleDeleteInstanceLogo are the typed-logo-slot
 // variants ({type} ∈ favicon|header-wide|header-square|opengraph).
-func (s *Server) handleSetInstanceLogo(c echo.Context) error {
+func (s *Server) handleSetInstanceLogo(c *echo.Context) error {
 	kind, err := instanceLogoKind(c)
 	if err != nil {
 		return err
@@ -55,7 +55,7 @@ func (s *Server) handleSetInstanceLogo(c echo.Context) error {
 	return s.setInstanceImage(c, kind)
 }
 
-func (s *Server) handleDeleteInstanceLogo(c echo.Context) error {
+func (s *Server) handleDeleteInstanceLogo(c *echo.Context) error {
 	kind, err := instanceLogoKind(c)
 	if err != nil {
 		return err
@@ -63,7 +63,7 @@ func (s *Server) handleDeleteInstanceLogo(c echo.Context) error {
 	return s.deleteInstanceImage(c, kind)
 }
 
-func (s *Server) setInstanceImage(c echo.Context, kind string) error {
+func (s *Server) setInstanceImage(c *echo.Context, kind string) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -81,7 +81,7 @@ func (s *Server) setInstanceImage(c echo.Context, kind string) error {
 	return c.JSON(http.StatusCreated, newProfileImageView(img))
 }
 
-func (s *Server) deleteInstanceImage(c echo.Context, kind string) error {
+func (s *Server) deleteInstanceImage(c *echo.Context, kind string) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -96,13 +96,13 @@ func (s *Server) deleteInstanceImage(c echo.Context, kind string) error {
 // handleGetInstanceImage serves an instance avatar/banner publicly, with the
 // content type derived at upload time. 404 when none is set.
 func (s *Server) handleGetInstanceImage(kind string) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		return s.serveInstanceImage(c, kind)
 	}
 }
 
 // handleGetInstanceLogo serves a typed logo slot publicly.
-func (s *Server) handleGetInstanceLogo(c echo.Context) error {
+func (s *Server) handleGetInstanceLogo(c *echo.Context) error {
 	kind, err := instanceLogoKind(c)
 	if err != nil {
 		return err
@@ -110,7 +110,7 @@ func (s *Server) handleGetInstanceLogo(c echo.Context) error {
 	return s.serveInstanceImage(c, kind)
 }
 
-func (s *Server) serveInstanceImage(c echo.Context, kind string) error {
+func (s *Server) serveInstanceImage(c *echo.Context, kind string) error {
 	img, ok := s.imagesvc.InstanceImage(kind)
 	if !ok {
 		return echo.NewHTTPError(http.StatusNotFound, kind+" not found")

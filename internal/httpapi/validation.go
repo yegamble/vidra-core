@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // FieldError is a single field-level validation problem, surfaced to the client
@@ -38,7 +38,7 @@ func (e *ValidationError) Error() string { return "validation failed" }
 //	if err := bindAndValidate(c, &in); err != nil {
 //	    return err
 //	}
-func bindAndValidate(c echo.Context, dst any) error {
+func bindAndValidate(c *echo.Context, dst any) error {
 	if err := c.Bind(dst); err != nil {
 		// Echo's bind errors already carry a 4xx; normalise to our envelope with
 		// a generic, non-leaky message (the raw decoder error can echo input).

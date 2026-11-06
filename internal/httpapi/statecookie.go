@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // Signed per-attempt state cookies.
@@ -92,7 +92,7 @@ func openState[T statePayload](secret, sealed string, ttl time.Duration) (T, boo
 // needs: httpOnly (invisible to scripts), SameSite=Lax (so it still rides the
 // top-level GET back from the provider, but not a cross-site POST), and Secure
 // whenever the instance is served over https.
-func (s *Server) writeStateCookie(c echo.Context, name, path, value string, maxAge time.Duration) {
+func (s *Server) writeStateCookie(c *echo.Context, name, path, value string, maxAge time.Duration) {
 	c.SetCookie(&http.Cookie{
 		Name:     name,
 		Value:    value,
@@ -106,7 +106,7 @@ func (s *Server) writeStateCookie(c echo.Context, name, path, value string, maxA
 
 // clearStateCookie expires a flow cookie (Max-Age=-1). The attributes have to
 // match the ones it was written with or the browser keeps the old cookie.
-func (s *Server) clearStateCookie(c echo.Context, name, path string) {
+func (s *Server) clearStateCookie(c *echo.Context, name, path string) {
 	c.SetCookie(&http.Cookie{
 		Name:     name,
 		Value:    "",

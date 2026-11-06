@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/qoe"
 )
@@ -40,7 +40,7 @@ type qoeHealthProvider interface {
 // `since`/`until` are RFC3339 and are snapped to hour boundaries by the service,
 // because that is the resolution the rollups exist at. Omitting both asks for the
 // last 24 hours; omitting `since` alone asks for the 24 hours before `until`.
-func (s *Server) handleQoEPlaybackHealth(c echo.Context) error {
+func (s *Server) handleQoEPlaybackHealth(c *echo.Context) error {
 	until, err := queryTime(c, "until", time.Now().UTC())
 	if err != nil {
 		return &ValidationError{Fields: []FieldError{{Field: "until", Message: "must be an RFC3339 timestamp"}}}
@@ -76,7 +76,7 @@ func (s *Server) handleQoEPlaybackHealth(c echo.Context) error {
 }
 
 // queryTime parses an optional RFC3339 query parameter.
-func queryTime(c echo.Context, name string, def time.Time) (time.Time, error) {
+func queryTime(c *echo.Context, name string, def time.Time) (time.Time, error) {
 	raw := c.QueryParam(name)
 	if raw == "" {
 		return def, nil

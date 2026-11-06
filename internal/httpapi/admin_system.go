@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/version"
 )
@@ -121,7 +121,7 @@ type systemStatusResponse struct {
 // Behind requireRole(admin). Always 200 (even when degraded, even when
 // draining) so the admin can see the state, unlike the /readyz probe which
 // 503s.
-func (s *Server) handleSystemStatus(c echo.Context) error {
+func (s *Server) handleSystemStatus(c *echo.Context) error {
 	components, healthy := s.systemComponents(c.Request().Context())
 	status := "ok"
 	if !healthy {

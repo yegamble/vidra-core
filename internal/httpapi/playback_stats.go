@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/playbackstats"
 	"github.com/vidra/vidra-core/internal/ratelimit"
@@ -44,7 +44,7 @@ const (
 
 func (s *Server) playbackRateLimit() echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+		resolve: func(c *echo.Context) (*ratelimit.Limiter, string, bool) {
 			if s.playbackLimit == nil {
 				return nil, "", false
 			}
@@ -58,7 +58,7 @@ func (s *Server) playbackRateLimit() echo.MiddlewareFunc {
 // playbackClientKey hashes (client network, video id). IPv6 clients are
 // collapsed to their /64 so rotating addresses inside one allocation does not
 // mint fresh budgets.
-func playbackClientKey(c echo.Context) string {
+func playbackClientKey(c *echo.Context) string {
 	ip := c.RealIP()
 	if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
 		ip = parsed.Mask(net.CIDRMask(64, 128)).String()
@@ -78,7 +78,7 @@ type playbackBeaconRequest struct {
 // internal/playbackstats). Best-effort: a storage failure answers 204 so
 // telemetry can never degrade playback. The owner's own plays are ignored so
 // previews do not skew their numbers.
-func (s *Server) handlePlaybackBeacon(c echo.Context) error {
+func (s *Server) handlePlaybackBeacon(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -171,7 +171,7 @@ func shareViews(in []playbackstats.Share) []playbackShareView {
 // handleGetPlaybackStats returns the last 30 days of playback aggregates to the
 // video's owner or a channel editor; everyone else (and an unknown id) gets 404
 // so existence is not leaked — the same authz as the channel stats surface.
-func (s *Server) handleGetPlaybackStats(c echo.Context) error {
+func (s *Server) handleGetPlaybackStats(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

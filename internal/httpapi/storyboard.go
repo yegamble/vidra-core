@@ -3,7 +3,7 @@ package httpapi
 import (
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
@@ -12,18 +12,18 @@ import (
 // handleGetVideoStoryboardImage serves a video's storyboard sprite sheet
 // (kind='storyboard'). Same visibility as the detail endpoint (private → owner
 // only, blocked → moderators only); a video without a stored storyboard is 404.
-func (s *Server) handleGetVideoStoryboardImage(c echo.Context) error {
+func (s *Server) handleGetVideoStoryboardImage(c *echo.Context) error {
 	return s.serveVideoStoryboard(c, "storyboard", "image/jpeg")
 }
 
 // handleGetVideoStoryboardVTT serves a video's storyboard WebVTT sprite map
 // (kind='storyboard_vtt'). Same visibility as the sprite sheet.
-func (s *Server) handleGetVideoStoryboardVTT(c echo.Context) error {
+func (s *Server) handleGetVideoStoryboardVTT(c *echo.Context) error {
 	return s.serveVideoStoryboard(c, "storyboard_vtt", "text/vtt")
 }
 
 // serveVideoStoryboard is the shared visibility-gated storyboard file server.
-func (s *Server) serveVideoStoryboard(c echo.Context, kind, contentType string) error {
+func (s *Server) serveVideoStoryboard(c *echo.Context, kind, contentType string) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err

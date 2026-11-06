@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/instancesettings"
@@ -97,7 +97,7 @@ func (s *Server) remoteSearchAllowed(authed bool) bool {
 // channel that ALWAYS receives exactly one value (possibly nil) within
 // remoteSearchResolveTimeout — the handler runs the local search concurrently
 // and joins on it.
-func (s *Server) startRemoteSearch(c echo.Context, q string) <-chan []remoteSearchResultView {
+func (s *Server) startRemoteSearch(c *echo.Context, q string) <-chan []remoteSearchResultView {
 	userID, _, authed := principalFromContext(c)
 	if !s.remoteSearchAllowed(authed) {
 		return nil

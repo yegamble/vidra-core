@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/messaging"
 )
@@ -211,7 +211,7 @@ type messageListResponse struct {
 // handleStartConversation returns (creating if needed) the 1:1 conversation with
 // the recipient. Behind requireAuth. Messaging yourself → 422; unknown recipient
 // → 404. Idempotent (returns the existing conversation).
-func (s *Server) handleStartConversation(c echo.Context) error {
+func (s *Server) handleStartConversation(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -289,7 +289,7 @@ func (s *Server) handleStartConversation(c echo.Context) error {
 
 // handleListConversations returns the caller's inbox, most-recently-active first.
 // Behind requireAuth. Pagination via ?limit (1–100, default 20)/?offset.
-func (s *Server) handleListConversations(c echo.Context) error {
+func (s *Server) handleListConversations(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -315,7 +315,7 @@ func (s *Server) handleListConversations(c echo.Context) error {
 // handleListMessages returns a conversation's messages, newest first. Behind
 // requireAuth. A non-participant (or unknown conversation) is 404 so a
 // conversation's existence is not leaked. Pagination via ?limit/?offset.
-func (s *Server) handleListMessages(c echo.Context) error {
+func (s *Server) handleListMessages(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -394,7 +394,7 @@ func (s *Server) handleListMessages(c echo.Context) error {
 // handleSendMessage posts a message to a conversation. Behind requireAuth. A
 // non-participant (or unknown conversation) is 404. The response carries the
 // sender's identity (the authenticated user).
-func (s *Server) handleSendMessage(c echo.Context) error {
+func (s *Server) handleSendMessage(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

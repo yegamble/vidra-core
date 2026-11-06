@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -22,7 +22,7 @@ type videoConfigResponse struct {
 // no longer wholly static: categories are the INSTANCE's taxonomy, which an
 // operator can replace (see instancesettings.KeyInstanceCustomCategories). The
 // other three are fixed vocabularies and stay compiled in.
-func (s *Server) handleVideoConfig(c echo.Context) error {
+func (s *Server) handleVideoConfig(c *echo.Context) error {
 	return c.JSON(http.StatusOK, videoConfigResponse{
 		// Same accessor validation uses, so what the picker offers and what a
 		// write accepts cannot drift apart.

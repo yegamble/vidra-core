@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/profileimage"
 )
@@ -61,7 +61,7 @@ type accountSearchResponse struct {
 // searchQueryParam reads and validates the shared ?q for the entity searches:
 // required and bounded by the same maxSearchQueryLen as the video search, so
 // one endpoint cannot be used to run a query the others refuse.
-func searchQueryParam(c echo.Context) (string, error) {
+func searchQueryParam(c *echo.Context) (string, error) {
 	q := strings.TrimSpace(c.QueryParam("q"))
 	if q == "" {
 		return "", echo.NewHTTPError(http.StatusBadRequest, "query parameter q is required")
@@ -79,7 +79,7 @@ func searchQueryParam(c echo.Context) (string, error) {
 // Visibility is enforced in SQL (SearchPublicChannels): the owning account must
 // be active and must not have opted out of discovery (unlisted). A signed-in
 // caller's mutes and blocks hide the channels of the accounts they apply to.
-func (s *Server) handleSearchChannels(c echo.Context) error {
+func (s *Server) handleSearchChannels(c *echo.Context) error {
 	q, err := searchQueryParam(c)
 	if err != nil {
 		return err
@@ -114,7 +114,7 @@ func (s *Server) handleSearchChannels(c echo.Context) error {
 // suspended, private, or unlisted account is absent from this list exactly as it
 // is absent from GET /users/{username}/profile. A signed-in caller's mutes and
 // blocks remove accounts on top of that.
-func (s *Server) handleSearchAccounts(c echo.Context) error {
+func (s *Server) handleSearchAccounts(c *echo.Context) error {
 	q, err := searchQueryParam(c)
 	if err != nil {
 		return err

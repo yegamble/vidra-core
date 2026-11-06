@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/playback"
@@ -100,7 +100,7 @@ type qoeEventInput struct {
 // partial accept would mean a client whose vocabulary has drifted keeps sending
 // forever while silently losing half its data, which is worse than a 400 it can
 // see in a console.
-func (s *Server) handleQoEEvents(c echo.Context) error {
+func (s *Server) handleQoEEvents(c *echo.Context) error {
 	var in qoeEventsRequest
 	if err := c.Bind(&in); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "malformed or invalid request body")
@@ -181,7 +181,7 @@ func (s *Server) handleQoEEvents(c echo.Context) error {
 // search beacon already pays, and per REQUEST rather than per event — and it is
 // the only shape that cannot be steered by a client: a body has never carried
 // identity here, so there is nothing to send and nothing to withhold.
-func (s *Server) qoeViewerDigest(c echo.Context, now time.Time) string {
+func (s *Server) qoeViewerDigest(c *echo.Context, now time.Time) string {
 	viewerID, prefs, authed := s.searchUserPrefs(c)
 	if authed {
 		if allowHistory, allowPersonalization := s.searchConsent(prefs, authed); !allowHistory && !allowPersonalization {

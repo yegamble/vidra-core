@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/donation"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -92,7 +92,7 @@ func (r addDonationAddressRequest) Validate() []FieldError {
 }
 
 // handleAddDonationAddress adds a donation address for the authenticated user.
-func (s *Server) handleAddDonationAddress(c echo.Context) error {
+func (s *Server) handleAddDonationAddress(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -123,7 +123,7 @@ func (s *Server) handleAddDonationAddress(c echo.Context) error {
 
 // handleListMyDonationAddresses lists all of the caller's donation addresses
 // (account-level and channel-scoped).
-func (s *Server) handleListMyDonationAddresses(c echo.Context) error {
+func (s *Server) handleListMyDonationAddresses(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -136,7 +136,7 @@ func (s *Server) handleListMyDonationAddresses(c echo.Context) error {
 }
 
 // handleDeleteDonationAddress removes one of the caller's donation addresses.
-func (s *Server) handleDeleteDonationAddress(c echo.Context) error {
+func (s *Server) handleDeleteDonationAddress(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -160,7 +160,7 @@ type donationChallengeResponse struct {
 
 // handleChallengeDonationAddress issues a proof-of-control challenge for one of
 // the caller's addresses. Networks without a signing path answer 501.
-func (s *Server) handleChallengeDonationAddress(c echo.Context) error {
+func (s *Server) handleChallengeDonationAddress(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -190,7 +190,7 @@ func (r verifyDonationAddressRequest) Validate() []FieldError {
 
 // handleVerifyDonationAddress verifies a signed challenge and, on success, marks
 // the address verified. Networks without a signing path answer 501.
-func (s *Server) handleVerifyDonationAddress(c echo.Context) error {
+func (s *Server) handleVerifyDonationAddress(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -216,7 +216,7 @@ func (s *Server) handleVerifyDonationAddress(c echo.Context) error {
 
 // handleListUserDonationAddresses lists a user's PUBLIC (account-level)
 // donation addresses. No auth required; only what the owner added is exposed.
-func (s *Server) handleListUserDonationAddresses(c echo.Context) error {
+func (s *Server) handleListUserDonationAddresses(c *echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		// An unknown/invalid user simply has no public addresses.
@@ -231,7 +231,7 @@ func (s *Server) handleListUserDonationAddresses(c echo.Context) error {
 
 // handleListChannelDonationAddresses lists a channel's PUBLIC donation
 // addresses, resolved by handle. No auth required.
-func (s *Server) handleListChannelDonationAddresses(c echo.Context) error {
+func (s *Server) handleListChannelDonationAddresses(c *echo.Context) error {
 	ctx := c.Request().Context()
 	ch, err := s.channelsvc.GetByHandle(ctx, c.Param("handle"))
 	if err != nil {

@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/federation"
 )
@@ -35,13 +35,13 @@ const apObjectCacheControl = "public, max-age=300"
 
 // serveAPObject renders one ActivityPub document with the negotiation, cache and
 // validator rules every object id shares.
-func (s *Server) serveAPObject(c echo.Context, load func(uuid.UUID) (map[string]any, error), tombstone func(uuid.UUID) (map[string]any, error)) error {
+func (s *Server) serveAPObject(c *echo.Context, load func(uuid.UUID) (map[string]any, error), tombstone func(uuid.UUID) (map[string]any, error)) error {
 	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
 		return echo.NewHTTPError(http.StatusNotAcceptable, "objects are served as application/activity+json")
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound)
+		return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 	}
 	doc, err := load(id)
 	switch {
@@ -50,18 +50,18 @@ func (s *Server) serveAPObject(c echo.Context, load func(uuid.UUID) (map[string]
 		// must be able to tell "really gone" from "this server is confused",
 		// which a 200-with-a-page could never say.
 		if tombstone == nil {
-			return echo.NewHTTPError(http.StatusGone)
+			return echo.NewHTTPError(http.StatusGone, http.StatusText(http.StatusGone))
 		}
 		doc, err = tombstone(id)
 		if err != nil {
 			if errors.Is(err, federation.ErrNotFound) {
-				return echo.NewHTTPError(http.StatusNotFound)
+				return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 			}
 			return err
 		}
 		return s.writeAPObject(c, http.StatusGone, doc, false)
 	case errors.Is(err, federation.ErrNotFound):
-		return echo.NewHTTPError(http.StatusNotFound)
+		return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 	case err != nil:
 		return err
 	}
@@ -85,7 +85,7 @@ func (s *Server) serveAPObject(c echo.Context, load func(uuid.UUID) (map[string]
 // If-None-Match, and this is precisely the answer that must never be revalidated
 // into a 304: a 304 says "what you already have is current", and what the peer
 // already has is the video.
-func (s *Server) writeAPObject(c echo.Context, status int, doc map[string]any, cacheable bool) error {
+func (s *Server) writeAPObject(c *echo.Context, status int, doc map[string]any, cacheable bool) error {
 	body, err := json.Marshal(doc)
 	if err != nil {
 		return err
@@ -108,7 +108,7 @@ func (s *Server) writeAPObject(c echo.Context, status int, doc map[string]any, c
 
 // handleVideoObject serves GET /videos/{uuid} as ActivityPub — the object id
 // every Create, Update, Delete and inReplyTo we emit points at.
-func (s *Server) handleVideoObject(c echo.Context) error {
+func (s *Server) handleVideoObject(c *echo.Context) error {
 	ctx := c.Request().Context()
 	return s.serveAPObject(c,
 		func(id uuid.UUID) (map[string]any, error) { return s.fedsvc.VideoObject(ctx, id) },
@@ -123,13 +123,13 @@ func (s *Server) handleVideoObject(c echo.Context) error {
 // second copy, so the object keeps one identity; Mastodon and PeerTube follow it
 // and take the id the document states. Only a video that is served at all is
 // redirected to — anything else is the 404 the canonical id would answer.
-func (s *Server) handleLegacyVideoObject(c echo.Context) error {
+func (s *Server) handleLegacyVideoObject(c *echo.Context) error {
 	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
 		return echo.NewHTTPError(http.StatusNotAcceptable, "objects are served as application/activity+json")
 	}
 	legacy, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound)
+		return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 	}
 	ctx := c.Request().Context()
 	id, err := s.fedsvc.LegacyVideoID(ctx, legacy)
@@ -138,7 +138,7 @@ func (s *Server) handleLegacyVideoObject(c echo.Context) error {
 	}
 	switch {
 	case errors.Is(err, federation.ErrNotFound):
-		return echo.NewHTTPError(http.StatusNotFound)
+		return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 	case err != nil && !errors.Is(err, federation.ErrGone):
 		return err
 	}
@@ -148,7 +148,7 @@ func (s *Server) handleLegacyVideoObject(c echo.Context) error {
 
 // handleNoteObject serves GET /comments/{uuid} as ActivityPub — the Note id a
 // remote reply threads against.
-func (s *Server) handleNoteObject(c echo.Context) error {
+func (s *Server) handleNoteObject(c *echo.Context) error {
 	ctx := c.Request().Context()
 	return s.serveAPObject(c,
 		func(id uuid.UUID) (map[string]any, error) { return s.fedsvc.NoteObject(ctx, id) },
@@ -159,7 +159,7 @@ func (s *Server) handleNoteObject(c echo.Context) error {
 // handleRemoteCommentObject serves GET /remote-comments/{uuid} as ActivityPub —
 // the dereferenceable Note behind a locally-authored comment on a remote video
 // (migration 0147). A distinct path from /comments/ so the id spaces never collide.
-func (s *Server) handleRemoteCommentObject(c echo.Context) error {
+func (s *Server) handleRemoteCommentObject(c *echo.Context) error {
 	ctx := c.Request().Context()
 	return s.serveAPObject(c,
 		func(id uuid.UUID) (map[string]any, error) { return s.fedsvc.AuthoredRemoteCommentObject(ctx, id) },

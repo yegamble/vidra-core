@@ -3,7 +3,7 @@ package httpapi
 import (
 	"strconv"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // Pagination lives here rather than being re-derived in every list handler.
@@ -47,14 +47,14 @@ func (p pageParams) meta(total int64) pageMeta {
 // quietly receives the first `max` rows. The accepted limit is the whole range
 // [1, max] — not a fixed set of options. The UI happens to offer 5/10/20/50/100
 // but the contract is a range, so a caller asking for 37 gets 37.
-func parsePage(c echo.Context, def, max int) pageParams {
+func parsePage(c *echo.Context, def, max int) pageParams {
 	return parsePageNamed(c, "limit", "offset", def, max)
 }
 
 // parsePageNamed is parsePage for the handful of endpoints whose page params
 // are not literally named limit/offset (the job-run detail view pages its
 // events with events_limit/events_offset alongside the run's own paging).
-func parsePageNamed(c echo.Context, limitParam, offsetParam string, def, max int) pageParams {
+func parsePageNamed(c *echo.Context, limitParam, offsetParam string, def, max int) pageParams {
 	offset := queryInt(c, offsetParam, 0)
 	if offset < 0 {
 		offset = 0
@@ -64,11 +64,11 @@ func parsePageNamed(c echo.Context, limitParam, offsetParam string, def, max int
 
 // parseLimit reads ?limit for endpoints that cap a result set without offset
 // paging (typeahead and suggestion routes).
-func parseLimit(c echo.Context, def, max int) int {
+func parseLimit(c *echo.Context, def, max int) int {
 	return parseLimitNamed(c, "limit", def, max)
 }
 
-func parseLimitNamed(c echo.Context, param string, def, max int) int {
+func parseLimitNamed(c *echo.Context, param string, def, max int) int {
 	return clampInt(queryInt(c, param, def), 1, max)
 }
 
@@ -78,7 +78,7 @@ func (p pageParams) Limit32() int32  { return int32(p.Limit) }
 func (p pageParams) Offset32() int32 { return int32(p.Offset) }
 
 // queryInt reads an integer query param, returning def when absent or malformed.
-func queryInt(c echo.Context, name string, def int) int {
+func queryInt(c *echo.Context, name string, def int) int {
 	raw := c.QueryParam(name)
 	if raw == "" {
 		return def

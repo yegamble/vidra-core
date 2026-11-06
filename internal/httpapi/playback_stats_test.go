@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/playbackstats"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -168,8 +168,7 @@ func TestPlaybackLimiterKeyedPerVideoAndIPv6Prefix(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/", nil)
 		req.RemoteAddr = ip
 		c := e.NewContext(req, httptest.NewRecorder())
-		c.SetParamNames("id")
-		c.SetParamValues(id)
+		c.SetPathValues(echo.PathValues{{Name: "id", Value: id}})
 		return playbackClientKey(c)
 	}
 	if key("[2001:db8:1:2::1]:80", "a") != key("[2001:db8:1:2:ffff::9]:80", "a") {

@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/labstack/gommon/bytes"
 
 	"github.com/vidra/vidra-core/internal/drm"
@@ -307,7 +307,7 @@ const (
 // handleInfrastructure returns the deploy-time shape of this instance. Behind
 // requireRole(admin). Read-only and always 200: every value is already in memory except the
 // local disk reading, whose failure drops that one field rather than the page.
-func (s *Server) handleInfrastructure(c echo.Context) error {
+func (s *Server) handleInfrastructure(c *echo.Context) error {
 	cfg := s.cfg
 	uploadMax, _ := bytes.Parse(cfg.UploadMaxSize) // boot-validated, so err is unreachable
 

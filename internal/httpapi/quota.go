@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/quota"
 )
@@ -50,7 +50,7 @@ type quotaStatusResponse struct {
 // handleGetMyQuota returns the authenticated user's current storage usage and
 // effective quota (per-user override, else the instance default; null =
 // unlimited), plus the rolling-24h daily upload window. Behind requireAuth.
-func (s *Server) handleGetMyQuota(c echo.Context) error {
+func (s *Server) handleGetMyQuota(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
