@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/vidra/vidra-core/internal/storage"
 )
@@ -38,7 +39,7 @@ func TestCopyHLSTreeReadsEachObjectOnce(t *testing.T) {
 		}
 	}
 	im := &Importer{srcMedia: &singleReadSource{Backend: src, opened: map[string]int{}}, destMedia: dst}
-	if err := im.copyHLSTree(ctx, prefix, "master.m3u8"); err != nil {
+	if err := im.copyHLSTree(ctx, prefix, "master.m3u8", 0); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -84,7 +85,7 @@ func TestCopyHLSAccelerationAndFallback(t *testing.T) {
 				return dst.Put(ctx, to, strings.NewReader("media bytes"))
 			})
 			im := &Importer{srcMedia: readSource, destMedia: dst, copyMediaServer: copier}
-			err := im.copyHLSTree(ctx, prefix, "master.m3u8")
+			err := im.copyHLSTree(ctx, prefix, "master.m3u8", 0)
 			if outcome == "changed" || outcome == "cancelled" {
 				want := changed
 				if outcome == "cancelled" {
@@ -134,7 +135,7 @@ func TestCopyHLSTreeRejectsIncompleteOrExternalMedia(t *testing.T) {
 				t.Fatal(err)
 			}
 			im := &Importer{srcMedia: src, destMedia: dest}
-			if err := im.copyHLSTree(context.Background(), "streaming-playlists/hls/fixture", "master.m3u8"); err == nil {
+			if err := im.copyHLSTree(context.Background(), "streaming-playlists/hls/fixture", "master.m3u8", 0); err == nil {
 				t.Fatal("accepted incomplete or external HLS")
 			}
 		})
@@ -157,7 +158,7 @@ func TestCopyHLSTreeRetriesPrivateSplitAudio(t *testing.T) {
 		}
 	}
 	im := &Importer{srcMedia: src, destMedia: dest}
-	if err := im.copyHLSTree(ctx, "streaming-playlists/hls/fixture", "master.m3u8"); err == nil {
+	if err := im.copyHLSTree(ctx, "streaming-playlists/hls/fixture", "master.m3u8", 0); err == nil {
 		t.Fatal("missing audio accepted")
 	}
 	files["audio.mp4"] = "synthetic audio bytes"
@@ -165,7 +166,7 @@ func TestCopyHLSTreeRetriesPrivateSplitAudio(t *testing.T) {
 		t.Fatal(err)
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := im.copyHLSTree(ctx, "streaming-playlists/hls/fixture", "master.m3u8"); err != nil {
+		if err := im.copyHLSTree(ctx, "streaming-playlists/hls/fixture", "master.m3u8", 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -183,7 +184,7 @@ func TestCopyHLSTreeRetriesPrivateSplitAudio(t *testing.T) {
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := im.copyHLSTree(cancelled, "streaming-playlists/hls/fixture", "master.m3u8"); err == nil {
+	if err := im.copyHLSTree(cancelled, "streaming-playlists/hls/fixture", "master.m3u8", 0); err == nil {
 		t.Fatal("cancel ignored")
 	}
 }
@@ -214,7 +215,7 @@ func TestCopyHLSTreeServerCopyAggregateCap(t *testing.T) {
 		}
 		return 0, capError
 	})}
-	if err := im.copyHLSTree(ctx, prefix, "master.m3u8"); !errors.Is(err, capError) || calls != 4 {
+	if err := im.copyHLSTree(ctx, prefix, "master.m3u8", 0); !errors.Is(err, capError) || calls != 4 {
 		t.Fatalf("calls=%d error=%v", calls, err)
 	}
 }
@@ -234,7 +235,7 @@ func TestCopyHLSUnavailableDisablesRepeatedAttempts(t *testing.T) {
 		calls++
 		return 0, storage.ErrCopyUnavailable
 	})}
-	if err := im.copyHLSTree(ctx, prefix, "master.m3u8"); err != nil {
+	if err := im.copyHLSTree(ctx, prefix, "master.m3u8", 0); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
@@ -273,7 +274,7 @@ func TestCopyHLSParallelFallbackDisablesCopierOnce(t *testing.T) {
 	})}
 	go func() {
 		counts, err := runHLSCopyWorkers(ctx, targets, func(ctx context.Context, target hlsCopyTarget) (hlsCopyOutcome, error) {
-			return hlsCopied, im.copyHLSTree(ctx, target.prefix, target.master)
+			return hlsCopied, im.copyHLSTree(ctx, target.prefix, target.master, 0)
 		})
 		done <- hlsWorkerResult{counts, err}
 	}()
@@ -325,7 +326,7 @@ func TestCopyHLSTreeCountsDistinctByteRangeReferences(t *testing.T) {
 		}
 	}
 	im := &Importer{srcMedia: &singleReadSource{Backend: src, opened: map[string]int{}}, destMedia: dst}
-	if err := im.copyHLSTree(ctx, prefix, "master.m3u8"); err != nil {
+	if err := im.copyHLSTree(ctx, prefix, "master.m3u8", 0); err != nil {
 		t.Fatalf("12,000 repeated byte-range lines naming 7 objects were refused: %v", err)
 	}
 	for name := range objects {
@@ -348,8 +349,61 @@ func TestCopyHLSTreeStillCapsDistinctReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	im := &Importer{srcMedia: src, destMedia: dst}
-	err := im.copyHLSTree(ctx, "streaming-playlists/hls/wide", "master.m3u8")
+	err := im.copyHLSTree(ctx, "streaming-playlists/hls/wide", "master.m3u8", 0)
 	if err == nil || !strings.Contains(err.Error(), "reference limit") {
 		t.Fatalf("10,001 distinct references must hit the reference limit, got %v", err)
+	}
+}
+
+// A fixed 30-minute budget needs 36 MB/s to fill the 64 GiB tree cap; the beta
+// streams 12–24 MB/s, so a 22 GB 4K ladder failed for being large, not stuck.
+func TestHLSTreeTimeoutFollowsRecordedBytes(t *testing.T) {
+	for _, tc := range []struct {
+		bytes int64
+		want  time.Duration
+	}{
+		{0, 30 * time.Minute},
+		{2 << 30, 30 * time.Minute},
+		{22_167_000_000, 5285 * time.Second},
+		{64 << 30, 16384 * time.Second},
+	} {
+		if got := hlsTreeTimeout(tc.bytes); got != tc.want {
+			t.Errorf("hlsTreeTimeout(%d) = %v, want %v", tc.bytes, got, tc.want)
+		}
+	}
+}
+
+type deadlineSource struct {
+	storage.Backend
+	deadline time.Time
+}
+
+func (s *deadlineSource) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	if d, ok := ctx.Deadline(); ok && s.deadline.IsZero() {
+		s.deadline = d
+	}
+	return s.Backend.Open(ctx, key)
+}
+
+func TestCopyHLSTreeDeadlineFollowsRecordedBytes(t *testing.T) {
+	ctx := context.Background()
+	src, _ := storage.NewLocal(t.TempDir())
+	dst, _ := storage.NewLocal(t.TempDir())
+	prefix := "streaming-playlists/hls/large"
+	for name, body := range map[string]string{"master.m3u8": "#EXTM3U\nvideo.mp4\n", "video.mp4": "media bytes"} {
+		if _, err := src.Put(ctx, prefix+"/"+name, strings.NewReader(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observed := &deadlineSource{Backend: src}
+	im := &Importer{srcMedia: observed, destMedia: dst}
+	const recorded = int64(22_167_000_000)
+	start := time.Now()
+	if err := im.copyHLSTree(ctx, prefix, "master.m3u8", recorded); err != nil {
+		t.Fatal(err)
+	}
+	want := hlsTreeTimeout(recorded)
+	if got := observed.deadline.Sub(start); got < want-time.Minute || got > want+time.Minute {
+		t.Fatalf("tree deadline %v after start, want about %v for %d recorded bytes", got.Round(time.Second), want, recorded)
 	}
 }

@@ -19,8 +19,8 @@ var hlsLocalName = regexp.MustCompile(`^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$`)
 // copyHLSTree follows only same-directory object names, never a URL or traversal.
 // PeerTube's flat HLS layout includes byte-range MP4s, audio and init segments.
 // Keys are stable across retries; the DB publishes nothing until this succeeds.
-func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string, recordedBytes int64) error {
+	ctx, cancel := context.WithTimeout(ctx, hlsTreeTimeout(recordedBytes))
 	defer cancel()
 	queue := []string{master}
 	seen := map[string]bool{}
@@ -250,4 +250,15 @@ func withoutHLSSubtitleGroups(body []byte) ([]byte, error) {
 		out.WriteString(raw)
 	}
 	return []byte(out.String()), nil
+}
+
+// hlsCopyFloorRate is the slowest a tree may copy before its deadline treats it
+// as stuck. Measured streamed copies on the beta ran at 12–24 MB/s per tree.
+const hlsCopyFloorRate = 4 << 20
+
+// hlsTreeTimeout bounds one tree's copy by its recorded size so a hung transfer
+// still ends without failing a large ladder for its size. 30 minutes alone would
+// need 36 MB/s to fill the 64 GiB tree cap; 0 (size unknown) keeps that floor.
+func hlsTreeTimeout(recordedBytes int64) time.Duration {
+	return max(30*time.Minute, time.Duration(recordedBytes/hlsCopyFloorRate)*time.Second)
 }

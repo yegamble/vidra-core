@@ -14,6 +14,7 @@ import (
 type hlsCopyTarget struct {
 	sourceID, prefix, master string
 	videoID                  uuid.UUID
+	bytes                    int64 // recorded ladder size; sizes the copy deadline
 }
 
 type hlsCopyOutcome int
@@ -125,7 +126,7 @@ func (im *Importer) importHLSCopies(ctx context.Context, r *Report) error {
 		if !ok {
 			continue
 		}
-		targets = append(targets, hlsCopyTarget{sourceID: v.UUID, videoID: id, prefix: sourceHLSDir(v.UUID), master: path.Base(hls.PlaylistFilename)})
+		targets = append(targets, hlsCopyTarget{sourceID: v.UUID, videoID: id, prefix: sourceHLSDir(v.UUID), master: path.Base(hls.PlaylistFilename), bytes: hls.Bytes})
 	}
 	im.copyMediaDisabled.Store(false)
 	c := r.count(KindHLSPlaylist)
@@ -140,7 +141,7 @@ func (im *Importer) importHLSCopies(ctx context.Context, r *Report) error {
 }
 
 func (im *Importer) copyHLSTarget(ctx context.Context, target hlsCopyTarget) (hlsCopyOutcome, error) {
-	if err := im.copyHLSTree(ctx, target.prefix, target.master); err != nil {
+	if err := im.copyHLSTree(ctx, target.prefix, target.master, target.bytes); err != nil {
 		if ctx.Err() != nil {
 			return hlsCopyFailed, ctx.Err()
 		}

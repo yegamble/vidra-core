@@ -61,13 +61,13 @@ func TestHLSTreeRetainsSourceOpenAndStreamFailureStages(t *testing.T) {
 		t.Fatal(err)
 	}
 	im := &Importer{srcMedia: src, destMedia: hlsFailPut{}}
-	if err := im.copyHLSTree(ctx, "tree", "master.m3u8"); err == nil || hlsCopyFailureNote(err) != "HLS copy incomplete; rerun required (source_open/not_found)" {
+	if err := im.copyHLSTree(ctx, "tree", "master.m3u8", 0); err == nil || hlsCopyFailureNote(err) != "HLS copy incomplete; rerun required (source_open/not_found)" {
 		t.Fatalf("source failure lost context: %v", err)
 	}
 	if _, err := src.Put(ctx, "tree/master.m3u8", strings.NewReader("#EXTM3U\n")); err != nil {
 		t.Fatal(err)
 	}
-	if err := im.copyHLSTree(ctx, "tree", "master.m3u8"); err == nil || hlsCopyFailureNote(err) != "HLS copy incomplete; rerun required (stream_copy/http_403)" {
+	if err := im.copyHLSTree(ctx, "tree", "master.m3u8", 0); err == nil || hlsCopyFailureNote(err) != "HLS copy incomplete; rerun required (stream_copy/http_403)" {
 		t.Fatalf("stream failure lost context: %v", err)
 	}
 }
