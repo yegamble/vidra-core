@@ -110,7 +110,7 @@ func TestMixedSourceHLSPreservesServerCopyPerObject(t *testing.T) {
 				return dest.Put(ctx, to, strings.NewReader(body))
 			})
 			im := &Importer{srcMedia: source, destMedia: dest, copyMediaServer: copier}
-			if err := im.copyHLSTree(ctx, prefix, "master.m3u8"); err != nil {
+			if err := im.copyHLSTree(ctx, prefix, "master.m3u8", 0); err != nil {
 				t.Fatal(err)
 			}
 			if copied != 1 || im.copyMediaDisabled.Load() || gets(actual+"/remote.mp4") != 0 {
@@ -155,7 +155,7 @@ func TestMixedSourceLocalWriteFailureIsNeverRetried(t *testing.T) {
 	im := &Importer{srcMedia: source, destMedia: dest, copyMediaServer: copyFunc(func(context.Context, storage.Backend, string, string, int64) (int64, error) {
 		return 0, storage.ErrNotFound
 	})}
-	if err := im.copyHLSTree(context.Background(), prefix, "master.m3u8"); !errors.Is(err, storage.ErrCopyUnavailable) || dest.writes != 1 || im.copyMediaDisabled.Load() {
+	if err := im.copyHLSTree(context.Background(), prefix, "master.m3u8", 0); !errors.Is(err, storage.ErrCopyUnavailable) || dest.writes != 1 || im.copyMediaDisabled.Load() {
 		t.Fatalf("uncertain local write retried: writes=%d err=%v", dest.writes, err)
 	}
 }

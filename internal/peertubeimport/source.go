@@ -317,6 +317,8 @@ type SourceVideoFile struct {
 type SourceHLSPlaylist struct {
 	ID               int64
 	PlaylistFilename string
+	// Bytes is the ladder's recorded file total (HLSPlaylist only; 0 = unknown).
+	Bytes int64
 }
 
 // SourceCaption is one subtitle track.
@@ -658,10 +660,11 @@ func (s *Source) keptOriginal(ctx context.Context, videoID int64) (SourceVideoFi
 func (s *Source) HLSPlaylist(ctx context.Context, videoID int64) (SourceHLSPlaylist, bool, error) {
 	var p SourceHLSPlaylist
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, COALESCE("playlistFilename", '')
-		FROM "videoStreamingPlaylist"
-		WHERE "videoId" = $1
-		ORDER BY id LIMIT 1`, videoID).Scan(&p.ID, &p.PlaylistFilename)
+		SELECT p.id, COALESCE(p."playlistFilename", ''),
+		       COALESCE((SELECT SUM(f.size) FROM "videoFile" f WHERE f."videoStreamingPlaylistId" = p.id), 0)::bigint
+		FROM "videoStreamingPlaylist" p
+		WHERE p."videoId" = $1
+		ORDER BY p.id LIMIT 1`, videoID).Scan(&p.ID, &p.PlaylistFilename, &p.Bytes)
 	if err == pgx.ErrNoRows {
 		return SourceHLSPlaylist{}, false, nil
 	}

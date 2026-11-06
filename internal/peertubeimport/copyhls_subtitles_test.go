@@ -46,7 +46,7 @@ func TestCopyHLSSeparatesPeerTubeSubtitlePlaylists(t *testing.T) {
 	}
 	observed := &singleReadSource{Backend: src, opened: map[string]int{}}
 	im := &Importer{srcMedia: observed, destMedia: dst}
-	if err := im.copyHLSTree(ctx, prefix, "master.m3u8"); err != nil {
+	if err := im.copyHLSTree(ctx, prefix, "master.m3u8", 0); err != nil {
 		t.Fatal(err)
 	}
 	for name, original := range files {
@@ -99,7 +99,7 @@ func TestCopyHLSRejectsMalformedSubtitleAttributesAndExternalMedia(t *testing.T)
 					t.Fatal(err)
 				}
 			}
-			if err := (&Importer{srcMedia: src, destMedia: dst}).copyHLSTree(ctx, prefix, "master.m3u8"); err == nil {
+			if err := (&Importer{srcMedia: src, destMedia: dst}).copyHLSTree(ctx, prefix, "master.m3u8", 0); err == nil {
 				t.Fatal("malformed subtitle attributes or external media accepted")
 			}
 		})
