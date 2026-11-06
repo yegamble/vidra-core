@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -41,7 +41,7 @@ func embedPrivacyResponse(p video.EmbedPrivacy) embedPrivacyView {
 // quarantined/scheduled gated, else 404) but WITHOUT the password gate — the embed
 // page needs the policy pre-unlock for a password video to decide whether to even
 // show the unlock prompt. It exposes only the status + allow-list, nothing else.
-func (s *Server) handleGetVideoEmbedPrivacy(c echo.Context) error {
+func (s *Server) handleGetVideoEmbedPrivacy(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return err
@@ -60,7 +60,7 @@ func (s *Server) handleGetVideoEmbedPrivacy(c echo.Context) error {
 // owner only (a non-owner or unknown id is 404). 400 on an unknown status, a
 // "whitelist" with an empty/invalid domain list (hostnames only, ≤50), or
 // allowed_domains supplied with a non-whitelist status.
-func (s *Server) handleSetVideoEmbedPrivacy(c echo.Context) error {
+func (s *Server) handleSetVideoEmbedPrivacy(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

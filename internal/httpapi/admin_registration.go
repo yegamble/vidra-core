@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -57,7 +57,7 @@ type registrationRequestListResponse struct {
 // This used to be `c.QueryParam("status") == "pending"`, so ?status=approved —
 // a perfectly reasonable request — silently returned the ENTIRE queue instead of
 // the approved ones. An unrecognised status is now a 400.
-func (s *Server) handleListRegistrationRequests(c echo.Context) error {
+func (s *Server) handleListRegistrationRequests(c *echo.Context) error {
 	status, err := parseEnumParam(c, "status", registrationRequestStatuses, statusFilterAll)
 	if err != nil {
 		return err
@@ -77,7 +77,7 @@ func (s *Server) handleListRegistrationRequests(c echo.Context) error {
 // handleApproveRegistration approves a pending request, creating the account.
 // Behind requireRole(admin). Unknown/already-resolved id → 404; a username/email
 // taken since the request was filed → 409. Emits an audit event.
-func (s *Server) handleApproveRegistration(c echo.Context) error {
+func (s *Server) handleApproveRegistration(c *echo.Context) error {
 	adminID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -117,7 +117,7 @@ func (r rejectRegistrationRequestBody) Validate() []FieldError {
 // handleRejectRegistration rejects a pending request with an optional moderator
 // note. Behind requireRole(admin). Unknown/already-resolved id → 404. Emits an
 // audit event.
-func (s *Server) handleRejectRegistration(c echo.Context) error {
+func (s *Server) handleRejectRegistration(c *echo.Context) error {
 	adminID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

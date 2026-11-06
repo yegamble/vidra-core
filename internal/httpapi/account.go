@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/admin"
@@ -38,7 +38,7 @@ func (r deleteAccountRequest) Validate() []FieldError {
 // blob cleanup), comments become tombstones, per-user rows are purged, all
 // sessions are revoked, and the users row is anonymised. Irreversible. 204 on
 // success; a wrong (or absent — OAuth-only accounts) password is 403.
-func (s *Server) handleDeleteAccount(c echo.Context) error {
+func (s *Server) handleDeleteAccount(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -90,7 +90,7 @@ func (s *Server) handleDeleteAccount(c echo.Context) error {
 // handleAdminDeleteUser is the admin variant of the §1 hard delete: same
 // semantics, no password confirmation, self-guarded (an admin cannot delete
 // their own account this way — 422). Behind requireRole(admin).
-func (s *Server) handleAdminDeleteUser(c echo.Context) error {
+func (s *Server) handleAdminDeleteUser(c *echo.Context) error {
 	adminID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -141,7 +141,7 @@ func (s *Server) handleAdminDeleteUser(c echo.Context) error {
 // A server with no admin service wired cannot answer the question, so it does
 // not pretend to: the guard is skipped rather than failing closed on an
 // unrelated misconfiguration.
-func (s *Server) ensureNotLastAdmin(c echo.Context, userID uuid.UUID, action string) error {
+func (s *Server) ensureNotLastAdmin(c *echo.Context, userID uuid.UUID, action string) error {
 	if s.adminsvc == nil {
 		return nil
 	}
@@ -174,7 +174,7 @@ func (s *Server) ensureNotLastAdmin(c echo.Context, userID uuid.UUID, action str
 //
 // A server with no auth service wired cannot answer the question and does not
 // pretend to, matching ensureNotLastAdmin.
-func (s *Server) ensureOwnerHasTransferred(c echo.Context, userID uuid.UUID, action string) error {
+func (s *Server) ensureOwnerHasTransferred(c *echo.Context, userID uuid.UUID, action string) error {
 	if s.authsvc == nil {
 		return nil
 	}
@@ -226,7 +226,7 @@ func (s *Server) accountExportView(row sqlcgen.AccountExport) accountExportView 
 // operator's export cap (user_export_max_quota_bytes; 0 = no cap). Single
 // active export per user: 409 while one is pending/running; a finished/failed
 // export is replaced. 202 with the queued job's status.
-func (s *Server) handleRequestAccountExport(c echo.Context) error {
+func (s *Server) handleRequestAccountExport(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -259,7 +259,7 @@ func (s *Server) handleRequestAccountExport(c echo.Context) error {
 
 // handleGetAccountExport reports the caller's latest export status. 404 when
 // none was ever requested (or the expired archive was already swept).
-func (s *Server) handleGetAccountExport(c echo.Context) error {
+func (s *Server) handleGetAccountExport(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -277,7 +277,7 @@ func (s *Server) handleGetAccountExport(c echo.Context) error {
 // handleDownloadAccountExport streams the caller's finished archive as a JSON
 // attachment. 409 while the export is still pending/running or after it
 // failed; 404 when none exists; 410 past its 7-day expiry.
-func (s *Server) handleDownloadAccountExport(c echo.Context) error {
+func (s *Server) handleDownloadAccountExport(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -306,7 +306,7 @@ func (s *Server) handleDownloadAccountExport(c echo.Context) error {
 // of local channels, and notification preferences. Everything else is reported
 // as skipped in the returned summary. The request body is bounded by the
 // global HTTP body limit.
-func (s *Server) handleImportAccount(c echo.Context) error {
+func (s *Server) handleImportAccount(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

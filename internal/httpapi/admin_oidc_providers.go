@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -49,7 +49,7 @@ type oidcEnvironmentProvider struct {
 //
 // The admin-managed rows (never a secret: secret_configured/secret_status
 // only) and the environment providers they may override (name + issuer only).
-func (s *Server) handleListOIDCProviders(c echo.Context) error {
+func (s *Server) handleListOIDCProviders(c *echo.Context) error {
 	rows, err := s.oidcprovsvc.List(c.Request().Context())
 	if err != nil {
 		return err
@@ -70,7 +70,7 @@ func (s *Server) handleListOIDCProviders(c echo.Context) error {
 }
 
 // --- POST /api/v1/admin/oidc-providers ---
-func (s *Server) handleCreateOIDCProvider(c echo.Context) error {
+func (s *Server) handleCreateOIDCProvider(c *echo.Context) error {
 	return s.writeOIDCProvider(c, observability.ActionAdminOIDCProviderCreate, func(ctx context.Context, in oidcProviderRequest, actor uuid.UUID) (oidcproviders.Provider, oidcproviders.Change, int, error) {
 		p, err := s.oidcprovsvc.Create(ctx, in.Name, in.Input, actor)
 		return p, oidcproviders.Change{SecretChanged: err == nil}, http.StatusCreated, err
@@ -78,7 +78,7 @@ func (s *Server) handleCreateOIDCProvider(c echo.Context) error {
 }
 
 // --- PUT /api/v1/admin/oidc-providers/{name} ---
-func (s *Server) handleUpdateOIDCProvider(c echo.Context) error {
+func (s *Server) handleUpdateOIDCProvider(c *echo.Context) error {
 	return s.writeOIDCProvider(c, observability.ActionAdminOIDCProviderUpdate, func(ctx context.Context, in oidcProviderRequest, actor uuid.UUID) (oidcproviders.Provider, oidcproviders.Change, int, error) {
 		p, ch, err := s.oidcprovsvc.Update(ctx, c.Param("name"), in.Input, actor)
 		return p, ch, http.StatusOK, err
@@ -90,7 +90,7 @@ type oidcWriteFunc func(context.Context, oidcProviderRequest, uuid.UUID) (oidcpr
 // writeOIDCProvider is the shared create/update path: decode strictly, demand
 // a fresh credential (a login provider decides who can sign in), write, and
 // audit by provider name and field NAMES only.
-func (s *Server) writeOIDCProvider(c echo.Context, action string, write oidcWriteFunc) error {
+func (s *Server) writeOIDCProvider(c *echo.Context, action string, write oidcWriteFunc) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -119,7 +119,7 @@ func (s *Server) writeOIDCProvider(c echo.Context, action string, write oidcWrit
 
 // oidcProviderError maps a refused write to its response and audits the
 // refusal by reason code.
-func (s *Server) oidcProviderError(c echo.Context, action string, callerID uuid.UUID, err error) error {
+func (s *Server) oidcProviderError(c *echo.Context, action string, callerID uuid.UUID, err error) error {
 	refuse := func(reason string, out error) error {
 		s.audit(c, action, observability.ResultFailure, callerID.String(), reason)
 		return out
@@ -161,7 +161,7 @@ type oidcDeleteRequest struct {
 // auto_provision, allowed_email_domains). The same thing happens on an
 // app-only rollback to a core without migration 0182, which ignores the
 // table — a rollback concern tracked outside this handler.
-func (s *Server) handleDeleteOIDCProvider(c echo.Context) error {
+func (s *Server) handleDeleteOIDCProvider(c *echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

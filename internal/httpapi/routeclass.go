@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // This file classifies routes by SHAPE rather than by feature, because two
@@ -87,7 +87,7 @@ var uploadRouteTemplates = map[string]struct{}{
 // isMediaRoute reports whether the matched route is a media GET (or its HEAD). The method
 // check matters: POST /videos/:id/thumbnail shares its template with the GET but
 // is an owner-only write that belongs on the API budget.
-func isMediaRoute(c echo.Context) bool {
+func isMediaRoute(c *echo.Context) bool {
 	if m := c.Request().Method; m != http.MethodGet && m != http.MethodHead {
 		return false
 	}
@@ -98,7 +98,7 @@ func isMediaRoute(c echo.Context) bool {
 // isStreamingRoute reports whether the matched route streams bytes in either
 // direction, and therefore takes HTTPStreamRequestTimeout instead of
 // HTTPRequestTimeout.
-func isStreamingRoute(c echo.Context) bool {
+func isStreamingRoute(c *echo.Context) bool {
 	if isMediaRoute(c) {
 		return true
 	}
@@ -119,8 +119,8 @@ func mediaGET(g *echo.Group, path string, h echo.HandlerFunc, m ...echo.Middlewa
 // go out as for GET, and the first body write fails fast — as net/http does for
 // HEAD — so a stored object is never read just to be thrown away.
 func headOf(h echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		c.Response().Writer = headWriter{c.Response().Writer}
+	return func(c *echo.Context) error {
+		c.SetResponse(headWriter{c.Response()})
 		if err := h(c); err != nil && !errors.Is(err, http.ErrBodyNotAllowed) {
 			return err
 		}
@@ -129,5 +129,8 @@ func headOf(h echo.HandlerFunc) echo.HandlerFunc {
 }
 
 type headWriter struct{ http.ResponseWriter }
+
+// Unwrap keeps echo.UnwrapResponse (status / committed tracking) working.
+func (w headWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (headWriter) Write([]byte) (int, error) { return 0, http.ErrBodyNotAllowed }

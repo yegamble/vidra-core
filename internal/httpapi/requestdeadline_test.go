@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // runWithDeadline drives the requestDeadline middleware over one route template
@@ -51,7 +51,7 @@ func TestStreamingRoutesGetTheLongerDeadline(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		runWithDeadline(t, tc.method, tc.template, general, stream, func(c echo.Context) error {
+		runWithDeadline(t, tc.method, tc.template, general, stream, func(c *echo.Context) error {
 			deadline, ok := c.Request().Context().Deadline()
 			if !ok {
 				t.Errorf("%s %s: no deadline set at all", tc.method, tc.template)
@@ -80,7 +80,7 @@ func TestExemptedUploadRouteIsNotCancelledAtTheGeneralDeadline(t *testing.T) {
 	var uploadErr, apiErr error
 	// The chunk PUT — the route that could never finish before — survives well
 	// past the general deadline.
-	runWithDeadline(t, http.MethodPut, uploadChunkRoutePath, general, stream, func(c echo.Context) error {
+	runWithDeadline(t, http.MethodPut, uploadChunkRoutePath, general, stream, func(c *echo.Context) error {
 		time.Sleep(20 * time.Millisecond)
 		uploadErr = c.Request().Context().Err()
 		return nil
@@ -91,7 +91,7 @@ func TestExemptedUploadRouteIsNotCancelledAtTheGeneralDeadline(t *testing.T) {
 
 	// The control: an ordinary API route in the same situation IS cancelled, so
 	// the test above is proving the exemption and not a broken deadline.
-	runWithDeadline(t, http.MethodGet, "/api/v1/videos", general, stream, func(c echo.Context) error {
+	runWithDeadline(t, http.MethodGet, "/api/v1/videos", general, stream, func(c *echo.Context) error {
 		time.Sleep(20 * time.Millisecond)
 		apiErr = c.Request().Context().Err()
 		return nil
@@ -110,7 +110,7 @@ func TestAdminJobEventsStreamHasNoDeadline(t *testing.T) {
 	c := e.NewContext(req, httptest.NewRecorder())
 	c.SetPath(adminJobEventsPath)
 
-	err := requestDeadline(time.Second, time.Hour)(func(c echo.Context) error {
+	err := requestDeadline(time.Second, time.Hour)(func(c *echo.Context) error {
 		if _, ok := c.Request().Context().Deadline(); ok {
 			t.Error("the admin job-events SSE stream must not carry a request deadline")
 		}

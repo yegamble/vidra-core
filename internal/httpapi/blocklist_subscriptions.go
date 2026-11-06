@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/blocklistsub"
@@ -140,7 +140,7 @@ func (r addBlocklistAllowRequest) Validate() []FieldError {
 	return nil
 }
 
-func subID(c echo.Context) (uuid.UUID, error) {
+func subID(c *echo.Context) (uuid.UUID, error) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return uuid.Nil, echo.NewHTTPError(http.StatusBadRequest, "invalid subscription id")
@@ -148,7 +148,7 @@ func subID(c echo.Context) (uuid.UUID, error) {
 	return id, nil
 }
 
-func (s *Server) handleListBlocklistSubscriptions(c echo.Context) error {
+func (s *Server) handleListBlocklistSubscriptions(c *echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	rows, total, err := s.blocklistsvc.List(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
@@ -166,7 +166,7 @@ func (s *Server) handleListBlocklistSubscriptions(c echo.Context) error {
 	return c.JSON(http.StatusOK, blocklistSubscriptionListResponse{Subscriptions: views, pageMeta: page.meta(total)})
 }
 
-func (s *Server) handleCreateBlocklistSubscription(c echo.Context) error {
+func (s *Server) handleCreateBlocklistSubscription(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -194,7 +194,7 @@ func (s *Server) handleCreateBlocklistSubscription(c echo.Context) error {
 	return c.JSON(http.StatusCreated, subView(sub, 0))
 }
 
-func (s *Server) handleUpdateBlocklistSubscription(c echo.Context) error {
+func (s *Server) handleUpdateBlocklistSubscription(c *echo.Context) error {
 	id, err := subID(c)
 	if err != nil {
 		return err
@@ -252,7 +252,7 @@ func updatedKeys(in updateBlocklistSubscriptionRequest) string {
 	return strings.Join(k, ",")
 }
 
-func (s *Server) handleDeleteBlocklistSubscription(c echo.Context) error {
+func (s *Server) handleDeleteBlocklistSubscription(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -278,7 +278,7 @@ func (s *Server) handleDeleteBlocklistSubscription(c echo.Context) error {
 
 // handleSyncBlocklistSubscription syncs one subscription now. Admin-only and
 // rate-limited per admin: it makes the server fetch an admin-supplied URL.
-func (s *Server) handleSyncBlocklistSubscription(c echo.Context) error {
+func (s *Server) handleSyncBlocklistSubscription(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -317,7 +317,7 @@ func (s *Server) handleSyncBlocklistSubscription(c echo.Context) error {
 	})
 }
 
-func (s *Server) handleListBlocklistAllow(c echo.Context) error {
+func (s *Server) handleListBlocklistAllow(c *echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	rows, total, err := s.blocklistsvc.ListAllow(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
@@ -330,7 +330,7 @@ func (s *Server) handleListBlocklistAllow(c echo.Context) error {
 	return c.JSON(http.StatusOK, blocklistAllowListResponse{Domains: views, pageMeta: page.meta(total)})
 }
 
-func (s *Server) handleAddBlocklistAllow(c echo.Context) error {
+func (s *Server) handleAddBlocklistAllow(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -349,7 +349,7 @@ func (s *Server) handleAddBlocklistAllow(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-func (s *Server) handleRemoveBlocklistAllow(c echo.Context) error {
+func (s *Server) handleRemoveBlocklistAllow(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

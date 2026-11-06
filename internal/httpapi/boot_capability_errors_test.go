@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // The A17/A27 finding, as a unit test on the one thing that decides it: 503 is
@@ -41,7 +41,7 @@ func TestBootCapabilityErrorsSurviveThe5xxScrubber(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c := srv.echo.NewContext(httptest.NewRequest(http.MethodGet, "/probe", nil), rec)
-			srv.echo.HTTPErrorHandler(tc.err, c)
+			srv.echo.HTTPErrorHandler(c, tc.err)
 
 			if rec.Code != http.StatusServiceUnavailable {
 				t.Fatalf("status = %d, want 503; body=%s", rec.Code, rec.Body.String())
@@ -71,7 +71,7 @@ func TestBootCapabilityErrorsSurviveThe5xxScrubber(t *testing.T) {
 	// each of the above had to be typed.
 	rec := httptest.NewRecorder()
 	c := srv.echo.NewContext(httptest.NewRequest(http.MethodGet, "/probe", nil), rec)
-	srv.echo.HTTPErrorHandler(echo.NewHTTPError(http.StatusServiceUnavailable, "set FOO_ENABLED and restart"), c)
+	srv.echo.HTTPErrorHandler(c, echo.NewHTTPError(http.StatusServiceUnavailable, "set FOO_ENABLED and restart"))
 	if strings.Contains(rec.Body.String(), "FOO_ENABLED") {
 		t.Errorf("a bare 503 kept its message (%s); the scrubbing assumption in this test is stale", rec.Body.String())
 	}

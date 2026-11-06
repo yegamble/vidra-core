@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/comment"
@@ -43,7 +43,7 @@ type adminCommentListResponse struct {
 // handleListAdminComments returns all comments newest first for moderators/admins,
 // each with its author + video context. Behind requireRole(admin, moderator).
 // Optional ?q filters by body; ?auto_tag keeps comments carrying one automatic tag; pagination via ?limit (1–100, default 20)/?offset.
-func (s *Server) handleListAdminComments(c echo.Context) error {
+func (s *Server) handleListAdminComments(c *echo.Context) error {
 	q := c.QueryParam("q")
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.commentsvc.ListForAdmin(c.Request().Context(), q, c.QueryParam("auto_tag"), page.Limit32(), page.Offset32())
@@ -98,7 +98,7 @@ type bulkRemoveCommentsResponse struct {
 // (PeerTube's bulk/remove-comments-of). Behind requireRole(admin, moderator).
 // One audit event records actor, target and count; comment bodies are never
 // logged. A removal that matched nothing is still a 200 with removed=0.
-func (s *Server) handleBulkRemoveComments(c echo.Context) error {
+func (s *Server) handleBulkRemoveComments(c *echo.Context) error {
 	actorID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

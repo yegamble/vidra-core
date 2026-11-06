@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -46,7 +46,7 @@ func (r adminRemoveUserMFARequest) Validate() []FieldError {
 // target, or one with no two-factor configuration to remove, is 404. Removing
 // your OWN second factor here is allowed and audited: an owner who loses their
 // authenticator has nobody above them to ask.
-func (s *Server) handleAdminRemoveUserMFA(c echo.Context) error {
+func (s *Server) handleAdminRemoveUserMFA(c *echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

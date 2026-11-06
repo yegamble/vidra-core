@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // instanceContactRequest is the POST /api/v1/instance/contact body: a visitor's
@@ -65,7 +65,7 @@ func validateContactEmail(v string) string {
 // the form is unavailable (toggle off, no contact email, or no outbound mail
 // path); 202 once the message is handed to the mailer. Neither the message nor
 // any address is ever logged (PII).
-func (s *Server) handleInstanceContact(c echo.Context) error {
+func (s *Server) handleInstanceContact(c *echo.Context) error {
 	var in instanceContactRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err

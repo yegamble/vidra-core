@@ -356,7 +356,7 @@ docs/                  operator + feature docs (this README links here)
 
 ## Tech stack
 
-Go 1.26 · Echo v4 · PostgreSQL (pg_trgm, uuid-ossp) · pgx · sqlc · Redis · Docker.
+Go 1.26 · Echo v5 · PostgreSQL (pg_trgm, uuid-ossp) · pgx · sqlc · Redis · Docker.
 
 ## License
 

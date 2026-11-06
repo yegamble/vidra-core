@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/pseudonym"

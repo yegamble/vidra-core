@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/video"
@@ -76,7 +76,7 @@ func dailyViews(days []video.DayViews) []dailyViewsView {
 // handleGetVideoStats returns a video's engagement totals and 30-day daily
 // views series to its owner only (product-decisions §8). Behind requireAuth;
 // a non-owner or unknown id is 404 so existence is not leaked.
-func (s *Server) handleGetVideoStats(c echo.Context) error {
+func (s *Server) handleGetVideoStats(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -101,7 +101,7 @@ func (s *Server) handleGetVideoStats(c echo.Context) error {
 // handleGetChannelStats returns a channel's aggregated engagement totals
 // (plus follower and video counts) and 30-day daily views series to its owner
 // only. Behind requireAuth; a non-owner or unknown handle is 404.
-func (s *Server) handleGetChannelStats(c echo.Context) error {
+func (s *Server) handleGetChannelStats(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -142,7 +142,7 @@ func (s *Server) handleGetChannelStats(c echo.Context) error {
 // across every channel they OWN (the studio "All channels" scope): account-wide
 // totals, the merged 30-day daily series, and a per-channel breakdown. Behind
 // requireAuth; owner-scoped by construction (only the caller's own channels).
-func (s *Server) handleGetAccountStats(c echo.Context) error {
+func (s *Server) handleGetAccountStats(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

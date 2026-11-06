@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/video"
@@ -41,7 +41,7 @@ var videoLifecycleStates = map[string]bool{
 // caller owns, filtered by q (title), privacy, state and channel_id. A
 // channel_id that is not the caller's matches nothing — ownership is part of
 // the query, so it can never return another account's rows.
-func (s *Server) handleListMyVideos(c echo.Context) error {
+func (s *Server) handleListMyVideos(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -149,7 +149,7 @@ type bulkVideosResponse struct {
 //     Delete/Update, the search outbox, storage cleanup, edge purge, audit —
 //     fires per item. One item failing (e.g. privacy=password with no password
 //     stored) is reported in its result and does not stop the others.
-func (s *Server) handleBulkMyVideos(c echo.Context) error {
+func (s *Server) handleBulkMyVideos(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -220,10 +220,13 @@ func bulkItemError(err error) (int, string) {
 	}
 	var he *echo.HTTPError
 	if errors.As(err, &he) {
-		if msg, ok := he.Message.(string); ok {
-			return he.Code, msg
+		if he.Message != "" {
+			return he.Code, he.Message
 		}
 		return he.Code, http.StatusText(he.Code)
+	}
+	if code := echo.StatusCode(err); code != 0 {
+		return code, http.StatusText(code)
 	}
 	return http.StatusInternalServerError, "internal error"
 }

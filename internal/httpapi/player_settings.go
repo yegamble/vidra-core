@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/playersettings"
 )
@@ -52,7 +52,7 @@ func playerSettingsView(s playersettings.Settings) playerSettingsResponse {
 // handleGetPlayerSettings returns the caller's effective player settings. Behind
 // requireAuth. Always 200 with the full object — a user who never saved gets the
 // effective defaults (no 404).
-func (s *Server) handleGetPlayerSettings(c echo.Context) error {
+func (s *Server) handleGetPlayerSettings(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -68,7 +68,7 @@ func (s *Server) handleGetPlayerSettings(c echo.Context) error {
 // full effective settings. Behind requireAuth. An omitted field keeps its stored
 // value; an invalid supplied value (default_speed not on the ladder, malformed
 // default_quality) is 400 and nothing is written.
-func (s *Server) handleUpdatePlayerSettings(c echo.Context) error {
+func (s *Server) handleUpdatePlayerSettings(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 )
@@ -18,7 +18,7 @@ import (
 // This deliberately exposes single-use credentials and MUST never be reachable in
 // production. It is intentionally not part of api/openapi.yaml (a test seam, not a
 // public contract surface).
-func (s *Server) handleDevEmailToken(c echo.Context) error {
+func (s *Server) handleDevEmailToken(c *echo.Context) error {
 	if s.devMailCapture == nil { // defensive: the route isn't registered without it
 		return echo.NewHTTPError(http.StatusNotFound, "not found")
 	}

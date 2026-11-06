@@ -42,7 +42,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -85,7 +85,7 @@ type stepUpStartResponse struct {
 // the START, and not only at the callback: beginning a challenge that could
 // never authorise anything would send the user through a whole consent screen
 // to be refused at the end of it.
-func (s *Server) handleStepUpStart(c echo.Context) error {
+func (s *Server) handleStepUpStart(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -120,7 +120,7 @@ func (s *Server) handleStepUpStart(c echo.Context) error {
 
 // startATProtoStepUp seals a step-up ATProto attempt into the login flow's own
 // state cookie and hands back the authorization URL.
-func (s *Server) startATProtoStepUp(c echo.Context, userID uuid.UUID, sessionID, handle, returnTo string) error {
+func (s *Server) startATProtoStepUp(c *echo.Context, userID uuid.UUID, sessionID, handle, returnTo string) error {
 	if s.atprotologinsvc == nil {
 		return &ATProtoLoginError{Status: http.StatusServiceUnavailable, Code: "atproto_disabled", Message: "ATProto login is not enabled on this instance"}
 	}
@@ -153,7 +153,7 @@ func (s *Server) startATProtoStepUp(c echo.Context, userID uuid.UUID, sessionID,
 // startOAuthStepUp is the OIDC twin. It answers with the authorization URL as
 // JSON rather than the login's 302, because the request that starts it must
 // carry the caller's bearer token — which a top-level navigation cannot send.
-func (s *Server) startOAuthStepUp(c echo.Context, userID uuid.UUID, sessionID, provider, returnTo string) error {
+func (s *Server) startOAuthStepUp(c *echo.Context, userID uuid.UUID, sessionID, provider, returnTo string) error {
 	if s.oauthsvc == nil || !s.oauthsvc.Enabled(provider) {
 		return echo.NewHTTPError(http.StatusNotFound, "unknown oauth provider")
 	}
@@ -193,7 +193,7 @@ func (s *Server) startOAuthStepUp(c echo.Context, userID uuid.UUID, sessionID, p
 // The subject check is what makes this a step-up and not merely a sign-in: a
 // completed round trip with somebody else's Bluesky account proves that person
 // controls that account, and nothing whatsoever about this one.
-func (s *Server) completeStepUp(c echo.Context, returnTo, provider, boundUserID, boundSessionID string, linked bool) error {
+func (s *Server) completeStepUp(c *echo.Context, returnTo, provider, boundUserID, boundSessionID string, linked bool) error {
 	userID, uerr := uuid.Parse(boundUserID)
 	sessionID, serr := uuid.Parse(boundSessionID)
 	if uerr != nil || serr != nil {
@@ -246,17 +246,17 @@ const stepUpCookieName = "vidra_step_up"
 const stepUpCookiePath = "/api/v1/auth/me"
 
 // setStepUpCookie parks the granted assertion for the redirect back.
-func (s *Server) setStepUpCookie(c echo.Context, token string) {
+func (s *Server) setStepUpCookie(c *echo.Context, token string) {
 	s.writeStateCookie(c, stepUpCookieName, stepUpCookiePath, token, auth.StepUpTTL)
 }
 
-func (s *Server) clearStepUpCookie(c echo.Context) {
+func (s *Server) clearStepUpCookie(c *echo.Context) {
 	s.clearStateCookie(c, stepUpCookieName, stepUpCookiePath)
 }
 
 // stepUpCookieToken returns the assertion the request's cookie carries, or ""
 // when there is none.
-func stepUpCookieToken(c echo.Context) string {
+func stepUpCookieToken(c *echo.Context) string {
 	ck, err := c.Cookie(stepUpCookieName)
 	if err != nil || ck == nil {
 		return ""
@@ -273,7 +273,7 @@ func stepUpCookieToken(c echo.Context) string {
 // arrives. The COOKIE wins when both are present: it is the one this instance
 // just issued, and preferring the caller's copy would let a stale token in a
 // body silently outrank a fresh grant.
-func stepUpTokenFor(c echo.Context, fromBody string) string {
+func stepUpTokenFor(c *echo.Context, fromBody string) string {
 	if ck := stepUpCookieToken(c); ck != "" {
 		return ck
 	}
@@ -282,7 +282,7 @@ func stepUpTokenFor(c echo.Context, fromBody string) string {
 
 // stepUpSuccessRedirect parks the assertion in the cookie and hands the browser
 // back to the validated return_to UNCHANGED — no token, and no flag either.
-func (s *Server) stepUpSuccessRedirect(c echo.Context, returnTo, token string) error {
+func (s *Server) stepUpSuccessRedirect(c *echo.Context, returnTo, token string) error {
 	s.setStepUpCookie(c, token)
 	u, err := url.Parse(returnTo)
 	if err != nil {
@@ -299,7 +299,7 @@ func (s *Server) stepUpSuccessRedirect(c echo.Context, returnTo, token string) e
 
 // stepUpErrorRedirect hands the browser back with a stable machine code. It
 // never carries a provider URL, subject, or token.
-func stepUpErrorRedirect(c echo.Context, returnTo, code string) error {
+func stepUpErrorRedirect(c *echo.Context, returnTo, code string) error {
 	u, err := url.Parse(returnTo)
 	if err != nil {
 		u = &url.URL{Path: "/"}
@@ -350,7 +350,7 @@ func (r setPasswordRequest) Validate() []FieldError {
 // door). 403 `step_up_required`, naming the providers that can satisfy it,
 // when the assertion is missing, spent, expired, or belongs to another session
 // or account.
-func (s *Server) handleSetPassword(c echo.Context) error {
+func (s *Server) handleSetPassword(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -374,7 +374,7 @@ func (s *Server) handleSetPassword(c echo.Context) error {
 
 // setPasswordError maps the service sentinels, auditing the refusal by RULE —
 // never the password, never the token.
-func (s *Server) setPasswordError(c echo.Context, userID uuid.UUID, err error) error {
+func (s *Server) setPasswordError(c *echo.Context, userID uuid.UUID, err error) error {
 	switch {
 	case errors.Is(err, auth.ErrPasswordAlreadySet):
 		s.audit(c, observability.ActionPasswordSet, observability.ResultFailure, userID.String(), "password_already_set")

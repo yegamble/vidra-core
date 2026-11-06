@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/dbmigrate"
 	"github.com/vidra/vidra-core/internal/version"
@@ -60,7 +60,7 @@ type schemaResponse struct {
 // 127.0.0.1:HTTP_PORT. It is nonetheless declared in api/openapi.yaml, because
 // TestOpenAPIContract enumerates every unconditionally registered route and
 // /version sets the precedent.
-func (s *Server) handleSchema(c echo.Context) error {
+func (s *Server) handleSchema(c *echo.Context) error {
 	return c.JSON(http.StatusOK, schemaResponse{
 		Software: versionResponse{
 			Name:      "vidra",

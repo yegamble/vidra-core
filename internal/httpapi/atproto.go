@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/atproto"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -65,7 +65,7 @@ func (r linkATProtoRequest) Validate() []FieldError {
 // handleLinkATProto links (or re-links) the caller's Bluesky account. It verifies
 // the credentials against the PDS (com.atproto.server.createSession) before
 // storing the sealed app password, then returns the status view.
-func (s *Server) handleLinkATProto(c echo.Context) error {
+func (s *Server) handleLinkATProto(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -88,7 +88,7 @@ func (s *Server) handleLinkATProto(c echo.Context) error {
 
 // handleGetATProto returns the caller's linked-account status (never the
 // password). 404 when nothing is linked.
-func (s *Server) handleGetATProto(c echo.Context) error {
+func (s *Server) handleGetATProto(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -101,7 +101,7 @@ func (s *Server) handleGetATProto(c echo.Context) error {
 }
 
 // handleUnlinkATProto removes the caller's linked Bluesky account. Idempotent.
-func (s *Server) handleUnlinkATProto(c echo.Context) error {
+func (s *Server) handleUnlinkATProto(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

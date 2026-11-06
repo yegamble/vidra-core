@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/instancesettings"
 )
@@ -28,7 +28,7 @@ type instanceAboutResponse struct {
 // handleInstanceAbout returns the operator-authored about-page texts. Public,
 // unauthenticated; all values are effective overlay values (raw markdown, ""
 // when unset).
-func (s *Server) handleInstanceAbout(c echo.Context) error {
+func (s *Server) handleInstanceAbout(c *echo.Context) error {
 	return c.JSON(http.StatusOK, instanceAboutResponse{
 		Description:         s.settingString(instancesettings.KeyInstanceDescription, s.cfg.InstanceDescription),
 		Terms:               s.settingString(instancesettings.KeyTerms, ""),

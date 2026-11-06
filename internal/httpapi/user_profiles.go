@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/profileimage"
@@ -34,7 +34,7 @@ type publicUserProfileView struct {
 // handleGetUserProfile returns an opted-in public profile. A signed-in owner
 // may also view their private profile as a preview; every other private,
 // inactive, or unknown lookup returns the same 404.
-func (s *Server) handleGetUserProfile(c echo.Context) error {
+func (s *Server) handleGetUserProfile(c *echo.Context) error {
 	ctx := c.Request().Context()
 	username := strings.TrimSpace(c.Param("username"))
 
@@ -104,7 +104,7 @@ func (s *Server) handleGetUserProfile(c echo.Context) error {
 // list's own visibility filter scoped by owner (ListPublicByOwner): public and
 // published only, no moderator-blocked video, the per-viewer mute/block clause
 // and the viewer's sensitive-content setting. Paginated like every list here.
-func (s *Server) handleListUserVideos(c echo.Context) error {
+func (s *Server) handleListUserVideos(c *echo.Context) error {
 	ctx := c.Request().Context()
 	username := strings.TrimSpace(c.Param("username"))
 

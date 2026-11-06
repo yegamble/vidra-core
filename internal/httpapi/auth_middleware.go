@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -30,7 +30,7 @@ const (
 // malformed header, invalid/expired token, or unparseable subject — yields a 401
 // unauthorized envelope without revealing which check failed.
 func (s *Server) requireAuth(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		token, ok := bearerToken(c.Request().Header.Get(echo.HeaderAuthorization))
 		if !ok {
 			return echo.NewHTTPError(http.StatusUnauthorized, "missing or malformed authorization header")
@@ -70,7 +70,7 @@ func (s *Server) requireAuth(next echo.HandlerFunc) echo.HandlerFunc {
 		// And onto the REQUEST context, beside the correlation ids, so a job
 		// enqueued three service layers below this one records who asked for it
 		// (A17). The echo-context key above cannot travel there: services take a
-		// context.Context, not an echo.Context, which is why every enqueue path
+		// context.Context, not an *echo.Context, which is why every enqueue path
 		// in the codebase had a nil actor on its operational run.
 		bindActor(c, principal.UserID)
 		if claims.ExpiresAt != nil {
@@ -90,7 +90,7 @@ func (s *Server) requireRole(allowed ...string) echo.MiddlewareFunc {
 		allow[r] = true
 	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			_, role, err := mustPrincipal(c)
 			if err != nil {
 				return err
@@ -109,7 +109,7 @@ func (s *Server) requireRole(allowed ...string) echo.MiddlewareFunc {
 // behaviour (e.g. an owner seeing their own private resource). It is a no-op
 // when no auth service is configured.
 func (s *Server) optionalAuth(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		if s.authsvc != nil {
 			if token, ok := bearerToken(c.Request().Header.Get(echo.HeaderAuthorization)); ok {
 				if claims, err := s.authsvc.Parse(token); err == nil {
@@ -151,7 +151,7 @@ func bearerToken(header string) (string, bool) {
 
 // principalFromContext returns the authenticated user's ID and role. ok is false
 // when the request did not pass through requireAuth.
-func principalFromContext(c echo.Context) (id uuid.UUID, role string, ok bool) {
+func principalFromContext(c *echo.Context) (id uuid.UUID, role string, ok bool) {
 	id, idOK := c.Get(ctxKeyUserID).(uuid.UUID)
 	role, roleOK := c.Get(ctxKeyRole).(string)
 	return id, role, idOK && roleOK
@@ -162,7 +162,7 @@ func principalFromContext(c echo.Context) (id uuid.UUID, role string, ok bool) {
 // present. Handlers that must vary behaviour for anonymous callers (optionalAuth
 // routes) or that deliberately answer 404 to avoid leaking existence use
 // principalFromContext directly.
-func mustPrincipal(c echo.Context) (uuid.UUID, string, error) {
+func mustPrincipal(c *echo.Context) (uuid.UUID, string, error) {
 	id, role, ok := principalFromContext(c)
 	if !ok {
 		return uuid.Nil, "", echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
@@ -180,7 +180,7 @@ func isStaff(role string) bool {
 
 // sessionIDFromContext returns the id of the session the caller's access token
 // is bound to (empty when the request did not pass through requireAuth).
-func sessionIDFromContext(c echo.Context) string {
+func sessionIDFromContext(c *echo.Context) string {
 	id, _ := c.Get(ctxKeySessionID).(string)
 	return id
 }
@@ -188,7 +188,7 @@ func sessionIDFromContext(c echo.Context) string {
 // tokenExpiryFromContext returns the authenticated access-token expiry. Long
 // lived streaming handlers cap their connection lifetime to this value so role
 // and token validity are re-evaluated on reconnect.
-func tokenExpiryFromContext(c echo.Context) (time.Time, bool) {
+func tokenExpiryFromContext(c *echo.Context) (time.Time, bool) {
 	expires, ok := c.Get(ctxKeyTokenExpiresAt).(time.Time)
 	return expires, ok
 }
@@ -198,7 +198,7 @@ func tokenExpiryFromContext(c echo.Context) (time.Time, bool) {
 // can attribute work to the person who asked for it. It rewrites the request on
 // the echo context, which is the only way a value set in middleware reaches a
 // service that takes a plain context.Context.
-func bindActor(c echo.Context, id uuid.UUID) {
+func bindActor(c *echo.Context, id uuid.UUID) {
 	req := c.Request()
 	c.SetRequest(req.WithContext(jobtrace.ContextWithActor(req.Context(), id)))
 }

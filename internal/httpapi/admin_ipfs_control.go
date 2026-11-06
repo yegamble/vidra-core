@@ -7,7 +7,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/vidra/vidra-core/internal/ipfscontrol"
 	"github.com/vidra/vidra-core/internal/observability"
 )
@@ -22,7 +22,7 @@ type ipfsControlProvider interface {
 func WithIPFSControl(svc ipfsControlProvider) Option {
 	return func(s *Server) { s.ipfscontrolsvc = svc }
 }
-func (s *Server) handleGetIPFSConfig(c echo.Context) error {
+func (s *Server) handleGetIPFSConfig(c *echo.Context) error {
 	if s.ipfscontrolsvc == nil {
 		return echo.NewHTTPError(501, "IPFS control is not configured")
 	}
@@ -32,7 +32,7 @@ func (s *Server) handleGetIPFSConfig(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, doc)
 }
-func (s *Server) handleUpdateIPFSConfig(c echo.Context) error {
+func (s *Server) handleUpdateIPFSConfig(c *echo.Context) error {
 	if s.ipfscontrolsvc == nil {
 		return echo.NewHTTPError(501, "IPFS control is not configured")
 	}
@@ -68,9 +68,9 @@ func (s *Server) handleUpdateIPFSConfig(c echo.Context) error {
 	}
 	return c.JSON(status, doc)
 }
-func (s *Server) handleApplyIPFS(c echo.Context) error   { return s.handleIPFSOperation(c, "apply") }
-func (s *Server) handleRestartIPFS(c echo.Context) error { return s.handleIPFSOperation(c, "restart") }
-func (s *Server) handleIPFSOperation(c echo.Context, action string) error {
+func (s *Server) handleApplyIPFS(c *echo.Context) error   { return s.handleIPFSOperation(c, "apply") }
+func (s *Server) handleRestartIPFS(c *echo.Context) error { return s.handleIPFSOperation(c, "restart") }
+func (s *Server) handleIPFSOperation(c *echo.Context, action string) error {
 	if s.ipfscontrolsvc == nil {
 		return echo.NewHTTPError(501, "IPFS control is not configured")
 	}
@@ -99,7 +99,7 @@ func (s *Server) handleIPFSOperation(c echo.Context, action string) error {
 		Revision  int64                     `json:"revision"`
 	}{op, op.ConfigRevision})
 }
-func decodeIPFSControlBody(c echo.Context, out any) error {
+func decodeIPFSControlBody(c *echo.Context, out any) error {
 	d := json.NewDecoder(http.MaxBytesReader(c.Response(), c.Request().Body, 16384))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {

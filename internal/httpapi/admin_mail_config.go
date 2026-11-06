@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -57,7 +57,7 @@ const maxMailConfigBody = 16 << 10
 // opened. The environment block reports host/port/from so an admin can see what
 // a DELETE would revert to — and never the SMTP username or password, which are
 // on this repository's absolute never-list (see admin_infra.go).
-func (s *Server) handleGetMailConfig(c echo.Context) error {
+func (s *Server) handleGetMailConfig(c *echo.Context) error {
 	if s.mailconfigsvc == nil {
 		return echo.NewHTTPError(http.StatusNotImplemented, "outbound mail configuration is not available on this deployment")
 	}
@@ -74,7 +74,7 @@ func (s *Server) handleGetMailConfig(c echo.Context) error {
 //	      (mail_secrets_key_missing). Secrets are stored sealed or not at all.
 //	422 — the document is invalid; `fields` carries dotted paths (smtp.host,
 //	      mailgun.api_key).
-func (s *Server) handleUpdateMailConfig(c echo.Context) error {
+func (s *Server) handleUpdateMailConfig(c *echo.Context) error {
 	if s.mailconfigsvc == nil {
 		return echo.NewHTTPError(http.StatusNotImplemented, "outbound mail configuration is not available on this deployment")
 	}
@@ -131,14 +131,14 @@ type mailConfigPutRequest struct {
 // must not be enough. Same two proofs as the email change, same refusal shape
 // (403 step_up_required; wrong password 403). Refusals are audited by reason
 // code, never by value.
-func (s *Server) confirmMailConfigWriter(c echo.Context, callerID uuid.UUID, in mailConfigPutRequest) error {
+func (s *Server) confirmMailConfigWriter(c *echo.Context, callerID uuid.UUID, in mailConfigPutRequest) error {
 	return s.confirmFreshAdminWriter(c, callerID, observability.ActionAdminMailConfigUpdate, in.CurrentPassword, in.StepUpToken)
 }
 
 // confirmFreshAdminWriter is the proof-of-presence gate shared by the admin
 // documents that hold a credential (mail config, OIDC providers). Refusals are
 // audited under action by reason code.
-func (s *Server) confirmFreshAdminWriter(c echo.Context, callerID uuid.UUID, action, password, stepUpToken string) error {
+func (s *Server) confirmFreshAdminWriter(c *echo.Context, callerID uuid.UUID, action, password, stepUpToken string) error {
 	stepUp := stepUpTokenFor(c, stepUpToken)
 	refuse := func(reason string, err error) error {
 		s.audit(c, action, observability.ResultFailure, callerID.String(), reason)
@@ -172,7 +172,7 @@ func (s *Server) confirmFreshAdminWriter(c echo.Context, callerID uuid.UUID, act
 // mailConfigSaveError renders a failed save and audits the refusal. The failure
 // is audited with a REASON CODE, never the document: an invalid save is still an
 // authenticated admin action worth being able to look back at.
-func (s *Server) mailConfigSaveError(c echo.Context, callerID uuid.UUID, err error) error {
+func (s *Server) mailConfigSaveError(c *echo.Context, callerID uuid.UUID, err error) error {
 	switch {
 	case errors.Is(err, mailconfig.ErrSecretsKeyMissing):
 		s.audit(c, observability.ActionAdminMailConfigUpdate, observability.ResultFailure, callerID.String(), "secrets_key_missing")
@@ -204,7 +204,7 @@ func (s *Server) mailConfigSaveError(c echo.Context, callerID uuid.UUID, err err
 // Removes the document, so the instance reverts to its ENVIRONMENT mail
 // configuration (MAIL_ENABLED + SMTP_*) — or to no mail path at all, which the
 // GET's `environment.configured` says in advance.
-func (s *Server) handleDeleteMailConfig(c echo.Context) error {
+func (s *Server) handleDeleteMailConfig(c *echo.Context) error {
 	if s.mailconfigsvc == nil {
 		return echo.NewHTTPError(http.StatusNotImplemented, "outbound mail configuration is not available on this deployment")
 	}
@@ -246,7 +246,7 @@ func (s *Server) handleDeleteMailConfig(c echo.Context) error {
 // unknown fields. DisallowUnknownFields matters more here than on most bodies:
 // a panel that mis-spells `password` would otherwise silently save a
 // configuration with no credential and report success.
-func decodeAdminDocumentBody(c echo.Context, out any) error {
+func decodeAdminDocumentBody(c *echo.Context, out any) error {
 	d := json.NewDecoder(http.MaxBytesReader(c.Response(), c.Request().Body, maxMailConfigBody))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {

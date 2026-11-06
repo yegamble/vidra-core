@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 func TestBodyLimitRejectsOversized(t *testing.T) {
 	cfg := testConfig()
 	cfg.HTTPBodyLimit = "16" // 16 bytes
 	srv := New(cfg, nil, nil)
-	srv.echo.POST("/sink", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+	srv.echo.POST("/sink", func(c *echo.Context) error { return c.NoContent(http.StatusOK) })
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/sink", strings.NewReader(strings.Repeat("x", 100)))
@@ -37,7 +37,7 @@ func TestBodyLimitAllowsUnderLimit(t *testing.T) {
 	cfg := testConfig()
 	cfg.HTTPBodyLimit = "1K"
 	srv := New(cfg, nil, nil)
-	srv.echo.POST("/sink", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+	srv.echo.POST("/sink", func(c *echo.Context) error { return c.NoContent(http.StatusOK) })
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/sink", strings.NewReader("small body"))
@@ -55,7 +55,7 @@ func TestRequestDeadline(t *testing.T) {
 	cfg := testConfig()
 	cfg.HTTPRequestTimeout = 20 * time.Millisecond
 	srv := New(cfg, nil, nil)
-	srv.echo.GET("/slow", func(c echo.Context) error {
+	srv.echo.GET("/slow", func(c *echo.Context) error {
 		ctx := c.Request().Context()
 		<-ctx.Done()
 		return ctx.Err()
@@ -83,7 +83,7 @@ func TestRequestDeadlinePropagates(t *testing.T) {
 	cfg := testConfig()
 	cfg.HTTPRequestTimeout = 5 * time.Second
 	srv := New(cfg, nil, nil)
-	srv.echo.GET("/fast", func(c echo.Context) error {
+	srv.echo.GET("/fast", func(c *echo.Context) error {
 		if _, ok := c.Request().Context().Deadline(); !ok {
 			t.Error("expected a deadline on the request context")
 		}

@@ -3,12 +3,12 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // handleSaveVideo adds a public, published video to the caller's library
 // (idempotent). Behind requireAuth.
-func (s *Server) handleSaveVideo(c echo.Context) error {
+func (s *Server) handleSaveVideo(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -25,7 +25,7 @@ func (s *Server) handleSaveVideo(c echo.Context) error {
 
 // handleUnsaveVideo removes a video from the caller's library (idempotent). Behind
 // requireAuth. The video need not still be public, so a user can always clean up.
-func (s *Server) handleUnsaveVideo(c echo.Context) error {
+func (s *Server) handleUnsaveVideo(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -42,7 +42,7 @@ func (s *Server) handleUnsaveVideo(c echo.Context) error {
 
 // handleListSavedVideos returns the caller's saved videos as feed cards,
 // newest-saved first. Behind requireAuth. Pagination via ?limit/?offset.
-func (s *Server) handleListSavedVideos(c echo.Context) error {
+func (s *Server) handleListSavedVideos(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

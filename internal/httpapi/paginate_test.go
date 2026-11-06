@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // pageFor drives parsePage through a real echo context so the test exercises

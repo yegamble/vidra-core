@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/searchevents"
 )
@@ -32,7 +32,7 @@ type watchProgressView struct {
 // handleRecordWatchProgress records (upserts) the caller's resume position for a
 // public, published video and bumps it to the top of their history. Behind
 // requireAuth. A non-public/unpublished or unknown video is 404.
-func (s *Server) handleRecordWatchProgress(c echo.Context) error {
+func (s *Server) handleRecordWatchProgress(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -71,7 +71,7 @@ func (s *Server) handleRecordWatchProgress(c echo.Context) error {
 // Redis, which already holds the watch-progress row itself under the same
 // account, and collapsing it to the subject would let one NAT'd address
 // suppress another viewer's events.
-func (s *Server) emitWatchProgress(c echo.Context, videoID, userID uuid.UUID, positionSeconds int32) {
+func (s *Server) emitWatchProgress(c *echo.Context, videoID, userID uuid.UUID, positionSeconds int32) {
 	if s.searchEvents == nil || s.searchWatchThrottle == nil {
 		return
 	}
@@ -98,7 +98,7 @@ func (s *Server) emitWatchProgress(c echo.Context, videoID, userID uuid.UUID, po
 
 // handleGetWatchProgress returns the caller's saved resume position for a public,
 // published video (0 when none recorded). Behind requireAuth.
-func (s *Server) handleGetWatchProgress(c echo.Context) error {
+func (s *Server) handleGetWatchProgress(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -134,7 +134,7 @@ type historyListResponse struct {
 // and ?offset. The optional ?progress=in_progress filter restricts the list to
 // the "Continue watching" subset (started, not effectively finished); any other
 // value (or absent) returns the full history.
-func (s *Server) handleListHistory(c echo.Context) error {
+func (s *Server) handleListHistory(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -159,7 +159,7 @@ func (s *Server) handleListHistory(c echo.Context) error {
 // handleDeleteHistoryEntry removes a single video from the caller's history
 // (idempotent). Behind requireAuth. No public-video check, so a user can always
 // clean up an entry.
-func (s *Server) handleDeleteHistoryEntry(c echo.Context) error {
+func (s *Server) handleDeleteHistoryEntry(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -176,7 +176,7 @@ func (s *Server) handleDeleteHistoryEntry(c echo.Context) error {
 
 // handleClearHistory removes the caller's entire watch history (idempotent).
 // Behind requireAuth.
-func (s *Server) handleClearHistory(c echo.Context) error {
+func (s *Server) handleClearHistory(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

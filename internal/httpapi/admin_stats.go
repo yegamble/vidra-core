@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // adminStatsResponse is the instance-wide overview the admin dashboard renders as
@@ -30,7 +30,7 @@ type adminStatsResponse struct {
 // dashboard (the vidra-user admin overview cards bind to this). Behind
 // requireRole(admin). A read-only aggregate — like the other admin GET snapshots
 // (system status, jobs) it is not audited.
-func (s *Server) handleAdminStats(c echo.Context) error {
+func (s *Server) handleAdminStats(c *echo.Context) error {
 	st, err := s.adminsvc.Stats(c.Request().Context())
 	if err != nil {
 		return err

@@ -12,7 +12,7 @@ shadow-copies guessed DTOs.
 ## Stack
 
 - Go (stable) — application language.
-- Echo v4 — HTTP routing/middleware.
+- Echo v5 — HTTP routing/middleware.
 - PostgreSQL 16 — durable system of record. Extensions: `pg_trgm`, `uuid-ossp`.
 - sqlc + pgx/v5 — typed SQL access over a connection pool.
 - Redis 7 — sessions, rate limiting, idempotency keys, hot status caches.

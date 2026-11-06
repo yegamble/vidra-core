@@ -2,7 +2,7 @@ package httpapi
 
 import (
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // --- the A13 opt-out ruling: opt-out means no attributed collection ---
@@ -81,7 +81,7 @@ func (i searchEventIdentity) Attributed() bool { return i.UserID != "" }
 // authenticated PUT /videos/{id}/watch-progress emit), because a rule applied
 // on some paths is a rule applied on none — one browser search alone writes two
 // query_log rows through two different paths.
-func (s *Server) searchEventIdentity(c echo.Context) searchEventIdentity {
+func (s *Server) searchEventIdentity(c *echo.Context) searchEventIdentity {
 	userID, prefs, authed := s.searchUserPrefs(c)
 	out := searchEventIdentity{SessionID: sessionIDFromRequest(c)}
 	out.AllowHistory, out.AllowPersonalization = s.searchConsent(prefs, authed)

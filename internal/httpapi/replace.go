@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -46,7 +46,7 @@ func (s *Server) videoReplaceAvailable() bool {
 // COMPLETION, which skips the open-session check — the completing session is
 // itself the one holding that slot. Returns the video row and whether the
 // actor manages a video they do not own.
-func (s *Server) replaceTarget(ctx context.Context, c echo.Context, id uuid.UUID, viaSession bool) (sqlcgen.GetVideoByIDRow, bool, error) {
+func (s *Server) replaceTarget(ctx context.Context, c *echo.Context, id uuid.UUID, viaSession bool) (sqlcgen.GetVideoByIDRow, bool, error) {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return sqlcgen.GetVideoByIDRow{}, false, err
@@ -89,7 +89,7 @@ func (s *Server) replaceTarget(ctx context.Context, c echo.Context, id uuid.UUID
 // -replacement-in-flight state (409 replace_conflict). Quotas are checked
 // against the video's OWNER (storage usage aggregates against the owning
 // account) even when a moderator/admin performs the replacement.
-func (s *Server) handleCreateReplaceSession(c echo.Context) error {
+func (s *Server) handleCreateReplaceSession(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -153,7 +153,7 @@ func (s *Server) handleCreateReplaceSession(c echo.Context) error {
 // The bytes themselves — assembly, scan, probe, the swap — are the worker's:
 // video.ReplaceSource is exactly as expensive as the upload path's
 // AttachOriginal → Process, and shares its route and therefore its deadline.
-func (s *Server) authorizeReplaceCompletion(c echo.Context, sess sqlcgen.UploadSession) (bool, error) {
+func (s *Server) authorizeReplaceCompletion(c *echo.Context, sess sqlcgen.UploadSession) (bool, error) {
 	ctx := c.Request().Context()
 	if !s.videoReplaceAvailable() {
 		return false, &FeatureDisabledError{Feature: "video_replace"}
@@ -173,7 +173,7 @@ func (s *Server) authorizeReplaceCompletion(c echo.Context, sess sqlcgen.UploadS
 // mirroring POST /videos/{id}/file. Owner or moderator/admin; gates and quota
 // semantics identical to the session shape. Responds 200 with the video + new
 // source file.
-func (s *Server) handleReplaceVideoFile(c echo.Context) error {
+func (s *Server) handleReplaceVideoFile(c *echo.Context) error {
 	if _, _, ok := principalFromContext(c); !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}

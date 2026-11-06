@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -108,7 +108,7 @@ type emailChangeConfirmedView struct {
 // registration discloses today for a taken address.
 // emailChangeErrorFor is emailChangeError plus the two step-up answers, which
 // need the server to name the caller's linked providers.
-func (s *Server) emailChangeErrorFor(c echo.Context, userID uuid.UUID, err error) error {
+func (s *Server) emailChangeErrorFor(c *echo.Context, userID uuid.UUID, err error) error {
 	switch {
 	case errors.Is(err, auth.ErrStepUpRequired):
 		return &StepUpRequiredError{Providers: s.authsvc.StepUpProvidersFor(c.Request().Context(), userID)}
@@ -147,7 +147,7 @@ func emailChangeError(err error) error {
 // requireAuth AND the strict auth limiter — supplying a current password makes
 // it a guessing surface exactly like login, and the limiter runs first, so the
 // budget is spent whether or not the caller is authenticated.
-func (s *Server) handleRequestEmailChange(c echo.Context) error {
+func (s *Server) handleRequestEmailChange(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -201,7 +201,7 @@ func (s *Server) handleRequestEmailChange(c echo.Context) error {
 // pending, superseding the previous token. It takes no body: the pending
 // request already names the address, and re-asking for the password would only
 // stop the user finishing a change they have already authorized.
-func (s *Server) handleResendEmailChange(c echo.Context) error {
+func (s *Server) handleResendEmailChange(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -221,7 +221,7 @@ func (s *Server) handleResendEmailChange(c echo.Context) error {
 
 // handleGetEmailChange reads the pending state. 200 always: "nothing pending"
 // is a state, not an error, and the settings card renders it either way.
-func (s *Server) handleGetEmailChange(c echo.Context) error {
+func (s *Server) handleGetEmailChange(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -238,7 +238,7 @@ func (s *Server) handleGetEmailChange(c echo.Context) error {
 
 // handleCancelEmailChange drops the pending request, killing its token. 404
 // when nothing was pending rather than a success that changed nothing.
-func (s *Server) handleCancelEmailChange(c echo.Context) error {
+func (s *Server) handleCancelEmailChange(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -256,7 +256,7 @@ func (s *Server) handleCancelEmailChange(c echo.Context) error {
 // requiring both means a token that leaks out of a mailbox — the one place it is
 // guaranteed to sit in plaintext — cannot move anybody's address on its own.
 // Another account's token is refused exactly like an unknown one: 400.
-func (s *Server) handleConfirmEmailChange(c echo.Context) error {
+func (s *Server) handleConfirmEmailChange(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

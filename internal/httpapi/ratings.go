@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/rating"
 )
@@ -28,7 +28,7 @@ func newRatingView(s rating.Summary) ratingView {
 
 // handleGetVideoRating returns a public, published video's like/dislike counts,
 // plus the caller's own rating when signed in. Behind optionalAuth.
-func (s *Server) handleGetVideoRating(c echo.Context) error {
+func (s *Server) handleGetVideoRating(c *echo.Context) error {
 	videoID, err := s.publicVideoID(c)
 	if err != nil {
 		return err
@@ -54,7 +54,7 @@ func (r setRatingRequest) Validate() []FieldError {
 }
 
 // handlePutVideoRating sets or changes the caller's rating for a video. Behind requireAuth.
-func (s *Server) handlePutVideoRating(c echo.Context) error {
+func (s *Server) handlePutVideoRating(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -79,7 +79,7 @@ func (s *Server) handlePutVideoRating(c echo.Context) error {
 
 // handleDeleteVideoRating clears the caller's rating for a video (idempotent).
 // Behind requireAuth.
-func (s *Server) handleDeleteVideoRating(c echo.Context) error {
+func (s *Server) handleDeleteVideoRating(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

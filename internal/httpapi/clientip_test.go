@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // postFrom posts to path from a specific socket address, optionally claiming a
@@ -166,5 +166,31 @@ func TestPublicTrustedProxyCIDRIsHonoured(t *testing.T) {
 	keys := counterKeys(defaultCounter)
 	if len(keys) != 1 || keys[0] != "auth:198.51.100.10" {
 		t.Errorf("rate-limit keys = %v, want [auth:198.51.100.10]: an unlisted public hop must NOT be trusted", keys)
+	}
+}
+
+// TestSpoofedRealIPHeaderIsIgnored covers the other header echo can read a client
+// address from. The installed extractor walks X-Forwarded-For from trusted hops
+// only, so a client-supplied X-Real-IP — trusted by echo's ExtractIPFromRealIPHeader
+// and forwarded by its proxy middleware (GO-2026-6872/6875) — must not move the key.
+func TestSpoofedRealIPHeaderIsIgnored(t *testing.T) {
+	var buf bytes.Buffer
+	fc := &fakeCounter{}
+	srv := newAuthLimitedServer(t, &buf, 5, fc)
+	for _, remote := range []string{"192.0.2.1:41000", "10.0.0.5:39000"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password-reset", strings.NewReader(`{"email":"a@b.test"}`))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		req.Header.Set(echo.HeaderXRealIP, "198.51.100.77")
+		req.RemoteAddr = remote
+		srv.Handler().ServeHTTP(rec, req)
+	}
+	for _, k := range counterKeys(fc) {
+		if strings.Contains(k, "198.51.100.77") {
+			t.Fatalf("rate-limit keys = %v: a client-supplied X-Real-IP chose the budget", counterKeys(fc))
+		}
+	}
+	if len(fc.counts) != 2 {
+		t.Errorf("rate-limit keys = %v, want one per real peer", counterKeys(fc))
 	}
 }

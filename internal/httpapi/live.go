@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/live"
 )
@@ -143,7 +143,7 @@ type liveTerminationView struct {
 // newLiveStreamView projects a stream. The request is passed because two of the
 // fields depend on WHO is asking (the termination reason) or on a lookup (the
 // viewer count), not only on the row.
-func (s *Server) newLiveStreamView(c echo.Context, st live.Stream) liveStreamView {
+func (s *Server) newLiveStreamView(c *echo.Context, st live.Stream) liveStreamView {
 	v := liveStreamView{
 		ID: st.ID.String(), ChannelID: st.ChannelID.String(), Title: st.Title,
 		Description: st.Description, Privacy: st.Privacy, State: st.State, Permanent: st.Permanent,
@@ -189,7 +189,7 @@ func newLiveTerminationView(st live.Stream) *liveTerminationView {
 //
 // canManageChannelContent is only consulted for a caller who is not already the
 // owner or staff, so an anonymous read costs no query at all.
-func (s *Server) mayReadLiveTermination(c echo.Context, st live.Stream) bool {
+func (s *Server) mayReadLiveTermination(c *echo.Context, st live.Stream) bool {
 	if !st.Terminated() {
 		return false
 	}
@@ -255,7 +255,7 @@ type liveStreamPublicListResponse struct {
 // feed, search, subscriptions and the channel page carry (A16 ruling).
 // principalFromContext reports (uuid.Nil, false) for an anonymous caller, which
 // passes a NULL viewer to the query and changes nothing for them.
-func (s *Server) handleListLivePublicStreams(c echo.Context) error {
+func (s *Server) handleListLivePublicStreams(c *echo.Context) error {
 	page := parsePage(c, defaultLivePublicLimit, maxLivePublicLimit)
 	viewerID, _, viewerAuthed := principalFromContext(c)
 	cards, total, err := s.livesvc.ListLivePublic(c.Request().Context(), viewerID, viewerAuthed, page.Limit, page.Offset)
@@ -300,7 +300,7 @@ type liveUpcomingListResponse struct {
 // the channel page. Public read (optionalAuth) with the "Live now" rail's
 // visibility: unlisted/private never appear and a muted or blocked owner drops
 // out for the muter. Like its sibling it is not gated on the live toggle.
-func (s *Server) handleListUpcomingLiveStreams(c echo.Context) error {
+func (s *Server) handleListUpcomingLiveStreams(c *echo.Context) error {
 	page := parsePage(c, defaultLivePublicLimit, maxLivePublicLimit)
 	// With live switched off an announcement is a promise nobody can keep, so the
 	// list is empty rather than 403 (it is a public read, like "Live now").
@@ -348,7 +348,7 @@ type liveStreamListResponse struct {
 // handleCreateLiveStream creates a live stream for a channel the caller owns and
 // returns it plus the stream key (once) and the RTMP ingest URL. Behind
 // requireAuth; non-owner channel → 403, unknown channel → 404.
-func (s *Server) handleCreateLiveStream(c echo.Context) error {
+func (s *Server) handleCreateLiveStream(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -412,7 +412,7 @@ func (s *Server) handleCreateLiveStream(c echo.Context) error {
 // privacy, permanent, replay_enabled). Behind requireAuth; a non-owner or unknown
 // id is 404 (existence is not leaked). It never rotates the key or changes the
 // live state.
-func (s *Server) handleUpdateLiveStream(c echo.Context) error {
+func (s *Server) handleUpdateLiveStream(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -460,7 +460,7 @@ func (s *Server) handleUpdateLiveStream(c echo.Context) error {
 
 // handleListLiveStreams lists the caller's live streams for a channel they own.
 // Behind requireAuth; non-owner → 403, unknown channel → 404. No stream keys.
-func (s *Server) handleListLiveStreams(c echo.Context) error {
+func (s *Server) handleListLiveStreams(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -489,7 +489,7 @@ func (s *Server) handleListLiveStreams(c echo.Context) error {
 // handleGetLiveStream returns a live stream's public metadata. Behind
 // optionalAuth: a private stream is visible only to its channel owner (else 404,
 // so its existence is not leaked). Never returns the stream key.
-func (s *Server) handleGetLiveStream(c echo.Context) error {
+func (s *Server) handleGetLiveStream(c *echo.Context) error {
 	id, err := pathUUID(c, "id", "live stream not found")
 	if err != nil {
 		return err
@@ -509,7 +509,7 @@ func (s *Server) handleGetLiveStream(c echo.Context) error {
 
 // handleRegenerateLiveStreamKey rotates a live stream's key and returns the new
 // one (once). Behind requireAuth; non-owner/unknown → 404 (existence not leaked).
-func (s *Server) handleRegenerateLiveStreamKey(c echo.Context) error {
+func (s *Server) handleRegenerateLiveStreamKey(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -541,7 +541,7 @@ const ingestSecretHeader = "X-Ingest-Secret"
 // ingestAuthorized gates the ingest hooks: they are disabled (404) unless an
 // ingest secret is configured, and require the media server to present it
 // (constant-time compared). Returns an *echo.HTTPError to send, or nil to proceed.
-func (s *Server) ingestAuthorized(c echo.Context) *echo.HTTPError {
+func (s *Server) ingestAuthorized(c *echo.Context) *echo.HTTPError {
 	if s.cfg.LiveIngestSecret == "" {
 		return echo.NewHTTPError(http.StatusNotFound, "live ingest is not enabled")
 	}
@@ -558,7 +558,7 @@ func (s *Server) ingestAuthorized(c echo.Context) *echo.HTTPError {
 // time `name` is the raw stream key; after the on-publish redirect renames the
 // session it is the stream ID (see handleLiveIngestStart). isForm reports whether
 // the request is the nginx-rtmp form callback (which expects a redirect rename).
-func ingestIdentity(c echo.Context) (ident string, isForm bool) {
+func ingestIdentity(c *echo.Context) (ident string, isForm bool) {
 	if v := strings.TrimSpace(c.FormValue("name")); v != "" {
 		return v, true
 	}
@@ -577,7 +577,7 @@ func ingestIdentity(c echo.Context) (ident string, isForm bool) {
 // every downstream path (HLS segments, the recording) is keyed by the stream ID
 // and the raw stream key never touches the filesystem. A JSON caller (harness)
 // gets a 200 with the resolved id instead.
-func (s *Server) handleLiveIngestStart(c echo.Context) error {
+func (s *Server) handleLiveIngestStart(c *echo.Context) error {
 	if err := s.ingestAuthorized(c); err != nil {
 		return err
 	}
@@ -634,7 +634,7 @@ func (s *Server) handleLiveIngestStart(c echo.Context) error {
 // returns to offline (permanent) or ended (one-shot). Same auth as start. When
 // the stream has replay enabled, the finished recording is republished as a VOD
 // best-effort in the background (never blocking or failing this hook).
-func (s *Server) handleLiveIngestStop(c echo.Context) error {
+func (s *Server) handleLiveIngestStop(c *echo.Context) error {
 	if err := s.ingestAuthorized(c); err != nil {
 		return err
 	}
@@ -662,7 +662,7 @@ func (s *Server) handleLiveIngestStop(c echo.Context) error {
 
 // handleDeleteLiveStream deletes a live stream. Behind requireAuth;
 // non-owner/unknown → 404. Idempotent for the owner.
-func (s *Server) handleDeleteLiveStream(c echo.Context) error {
+func (s *Server) handleDeleteLiveStream(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

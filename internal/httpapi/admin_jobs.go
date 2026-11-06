@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/jobstatus"
 )
@@ -55,7 +55,7 @@ type jobRunDetailResponse struct {
 // handleListJobs returns the durable-queue operations snapshot for the admin
 // jobs page: per-queue {pending, running, done, failed, oldest_pending_age} plus
 // a merged recent-failures list (id/error/attempts — no secrets). Admin-only.
-func (s *Server) handleListJobs(c echo.Context) error {
+func (s *Server) handleListJobs(c *echo.Context) error {
 	ov, err := s.jobStatusSvc.Overview(c.Request().Context())
 	if err != nil {
 		return err
@@ -65,7 +65,7 @@ func (s *Server) handleListJobs(c echo.Context) error {
 
 // handleListJobRuns returns individual sanitized executions. The existing
 // /admin/jobs overview remains unchanged for backwards compatibility.
-func (s *Server) handleListJobRuns(c echo.Context) error {
+func (s *Server) handleListJobRuns(c *echo.Context) error {
 	filter, err := parseJobFilter(c, false)
 	if err != nil {
 		return err
@@ -84,7 +84,7 @@ func (s *Server) handleListJobRuns(c echo.Context) error {
 	})
 }
 
-func (s *Server) handleGetJobRun(c echo.Context) error {
+func (s *Server) handleGetJobRun(c *echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid job run id")
@@ -111,7 +111,7 @@ func (s *Server) handleGetJobRun(c echo.Context) error {
 // opaque decimal cursor. The stream is deliberately bounded, causing clients to
 // reconnect and re-authenticate periodically. REST list/detail remains the
 // polling/manual-refresh fallback.
-func (s *Server) handleJobEvents(c echo.Context) error {
+func (s *Server) handleJobEvents(c *echo.Context) error {
 	filter, err := parseJobFilter(c, true)
 	if err != nil {
 		return err
@@ -128,7 +128,7 @@ func (s *Server) handleJobEvents(c echo.Context) error {
 		return jobCursorError(c, http.StatusBadRequest, "invalid_event_cursor", "event cursor is ahead of the current stream")
 	}
 
-	flusher, ok := c.Response().Writer.(http.Flusher)
+	flusher, ok := c.Response().(http.Flusher)
 	if !ok {
 		return echo.NewHTTPError(http.StatusInternalServerError, "streaming is not supported")
 	}
@@ -201,7 +201,7 @@ func (s *Server) handleJobEvents(c echo.Context) error {
 	}
 }
 
-func parseJobFilter(c echo.Context, includeJobID bool) (jobstatus.Filter, error) {
+func parseJobFilter(c *echo.Context, includeJobID bool) (jobstatus.Filter, error) {
 	f := jobstatus.Filter{
 		State:        strings.TrimSpace(c.QueryParam("state")),
 		Type:         strings.TrimSpace(c.QueryParam("type")),
@@ -261,7 +261,7 @@ func parseJobFilter(c echo.Context, includeJobID bool) (jobstatus.Filter, error)
 	return f, nil
 }
 
-func parseEventCursor(c echo.Context) (int64, error) {
+func parseEventCursor(c *echo.Context) (int64, error) {
 	raw := strings.TrimSpace(c.Request().Header.Get("Last-Event-ID"))
 	if raw == "" {
 		raw = strings.TrimSpace(c.QueryParam("after"))
@@ -275,7 +275,7 @@ func parseEventCursor(c echo.Context) (int64, error) {
 	return strconv.ParseInt(raw, 10, 64)
 }
 
-func jobCursorError(c echo.Context, status int, code, message string) error {
+func jobCursorError(c *echo.Context, status int, code, message string) error {
 	return c.JSON(status, ErrorResponse{Error: ErrorBody{
 		Code: code, Message: message,
 		RequestID: c.Response().Header().Get(echo.HeaderXRequestID),

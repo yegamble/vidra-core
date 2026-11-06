@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -31,7 +31,7 @@ type instanceHomepageDocResponse struct {
 // handleGetInstanceDocumentAdmin returns one instance document's stored state
 // (empty body/hash when never set — a stable shape for the admin editor).
 // Behind requireRole(admin). Unknown names are 404.
-func (s *Server) handleGetInstanceDocumentAdmin(c echo.Context) error {
+func (s *Server) handleGetInstanceDocumentAdmin(c *echo.Context) error {
 	name := c.Param("name")
 	if !instancedocs.IsName(name) {
 		return echo.NewHTTPError(http.StatusNotFound, "unknown instance document")
@@ -49,7 +49,7 @@ func (s *Server) handleGetInstanceDocumentAdmin(c echo.Context) error {
 // down a script they did not approve. Every write is audit-enveloped with the document name +
 // new content hash (never the body — custom JS/CSS is operator code that runs
 // in every visitor's browser, so changes must be traceable).
-func (s *Server) handlePutInstanceDocument(c echo.Context) error {
+func (s *Server) handlePutInstanceDocument(c *echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -97,7 +97,7 @@ func (s *Server) handlePutInstanceDocument(c echo.Context) error {
 // marker (users.is_owner). Vidra has no owner ROLE, so requireRole cannot say
 // it; the flag is read off the account row per request, so a transfer takes
 // effect at once.
-func (s *Server) callerIsInstanceOwner(c echo.Context, callerID uuid.UUID) (bool, error) {
+func (s *Server) callerIsInstanceOwner(c *echo.Context, callerID uuid.UUID) (bool, error) {
 	user, err := s.authsvc.UserByID(c.Request().Context(), callerID)
 	if err != nil {
 		return false, echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
@@ -107,7 +107,7 @@ func (s *Server) callerIsInstanceOwner(c echo.Context, callerID uuid.UUID) (bool
 
 // handleGetInstanceHomepage serves the admin-authored homepage document as raw
 // markdown JSON. Public; 404 while no homepage is set.
-func (s *Server) handleGetInstanceHomepage(c echo.Context) error {
+func (s *Server) handleGetInstanceHomepage(c *echo.Context) error {
 	doc, ok := s.instancedocssvc.Get(instancedocs.NameHomepage)
 	if !ok || doc.Body == "" {
 		return echo.NewHTTPError(http.StatusNotFound, "homepage not set")
@@ -119,7 +119,7 @@ func (s *Server) handleGetInstanceHomepage(c echo.Context) error {
 // same-origin text/css file. Public; 404 while unset. Consumed hash-busted
 // (<link href="/instance/custom.css?v={css_hash}">), so responses carry the
 // content hash as a strong ETag.
-func (s *Server) handleGetInstanceCustomCSS(c echo.Context) error {
+func (s *Server) handleGetInstanceCustomCSS(c *echo.Context) error {
 	return s.serveInstanceDocumentRaw(c, instancedocs.NameCustomCSS, "text/css; charset=utf-8")
 }
 
@@ -127,7 +127,7 @@ func (s *Server) handleGetInstanceCustomCSS(c echo.Context) error {
 // same-origin application/javascript file (external-file delivery keeps a
 // future script-src 'self' CSP viable — architecture note 6). Public; 404
 // while unset.
-func (s *Server) handleGetInstanceCustomJS(c echo.Context) error {
+func (s *Server) handleGetInstanceCustomJS(c *echo.Context) error {
 	return s.serveInstanceDocumentRaw(c, instancedocs.NameCustomJS, "application/javascript; charset=utf-8")
 }
 
@@ -135,7 +135,7 @@ func (s *Server) handleGetInstanceCustomJS(c echo.Context) error {
 // discipline, a strong content-hash ETag (with If-None-Match short-circuit),
 // and a modest shared-cache lifetime — the ?v={hash} query param from GET
 // /instance is the real cache buster.
-func (s *Server) serveInstanceDocumentRaw(c echo.Context, name, contentType string) error {
+func (s *Server) serveInstanceDocumentRaw(c *echo.Context, name, contentType string) error {
 	doc, ok := s.instancedocssvc.Get(name)
 	if !ok || doc.Body == "" {
 		return echo.NewHTTPError(http.StatusNotFound, "document not set")

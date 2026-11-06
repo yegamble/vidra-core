@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/audit"
@@ -130,7 +130,7 @@ type adminUserListResponse struct {
 // handleListUsers returns accounts, newest first, optionally filtered by ?q
 // (username/email substring). Behind requireRole(admin). Pagination via ?limit
 // (1–200, default 50) and ?offset.
-func (s *Server) handleListUsers(c echo.Context) error {
+func (s *Server) handleListUsers(c *echo.Context) error {
 	ctx := c.Request().Context()
 	query := strings.TrimSpace(c.QueryParam("q"))
 	page := parsePage(c, defaultUserPageLimit, maxUserPageLimit)
@@ -229,7 +229,7 @@ func (r updateUserRequest) Validate() []FieldError {
 // handleUpdateUser edits a user's role, active flag, and/or storage quota.
 // Behind requireRole(admin). Self-demotion/self-deactivation is rejected; an
 // unknown id is 404. Emits an audit event.
-func (s *Server) handleUpdateUser(c echo.Context) error {
+func (s *Server) handleUpdateUser(c *echo.Context) error {
 	callerID, callerRole, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -323,7 +323,7 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 // notice carries the stated reason (the DSA statement of reasons), unban a short
 // reinstatement. Best-effort: a mail failure is logged without the address or
 // reason and never fails the action.
-func (s *Server) notifyBanChange(c echo.Context, res admin.UpdateResult, in updateUserRequest) {
+func (s *Server) notifyBanChange(c *echo.Context, res admin.UpdateResult, in updateUserRequest) {
 	if in.IsActive == nil || res.Before.IsActive == res.After.IsActive {
 		return
 	}
@@ -349,7 +349,7 @@ const auditResourceUser = "user"
 // auditAdminUserRefusal records a refused admin write as a FAILURE naming the
 // target and the guard that fired. reason_code is an allowlisted metadata key,
 // so the machine-readable cause survives where prose would be rejected.
-func (s *Server) auditAdminUserRefusal(c echo.Context, action string, callerID, targetID uuid.UUID, code string) {
+func (s *Server) auditAdminUserRefusal(c *echo.Context, action string, callerID, targetID uuid.UUID, code string) {
 	s.auditEvent(c, audit.Event{
 		Action: action, Result: observability.ResultFailure, ActorID: callerID.String(),
 		Reason:       code + " target=" + targetID.String(),

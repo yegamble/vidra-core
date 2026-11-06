@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 func TestErrorEnvelopeNotFound(t *testing.T) {
@@ -38,7 +38,7 @@ func TestErrorEnvelopeNotFound(t *testing.T) {
 // error message to the client.
 func TestErrorEnvelopeHidesInternalDetail(t *testing.T) {
 	srv := New(testConfig(), nil, nil)
-	srv.echo.GET("/boom", func(c echo.Context) error {
+	srv.echo.GET("/boom", func(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "leaky secret detail")
 	})
 
@@ -93,8 +93,8 @@ func TestCodeForStatus(t *testing.T) {
 func TestHandleReservedRendersOneConflictForBothKinds(t *testing.T) {
 	srv := New(testConfig(), nil, nil)
 	e := srv.Handler()
-	srv.echo.GET("/test-account-side", func(echo.Context) error { return &HandleReservedError{} })
-	srv.echo.GET("/test-channel-side", func(echo.Context) error { return &HandleReservedError{} })
+	srv.echo.GET("/test-account-side", func(*echo.Context) error { return &HandleReservedError{} })
+	srv.echo.GET("/test-channel-side", func(*echo.Context) error { return &HandleReservedError{} })
 
 	var bodies []ErrorResponse
 	for _, path := range []string{"/test-account-side", "/test-channel-side"} {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -24,7 +24,7 @@ const (
 // withDevice reads the request's device cookie (minting a token when absent),
 // returns a request context carrying it for the service, and the token so the
 // caller can set the cookie once the sign-in has succeeded.
-func (s *Server) withDevice(c echo.Context) string {
+func (s *Server) withDevice(c *echo.Context) string {
 	tok := ""
 	if ck, err := c.Cookie(deviceCookieName); err == nil && ck != nil {
 		tok = strings.TrimSpace(ck.Value)
@@ -39,7 +39,7 @@ func (s *Server) withDevice(c echo.Context) string {
 	return tok
 }
 
-func (s *Server) setDeviceCookie(c echo.Context, tok string) {
+func (s *Server) setDeviceCookie(c *echo.Context, tok string) {
 	if tok != "" {
 		s.writeStateCookie(c, deviceCookieName, refreshCookiePath, tok, deviceCookieTTL)
 	}
@@ -59,7 +59,7 @@ type devicesResponse struct {
 }
 
 // handleListDevices lists the caller's recognised devices (GET /auth/devices).
-func (s *Server) handleListDevices(c echo.Context) error {
+func (s *Server) handleListDevices(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -82,7 +82,7 @@ func (s *Server) handleListDevices(c echo.Context) error {
 
 // handleForgetDevice removes one recognised device (DELETE /auth/devices/:id).
 // 404 for an id that is not the caller's. It does not end sessions.
-func (s *Server) handleForgetDevice(c echo.Context) error {
+func (s *Server) handleForgetDevice(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -114,7 +114,7 @@ func (r securityPrefsRequest) Validate() []FieldError {
 
 // handleUpdateSecurityPrefs sets the new-device email opt-out
 // (PATCH /auth/security-prefs).
-func (s *Server) handleUpdateSecurityPrefs(c echo.Context) error {
+func (s *Server) handleUpdateSecurityPrefs(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

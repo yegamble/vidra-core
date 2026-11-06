@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -16,7 +16,7 @@ import (
 // 204 whether or not a lockout existed — the answer must not become a probe for
 // "has someone been guessing this account" beyond what the admin can already
 // read from the audit log — and 404 only for an unknown user. Audited.
-func (s *Server) handleAdminClearLoginLockout(c echo.Context) error {
+func (s *Server) handleAdminClearLoginLockout(c *echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

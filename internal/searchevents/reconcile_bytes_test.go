@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -42,8 +42,8 @@ func TestRunReconcileByteBoundedEscapedDescriptions(t *testing.T) {
 	endTotal := -1
 	receiver := echo.New()
 	// This is the receiver's real Echo middleware and shipped default limit.
-	receiver.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{Limit: "2M"}))
-	receiver.POST("/internal/v1/events", func(c echo.Context) error {
+	receiver.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{LimitBytes: 2 << 20}))
+	receiver.POST("/internal/v1/events", func(c *echo.Context) error {
 		var batch EventBatch
 		if err := c.Bind(&batch); err != nil {
 			return err

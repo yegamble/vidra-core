@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -91,7 +91,7 @@ type blockedRemoteActorListResponse struct {
 // handleAdminBlockRemoteActor blocks one remote account for everyone. Behind
 // requireRole(admin, moderator). Idempotent; a local identity → 422; an
 // unresolvable handle → 422.
-func (s *Server) handleAdminBlockRemoteActor(c echo.Context) error {
+func (s *Server) handleAdminBlockRemoteActor(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -119,7 +119,7 @@ func (s *Server) handleAdminBlockRemoteActor(c echo.Context) error {
 // segment. It is matched VERBATIM against the stored URL — no handle resolution
 // runs here, so a WebFinger that has since started failing can never strand an
 // admin with a block they cannot lift.
-func (s *Server) handleAdminUnblockRemoteActor(c echo.Context) error {
+func (s *Server) handleAdminUnblockRemoteActor(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -137,7 +137,7 @@ func (s *Server) handleAdminUnblockRemoteActor(c echo.Context) error {
 
 // handleAdminListBlockedRemoteActors lists the instance-wide blocks, newest
 // first.
-func (s *Server) handleAdminListBlockedRemoteActors(c echo.Context) error {
+func (s *Server) handleAdminListBlockedRemoteActors(c *echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.fedsvc.ListBlockedRemoteActors(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {

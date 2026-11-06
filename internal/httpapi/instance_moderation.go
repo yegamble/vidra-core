@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -25,7 +25,7 @@ import (
 // here makes both spellings the same request, which is what a percent-encoding
 // is for. An undecodable segment is passed through unchanged so the validator
 // still refuses it with the message it already has.
-func domainParam(c echo.Context) string {
+func domainParam(c *echo.Context) string {
 	raw := c.Param("domain")
 	decoded, err := url.PathUnescape(raw)
 	if err != nil {
@@ -49,7 +49,7 @@ type mutedInstanceListResponse struct {
 // handleMuteInstance mutes a whole remote instance for the caller: remote
 // content from that domain becomes hidden from their surfaces. Behind
 // requireAuth. Idempotent; an invalid domain → 422.
-func (s *Server) handleMuteInstance(c echo.Context) error {
+func (s *Server) handleMuteInstance(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -65,7 +65,7 @@ func (s *Server) handleMuteInstance(c echo.Context) error {
 
 // handleUnmuteInstance lifts the caller's mute of a remote instance. Behind
 // requireAuth. Idempotent; an invalid domain → 422.
-func (s *Server) handleUnmuteInstance(c echo.Context) error {
+func (s *Server) handleUnmuteInstance(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -81,7 +81,7 @@ func (s *Server) handleUnmuteInstance(c echo.Context) error {
 
 // handleListMutedInstances returns the instances the caller has muted, newest
 // first. Behind requireAuth. Pagination via ?limit (1–100, default 20)/?offset.
-func (s *Server) handleListMutedInstances(c echo.Context) error {
+func (s *Server) handleListMutedInstances(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -137,7 +137,7 @@ func (r blockInstanceRequest) Validate() []FieldError {
 // all surfaces, and outbound deliveries to it are cancelled. Behind
 // requireRole(admin, moderator). Idempotent; an invalid domain → 422. Emits an
 // audit event.
-func (s *Server) handleBlockInstance(c echo.Context) error {
+func (s *Server) handleBlockInstance(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -164,7 +164,7 @@ func (s *Server) handleBlockInstance(c echo.Context) error {
 // activities this instance refused to send while it stood (A29-F4). See
 // federation.RedeliverAfterUnblock for which of them qualify and why the rest
 // stay cancelled.
-func (s *Server) handleUnblockInstance(c echo.Context) error {
+func (s *Server) handleUnblockInstance(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -194,7 +194,7 @@ func (s *Server) handleUnblockInstance(c echo.Context) error {
 // Nothing here can fail the unblock — the block IS lifted; a resumption that
 // did not happen leaves rows exactly where they already were, which is the same
 // place they were before this existed.
-func (s *Server) redeliverAfterUnblock(c echo.Context, domain string, blockedAt time.Time) {
+func (s *Server) redeliverAfterUnblock(c *echo.Context, domain string, blockedAt time.Time) {
 	if s.fedsvc == nil || !s.cfg.FederationEnabled {
 		return
 	}
@@ -216,7 +216,7 @@ func (s *Server) redeliverAfterUnblock(c echo.Context, domain string, blockedAt 
 // handleListBlockedInstances returns the admin instance blocklist, newest block
 // first. Behind requireRole(admin, moderator). Pagination via ?limit (1–100,
 // default 20) and ?offset.
-func (s *Server) handleListBlockedInstances(c echo.Context) error {
+func (s *Server) handleListBlockedInstances(c *echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.instancemodsvc.ListBlockedInstances(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {

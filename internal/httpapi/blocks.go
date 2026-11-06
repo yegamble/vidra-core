@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/block"
 )
@@ -29,7 +29,7 @@ type blockedUserListResponse struct {
 
 // handleBlockUser blocks another account for the caller. Behind requireAuth.
 // Blocking yourself → 422; an unknown target → 404. Idempotent.
-func (s *Server) handleBlockUser(c echo.Context) error {
+func (s *Server) handleBlockUser(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -52,7 +52,7 @@ func (s *Server) handleBlockUser(c echo.Context) error {
 
 // handleUnblockUser lifts the caller's block of another account. Behind
 // requireAuth. Idempotent (unblocking a not-blocked account still succeeds).
-func (s *Server) handleUnblockUser(c echo.Context) error {
+func (s *Server) handleUnblockUser(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -69,7 +69,7 @@ func (s *Server) handleUnblockUser(c echo.Context) error {
 
 // handleListBlockedUsers returns the accounts the caller has blocked, newest
 // block first. Behind requireAuth. Pagination via ?limit (1–100, default 20)/?offset.
-func (s *Server) handleListBlockedUsers(c echo.Context) error {
+func (s *Server) handleListBlockedUsers(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

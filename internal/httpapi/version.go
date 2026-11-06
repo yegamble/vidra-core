@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/version"
 )
@@ -20,7 +20,7 @@ type versionResponse struct {
 // handleVersion reports the running build's version metadata. It performs no
 // dependency checks and is safe to call unauthenticated; it exposes only build
 // information, never secrets or configuration.
-func (s *Server) handleVersion(c echo.Context) error {
+func (s *Server) handleVersion(c *echo.Context) error {
 	return c.JSON(http.StatusOK, versionResponse{
 		Name:      "vidra",
 		Version:   version.Version,

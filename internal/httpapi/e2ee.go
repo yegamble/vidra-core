@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -160,7 +160,7 @@ func e2eeError(err error) error {
 
 // handleRegisterE2EEDevice registers an E2EE device (public keys + label) for
 // the caller. Behind requireAuth.
-func (s *Server) handleRegisterE2EEDevice(c echo.Context) error {
+func (s *Server) handleRegisterE2EEDevice(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -182,7 +182,7 @@ func (s *Server) handleRegisterE2EEDevice(c echo.Context) error {
 
 // handleListMyE2EEDevices returns the caller's registered devices, oldest
 // first. Behind requireAuth. Also the frontend's E2EE availability probe.
-func (s *Server) handleListMyE2EEDevices(c echo.Context) error {
+func (s *Server) handleListMyE2EEDevices(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -200,7 +200,7 @@ func (s *Server) handleListMyE2EEDevices(c echo.Context) error {
 
 // handleDeleteE2EEDevice removes one of the caller's devices (cascading its
 // one-time keys and envelopes). Behind requireAuth. Unknown-or-not-owned → 404.
-func (s *Server) handleDeleteE2EEDevice(c echo.Context) error {
+func (s *Server) handleDeleteE2EEDevice(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -222,7 +222,7 @@ func (s *Server) handleDeleteE2EEDevice(c echo.Context) error {
 // Behind requireAuth and participant-gated: unless the target is the caller,
 // they must share a conversation — otherwise 404, so accounts and device
 // counts cannot be enumerated. A block either direction → 403.
-func (s *Server) handleListUserE2EEDevices(c echo.Context) error {
+func (s *Server) handleListUserE2EEDevices(c *echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -248,7 +248,7 @@ func (s *Server) handleListUserE2EEDevices(c echo.Context) error {
 // handleUploadOneTimeKeys stores a batch of public one-time prekeys for one of
 // the caller's devices (idempotent per key_id). Behind requireAuth. Not-owned
 // device → 404.
-func (s *Server) handleUploadOneTimeKeys(c echo.Context) error {
+func (s *Server) handleUploadOneTimeKeys(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -277,7 +277,7 @@ func (s *Server) handleUploadOneTimeKeys(c echo.Context) error {
 
 // handleCountOneTimeKeys returns the unclaimed one-time-key count of one of
 // the caller's devices. Behind requireAuth. Not-owned device → 404.
-func (s *Server) handleCountOneTimeKeys(c echo.Context) error {
+func (s *Server) handleCountOneTimeKeys(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -300,7 +300,7 @@ func (s *Server) handleCountOneTimeKeys(c echo.Context) error {
 // target user. Behind requireAuth and participant-gated like the peer device
 // listing. Audited with COUNTS ONLY — key material never reaches the audit
 // trail or logs.
-func (s *Server) handleClaimOneTimeKeys(c echo.Context) error {
+func (s *Server) handleClaimOneTimeKeys(c *echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -335,7 +335,7 @@ func (s *Server) handleClaimOneTimeKeys(c echo.Context) error {
 // is dispatched from handleSendMessage once the conversation is known to be
 // encrypted and the caller a participant. Mirrors the plaintext path's
 // notification side effect (metadata only — no content).
-func (s *Server) sendEncryptedMessage(c echo.Context, userID, convID uuid.UUID, in sendMessageRequest) error {
+func (s *Server) sendEncryptedMessage(c *echo.Context, userID, convID uuid.UUID, in sendMessageRequest) error {
 	senderDeviceID, err := uuid.Parse(strings.TrimSpace(in.SenderDeviceID))
 	if err != nil {
 		return &ValidationError{Fields: []FieldError{{Field: "sender_device_id", Message: "must be a valid id"}}}
@@ -380,7 +380,7 @@ func (s *Server) sendEncryptedMessage(c echo.Context, userID, convID uuid.UUID, 
 // listEncryptedMessages returns the caller's devices' envelopes in an
 // encrypted conversation, newest first (expired ones filtered). Dispatched
 // from handleListMessages.
-func (s *Server) listEncryptedMessages(c echo.Context, userID, convID uuid.UUID, limit, offset int) error {
+func (s *Server) listEncryptedMessages(c *echo.Context, userID, convID uuid.UUID, limit, offset int) error {
 	msgs, err := s.e2eesvc.ListMessages(c.Request().Context(), userID, convID, int32(limit), int32(offset))
 	if err != nil {
 		if herr := e2eeError(err); herr != nil {
@@ -409,7 +409,7 @@ func (s *Server) listEncryptedMessages(c echo.Context, userID, convID uuid.UUID,
 // listEncryptedMessages, so encrypted threads page identically to plaintext ones.
 // An unknown/foreign cursor is a 422 (via *e2ee.InvalidError). Dispatched from
 // handleListMessages.
-func (s *Server) listEncryptedMessagesBefore(c echo.Context, userID, convID, beforeID uuid.UUID, limit int) error {
+func (s *Server) listEncryptedMessagesBefore(c *echo.Context, userID, convID, beforeID uuid.UUID, limit int) error {
 	msgs, err := s.e2eesvc.ListMessagesBefore(c.Request().Context(), userID, convID, beforeID, int32(limit))
 	if err != nil {
 		if herr := e2eeError(err); herr != nil {

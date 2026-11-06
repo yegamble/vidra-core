@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -91,7 +91,7 @@ func (s *Server) reportEmailAlertsAvailable() bool {
 // repeat never notifies): the in-app new_report staff fan-out, and the
 // operator email alert when reportEmailAlertsAvailable. Both are best-effort:
 // a notification or mail failure must never fail the report itself.
-func (s *Server) notifyStaffOfReport(c echo.Context, reportID uuid.UUID, targetType, reason string) {
+func (s *Server) notifyStaffOfReport(c *echo.Context, reportID uuid.UUID, targetType, reason string) {
 	if reportID == uuid.Nil {
 		return
 	}
@@ -116,7 +116,7 @@ func (s *Server) notifyStaffOfReport(c echo.Context, reportID uuid.UUID, targetT
 
 // handleReportVideo files a report against a public, published video. Behind
 // requireAuth. A non-public/unpublished or unknown video is 404. Idempotent.
-func (s *Server) handleReportVideo(c echo.Context) error {
+func (s *Server) handleReportVideo(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -142,7 +142,7 @@ func (s *Server) handleReportVideo(c echo.Context) error {
 
 // handleReportComment files a report against a comment. Behind requireAuth. An
 // unknown comment is 404. Idempotent.
-func (s *Server) handleReportComment(c echo.Context) error {
+func (s *Server) handleReportComment(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -171,7 +171,7 @@ func (s *Server) handleReportComment(c echo.Context) error {
 
 // handleReportAccount files a report against another user account. Behind
 // requireAuth. Reporting yourself is 422; an unknown account is 404. Idempotent.
-func (s *Server) handleReportAccount(c echo.Context) error {
+func (s *Server) handleReportAccount(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -295,7 +295,7 @@ var reportStatuses = []string{moderation.StatusOpen, moderation.StatusResolved, 
 // This used to be `c.QueryParam("status") == "open"`, so ?status=resolved — the
 // obvious way to ask for the closed queue — silently returned EVERY report. An
 // unrecognised status is now a 400.
-func (s *Server) handleListReports(c echo.Context) error {
+func (s *Server) handleListReports(c *echo.Context) error {
 	status, err := parseEnumParam(c, "status", reportStatuses, statusFilterAll)
 	if err != nil {
 		return err
@@ -335,7 +335,7 @@ func (r resolveReportRequest) Validate() []FieldError {
 
 // handleResolveReport accepts/rejects a report with an internal note. Behind
 // requireRole(admin, moderator). An unknown id is 404. Emits an audit event.
-func (s *Server) handleResolveReport(c echo.Context) error {
+func (s *Server) handleResolveReport(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -372,7 +372,7 @@ func (s *Server) handleResolveReport(c echo.Context) error {
 // moderators resolve reports, admins can purge them. Idempotent like the other
 // admin deletes (deleting an unknown id still succeeds); a malformed id is 404.
 // Any notification referencing the report cascades away. Emits an audit event.
-func (s *Server) handleDeleteReport(c echo.Context) error {
+func (s *Server) handleDeleteReport(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

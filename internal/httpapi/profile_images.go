@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/profileimage"
@@ -40,7 +40,7 @@ func newProfileImageView(img profileimage.Image) profileImageView {
 // one. Behind requireAuth. The global HTTP body limit bounds the upload (same
 // cap as the custom video thumbnail).
 func (s *Server) handleSetMyImage(kind string) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		userID, _, err := mustPrincipal(c)
 		if err != nil {
 			return err
@@ -68,7 +68,7 @@ func (s *Server) handleSetMyImage(kind string) echo.HandlerFunc {
 // handleDeleteMyImage removes the caller's own avatar/banner (row + stored
 // object). Behind requireAuth; 404 when none is set.
 func (s *Server) handleDeleteMyImage(kind string) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		userID, _, err := mustPrincipal(c)
 		if err != nil {
 			return err
@@ -87,7 +87,7 @@ func (s *Server) handleDeleteMyImage(kind string) echo.HandlerFunc {
 // handleGetUserImage serves a user's avatar/banner publicly, with the content
 // type derived at upload time. 404 when the user is unknown or has none set.
 func (s *Server) handleGetUserImage(kind string) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		id, err := pathUUID(c, "id", kind+" not found")
 		if err != nil {
 			return err
@@ -115,7 +115,7 @@ func (s *Server) handleGetUserImage(kind string) echo.HandlerFunc {
 // non-owner or unknown handle is 404 so the route does not reveal whether the
 // caller could act on it. Same multipart/type gate as the user routes.
 func (s *Server) handleSetChannelImage(kind string) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		ch, err := s.ownedChannel(c)
 		if err != nil {
 			return err
@@ -140,7 +140,7 @@ func (s *Server) handleSetChannelImage(kind string) echo.HandlerFunc {
 // handleDeleteChannelImage removes a channel's avatar/banner (owner only;
 // non-owner/unknown handle → 404). 404 when none is set.
 func (s *Server) handleDeleteChannelImage(kind string) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		ch, err := s.ownedChannel(c)
 		if err != nil {
 			return err
@@ -159,7 +159,7 @@ func (s *Server) handleDeleteChannelImage(kind string) echo.HandlerFunc {
 // handleGetChannelImage serves a channel's avatar/banner publicly. 404 when
 // the channel is unknown or has none set.
 func (s *Server) handleGetChannelImage(kind string) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		ch, err := s.channelsvc.GetByHandle(c.Request().Context(), c.Param("handle"))
 		if err != nil {
 			return channelError(err) // ErrNotFound -> 404
@@ -192,7 +192,7 @@ func identityImageClass(kind string) delivery.Class {
 // ownedChannel resolves the :handle channel and requires the caller to own it.
 // Unknown handle AND non-owner both yield 404 (mirroring the videos convention:
 // a mutating route does not reveal whether the caller could act on the target).
-func (s *Server) ownedChannel(c echo.Context) (sqlcgen.Channel, error) {
+func (s *Server) ownedChannel(c *echo.Context) (sqlcgen.Channel, error) {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return sqlcgen.Channel{}, err
@@ -212,7 +212,7 @@ func (s *Server) ownedChannel(c echo.Context) (sqlcgen.Channel, error) {
 // the video path, which stores first and deletes a rejected original afterwards
 // — there is no reason to let a refused avatar touch the object store at all.
 // A28 found every one of these routes storing unscanned.
-func (s *Server) imageUploadInput(c echo.Context, kind string) (profileimage.UploadInput, func(), error) {
+func (s *Server) imageUploadInput(c *echo.Context, kind string) (profileimage.UploadInput, func(), error) {
 	fh, err := c.FormFile("file")
 	if err != nil {
 		return profileimage.UploadInput{}, nil, echo.NewHTTPError(http.StatusBadRequest, `multipart form field "file" is required`)

@@ -18,7 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/mail"
@@ -1047,7 +1047,7 @@ func postWithAuth(srv *Server, path, token string) *httptest.ResponseRecorder {
 // exists in the public surface yet; P9 admin endpoints will mount this).
 func TestRequireRole(t *testing.T) {
 	srv := authServer(t)
-	srv.echo.GET("/api/v1/_test/admin-only", func(c echo.Context) error {
+	srv.echo.GET("/api/v1/_test/admin-only", func(c *echo.Context) error {
 		return c.NoContent(http.StatusOK)
 	}, srv.requireAuth, srv.requireRole("admin"))
 

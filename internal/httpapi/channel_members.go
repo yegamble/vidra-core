@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -107,7 +107,7 @@ func memberError(err error) error {
 
 // handleListChannelMembers lists a channel's collaborators. Visible to the owner
 // and to existing members; anyone else gets 403 (unknown handle → 404).
-func (s *Server) handleListChannelMembers(c echo.Context) error {
+func (s *Server) handleListChannelMembers(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -127,7 +127,7 @@ func (s *Server) handleListChannelMembers(c echo.Context) error {
 // handleAddChannelMember invites a local user as an editor of the channel. Owner
 // only. 404 unknown channel or unknown target user; 409 when the target already
 // manages the channel (owner or existing member).
-func (s *Server) handleAddChannelMember(c echo.Context) error {
+func (s *Server) handleAddChannelMember(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -145,7 +145,7 @@ func (s *Server) handleAddChannelMember(c echo.Context) error {
 
 // handleRemoveChannelMember removes a collaborator. Owner only; idempotent
 // (removing a non-member is a 204). Unknown handle → 404.
-func (s *Server) handleRemoveChannelMember(c echo.Context) error {
+func (s *Server) handleRemoveChannelMember(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

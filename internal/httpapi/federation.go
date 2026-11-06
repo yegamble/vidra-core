@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/httpsig"
@@ -49,7 +49,7 @@ const applicationActorRel = "https://www.w3.org/ns/activitystreams#Application"
 
 // handleNodeInfoDiscovery serves /.well-known/nodeinfo — the pointer to the
 // versioned document, plus the instance actor when this instance serves one.
-func (s *Server) handleNodeInfoDiscovery(c echo.Context) error {
+func (s *Server) handleNodeInfoDiscovery(c *echo.Context) error {
 	links := []nodeInfoLink{{Rel: nodeInfo21Rel, Href: s.cfg.PublicBaseURL + "/nodeinfo/2.1"}}
 	if id, ok := s.fedsvc.InstanceActorAvailable(c.Request().Context()); ok {
 		links = append(links, nodeInfoLink{Rel: applicationActorRel, Href: id})
@@ -89,7 +89,7 @@ type nodeInfo21Document struct {
 
 // handleNodeInfo21 serves /nodeinfo/2.1 — the NodeInfo 2.1 document with live
 // usage counts.
-func (s *Server) handleNodeInfo21(c echo.Context) error {
+func (s *Server) handleNodeInfo21(c *echo.Context) error {
 	usage, err := s.fedsvc.NodeInfoUsage(c.Request().Context())
 	if err != nil {
 		return err
@@ -125,11 +125,11 @@ func wantsActivityJSON(accept string) bool {
 	return strings.Contains(a, "application/activity+json") || strings.Contains(a, "application/ld+json")
 }
 
-func (s *Server) handleAccountActor(c echo.Context) error {
+func (s *Server) handleAccountActor(c *echo.Context) error {
 	return s.serveActor(c, s.fedsvc.AccountActor, "/users/")
 }
 
-func (s *Server) handleChannelActor(c echo.Context) error {
+func (s *Server) handleChannelActor(c *echo.Context) error {
 	return s.serveActor(c, s.fedsvc.ChannelActor, "/channels/")
 }
 
@@ -137,7 +137,7 @@ func (s *Server) handleChannelActor(c echo.Context) error {
 // gets 406 — except a browser (Accept: text/html), which is sent on to the human
 // profile page under profilePrefix, as Mastodon and PeerTube do; an
 // unknown/inactive actor gets 404.
-func (s *Server) serveActor(c echo.Context, fetch func(context.Context, string) (*federation.Actor, error), profilePrefix string) error {
+func (s *Server) serveActor(c *echo.Context, fetch func(context.Context, string) (*federation.Actor, error), profilePrefix string) error {
 	// One URL, three answers keyed on Accept (302 for a browser, AP JSON, 406):
 	// say so, or a shared cache could hand a peer the browser redirect.
 	c.Response().Header().Add(echo.HeaderVary, echo.HeaderAccept)
@@ -146,7 +146,7 @@ func (s *Server) serveActor(c echo.Context, fetch func(context.Context, string) 
 		if strings.Contains(strings.ToLower(accept), "text/html") {
 			actor, err := fetch(c.Request().Context(), c.Param("handle"))
 			if errors.Is(err, federation.ErrNotFound) {
-				return echo.NewHTTPError(http.StatusNotFound)
+				return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 			}
 			if err != nil {
 				return err
@@ -162,7 +162,7 @@ func (s *Server) serveActor(c echo.Context, fetch func(context.Context, string) 
 	}
 	actor, err := fetch(c.Request().Context(), c.Param("handle"))
 	if errors.Is(err, federation.ErrNotFound) {
-		return echo.NewHTTPError(http.StatusNotFound)
+		return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 	}
 	if err != nil {
 		return err
@@ -173,7 +173,7 @@ func (s *Server) serveActor(c echo.Context, fetch func(context.Context, string) 
 
 // handleWebFinger serves /.well-known/webfinger — resolving acct:name@domain to
 // its actor URL.
-func (s *Server) handleWebFinger(c echo.Context) error {
+func (s *Server) handleWebFinger(c *echo.Context) error {
 	resource := c.QueryParam("resource")
 	if resource == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "resource query parameter is required")
@@ -183,7 +183,7 @@ func (s *Server) handleWebFinger(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "malformed resource")
 	}
 	if errors.Is(err, federation.ErrNotFound) {
-		return echo.NewHTTPError(http.StatusNotFound)
+		return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 	}
 	if err != nil {
 		return err
@@ -193,13 +193,13 @@ func (s *Server) handleWebFinger(c echo.Context) error {
 }
 
 // serveCollection content-negotiates and serves an actor OrderedCollection.
-func (s *Server) serveCollection(c echo.Context, fetch func(context.Context) (*federation.OrderedCollection, error)) error {
+func (s *Server) serveCollection(c *echo.Context, fetch func(context.Context) (*federation.OrderedCollection, error)) error {
 	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
 		return echo.NewHTTPError(http.StatusNotAcceptable, "collections are served as application/activity+json")
 	}
 	col, err := fetch(c.Request().Context())
 	if errors.Is(err, federation.ErrNotFound) {
-		return echo.NewHTTPError(http.StatusNotFound)
+		return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 	}
 	if err != nil {
 		return err
@@ -211,7 +211,7 @@ func (s *Server) serveCollection(c echo.Context, fetch func(context.Context) (*f
 // channelCollection / accountCollection return handlers for a channel's or
 // account's followers/following/outbox collection of the given kind.
 func (s *Server) channelCollection(kind string) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		return s.serveCollection(c, func(ctx context.Context) (*federation.OrderedCollection, error) {
 			return s.fedsvc.ChannelCollection(ctx, c.Param("handle"), kind)
 		})
@@ -220,7 +220,7 @@ func (s *Server) channelCollection(kind string) echo.HandlerFunc {
 
 // channelOutbox serves the channel outbox: the summary OrderedCollection (with a
 // `first` link) by default, or an OrderedCollectionPage when ?page=N is given.
-func (s *Server) channelOutbox(c echo.Context) error {
+func (s *Server) channelOutbox(c *echo.Context) error {
 	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
 		return echo.NewHTTPError(http.StatusNotAcceptable, "collections are served as application/activity+json")
 	}
@@ -229,7 +229,7 @@ func (s *Server) channelOutbox(c echo.Context) error {
 		page, _ := strconv.Atoi(p)
 		pg, err := s.fedsvc.ChannelOutboxPage(c.Request().Context(), handle, page)
 		if errors.Is(err, federation.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound)
+			return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 		}
 		if err != nil {
 			return err
@@ -245,7 +245,7 @@ func (s *Server) channelOutbox(c echo.Context) error {
 // accountOutbox serves an account's outbox. The instance actor's is paged
 // (?page=N) like a channel's — PeerTube crawls it once its instance follow is
 // accepted; an account's is the empty summary.
-func (s *Server) accountOutbox(c echo.Context) error {
+func (s *Server) accountOutbox(c *echo.Context) error {
 	p := c.QueryParam("page")
 	if p == "" || !strings.EqualFold(c.Param("handle"), federation.InstanceActorName) {
 		return s.accountCollection("outbox")(c)
@@ -266,7 +266,7 @@ func (s *Server) accountOutbox(c echo.Context) error {
 }
 
 func (s *Server) accountCollection(kind string) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		return s.serveCollection(c, func(ctx context.Context) (*federation.OrderedCollection, error) {
 			return s.fedsvc.AccountCollection(ctx, c.Param("handle"), kind)
 		})
@@ -277,7 +277,7 @@ func (s *Server) accountCollection(kind string) echo.HandlerFunc {
 // signer's key via the remote-actor cache), then dispatches it. Used for the
 // shared /inbox and per-actor inbox routes; the target is read from the activity,
 // not the path. Bad signature → 401; malformed/mismatched activity → 400.
-func (s *Server) handleInbox(c echo.Context) error {
+func (s *Server) handleInbox(c *echo.Context) error {
 	body, err := io.ReadAll(io.LimitReader(c.Request().Body, maxInboxBytes))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "could not read request body")

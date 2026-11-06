@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -101,7 +101,7 @@ func uuidPtrString(u pgtype.UUID) *string {
 // Anything else (missing, draft, unlisted, private) is a 404 — interactions on
 // those are a later slice. Returns the full row so callers can consult
 // per-video policy (comments_policy, config-parity W9) without a second fetch.
-func (s *Server) publicVideo(c echo.Context) (sqlcgen.GetVideoByIDRow, error) {
+func (s *Server) publicVideo(c *echo.Context) (sqlcgen.GetVideoByIDRow, error) {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return sqlcgen.GetVideoByIDRow{}, err
@@ -120,7 +120,7 @@ func (s *Server) publicVideo(c echo.Context) (sqlcgen.GetVideoByIDRow, error) {
 
 // publicVideoID is the id-only shorthand over publicVideo for interaction
 // endpoints that do not consult per-video policy.
-func (s *Server) publicVideoID(c echo.Context) (uuid.UUID, error) {
+func (s *Server) publicVideoID(c *echo.Context) (uuid.UUID, error) {
 	v, err := s.publicVideo(c)
 	return v.ID, err
 }
@@ -182,7 +182,7 @@ func (s *Server) watchedWordHolds(ctx context.Context, videoID uuid.UUID, body s
 }
 
 // handleCreateComment posts a comment on a public, published video. Behind requireAuth.
-func (s *Server) handleCreateComment(c echo.Context) error {
+func (s *Server) handleCreateComment(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -325,7 +325,7 @@ type commentListResponse struct {
 // handleListComments returns a public+published video's comments, newest first.
 // Auth is optional (optionalAuth): a signed-in viewer's muted accounts are hidden;
 // anonymous viewers see all. Pagination via ?limit (1–100, default 20) and ?offset.
-func (s *Server) handleListComments(c echo.Context) error {
+func (s *Server) handleListComments(c *echo.Context) error {
 	v, err := s.publicVideo(c)
 	if err != nil {
 		return err
@@ -352,7 +352,7 @@ func (s *Server) handleListComments(c echo.Context) error {
 
 // handleDeleteComment removes a comment. Behind requireAuth. The comment's author
 // may always delete it; a moderator/admin may delete anyone's.
-func (s *Server) handleDeleteComment(c echo.Context) error {
+func (s *Server) handleDeleteComment(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -418,7 +418,7 @@ func (r updateCommentRequest) Validate() []FieldError {
 // handleUpdateComment edits the caller's own comment. Behind requireAuth. Only
 // the author may edit (moderators delete, not edit): another user's comment is
 // 403, an unknown id is 404, a blank/too-long body is 422.
-func (s *Server) handleUpdateComment(c echo.Context) error {
+func (s *Server) handleUpdateComment(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -509,7 +509,7 @@ func (s *Server) canManageCommentVideo(ctx context.Context, userID uuid.UUID, ro
 // run the action, map its validation sentinels to 422, and return the updated
 // comment view (200). None of the actions touch the comment body or fire a
 // federation hook — they are local metadata only.
-func (s *Server) commentCreatorAction(c echo.Context, action func(context.Context, uuid.UUID) (comment.WithAuthor, error)) error {
+func (s *Server) commentCreatorAction(c *echo.Context, action func(context.Context, uuid.UUID) (comment.WithAuthor, error)) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -553,24 +553,24 @@ func (s *Server) commentCreatorAction(c echo.Context, action func(context.Contex
 // handlePinComment pins a top-level comment as its video's single pinned comment.
 // Behind requireAuth. The caller manages the video (owner/editor) or is staff;
 // pinning replaces any existing pin. A reply or a tombstoned comment is 422.
-func (s *Server) handlePinComment(c echo.Context) error {
+func (s *Server) handlePinComment(c *echo.Context) error {
 	return s.commentCreatorAction(c, s.commentsvc.Pin)
 }
 
 // handleUnpinComment clears the video's pin when this comment is the current one.
 // Behind requireAuth.
-func (s *Server) handleUnpinComment(c echo.Context) error {
+func (s *Server) handleUnpinComment(c *echo.Context) error {
 	return s.commentCreatorAction(c, s.commentsvc.Unpin)
 }
 
 // handleHeartComment adds the creator heart to a comment (any depth, including
 // remote-authored). Behind requireAuth. A tombstoned comment is 422.
-func (s *Server) handleHeartComment(c echo.Context) error {
+func (s *Server) handleHeartComment(c *echo.Context) error {
 	return s.commentCreatorAction(c, s.commentsvc.Heart)
 }
 
 // handleUnheartComment removes the creator heart. Behind requireAuth.
-func (s *Server) handleUnheartComment(c echo.Context) error {
+func (s *Server) handleUnheartComment(c *echo.Context) error {
 	return s.commentCreatorAction(c, s.commentsvc.Unheart)
 }
 
@@ -588,7 +588,7 @@ func (r approveCommentRequest) Validate() []FieldError {
 
 // handleApproveComment releases a held comment (0161): reviewers only, on THIS
 // video. Only the transition notifies, federates and audits; repeats are 200.
-func (s *Server) handleApproveComment(c echo.Context) error {
+func (s *Server) handleApproveComment(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -662,7 +662,7 @@ type managedCommentListResponse struct {
 // video the caller manages (channels they own or edit), newest first. Behind
 // requireAuth. ?held=true lists only comments awaiting approval, ?held=false
 // only published ones; omitted lists both; anything else is 422.
-func (s *Server) handleListManagedComments(c echo.Context) error {
+func (s *Server) handleListManagedComments(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

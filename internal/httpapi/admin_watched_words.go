@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -52,7 +52,7 @@ func (r createWatchedWordRequest) Validate() []FieldError {
 
 // handleListWatchedWords returns the watched-words list, newest first. Behind
 // requireRole(admin, moderator). Pagination via ?limit (1–100, default 20)/?offset.
-func (s *Server) handleListWatchedWords(c echo.Context) error {
+func (s *Server) handleListWatchedWords(c *echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.watchwordsvc.List(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
@@ -72,7 +72,7 @@ func (s *Server) handleListWatchedWords(c echo.Context) error {
 
 // handleAddWatchedWord adds a term to the watched-words list. Behind
 // requireRole(admin, moderator). A duplicate (case-insensitive) → 409.
-func (s *Server) handleAddWatchedWord(c echo.Context) error {
+func (s *Server) handleAddWatchedWord(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -104,7 +104,7 @@ func (s *Server) handleAddWatchedWord(c echo.Context) error {
 // audit event is emitted only when a row was actually removed: a repeat or stale
 // id changed nothing, and a success event for it would claim a policy change
 // that never happened.
-func (s *Server) handleDeleteWatchedWord(c echo.Context) error {
+func (s *Server) handleDeleteWatchedWord(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -181,7 +181,7 @@ var watchedWordMatchStatuses = []string{
 // requireRole(admin, moderator). ?status is open|resolved|dismissed|all and
 // defaults to OPEN — the queue is a work list, and before triage existed it
 // could only ever grow. Pagination via ?limit (1–100, default 20)/?offset.
-func (s *Server) handleListWatchedWordMatches(c echo.Context) error {
+func (s *Server) handleListWatchedWordMatches(c *echo.Context) error {
 	status, err := parseEnumParam(c, "status", watchedWordMatchStatuses, watchword.StatusOpen)
 	if err != nil {
 		return err
@@ -252,7 +252,7 @@ func (r resolveWatchedWordMatchRequest) Validate() []FieldError {
 // OUTCOME and whether a note was supplied — never the note itself, which is
 // moderator prose and belongs on the domain row (audit_log's metadata allowlist
 // rejects the whole event when prose reaches it; 0130 learned this).
-func (s *Server) handleResolveWatchedWordMatch(c echo.Context) error {
+func (s *Server) handleResolveWatchedWordMatch(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

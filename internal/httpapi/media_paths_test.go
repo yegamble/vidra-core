@@ -25,7 +25,7 @@ func TestMediaPathsMatchTheirRoutes(t *testing.T) {
 	srv, _, _, _, _ := videoServerFull(t, testConfig())
 	registered := map[string]bool{}
 	for _, s := range []*Server{srv, profileImageServer(t)} {
-		for _, r := range s.echo.Routes() {
+		for _, r := range s.echo.Router().Routes() {
 			if r.Method == http.MethodGet {
 				registered[r.Path] = true
 			}

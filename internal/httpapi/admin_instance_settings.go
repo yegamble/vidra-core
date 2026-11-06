@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/labstack/gommon/bytes"
 
 	"github.com/vidra/vidra-core/internal/audit"
@@ -374,7 +374,7 @@ func (s *Server) instanceSettingsResponse() instanceSettingsResponse {
 
 // handleGetInstanceSettings returns every mutable instance setting's effective
 // value + whether it is overridden. Behind requireRole(admin).
-func (s *Server) handleGetInstanceSettings(c echo.Context) error {
+func (s *Server) handleGetInstanceSettings(c *echo.Context) error {
 	return c.JSON(http.StatusOK, s.instanceSettingsResponse())
 }
 
@@ -388,7 +388,7 @@ func (s *Server) handleGetInstanceSettings(c echo.Context) error {
 // safe, the effective old -> new values (see instanceSettingChanges); free-text
 // keys are recorded as "changed" with no values — the contact email is operator
 // PII and broadcast text is a message body.
-func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
+func (s *Server) handleUpdateInstanceSettings(c *echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -543,7 +543,7 @@ type instanceSettingsValidationResponse struct {
 // invalid", which is a different sentence. Nothing is persisted and no audit
 // event is emitted — a dry run changes nothing, and an event per keystroke would
 // drown the trail that records real changes.
-func (s *Server) handleValidateInstanceSettings(c echo.Context) error {
+func (s *Server) handleValidateInstanceSettings(c *echo.Context) error {
 	var raw map[string]json.RawMessage
 	if err := json.NewDecoder(c.Request().Body).Decode(&raw); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "malformed or invalid request body")

@@ -1,6 +1,6 @@
 # AGENTS.md — vidra-core
 
-Go backend for vidra, a self-hostable video platform: one Echo v4 HTTP API
+Go backend for vidra, a self-hostable video platform: one Echo v5 HTTP API
 (every route registers in `internal/httpapi/server.go` `routes()`), sqlc for
 all SQL, golang-migrate migrations, in-process workers (transcode, imports,
 search outbox, media GC). The frontend (yegamble/vidra-user) consumes this

@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/version"
 )
@@ -71,7 +71,7 @@ const readinessCacheTTL = 2 * time.Second
 // handleLive reports that the process is up and serving. It performs no
 // dependency checks so an orchestrator can distinguish "process alive" from
 // "ready to serve traffic".
-func (s *Server) handleLive(c echo.Context) error {
+func (s *Server) handleLive(c *echo.Context) error {
 	return c.JSON(http.StatusOK, livenessResponse{Status: "ok"})
 }
 
@@ -262,7 +262,7 @@ func (s *Server) mfaKEKStatus() componentStatus {
 // Draining wins over everything. Once Drain() has been called this instance is
 // leaving, and it says so before the listener closes so the balancer has a
 // chance to notice.
-func (s *Server) handleReady(c echo.Context) error {
+func (s *Server) handleReady(c *echo.Context) error {
 	if s.draining.Load() {
 		// Not cached and not probed: the answer does not depend on any
 		// dependency, and spending a DB connection to decorate a 503 nobody will
@@ -349,7 +349,7 @@ type nodeInfoResponse struct {
 }
 
 // handleNodeInfo returns basic instance discovery metadata.
-func (s *Server) handleNodeInfo(c echo.Context) error {
+func (s *Server) handleNodeInfo(c *echo.Context) error {
 	var resp nodeInfoResponse
 	resp.Version = "2.0"
 	resp.Software.Name = "vidra"

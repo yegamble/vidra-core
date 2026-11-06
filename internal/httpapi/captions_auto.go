@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -63,7 +63,7 @@ func newCaptionJobResponse(row sqlcgen.CaptionJob) captionJobResponse {
 // 503; a bad language tag is 422; while a job is already in flight for the
 // video it is 409. The audio-extraction, transcription, and caption upsert run
 // in the background worker; watch progress via GET /videos/:id/captions/auto.
-func (s *Server) handleRequestAutoCaption(c echo.Context) error {
+func (s *Server) handleRequestAutoCaption(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -119,7 +119,7 @@ func (s *Server) handleRequestAutoCaption(c echo.Context) error {
 // handleGetAutoCaption reports the status of a video's most recent auto-caption
 // job to its owner or a moderator/admin. Ordinary non-owner/unknown video → 404;
 // a video that never requested auto-captioning → 404.
-func (s *Server) handleGetAutoCaption(c echo.Context) error {
+func (s *Server) handleGetAutoCaption(c *echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err

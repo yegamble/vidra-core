@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -53,7 +53,7 @@ type mailTestResponse struct {
 //	      (and `port` for SMTP) so the panel can name the failure; the relay's
 //	      own words go to the server log, never to the response.
 //	202 — handed to the relay.
-func (s *Server) handleMailTest(c echo.Context) error {
+func (s *Server) handleMailTest(c *echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

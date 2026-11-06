@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // peertubeSpoolPattern names the temp files a PeerTube archive upload is
@@ -77,7 +77,7 @@ func (s *Server) peertubeSpoolDir() string {
 // While writing, free space is re-measured every checkEvery bytes against the
 // same floor (another consumer of the volume may be filling it), and a read
 // that blocks longer than idle abandons the upload (408).
-func (s *Server) spoolPeerTubeArchive(c echo.Context) (_ *os.File, _ int64, err error) {
+func (s *Server) spoolPeerTubeArchive(c *echo.Context) (_ *os.File, _ int64, err error) {
 	req := c.Request()
 	if req.ContentLength < 0 {
 		return nil, 0, echo.NewHTTPError(http.StatusLengthRequired, "a Content-Length is required")
@@ -160,9 +160,8 @@ func (s *Server) spoolPeerTubeArchive(c echo.Context) (_ *os.File, _ int64, err 
 // body-limit reader's 413 and the disk guard's 503 pass through, a stalled
 // client is 408, anything else (client abort, disk error) stays as is.
 func spoolReadError(err error) error {
-	var he *echo.HTTPError
-	if errors.As(err, &he) {
-		return he
+	if se := statusError(err); se != nil {
+		return se
 	}
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		return echo.NewHTTPError(http.StatusRequestTimeout, "the upload stalled")
@@ -237,4 +236,16 @@ func sweepStalePeerTubeSpools(dir string, maxAge time.Duration, now time.Time, l
 			logger.Info("removed stale PeerTube import spool file", "path", p, "size", fi.Size())
 		}
 	}
+}
+
+// statusError returns the first error in err's chain that carries an HTTP
+// status (*echo.HTTPError or one of echo v5's status-only sentinels such as
+// ErrStatusRequestEntityTooLarge), or nil when there is none.
+func statusError(err error) error {
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if _, ok := e.(echo.HTTPStatusCoder); ok {
+			return e
+		}
+	}
+	return nil
 }

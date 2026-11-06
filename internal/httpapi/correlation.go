@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/observability"
 )
@@ -30,7 +30,7 @@ const maxCorrelationIDLen = 128
 // emitted). The value is never a secret and is safe to log/echo after sanitising.
 func correlationID() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			cid := sanitizeCorrelationID(c.Request().Header.Get(correlationHeader))
 			if cid == "" {
 				// The Echo RequestID middleware has already set X-Request-Id on the

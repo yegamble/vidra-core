@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -40,7 +40,7 @@ func (s *Server) totpIssuer() string {
 // handleBeginTOTPEnrollment generates a TOTP secret for the authenticated
 // account (pending — login is unaffected until verified). 409 when MFA is
 // already enabled.
-func (s *Server) handleBeginTOTPEnrollment(c echo.Context) error {
+func (s *Server) handleBeginTOTPEnrollment(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -82,7 +82,7 @@ type recoveryCodesResponse struct {
 // valid TOTP code: MFA flips on and the 10 single-use recovery codes are
 // returned ONCE. 400 on a wrong code or no pending enrollment; 409 when
 // already enabled.
-func (s *Server) handleVerifyTOTPEnrollment(c echo.Context) error {
+func (s *Server) handleVerifyTOTPEnrollment(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -137,7 +137,7 @@ func (r disableTOTPRequest) Validate() []FieldError {
 // code) after password re-authentication, and signs every OTHER session out —
 // access tokens included, because access tokens are session-bound — then mails
 // the account the notice. Wrong password → 403; nothing to disable → 404.
-func (s *Server) handleDisableTOTP(c echo.Context) error {
+func (s *Server) handleDisableTOTP(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -172,7 +172,7 @@ type mfaStatusResponse struct {
 
 // handleGetMFAStatus reports the authenticated account's two-factor state. A
 // pending (unverified) enrollment reports as disabled.
-func (s *Server) handleGetMFAStatus(c echo.Context) error {
+func (s *Server) handleGetMFAStatus(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -221,7 +221,7 @@ func (r mfaChallengeRequest) Validate() []FieldError {
 // handleMFAChallenge completes an MFA login: a valid mfa_token plus a TOTP or
 // recovery code (marked used — single-use) yields the full auth response. A
 // tampered/expired/repurposed token and a wrong code are both 401.
-func (s *Server) handleMFAChallenge(c echo.Context) error {
+func (s *Server) handleMFAChallenge(c *echo.Context) error {
 	var in mfaChallengeRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
@@ -298,7 +298,7 @@ func (s *Server) handleMFAChallenge(c echo.Context) error {
 //
 // It carries the failure class, the account and the cipher's own message. Never
 // the ciphertext, never the key, never the plaintext secret.
-func (s *Server) logMFASecretUndecryptable(c echo.Context, err error) string {
+func (s *Server) logMFASecretUndecryptable(c *echo.Context, err error) string {
 	attrs := []any{"failure", "mfa_secret_undecryptable"}
 	var ue *auth.MFASecretUndecryptableError
 	actor := ""

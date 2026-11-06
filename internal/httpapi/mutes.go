@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/mute"
 )
@@ -30,7 +30,7 @@ type mutedAccountListResponse struct {
 
 // handleMuteAccount mutes another account for the caller. Behind requireAuth.
 // Muting yourself → 422; an unknown target → 404. Idempotent.
-func (s *Server) handleMuteAccount(c echo.Context) error {
+func (s *Server) handleMuteAccount(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -53,7 +53,7 @@ func (s *Server) handleMuteAccount(c echo.Context) error {
 
 // handleUnmuteAccount lifts the caller's mute of another account. Behind
 // requireAuth. Idempotent (unmuting a not-muted account still succeeds).
-func (s *Server) handleUnmuteAccount(c echo.Context) error {
+func (s *Server) handleUnmuteAccount(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -70,7 +70,7 @@ func (s *Server) handleUnmuteAccount(c echo.Context) error {
 
 // handleListMutedAccounts returns the accounts the caller has muted, newest mute
 // first. Behind requireAuth. Pagination via ?limit (1–100, default 20) and ?offset.
-func (s *Server) handleListMutedAccounts(c echo.Context) error {
+func (s *Server) handleListMutedAccounts(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

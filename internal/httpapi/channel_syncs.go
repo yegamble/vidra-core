@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/channelsync"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -92,7 +92,7 @@ type channelSyncListResponse struct {
 // resolver; 422 for a bad/private URL or when the caller is at the per-user
 // cap; 404 when the channel is unknown or not owned; 409 when an identical
 // sync already exists.
-func (s *Server) handleCreateChannelSync(c echo.Context) error {
+func (s *Server) handleCreateChannelSync(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -115,7 +115,7 @@ func (s *Server) handleCreateChannelSync(c echo.Context) error {
 // handleListChannelSyncs lists the authenticated user's channel syncs,
 // paginated via ?limit (1–100, default 20)/?offset with a true total. It
 // previously returned every sync unbounded.
-func (s *Server) handleListChannelSyncs(c echo.Context) error {
+func (s *Server) handleListChannelSyncs(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -133,7 +133,7 @@ func (s *Server) handleListChannelSyncs(c echo.Context) error {
 }
 
 // handleDeleteChannelSync removes a channel sync the caller owns.
-func (s *Server) handleDeleteChannelSync(c echo.Context) error {
+func (s *Server) handleDeleteChannelSync(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -153,7 +153,7 @@ func (s *Server) handleDeleteChannelSync(c echo.Context) error {
 // deployment lacks the yt-dlp import resolver; 404 when unknown or not owned;
 // 429 (with Retry-After) when the server-side cooldown since the last completed
 // run has not yet elapsed.
-func (s *Server) handleSyncChannelNow(c echo.Context) error {
+func (s *Server) handleSyncChannelNow(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err

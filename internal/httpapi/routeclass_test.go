@@ -13,7 +13,7 @@ func registeredMethodPaths(t *testing.T) map[string]bool {
 	t.Helper()
 	srv := New(testConfig(), nil, nil, fullRouteOptions()...)
 	out := map[string]bool{}
-	for _, r := range srv.Handler().Routes() {
+	for _, r := range srv.Handler().Router().Routes() {
 		out[r.Method+" "+r.Path] = true
 	}
 	return out

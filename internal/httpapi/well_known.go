@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/urlsafety"
@@ -27,7 +27,7 @@ const securityTxtLifetime = 364 * 24 * time.Hour
 
 // handleHostMeta serves /.well-known/host-meta: the XRD pointer from which
 // Mastodon-era servers discover the WebFinger endpoint (lrdd, RFC 6415).
-func (s *Server) handleHostMeta(c echo.Context) error {
+func (s *Server) handleHostMeta(c *echo.Context) error {
 	tmpl := s.cfg.PublicBaseURL + "/.well-known/webfinger?resource={uri}"
 	xml := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" +
 		`<XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">` + "\n" +
@@ -37,7 +37,7 @@ func (s *Server) handleHostMeta(c echo.Context) error {
 }
 
 // handleHostMetaJSON is the JRD form of the same pointer.
-func (s *Server) handleHostMetaJSON(c echo.Context) error {
+func (s *Server) handleHostMetaJSON(c *echo.Context) error {
 	c.Response().Header().Set(echo.HeaderContentType, "application/jrd+json; charset=utf-8")
 	return c.JSON(http.StatusOK, map[string]any{"links": []map[string]string{{
 		"rel":      "lrdd",
@@ -50,10 +50,10 @@ func (s *Server) handleHostMetaJSON(c echo.Context) error {
 // the instance's configured contact email (setting, else INSTANCE_CONTACT_EMAIL);
 // with none configured there is nothing honest to publish, so it is 404 rather
 // than a made-up address.
-func (s *Server) handleSecurityTxt(c echo.Context) error {
+func (s *Server) handleSecurityTxt(c *echo.Context) error {
 	contact := strings.TrimSpace(s.effectiveContactEmail())
 	if contact == "" || strings.ContainsAny(contact, "\r\n") {
-		return echo.NewHTTPError(http.StatusNotFound)
+		return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 	}
 	body := fmt.Sprintf("Contact: mailto:%s\nExpires: %s\nCanonical: %s/.well-known/security.txt\n",
 		contact, time.Now().UTC().Add(securityTxtLifetime).Format(time.RFC3339), s.cfg.PublicBaseURL)
@@ -62,7 +62,7 @@ func (s *Server) handleSecurityTxt(c echo.Context) error {
 
 // handleWellKnownChangePassword is the well-known change-password URL (W3C): password
 // managers send the user straight to the page where the password is changed.
-func (s *Server) handleWellKnownChangePassword(c echo.Context) error {
+func (s *Server) handleWellKnownChangePassword(c *echo.Context) error {
 	return c.Redirect(http.StatusFound, s.cfg.PublicBaseURL+"/settings/security")
 }
 
@@ -72,7 +72,7 @@ func (s *Server) handleWellKnownChangePassword(c echo.Context) error {
 // unbudgeted, exactly as remote search behaves.
 func (s *Server) remoteInteractionLimit() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			key := "remote-interaction:ip:" + c.RealIP()
 			if id, _, ok := principalFromContext(c); ok {
 				key = "remote-interaction:user:" + id.String()
@@ -103,7 +103,7 @@ type remoteInteractionResponse struct {
 // outbound half of remote interaction. Anonymous by design (the visitor is not
 // signed in here), so it is IP-rate-limited and resolves only through the
 // SSRF-guarded federation machinery.
-func (s *Server) handleResolveRemoteInteraction(c echo.Context) error {
+func (s *Server) handleResolveRemoteInteraction(c *echo.Context) error {
 	if !s.cfg.FederationEnabled {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "federation is disabled on this instance")
 	}

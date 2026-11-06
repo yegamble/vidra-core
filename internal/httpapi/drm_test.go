@@ -457,7 +457,7 @@ func TestClearKeyLicenseRouteMatchesProviderPath(t *testing.T) {
 	want := strings.Replace(drm.ClearKeyLicensePath(id), id.String(), ":id", 1)
 
 	srv := New(testConfig(), nil, nil, fullRouteOptions()...)
-	for _, r := range srv.Handler().Routes() {
+	for _, r := range srv.Handler().Router().Routes() {
 		if r.Method == http.MethodPost && r.Path == want {
 			return
 		}

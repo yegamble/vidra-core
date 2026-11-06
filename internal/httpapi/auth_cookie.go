@@ -3,7 +3,7 @@ package httpapi
 import (
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // Cookie-mode refresh sessions (opt-in, for browser clients).
@@ -37,20 +37,20 @@ const refreshCookiePath = "/api/v1/auth"
 
 // setRefreshCookie stores the (freshly rotated) refresh token in the httpOnly
 // session cookie.
-func (s *Server) setRefreshCookie(c echo.Context, token string) {
+func (s *Server) setRefreshCookie(c *echo.Context, token string) {
 	s.writeStateCookie(c, refreshCookieName, refreshCookiePath, token, s.cfg.JWTRefreshTTL)
 }
 
 // clearRefreshCookie expires the refresh cookie (written as Max-Age=0), used on
 // logout/logout-all and when a cookie-presented token turns out to be invalid.
-func (s *Server) clearRefreshCookie(c echo.Context) {
+func (s *Server) clearRefreshCookie(c *echo.Context) {
 	s.clearStateCookie(c, refreshCookieName, refreshCookiePath)
 	s.clearStateCookie(c, videoAccessCookieName, videoAccessCookiePath)
 }
 
 // refreshCookieToken returns the refresh token carried by the request's
 // vidra_refresh cookie, or "" when the cookie is absent or empty.
-func refreshCookieToken(c echo.Context) string {
+func refreshCookieToken(c *echo.Context) string {
 	ck, err := c.Cookie(refreshCookieName)
 	if err != nil || ck == nil {
 		return ""
@@ -62,7 +62,7 @@ func refreshCookieToken(c echo.Context) string {
 // body token always wins; otherwise the vidra_refresh cookie is used.
 // fromCookie reports which source supplied it (a cookie-supplied token implies
 // cookie mode).
-func resolveRefreshToken(c echo.Context, bodyToken string) (token string, fromCookie bool) {
+func resolveRefreshToken(c *echo.Context, bodyToken string) (token string, fromCookie bool) {
 	if t := strings.TrimSpace(bodyToken); t != "" {
 		return t, false
 	}

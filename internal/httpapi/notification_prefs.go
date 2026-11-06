@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/notification"
 )
@@ -59,7 +59,7 @@ func (r updateNotificationPrefsRequest) Validate() []FieldError {
 // handleGetNotificationPrefs returns the caller's notification preferences (all
 // known types; absent rows default to enabled) and email switches. Behind
 // requireAuth.
-func (s *Server) handleGetNotificationPrefs(c echo.Context) error {
+func (s *Server) handleGetNotificationPrefs(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -70,7 +70,7 @@ func (s *Server) handleGetNotificationPrefs(c echo.Context) error {
 // handleUpdateNotificationPrefs applies a partial preference update and returns
 // the full updated maps. Behind requireAuth. An unknown type, or an email
 // switch for a type without email, is 422 and nothing is written.
-func (s *Server) handleUpdateNotificationPrefs(c echo.Context) error {
+func (s *Server) handleUpdateNotificationPrefs(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -102,7 +102,7 @@ func (s *Server) applyNotificationPrefs(ctx context.Context, userID uuid.UUID, i
 	return nil
 }
 
-func (s *Server) writeNotificationPrefs(c echo.Context, userID uuid.UUID) error {
+func (s *Server) writeNotificationPrefs(c *echo.Context, userID uuid.UUID) error {
 	ctx := c.Request().Context()
 	prefs, err := s.notifsvc.Prefs(ctx, userID)
 	if err != nil {

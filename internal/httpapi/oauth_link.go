@@ -60,7 +60,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -87,17 +87,17 @@ const mfaPendingCookiePath = "/api/v1/auth/mfa/challenge"
 const mfaPendingTTL = 5 * time.Minute
 
 // setMFAPendingCookie parks the withheld challenge token for the redirect.
-func (s *Server) setMFAPendingCookie(c echo.Context, token string) {
+func (s *Server) setMFAPendingCookie(c *echo.Context, token string) {
 	s.writeStateCookie(c, mfaPendingCookieName, mfaPendingCookiePath, token, mfaPendingTTL)
 }
 
-func (s *Server) clearMFAPendingCookie(c echo.Context) {
+func (s *Server) clearMFAPendingCookie(c *echo.Context) {
 	s.clearStateCookie(c, mfaPendingCookieName, mfaPendingCookiePath)
 }
 
 // mfaPendingToken returns the challenge token the request's cookie carries, or
 // "" when there is none.
-func mfaPendingToken(c echo.Context) string {
+func mfaPendingToken(c *echo.Context) string {
 	ck, err := c.Cookie(mfaPendingCookieName)
 	if err != nil || ck == nil {
 		return ""
@@ -109,7 +109,7 @@ func mfaPendingToken(c echo.Context) string {
 // the `mfa=required` FLAG — never the token, which went into the cookie above.
 // The flag is not a secret: it says a challenge is pending in this browser, and
 // the login page swaps to the code entry it already has for the password path.
-func mfaChallengeRedirect(c echo.Context, returnTo string) error {
+func mfaChallengeRedirect(c *echo.Context, returnTo string) error {
 	u, err := url.Parse(returnTo)
 	if err != nil {
 		u = &url.URL{Path: "/"}
@@ -132,7 +132,7 @@ func mfaChallengeRedirect(c echo.Context, returnTo string) error {
 // back on the login page, which renders `oauth_error`; sending it a key that
 // page does not read would refuse the account switch silently, which is the
 // one thing worse than making it.
-func oauthLinkRedirect(c echo.Context, returnTo, key, value string) error {
+func oauthLinkRedirect(c *echo.Context, returnTo, key, value string) error {
 	u, err := url.Parse(returnTo)
 	if err != nil {
 		u = &url.URL{Path: "/"}
@@ -164,7 +164,7 @@ type linkStartResponse struct {
 // is not knowable until the id_token comes back — so that one is a redirect
 // code at the callback. The ATProto twin below CAN check it early, because
 // ATProto resolves its subject (the DID) at start.
-func (s *Server) handleOAuthLinkStart(c echo.Context) error {
+func (s *Server) handleOAuthLinkStart(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -231,7 +231,7 @@ func (s *Server) handleOAuthLinkStart(c echo.Context) error {
 // resolves to a DID somebody else already linked (409). The second is possible
 // here and not for OIDC only because ATProto resolves its subject before the
 // browser ever leaves.
-func (s *Server) handleATProtoLinkStart(c echo.Context) error {
+func (s *Server) handleATProtoLinkStart(c *echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
@@ -291,7 +291,7 @@ func (s *Server) handleATProtoLinkStart(c echo.Context) error {
 // boundUserID comes from the SIGNED state cookie on a link-purpose attempt, and
 // from the live refresh session on a login-purpose attempt that arrived inside
 // one. Both are the browser's own account; neither is a request parameter.
-func (s *Server) completeOAuthLink(c echo.Context, returnTo string, boundUserID uuid.UUID, as auth.OAuthAssertion, handle *string, errorKey string) error {
+func (s *Server) completeOAuthLink(c *echo.Context, returnTo string, boundUserID uuid.UUID, as auth.OAuthAssertion, handle *string, errorKey string) error {
 	outcome, err := s.oauthsvc.LinkIdentity(c.Request().Context(), boundUserID, as, handle)
 	if err != nil {
 		code := "link_failed"
@@ -321,7 +321,7 @@ func (s *Server) completeOAuthLink(c echo.Context, returnTo string, boundUserID 
 // asks: is a session already signed in in THIS browser? The refresh cookie is
 // the only credential a top-level navigation from a provider can carry, and it
 // is read without rotating it (auth.Service.SessionAccount).
-func (s *Server) linkedAccountForCallback(c echo.Context) (uuid.UUID, bool) {
+func (s *Server) linkedAccountForCallback(c *echo.Context) (uuid.UUID, bool) {
 	user, _, ok := s.authsvc.SessionAccount(c.Request().Context(), refreshCookieToken(c))
 	if !ok {
 		return uuid.Nil, false

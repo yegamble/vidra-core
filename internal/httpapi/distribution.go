@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"golang.org/x/net/idna"
 
 	"github.com/vidra/vidra-core/internal/channel"
@@ -203,7 +203,7 @@ func (s *Server) feedLocalName(raw string) (string, bool) {
 // instance-wide feed: serving everyone's videos to a subscriber of one channel
 // is the silent wrong answer. That includes PeerTube's numeric ids, which
 // vidra does not preserve.
-func (s *Server) resolveFeedScope(c echo.Context) (*feedScope, error) {
+func (s *Server) resolveFeedScope(c *echo.Context) (*feedScope, error) {
 	ctx := c.Request().Context()
 	notFound := func(what string) error { return echo.NewHTTPError(http.StatusNotFound, what+" not found") }
 
@@ -306,7 +306,7 @@ func (s *Server) rssItemFor(it video.FeedItem) rssItem {
 // (podcast enclosure probes) or guard a secret (the token-gated feed).
 func (s *Server) feedRateLimit() echo.MiddlewareFunc {
 	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+		resolve: func(c *echo.Context) (*ratelimit.Limiter, string, bool) {
 			if s.limiter == nil {
 				return nil, "", false
 			}
@@ -321,7 +321,7 @@ func (s *Server) feedRateLimit() echo.MiddlewareFunc {
 // public LOCAL videos. With ?channel={handle} it filters to one channel (unknown
 // handle → 404). It NEVER surfaces private/password/unlisted/remote videos.
 // Fail-safe: an empty feed beats an error page.
-func (s *Server) handleVideosFeed(c echo.Context) error {
+func (s *Server) handleVideosFeed(c *echo.Context) error {
 	ctx := c.Request().Context()
 	origin := s.webOrigin()
 	instance := s.instanceName()
@@ -422,7 +422,7 @@ type oembedResponse struct {
 // videos MAY embed; private and password videos are 401; anything else (foreign
 // URL, non-video path, unknown/unpublished video) is 404. XML format is not
 // implemented (501); a missing format defaults to json.
-func (s *Server) handleOEmbed(c echo.Context) error {
+func (s *Server) handleOEmbed(c *echo.Context) error {
 	if format := c.QueryParam("format"); format != "" && format != "json" {
 		return echo.NewHTTPError(http.StatusNotImplemented, "only the json oEmbed format is supported")
 	}
@@ -595,7 +595,7 @@ type sitemapURL struct {
 // handleSitemap renders a single-file sitemap: the instance root and the static
 // discovery routes, each public channel that has recent public content, then the
 // newest published public LOCAL videos (capped). lastmod is the row's updated_at.
-func (s *Server) handleSitemap(c echo.Context) error {
+func (s *Server) handleSitemap(c *echo.Context) error {
 	ctx := c.Request().Context()
 	origin := s.webOrigin()
 
@@ -649,7 +649,7 @@ func (s *Server) handleSitemap(c echo.Context) error {
 // writeXML marshals doc with encoding/xml (never string templating — titles and
 // descriptions are attacker-controlled), prepends the XML declaration, and sets
 // the content-type and cache-control headers.
-func writeXML(c echo.Context, contentType, cacheControl string, doc any) error {
+func writeXML(c *echo.Context, contentType, cacheControl string, doc any) error {
 	body, err := xml.Marshal(doc)
 	if err != nil {
 		return err
