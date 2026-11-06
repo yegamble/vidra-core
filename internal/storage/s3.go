@@ -3,8 +3,10 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -465,6 +467,80 @@ type s3Object struct {
 	// total is the object's length as the store reported it, or negative when
 	// the store did not say.
 	total int64
+
+	// What Read needs to fetch the rest of THIS version after a dropped body.
+	ctx               context.Context
+	client            *minio.Client
+	bucket, key, etag string
+	pos               int64
+	resumes           int
+}
+
+// maxReadResumes bounds consecutive resumes that deliver no byte. Any delivered
+// byte resets it, so a long copy may resume as often as its consumer stalls.
+const maxReadResumes = 3
+
+// Read resumes a body the store closes mid-transfer. Backblaze B2 drops a
+// download left unread for ~30 s (measured 2026-11-06: 15 s survived, 45 s did
+// not), which a streamed copy does whenever its destination part upload retries;
+// without this a multi-GB copy failed and restarted from byte zero. The new
+// request is pinned to the original ETag, so a replaced object fails instead of
+// splicing two versions.
+func (o *s3Object) Read(p []byte) (int, error) {
+	for {
+		n, err := o.Object.Read(p)
+		o.pos += int64(n)
+		if n > 0 {
+			o.resumes = 0
+		}
+		if err == nil || err == io.EOF || !o.canResume(err) {
+			return n, err
+		}
+		if rerr := o.resume(); rerr != nil {
+			return n, errors.Join(err, rerr)
+		}
+		if n > 0 {
+			return n, nil
+		}
+	}
+}
+
+// Seek keeps pos in step for http.ServeContent's Range path. ReadAt needs no
+// tracking: it never moves the read offset.
+func (o *s3Object) Seek(offset int64, whence int) (int64, error) {
+	n, err := o.Object.Seek(offset, whence)
+	if err == nil {
+		o.pos = n
+	}
+	return n, err
+}
+
+func (o *s3Object) canResume(err error) bool {
+	if o.client == nil || o.etag == "" || o.total < 0 || o.pos >= o.total ||
+		o.resumes >= maxReadResumes || o.ctx.Err() != nil {
+		return false
+	}
+	var netErr net.Error
+	return errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &netErr)
+}
+
+func (o *s3Object) resume() error {
+	o.resumes++
+	opts := minio.GetObjectOptions{}
+	if err := opts.SetMatchETag(o.etag); err != nil {
+		return err
+	}
+	obj, err := o.client.GetObject(o.ctx, o.bucket, o.key, opts)
+	if err != nil {
+		return err
+	}
+	if _, err := obj.Seek(o.pos, io.SeekStart); err != nil {
+		_ = obj.Close()
+		return err
+	}
+	_ = o.Object.Close()
+	o.Object = obj
+	return nil
 }
 
 var _ SizedReader = (*s3Object)(nil)
@@ -516,7 +592,7 @@ func (s *S3) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 		}
 		return nil, classifyS3("open", fmt.Errorf("storage: s3: open %q: %w", key, err))
 	}
-	return &s3Object{Object: obj, total: info.Size}, nil
+	return &s3Object{Object: obj, total: info.Size, ctx: ctx, client: client, bucket: s.bucket, key: key, etag: info.ETag}, nil
 }
 
 // Delete removes the object at key; missing objects are not an error.

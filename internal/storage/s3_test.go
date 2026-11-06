@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -445,5 +448,92 @@ func TestBucketRetentionReclaimsOnDelete(t *testing.T) {
 				t.Errorf("ReclaimsOnDelete() = (%v, %v), want (%v, %v)", reclaims, known, tc.reclaims, tc.known)
 			}
 		})
+	}
+}
+
+// droppingS3 serves one object and closes its FIRST GET a third of the way into
+// the body, the way Backblaze B2 drops a download left unread for ~30 s. After
+// that it answers normally, except that replaced=true serves a new version
+// (another ETag) so a resume can be caught splicing two versions together.
+func droppingS3(t *testing.T, body []byte, replaced bool) (*S3, *atomic.Value, *atomic.Value) {
+	t.Helper()
+	var gets atomic.Int32
+	var dropped atomic.Bool
+	var resumeRange, resumeIfMatch atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		first := r.Method == http.MethodGet && gets.Add(1) == 1
+		etag := `"5d41402abc4b2a76b9719d911017c592"`
+		if replaced && dropped.Load() {
+			etag = `"7215ee9c7d9dc229d2921a40e899ec5f"`
+		}
+		w.Header().Set("Last-Modified", time.Unix(1_700_000_000, 0).UTC().Format(http.TimeFormat))
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Accept-Ranges", "bytes")
+		if first {
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body[:len(body)/3])
+			w.(http.Flusher).Flush()
+			dropped.Store(true)
+			panic(http.ErrAbortHandler)
+		}
+		if r.Method == http.MethodGet {
+			resumeRange.Store(r.Header.Get("Range"))
+			resumeIfMatch.Store(r.Header.Get("If-Match"))
+		}
+		http.ServeContent(w, r, "obj.bin", time.Time{}, bytes.NewReader(body))
+	}))
+	t.Cleanup(srv.Close)
+	cfg := validS3Config()
+	cfg.Endpoint = strings.TrimPrefix(srv.URL, "http://")
+	cfg.Region = "us-east-1"
+	b, err := NewS3(cfg)
+	if err != nil {
+		t.Fatalf("NewS3: %v", err)
+	}
+	return b, &resumeRange, &resumeIfMatch
+}
+
+func TestS3ReadResumesABodyTheStoreDrops(t *testing.T) {
+	body := bytes.Repeat([]byte("0123456789abcdef"), 64<<10)
+	b, resumeRange, resumeIfMatch := droppingS3(t, body, false)
+	rc, err := b.Open(context.Background(), "web-videos/large.mp4")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll after a dropped connection: %v (read %d of %d bytes)", err, len(got), len(body))
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("resumed body differs: got %d bytes, want %d", len(got), len(body))
+	}
+	if r, _ := resumeRange.Load().(string); r != fmt.Sprintf("bytes=%d-", len(body)/3) {
+		t.Errorf("resume Range = %q, want it to continue at byte %d", r, len(body)/3)
+	}
+	if m, _ := resumeIfMatch.Load().(string); m != `"5d41402abc4b2a76b9719d911017c592"` {
+		t.Errorf("resume If-Match = %q, want the original ETag so a replaced object cannot be spliced in", m)
+	}
+}
+
+func TestS3ReadRefusesToSpliceAReplacedObject(t *testing.T) {
+	body := bytes.Repeat([]byte("0123456789abcdef"), 64<<10)
+	b, _, _ := droppingS3(t, body, true)
+	rc, err := b.Open(context.Background(), "web-videos/large.mp4")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, err := io.ReadAll(rc)
+	if err == nil {
+		t.Fatalf("ReadAll succeeded across a replaced object (%d bytes); it must fail instead of splicing versions", len(got))
+	}
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("err = %v; the original truncation must stay visible to callers that classify it", err)
+	}
+	if len(got) != len(body)/3 {
+		t.Errorf("read %d bytes, want only the %d the first version delivered", len(got), len(body)/3)
 	}
 }
