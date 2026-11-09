@@ -167,25 +167,118 @@ func TestMailTestOutcomes(t *testing.T) {
 	})
 }
 
-// The endpoint takes no recipient, and there is no body shape that could
-// smuggle one in: that is what stops an admin session from becoming an open
-// relay for phishing from the instance's own domain.
-func TestMailTestCannotChooseTheRecipient(t *testing.T) {
-	cfg := testConfig()
-	cfg.InstanceContactEmail = "ops@example.test"
-	capture := auth.NewCaptureMailer()
-	srv, _ := mailTestServer(t, cfg, WithContactMailer(capture))
+// A caller-chosen recipient is the relay risk the endpoint was built to avoid,
+// so it is only honoured behind a FRESH proof of the caller's own password: a
+// stolen admin session alone still cannot make the instance mail anyone but its
+// contact address. Without a recipient the probe keeps its old destination.
+func TestMailTestCustomRecipient(t *testing.T) {
+	const custom = "qa@elsewhere.test"
+	setup := func(t *testing.T, contact string, mailer auth.Mailer) (*Server, *bytes.Buffer, string) {
+		t.Helper()
+		cfg := testConfig()
+		cfg.InstanceContactEmail = contact
+		srv, buf := mailTestServer(t, cfg, WithContactMailer(mailer))
+		admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"`+fixtureCurrentPassword+`"}`)
+		return srv, buf, admin
+	}
+	post := func(srv *Server, body, token string) *httptest.ResponseRecorder {
+		return sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/mail/test", body, token)
+	}
+	// withProof builds the body from the shared fixture constants, never a
+	// password literal in a JSON string.
+	withProof := func(to, password string) string {
+		b, _ := json.Marshal(map[string]string{"to": to, "current_password": password})
+		return string(b)
+	}
 
-	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
-	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/mail/test",
-		`{"to":"victim@elsewhere.test","email":"victim@elsewhere.test"}`, admin)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("mail test with a body = %d, want it ignored and 202; body=%s", rec.Code, rec.Body.String())
-	}
-	sent := capture.TestMessages()
-	if len(sent) != 1 || sent[0].To != "ops@example.test" {
-		t.Fatalf("captured = %+v; a caller-supplied address must be ignored entirely", sent)
-	}
+	t.Run("without a fresh password nothing is sent", func(t *testing.T) {
+		capture := auth.NewCaptureMailer()
+		srv, _, admin := setup(t, "ops@example.test", capture)
+		rec := post(srv, `{"to":"`+custom+`"}`, admin)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "step_up_required") {
+			t.Fatalf("custom recipient without proof = %d %s, want 403 step_up_required", rec.Code, rec.Body.String())
+		}
+		if sent := capture.TestMessages(); len(sent) != 0 {
+			t.Fatalf("an unproven custom recipient still caused sends: %+v", sent)
+		}
+	})
+
+	t.Run("a wrong password is refused", func(t *testing.T) {
+		capture := auth.NewCaptureMailer()
+		srv, _, admin := setup(t, "ops@example.test", capture)
+		rec := post(srv, withProof(custom, fixtureNextPassword), admin)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("wrong password = %d %s, want 403", rec.Code, rec.Body.String())
+		}
+		if sent := capture.TestMessages(); len(sent) != 0 {
+			t.Fatalf("a wrong password still caused sends: %+v", sent)
+		}
+	})
+
+	t.Run("with the password it goes to that address only, even with no contact set", func(t *testing.T) {
+		capture := auth.NewCaptureMailer()
+		srv, buf, admin := setup(t, "", capture)
+		rec := post(srv, withProof(" "+custom+" ", fixtureCurrentPassword), admin)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("custom recipient with password = %d %s, want 202", rec.Code, rec.Body.String())
+		}
+		if sent := capture.TestMessages(); len(sent) != 1 || sent[0].To != custom {
+			t.Fatalf("captured = %+v, want exactly one to %s", sent, custom)
+		}
+		lines := auditLines(buf.String())
+		found := false
+		for _, line := range lines {
+			if strings.Contains(line, custom) || strings.Contains(line, fixtureCurrentPassword) {
+				t.Errorf("an audit event carries the recipient or the password: %s", line)
+			}
+			found = found || strings.Contains(line, "sent_custom_recipient")
+		}
+		if !found {
+			t.Errorf("no sent_custom_recipient audit event in: %v", lines)
+		}
+	})
+
+	t.Run("a blank recipient keeps the contact address and needs no password", func(t *testing.T) {
+		capture := auth.NewCaptureMailer()
+		srv, _, admin := setup(t, "ops@example.test", capture)
+		if rec := post(srv, `{"to":"   "}`, admin); rec.Code != http.StatusAccepted {
+			t.Fatalf("blank to = %d %s, want 202", rec.Code, rec.Body.String())
+		}
+		if sent := capture.TestMessages(); len(sent) != 1 || sent[0].To != "ops@example.test" {
+			t.Fatalf("captured = %+v, want one to the contact address", sent)
+		}
+	})
+
+	t.Run("anything but one bare address is 422 and sends nothing", func(t *testing.T) {
+		for _, to := range []string{
+			"Eve <eve@elsewhere.test>",
+			"a@elsewhere.test, b@elsewhere.test",
+			"a@elsewhere.test\r\nBcc: b@elsewhere.test",
+			"not-an-address",
+			strings.Repeat("a", 250) + "@elsewhere.test",
+		} {
+			capture := auth.NewCaptureMailer()
+			srv, _, admin := setup(t, "ops@example.test", capture)
+			rec := post(srv, withProof(to, fixtureCurrentPassword), admin)
+			if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"to"`) {
+				t.Errorf("to=%q = %d %s, want 422 on field to", to, rec.Code, rec.Body.String())
+			}
+			if sent := capture.TestMessages(); len(sent) != 0 {
+				t.Errorf("to=%q still caused sends: %+v", to, sent)
+			}
+		}
+	})
+
+	t.Run("a relay refusal never puts the custom address in the server log", func(t *testing.T) {
+		srv, buf, admin := setup(t, "ops@example.test", refusingMailer{})
+		rec := post(srv, withProof(custom, fixtureCurrentPassword), admin)
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("refused custom send = %d %s, want 502", rec.Code, rec.Body.String())
+		}
+		if strings.Contains(buf.String(), custom) || strings.Contains(rec.Body.String(), custom) {
+			t.Errorf("the custom recipient leaked into the log or response: %s / %s", buf.String(), rec.Body.String())
+		}
+	})
 }
 
 // Non-admins and anonymous callers cannot make the instance send anything.
