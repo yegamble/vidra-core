@@ -161,10 +161,11 @@ const (
 	// the body (custom JS/CSS is operator-authored code).
 	ActionAdminInstanceDocumentUpdate = "admin.instance_document.update"
 	// ActionAdminMailTest records an admin sending the outbound-mail probe. The
-	// probe goes to the instance's own contact address and nowhere else (the
-	// caller cannot choose a recipient), and the reason carries the OUTCOME only
-	// — sent, mail_not_configured, no_contact_email, send_failed — never an
-	// address. It is audited because it is an authenticated action that causes
+	// probe goes to the instance's contact address unless the caller names a
+	// recipient behind a fresh password proof, and the reason carries the
+	// OUTCOME only — sent, mail_not_configured, no_contact_email, send_failed,
+	// invalid_request, the proof refusals, and *_custom_recipient for a named
+	// address — never an address. It is audited because it is an authenticated action that causes
 	// outbound network traffic, which is exactly the shape worth being able to
 	// look back at.
 	ActionAdminMailTest = "admin.mail.test"

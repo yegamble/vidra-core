@@ -16517,22 +16517,31 @@ paths:
       summary: Send an outbound-mail test message (admin)
       description: >-
         Sends one probe message so an admin can find out whether outbound mail
-        works BEFORE a user needs a password reset. No request body.
-        The recipient is the instance's own effective contact address and the
-        caller CANNOT choose it. That is the security design of the endpoint: an
-        authenticated send-to-any-address button is an open relay behind an admin
-        password — useful for spam, for phishing from the instance's own domain,
-        and for burning its sending reputation. With a fixed recipient there is
-        nothing to abuse.
+        works BEFORE a user needs a password reset. The body is OPTIONAL:
+        without it, or with a blank `to`, the recipient is the instance's own
+        effective contact address. An admin may name another recipient in `to`
+        — to check delivery to a particular mailbox, or before any contact
+        address exists — but only with a fresh proof of their OWN password
+        (`current_password`, or `step_up_token` for an admin without one), the
+        same gate as saving the mail settings. A send-to-any-address button is
+        otherwise an open relay behind a stolen admin session — useful for spam,
+        for phishing from the instance's own domain and for burning its sending
+        reputation — so a session alone can still only mail the operator.
         202 means the message was handed to the relay, not that it was delivered:
         SMTP acceptance is a promise to try, and an admin who reads "sent" and
         finds nothing in the inbox has learned something real.
         Restricted to admins, throttled on its own budget (10 per admin per hour
-        in production wiring), and audited as admin.mail.test with the OUTCOME
-        only — never an address.
+        in production wiring) and by the strict auth limiter, and audited as
+        admin.mail.test with the OUTCOME only — never an address.
       tags: [admin]
       security:
         - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MailTestRequest"
       responses:
         "202":
           description: The message was handed to the mail relay.
@@ -16540,6 +16549,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MailTestResult"
+        "400":
+          description: The body is not valid JSON.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing, invalid, or expired token.
           content:
@@ -16547,15 +16562,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: The caller is not an admin.
+          description: >-
+            The caller is not an admin, or `to` was named without a valid fresh
+            proof — code step_up_required (no proof, or the session needs a
+            step-up) or an incorrect password.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: >-
-            No instance contact email is set, so there is nowhere to send the
-            test. Set the contact_email instance setting first.
+            No `to` was named and no instance contact email is set, so there is
+            nowhere to send — set the contact_email instance setting, or name a
+            recipient. Also password_not_set when a password is offered for an
+            account that has none.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            `to` is not one plain email address (a display name, a list or a
+            line break), both proofs were sent, or password_already_set (a
+            step-up offered for an account that has a password). Field errors
+            name the input.
           content:
             application/json:
               schema:
@@ -28094,6 +28124,24 @@ components:
           type: string
           writeOnly: true
           description: Write-only. Omit to keep the stored token. Never returned.
+    MailTestRequest:
+      type: object
+      description: >-
+        Optional body of POST /api/v1/admin/mail/test. Omit it, or leave `to`
+        blank, to send to the instance contact address. A `to` needs exactly one
+        of current_password / step_up_token.
+      properties:
+        to:
+          type: string
+          format: email
+          maxLength: 254
+          description: One bare address — no display name, no list.
+        current_password:
+          type: string
+          writeOnly: true
+        step_up_token:
+          type: string
+          writeOnly: true
     MailTestResult:
       type: object
       description: >-

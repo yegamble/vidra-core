@@ -35,20 +35,50 @@ type mailTestResponse struct {
 	Status string `json:"status"`
 }
 
+// mailTestRequest is the OPTIONAL body. Without it, or with a blank To, the
+// probe goes to the contact address exactly as before. A To is honoured only
+// behind a fresh proof of the caller's own password (or a step-up token).
+type mailTestRequest struct {
+	To              string `json:"to"`
+	CurrentPassword string `json:"current_password"`
+	StepUpToken     string `json:"step_up_token"`
+}
+
+// maxMailTestRecipientLen is RFC 5321's forward-path limit.
+const maxMailTestRecipientLen = 254
+
+func (in mailTestRequest) recipient() string { return strings.TrimSpace(in.To) }
+
+// Validate applies the codebase's one address rule (mail.IsAddrSpec): a single
+// bare addr-spec, so a display name, a list or a CRLF can never reach a header.
+func (in mailTestRequest) Validate() []FieldError {
+	to := in.recipient()
+	if to == "" {
+		return nil
+	}
+	if len(to) > maxMailTestRecipientLen || !mail.IsAddrSpec(to) {
+		return []FieldError{{Field: "to", Message: "must be one plain email address, like someone@example.org"}}
+	}
+	return nil
+}
+
 // handleMailTest sends one probe message so an admin can find out whether
 // outbound mail works BEFORE a user needs a password reset. Behind
 // requireRole(admin) and its own budget (10 per admin per hour).
 //
-// The recipient is the instance's own effective contact address and the caller
-// cannot choose it. That is the whole security design of the endpoint: an
-// authenticated-send-to-any-address button is an open relay with an admin
-// password in front of it, useful for spam, phishing from the instance's own
-// domain, and burning its sending reputation. With a fixed recipient there is
-// nothing to abuse — the worst an attacker with an admin session can do is mail
-// the operator ten times an hour.
+// By default the recipient is the instance's own effective contact address. An
+// admin may name another one — to check delivery to a particular mailbox, or
+// before any contact address exists — but only with a FRESH proof of their own
+// password (the same gate as saving the mail settings). A send-to-any-address
+// button is otherwise an open relay behind a stolen admin session, useful for
+// spam, phishing from the instance's own domain and burning its reputation; the
+// fresh proof means a session alone still cannot mail anyone but the operator,
+// and the per-admin budget bounds what a password-holder can do.
 //
 //	503 — this deployment has no outbound mail path at all (mail_not_configured).
-//	409 — no contact address is set, so there is nowhere to send.
+//	422 — the named recipient is not one bare address.
+//	403 — a named recipient without a valid fresh proof (step_up_required / incorrect password).
+//	409 — no recipient named and no contact address set, so there is nowhere to send.
 //	502 — the relay refused it. The body carries the machine-readable `reason`
 //	      (and `port` for SMTP) so the panel can name the failure; the relay's
 //	      own words go to the server log, never to the response.
@@ -56,6 +86,12 @@ type mailTestResponse struct {
 func (s *Server) handleMailTest(c *echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
+		return err
+	}
+
+	var in mailTestRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		s.audit(c, observability.ActionAdminMailTest, observability.ResultFailure, callerID.String(), "invalid_request")
 		return err
 	}
 
@@ -69,11 +105,25 @@ func (s *Server) handleMailTest(c *echo.Context) error {
 		return &MailNotConfiguredError{}
 	}
 
-	to := strings.TrimSpace(s.effectiveContactEmail())
+	to, custom := in.recipient(), in.recipient() != ""
+	if custom {
+		// Refusals are audited inside, by reason code only.
+		if err := s.confirmFreshAdminWriter(c, callerID, observability.ActionAdminMailTest, in.CurrentPassword, in.StepUpToken); err != nil {
+			return err
+		}
+	} else {
+		to = strings.TrimSpace(s.effectiveContactEmail())
+	}
 	if to == "" {
 		s.audit(c, observability.ActionAdminMailTest, observability.ResultFailure, callerID.String(), "no_contact_email")
 		return echo.NewHTTPError(http.StatusConflict,
-			"set the instance contact email first — the test message goes there and nowhere else. It is the contact_email setting on the admin General configuration page")
+			"set the instance contact email first, or name a recipient — without one the test message goes to that address. It is the contact_email setting on the admin General configuration page")
+	}
+	outcome := func(base string) string {
+		if custom {
+			return base + "_custom_recipient"
+		}
+		return base
 	}
 
 	if err := sender.SendTest(c.Request().Context(), to); err != nil {
@@ -83,8 +133,14 @@ func (s *Server) handleMailTest(c *echo.Context) error {
 		// the recipient back ("550 5.1.1 <ops@example> ... rejected"), which is
 		// operator PII: a log line the operator already owns is the right place
 		// for it; a JSON body a browser caches is not.
+		// A caller-named address is not the operator's own, so it is redacted
+		// from the relay's words before they reach even the server log.
+		logged := err.Error()
+		if custom {
+			logged = strings.ReplaceAll(logged, to, "<test recipient>")
+		}
 		s.logger.Warn("admin mail test failed",
-			"error", err,
+			"error", logged,
 			"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
 		)
 		// The CLASSIFICATION does cross the boundary, because it is not the
@@ -94,11 +150,11 @@ func (s *Server) handleMailTest(c *echo.Context) error {
 		// most common self-hosting failure — a host blocking outbound 25/465/587
 		// — is indistinguishable from a wrong password.
 		reason := mail.ReasonOf(err)
-		s.audit(c, observability.ActionAdminMailTest, observability.ResultFailure, callerID.String(), "send_failed")
+		s.audit(c, observability.ActionAdminMailTest, observability.ResultFailure, callerID.String(), outcome("send_failed"))
 		return &MailTestFailedError{Reason: string(reason), Port: mailFailurePort(err)}
 	}
 
-	s.audit(c, observability.ActionAdminMailTest, observability.ResultSuccess, callerID.String(), "sent")
+	s.audit(c, observability.ActionAdminMailTest, observability.ResultSuccess, callerID.String(), outcome("sent"))
 	return c.JSON(http.StatusAccepted, mailTestResponse{Status: "sent"})
 }
 

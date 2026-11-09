@@ -2430,11 +2430,12 @@ func (s *Server) routes() {
 		api.GET("/admin/infrastructure", s.handleInfrastructure, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		// Outbound mail probe. Always mounted (stable contract) and 503 inside
 		// when the deployment has no mail path — an admin needs to be told that
-		// is why, not find the button missing. The recipient is the instance's
-		// own contact address and cannot be chosen, so this can never become a
-		// relay; the extra budget is about the instance's sending reputation.
+		// is why, not find the button missing. A caller-named recipient needs a
+		// fresh password, so the chain takes the strict auth limiter like every
+		// password-verifying admin route; the per-admin budget is about the
+		// instance's sending reputation.
 		api.POST("/admin/mail/test", s.handleMailTest,
-			s.requireAuth, s.requireRole(admin.RoleAdmin), s.mailTestRateLimit())
+			append(s.adminPasswordStepUpMW(), s.mailTestRateLimit())...)
 	}
 
 	// Admin-configurable outbound email (migration 0151). A dedicated document
