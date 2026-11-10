@@ -216,6 +216,10 @@ x-api-env: &api-env
   # control, because trusting an address means believing the client IP it
   # claims. Comma-separated CIDRs, e.g. 203.0.113.7/32,2001:db8::/32.
   TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+  # Generic anti-adblock ad-tag proxy (internal/httpapi/adproxy.go): a JSON
+  # array mapping local paths to upstream tag fetches. Empty (the default)
+  # mounts nothing. Carried by api AND worker like every other config key.
+  AD_ANTIADBLOCK_PROVIDERS: ${AD_ANTIADBLOCK_PROVIDERS:-}
   # Master switch for self-service signup. Default true so local dev and the
   # e2e suites can register freely. First-boot note: signups stay closed
   # (403 owner_claim_required) on a fresh instance until the operator redeems
