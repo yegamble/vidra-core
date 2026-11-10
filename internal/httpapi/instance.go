@@ -176,6 +176,7 @@ type instanceAds struct {
 	Controls                  bool   `json:"controls"`
 	SkipAfterSeconds          int64  `json:"skip_after_seconds"`
 	MidrollOffsetPercent      int64  `json:"midroll_offset_percent"`
+	MidrollIntervalSeconds    int64  `json:"midroll_interval_seconds"`
 	SkipCountdown             string `json:"skip_countdown"`
 	SkipLabel                 string `json:"skip_label"`
 	RemainingMessage          string `json:"remaining_message"`
@@ -611,6 +612,10 @@ func (s *Server) instanceAdsBlock() instanceAds {
 		}
 		return value
 	}
+	interval := s.settingInt(instancesettings.KeyPlayerVASTMidrollIntervalSeconds, instancesettings.DefaultVASTMidrollIntervalSeconds)
+	if interval != 0 && (interval < instancesettings.MinVASTMidrollIntervalSeconds || interval > 86400) {
+		interval = instancesettings.DefaultVASTMidrollIntervalSeconds
+	}
 	return instanceAds{
 		Enabled:       s.settingBool(instancesettings.KeyPlayerVASTEnabled, false) && (tag != "" || midroll != "" || postroll != ""),
 		VASTTagURL:    tag,
@@ -621,6 +626,7 @@ func (s *Server) instanceAdsBlock() instanceAds {
 		Controls:                  s.settingBool(instancesettings.KeyPlayerVASTControls, true),
 		SkipAfterSeconds:          boundedInt(instancesettings.KeyPlayerVASTSkipAfterSeconds, instancesettings.DefaultVASTSkipAfterSeconds, 300),
 		MidrollOffsetPercent:      boundedInt(instancesettings.KeyPlayerVASTMidrollOffsetPercent, 0, 100),
+		MidrollIntervalSeconds:    interval,
 		SkipCountdown:             publicText(instancesettings.KeyPlayerVASTSkipCountdown, instancesettings.DefaultVASTSkipCountdown),
 		SkipLabel:                 publicText(instancesettings.KeyPlayerVASTSkipLabel, instancesettings.DefaultVASTSkipLabel),
 		RemainingMessage:          publicText(instancesettings.KeyPlayerVASTRemainingMessage, instancesettings.DefaultVASTRemainingMessage),

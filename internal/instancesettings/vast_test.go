@@ -177,3 +177,31 @@ func TestVASTPresentationSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestVASTMidrollIntervalSetting(t *testing.T) {
+	const key = "player_vast_midroll_interval_seconds"
+	svc := NewService(newFakeRepo(), testDefaults())
+	if kind, ok := KindOf(key); !ok || kind != KindInt || svc.Int(key) != 0 {
+		t.Fatalf("interval must be an integer defaulting to 0 (single midroll)")
+	}
+	for _, value := range []string{"0", "60", "900", "86400"} {
+		if err := Validate(key, value); err != nil {
+			t.Errorf("%s=%s rejected: %v", key, value, err)
+		}
+	}
+	// 1–59 would put a repeat inside the previous break's 60 s tail guard.
+	for _, value := range []string{"-1", "1", "59", "86401", "1.5", ""} {
+		if err := Validate(key, value); err == nil {
+			t.Errorf("invalid interval accepted: %q", value)
+		}
+	}
+	found := false
+	for _, entry := range svc.Snapshot() {
+		if entry.Key == key {
+			found = entry.Page == PageVOD && entry.Section == "advertising" && !entry.Overridden
+		}
+	}
+	if !found {
+		t.Fatal("interval missing from the VOD advertising section")
+	}
+}
