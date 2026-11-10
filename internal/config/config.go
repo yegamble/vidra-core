@@ -181,6 +181,17 @@ type Config struct {
 	// with no prefix length is the typo that would silently trust nothing.
 	TrustedProxyCIDRs []string
 
+	// AdAntiAdblockProviders is the raw JSON for the generic anti-adblock ad-tag
+	// proxy (internal/httpapi/adproxy.go). Ad networks ship a server-side script
+	// (almost always PHP) that fetches a JS anti-adblock tag and re-serves it from
+	// the publisher's own origin under an arbitrary path, so filter lists keyed on
+	// the network's hostname cannot block it; this carries that behaviour natively
+	// so no PHP runtime is needed. A JSON array of provider objects maps one local
+	// path to one upstream fetch; empty (the default) mounts nothing. The shape is
+	// validated where it is used, so a bad value disables the feature with a logged
+	// error rather than refusing to boot the whole API.
+	AdAntiAdblockProviders string
+
 	// PostgreSQL connection (DSN form, e.g. postgres://user:pass@host:5432/db).
 	DatabaseURL string
 
@@ -1263,6 +1274,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		AllowPlainHTTP:                         p.Bool("VIDRA_ALLOW_PLAIN_HTTP", false),
 		TrustedProxyCIDRs:                      splitAndTrim(getEnv("TRUSTED_PROXY_CIDRS", "")),
 		FederationEnabled:                      p.Bool("FEDERATION_ENABLED", false),
+		AdAntiAdblockProviders:                 getEnv("AD_ANTIADBLOCK_PROVIDERS", ""),
 		FederationKeyKEK:                       getEnv("FEDERATION_KEY_KEK", ""),
 		ATProtoEnabled:                         p.Bool("ATPROTO_ENABLED", false),
 		ATProtoKeyKEK:                          getEnv("ATPROTO_KEY_KEK", ""),
