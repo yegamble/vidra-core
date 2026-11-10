@@ -1534,6 +1534,10 @@ func (s *Server) routes() {
 		s.echo.GET("/metrics", echo.WrapHandler(s.metrics.Handler()))
 	}
 
+	// Generic anti-adblock ad-tag proxy (AD_ANTIADBLOCK_PROVIDERS). Root-mounted,
+	// outside the /api/v1 OpenAPI contract like /metrics; mounts nothing when unset.
+	s.registerAdProxy()
+
 	// Not federation features: both only need the public base URL.
 	if s.cfg.PublicBaseURL != "" {
 		s.echo.GET("/.well-known/security.txt", s.handleSecurityTxt)
