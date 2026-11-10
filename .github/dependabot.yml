@@ -31,6 +31,8 @@ updates:
       # otel publishes per-architecture tags (0.162.0-386 is the i386 image).
       # Dependabot reads the "-386" suffix as a newer version than 0.162.0 and
       # proposed it in #435, which would run a 32-bit x86 collector. Ignore
-      # that exact tag only; the collector itself still gets updates.
+      # that exact tag only; the collector itself still gets updates. The same
+      # mis-detection recurs per release (0.164.0-386 in #527), so each i386
+      # tag is listed here as it appears.
       - dependency-name: "otel/opentelemetry-collector-contrib"
-        versions: ["0.162.0-386"]
+        versions: ["0.162.0-386", "0.164.0-386"]
