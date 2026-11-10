@@ -154,6 +154,7 @@ const (
 	KeyPlayerVASTControls                  = "player_vast_controls"
 	KeyPlayerVASTSkipAfterSeconds          = "player_vast_skip_after_seconds"
 	KeyPlayerVASTMidrollOffsetPercent      = "player_vast_midroll_offset_percent"
+	KeyPlayerVASTMidrollIntervalSeconds    = "player_vast_midroll_interval_seconds"
 	KeyPlayerVASTSkipCountdown             = "player_vast_skip_countdown"
 	KeyPlayerVASTSkipLabel                 = "player_vast_skip_label"
 	KeyPlayerVASTRemainingMessage          = "player_vast_remaining_message"
@@ -635,6 +636,8 @@ const (
 	defaultPlayerAutoplay                = true
 	DefaultVASTMidrollOffsetSeconds      = 300
 	DefaultVASTMidrollMinDurationSeconds = 600
+	DefaultVASTMidrollIntervalSeconds    = 0
+	MinVASTMidrollIntervalSeconds        = 60
 	DefaultVASTCooldownSeconds           = 300
 	DefaultVASTSkipAfterSeconds          = 5
 	DefaultVASTSkipCountdown             = "Skip in {seconds}…"
@@ -978,6 +981,8 @@ var specs = []spec{
 	{key: KeyPlayerVASTSkipAfterSeconds, kind: KindInt, defInt: func(Defaults) int64 { return DefaultVASTSkipAfterSeconds }, validate: intRange(0, 300),
 		page: PageVOD, section: "advertising"},
 	{key: KeyPlayerVASTMidrollOffsetPercent, kind: KindInt, defInt: func(Defaults) int64 { return 0 }, validate: intRange(0, 100),
+		page: PageVOD, section: "advertising"},
+	{key: KeyPlayerVASTMidrollIntervalSeconds, kind: KindInt, defInt: func(Defaults) int64 { return DefaultVASTMidrollIntervalSeconds }, validate: intZeroOrRange(MinVASTMidrollIntervalSeconds, 86400),
 		page: PageVOD, section: "advertising"},
 	{key: KeyPlayerVASTSkipCountdown, kind: KindString, defString: hardcoded(DefaultVASTSkipCountdown), validate: maxLen(200),
 		page: PageVOD, section: "advertising"},

@@ -250,3 +250,56 @@ func TestVASTPresentationStoredBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestVASTMidrollIntervalConfig(t *testing.T) {
+	e := newSettingsAuditEnv(t)
+	read := func() any {
+		t.Helper()
+		var body struct {
+			Ads map[string]any `json:"ads"`
+		}
+		if err := json.Unmarshal(getInstanceRec(e.srv).Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Ads["midroll_interval_seconds"]
+	}
+	if got := read(); got != float64(0) {
+		t.Fatalf("default interval=%v, want 0", got)
+	}
+	e.patch(t, `{"player_vast_midroll_interval_seconds":900}`)
+	if got := read(); got != float64(900) {
+		t.Fatalf("patched interval=%v, want 900", got)
+	}
+	for _, bad := range []string{"59", "1", "-1", "86401"} {
+		body := `{"player_vast_midroll_interval_seconds":` + bad + `}`
+		if rec := sendJSONAuth(e.srv, http.MethodPatch, "/api/v1/admin/instance-settings", body, e.admin); rec.Code != http.StatusUnprocessableEntity || read() != float64(900) {
+			t.Fatalf("interval %s: status=%d payload=%v, want 422 and 900 kept", bad, rec.Code, read())
+		}
+	}
+	e.patch(t, `{"player_vast_midroll_interval_seconds":null}`)
+	if got := read(); got != float64(0) {
+		t.Fatalf("reset interval=%v, want 0", got)
+	}
+}
+
+func TestVASTMidrollIntervalStoredBounds(t *testing.T) {
+	for _, stored := range []string{"59", "86401", "-5"} {
+		repo := newInstanceSettingsFakeRepo()
+		const key = "player_vast_midroll_interval_seconds"
+		repo.rows[key] = sqlcgen.InstanceSetting{Key: key, Value: stored}
+		svc := instancesettings.NewService(repo, instancesettings.Defaults{})
+		if err := svc.Load(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		var body struct {
+			Ads map[string]any `json:"ads"`
+		}
+		srv := New(testConfig(), nil, nil, WithSettingsService(svc))
+		if err := json.Unmarshal(getInstanceRec(srv).Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if got := body.Ads["midroll_interval_seconds"]; got != float64(0) {
+			t.Fatalf("stored %s exposed as %v, want 0", stored, got)
+		}
+	}
+}

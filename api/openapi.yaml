@@ -17059,7 +17059,10 @@ paths:
         player_vast_embed_enabled and player_vast_controls default true.
         player_vast_skip_after_seconds defaults 5 (0–300; zero disables skipping).
         player_vast_midroll_offset_percent defaults 0 (0–100; zero uses seconds,
-        positive values use content-duration percentage). Plain-text settings
+        positive values use content-duration percentage).
+        player_vast_midroll_interval_seconds defaults 0 (one midroll); 60–86400
+        repeats the midroll every that many seconds of content after the first
+        position, and values 1–59 are rejected. Plain-text settings
         player_vast_skip_countdown (default "Skip in {seconds}…", max 200 bytes),
         player_vast_skip_label (default "Skip ad", max 80 bytes), and
         player_vast_remaining_message (default "This ad will end in {seconds}",
@@ -20929,6 +20932,13 @@ components:
               maximum: 100
               default: 0
               description: Positive values place the midroll at this percentage of content duration; zero or absent uses midroll_offset_seconds.
+            midroll_interval_seconds:
+              type: integer
+              format: int64
+              minimum: 0
+              maximum: 86400
+              default: 0
+              description: Zero plays a single midroll. A value from 60 to 86400 repeats the midroll every that many seconds of content after the first position; clients place none in the last 60 seconds and skip a break that falls inside cooldown_seconds. Never 1–59. Absent on older servers means 0.
             skip_countdown:
               type: string
               default: 'Skip in {seconds}…'
