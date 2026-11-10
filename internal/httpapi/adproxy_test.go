@@ -46,11 +46,17 @@ func TestParseAdProxyProviders(t *testing.T) {
 	if ps[0].ttl() != adProxyDefaultTTL {
 		t.Errorf("default ttl: %v", ps[0].ttl())
 	}
+	// Behind the stock reverse proxy only /api/* reaches the api, so a path there
+	// (outside the /api/v1 contract namespace) has to be accepted.
+	if _, err := parseAdProxyProviders(`[{"path":"/api/x/tag.js","upstream":"https://a.com/p"}]`); err != nil {
+		t.Errorf("path under /api/ but outside /api/v1 must be allowed: %v", err)
+	}
 	bad := map[string]string{
 		"empty list":        `[]`,
 		"relative path":     `[{"path":"x.js","upstream":"https://a.com/p"}]`,
 		"reserved path":     `[{"path":"/healthz","upstream":"https://a.com/p"}]`,
 		"api path":          `[{"path":"/api/v1/x","upstream":"https://a.com/p"}]`,
+		"api base":          `[{"path":"/api/v1","upstream":"https://a.com/p"}]`,
 		"bad scheme":        `[{"path":"/x.js","upstream":"ftp://a.com/p"}]`,
 		"relative upstream": `[{"path":"/x.js","upstream":"/local"}]`,
 		"duplicate":         `[{"path":"/x.js","upstream":"https://a.com/p"},{"path":"/x.js","upstream":"https://b.com/p"}]`,
@@ -151,5 +157,27 @@ func TestAdProxyErrorFallback(t *testing.T) {
 	rec = adProxyDoGet(h, "/x.js", "d", "")
 	if rec.Code != 200 || rec.Body.String() != "STALE" {
 		t.Errorf("stale-on-error not served: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+// A provider is only useful if a visitor can reach it: in production the reverse
+// proxy forwards /api/* (and a fixed list of root paths) here and sends
+// everything else to the frontend. So it has to answer through the fully wired
+// server at a path under /api/, not only through the bare handler.
+func TestAdProxyServesUnderAPIPrefixThroughServer(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("/*tag*/"))
+	}))
+	defer up.Close()
+	cfg := testConfig()
+	cfg.AdAntiAdblockProviders = `[{"path":"/api/x/tag.js","upstream":"` + up.URL + `"}]`
+	req := httptest.NewRequest(http.MethodGet, "/api/x/tag.js", nil)
+	rec := httptest.NewRecorder()
+	New(cfg, nil, nil).Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "/*tag*/" {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != adProxyDefaultContentType {
+		t.Errorf("content-type=%q", ct)
 	}
 }

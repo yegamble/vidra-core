@@ -54,9 +54,10 @@ const (
 	adProxyDefaultUserAgent   = "Vidra-AntiAdBlock-Proxy/1.0"
 )
 
-// adProxyReservedPaths plus the /api/ and /.well-known/ prefixes are refused so
-// a mistyped provider path cannot shadow a real route (Echo panics on an exact
-// duplicate, but a reserved prefix could silently steal traffic).
+// adProxyReservedPaths plus the REST contract namespace (/api/v1) and
+// /.well-known/ are refused so a mistyped provider path cannot shadow a real
+// route (Echo panics on an exact duplicate, but a reserved prefix could silently
+// steal traffic). The rest of /api/ stays open on purpose: see Path.
 var adProxyReservedPaths = map[string]bool{
 	"/": true, "/healthz": true, "/readyz": true, "/version": true,
 	"/schemaz": true, "/metrics": true, "/inbox": true, "/sitemap.xml": true,
@@ -64,8 +65,11 @@ var adProxyReservedPaths = map[string]bool{
 
 // adProxyProvider maps one local path to one upstream anti-adblock fetch.
 type adProxyProvider struct {
-	// Path is the local URL to serve, e.g. "/f2187587a2.js" — operator-chosen and
-	// deliberately opaque so it is not already on a blocklist.
+	// Path is the local URL to serve — operator-chosen and deliberately opaque so
+	// it is not already on a blocklist. Behind the stock reverse proxy only /api/*
+	// and a fixed list of root paths reach this process (everything else goes to
+	// the frontend), so in production it has to sit under /api/ but outside the
+	// /api/v1 contract namespace, e.g. "/api/x/f2187587a2.js".
 	Path string `json:"path"`
 	// Upstream is the absolute http(s) endpoint to fetch, without a query string,
 	// e.g. "https://api.hilltopads.com/publisher/antiAdBlock".
@@ -121,7 +125,7 @@ func parseAdProxyProviders(raw string) ([]adProxyProvider, error) {
 		if !strings.HasPrefix(p.Path, "/") {
 			return nil, fmt.Errorf("adproxy: provider %d: path %q must begin with '/'", i, p.Path)
 		}
-		if adProxyReservedPaths[p.Path] || strings.HasPrefix(p.Path, "/api/") || strings.HasPrefix(p.Path, "/.well-known/") {
+		if adProxyReservedPaths[p.Path] || p.Path == apiBasePath || strings.HasPrefix(p.Path, apiBasePath+"/") || strings.HasPrefix(p.Path, "/.well-known/") {
 			return nil, fmt.Errorf("adproxy: provider %d: path %q is reserved", i, p.Path)
 		}
 		if seen[p.Path] {
