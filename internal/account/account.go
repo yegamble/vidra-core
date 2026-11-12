@@ -104,6 +104,7 @@ type Repository interface {
 	ListPlaylistsByOwnerForExport(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.ListPlaylistsByOwnerForExportRow, error)
 	ListPlaylistItemVideoIDs(ctx context.Context, playlistID uuid.UUID) ([]uuid.UUID, error)
 	ListNotificationPrefs(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationPrefsRow, error)
+	ListUserConsents(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListUserConsentsRow, error)
 
 	// Import writes.
 	UpdateUserProfile(ctx context.Context, arg sqlcgen.UpdateUserProfileParams) (sqlcgen.User, error)

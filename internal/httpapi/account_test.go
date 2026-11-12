@@ -293,6 +293,10 @@ func (f *accountFakeRepo) ListNotificationPrefs(context.Context, uuid.UUID) ([]s
 	return []sqlcgen.ListNotificationPrefsRow{{Type: "follow", Enabled: false}}, nil
 }
 
+func (f *accountFakeRepo) ListUserConsents(context.Context, uuid.UUID) ([]sqlcgen.ListUserConsentsRow, error) {
+	return nil, nil
+}
+
 func (f *accountFakeRepo) UpdateUserProfile(_ context.Context, arg sqlcgen.UpdateUserProfileParams) (sqlcgen.User, error) {
 	f.profileUpdates = append(f.profileUpdates, arg)
 	return sqlcgen.User{}, nil

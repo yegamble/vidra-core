@@ -110,6 +110,7 @@ type fakeRepo struct {
 
 	// export data
 	prefs         []sqlcgen.ListNotificationPrefsRow
+	consents      []sqlcgen.ListUserConsentsRow
 	exportVideos  []sqlcgen.ListVideosByOwnerForExportRow
 	tags          map[uuid.UUID][]string
 	comments      []sqlcgen.ListCommentsByUserForExportRow
@@ -450,6 +451,10 @@ func (f *fakeRepo) ListNotificationPrefs(context.Context, uuid.UUID) ([]sqlcgen.
 	return f.prefs, nil
 }
 
+func (f *fakeRepo) ListUserConsents(context.Context, uuid.UUID) ([]sqlcgen.ListUserConsentsRow, error) {
+	return f.consents, nil
+}
+
 // --- import writes
 
 func (f *fakeRepo) UpdateUserProfile(_ context.Context, arg sqlcgen.UpdateUserProfileParams) (sqlcgen.User, error) {
@@ -759,6 +764,12 @@ func TestDrainExportsBuildsArchiveWithoutSecrets(t *testing.T) {
 	repo.playlists = []sqlcgen.ListPlaylistsByOwnerForExportRow{{ID: plID, OwnerID: user.ID, Title: "Faves", Visibility: "private"}}
 	repo.playlistItems[plID] = []uuid.UUID{vID}
 	repo.prefs = []sqlcgen.ListNotificationPrefsRow{{Type: "follow", Enabled: false}}
+	sixteen := int32(16)
+	accepted := time.Date(2026, 11, 12, 9, 30, 0, 0, time.UTC)
+	repo.consents = []sqlcgen.ListUserConsentsRow{
+		{Document: "terms", Version: "2026-11-12", Url: "https://example.test/terms", Source: "signup", AcceptedAt: accepted},
+		{Document: "age", MinimumAge: &sixteen, Source: "signup", AcceptedAt: accepted},
+	}
 	repo.comments = []sqlcgen.ListCommentsByUserForExportRow{{ID: uuid.New(), VideoID: vID, Body: "nice"}}
 	repo.follows = []sqlcgen.ListFollowedChannelsByUserRow{{ChannelID: chID, Handle: "other", DisplayName: "Other"}}
 	repo.saved = []sqlcgen.ListSavedVideosByUserForExportRow{{VideoID: vID}}
@@ -806,6 +817,12 @@ func TestDrainExportsBuildsArchiveWithoutSecrets(t *testing.T) {
 	}
 	if len(archive.NotificationPrefs) != 1 || archive.NotificationPrefs[0].Enabled {
 		t.Fatalf("prefs wrong: %+v", archive.NotificationPrefs)
+	}
+	// What the account holder accepted, and when, is their data too.
+	if len(archive.Consents) != 2 ||
+		archive.Consents[0] != (ArchiveConsent{Document: "terms", Version: "2026-11-12", URL: "https://example.test/terms", Source: "signup", AcceptedAt: accepted}) ||
+		archive.Consents[1].Document != "age" || archive.Consents[1].MinimumAge == nil || *archive.Consents[1].MinimumAge != 16 {
+		t.Fatalf("consents wrong: %+v", archive.Consents)
 	}
 	if len(archive.Comments) != 1 || len(archive.Follows) != 1 || len(archive.SavedVideos) != 1 || len(archive.WatchHistory) != 1 {
 		t.Fatalf("sections missing: %+v", archive)
