@@ -1532,6 +1532,9 @@ func run() error {
 		func(ctx context.Context, videoID uuid.UUID, kind string) {
 			cdnPurgeSvc.PurgeReplacedAsset(ctx, videoID, kind)
 		}))
+	// Anonymous callers share public lists, search totals and the home rail
+	// for 15 s; a publish, edit, delete or moderator block ends that at once.
+	vopts = append(vopts, video.WithAnonymousCache(15*time.Second))
 	videosvc = video.NewService(db.Queries(), blobs, vopts...)
 
 	// DUAL-READ during a storage migration. The HTTP layer's media handle — and

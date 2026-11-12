@@ -3,6 +3,8 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -400,22 +402,44 @@ func (s *Server) handleHomeRecommendations(c *echo.Context) error {
 	hideSensitive := s.effectiveHideSensitive(c)
 
 	if s.useSearchService() {
-		uid := s.attributedUserID(userID, prefs, authed)
-		out, err := s.searchClient.RecommendationsHome(ctx, searchclient.RecsParams{
-			UserID:        uid,
+		params := searchclient.RecsParams{
+			UserID:        s.attributedUserID(userID, prefs, authed),
 			SessionID:     sessionIDFromRequest(c),
 			Limit:         overfetchCount(0, limit),
 			Personalized:  personalized,
 			HideSensitive: hideSensitive,
-		})
-		if err == nil {
-			if views, ok := s.hydrateRankedRecs(ctx, out.Items, viewerID, authed, limit, hideSensitive); ok && len(views) > 0 {
-				return c.JSON(http.StatusOK, recommendationsResponse{Items: views, Personalized: personalized, Source: "search"})
+		}
+		load := func(ctx context.Context) ([]recItemView, error) {
+			out, err := s.searchClient.RecommendationsHome(ctx, params)
+			if err != nil {
+				return nil, err
 			}
+			views, ok := s.hydrateRankedRecs(ctx, out.Items, viewerID, authed, limit, hideSensitive)
+			if !ok || len(views) == 0 {
+				return nil, errNoSearchRecommendations // not an answer worth keeping
+			}
+			return views, nil
+		}
+		var views []recItemView
+		var err error
+		if !authed && !s.searchAdvanced() {
+			// Simple mode ranks from the catalogue alone (it reads neither the
+			// session nor a user), so every anonymous caller gets the same rail.
+			// Advanced mode ranks per session and is never shared.
+			views, err = video.AnonymousCached(ctx, s.videosvc, fmt.Sprintf("home|%d|%t", limit, hideSensitive), load)
+		} else {
+			views, err = load(ctx)
+		}
+		if err == nil {
+			return c.JSON(http.StatusOK, recommendationsResponse{Items: views, Personalized: personalized, Source: "search"})
 		}
 	}
 	return s.homeRecommendationsFallback(c, limit, viewerID, authed)
 }
+
+// errNoSearchRecommendations sends the home rail to its fallback when
+// vidra-search answered with nothing usable.
+var errNoSearchRecommendations = errors.New("httpapi: no recommendations from search")
 
 // homeRecommendationsFallback serves the trending feed when vidra-search is
 // unavailable or returns nothing.

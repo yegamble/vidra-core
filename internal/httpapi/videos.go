@@ -1980,6 +1980,9 @@ func (s *Server) handleBlockVideo(c *echo.Context) error {
 		}
 		return err
 	}
+	// A block changes no column the video service writes, so it is the one
+	// takedown that has to tell the anonymous list cache itself.
+	s.videosvc.InvalidateAnonymous()
 	// THE MIRROR (2026-09-09 ruling; A31 clause 5). A block makes a video 404 on
 	// every Vidra surface, but it changes neither privacy nor state, so nothing the
 	// mirror's eligibility fence reads could see one: the video's ledger rows stayed
@@ -2036,6 +2039,7 @@ func (s *Server) handleUnblockVideo(c *echo.Context) error {
 	if err != nil {
 		return err
 	}
+	s.videosvc.InvalidateAnonymous()
 	// Re-arm the mirror. This is the half A31 said "needs a path that does not
 	// exist today": the ledger rows a block flipped to 'unpinning' end up
 	// 'unpinned', which is terminal, so nothing would ever re-publish the video
