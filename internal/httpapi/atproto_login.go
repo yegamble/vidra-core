@@ -102,6 +102,9 @@ type atprotoLoginStartRequest struct {
 	Handle string `json:"handle"`
 	// ReturnTo is where to send the browser after the flow (same-origin path).
 	ReturnTo string `json:"return_to"`
+	// TermsAccepted is the signup form's tick; it matters only if this handle
+	// turns out to be a first sign-in (see oauthStatePayload.TermsAccepted).
+	TermsAccepted bool `json:"terms_accepted,omitempty"`
 }
 
 func (r atprotoLoginStartRequest) Validate() []FieldError {
@@ -139,6 +142,7 @@ func (s *Server) handleATProtoLoginStart(c *echo.Context) error {
 	if err != nil {
 		return atprotoLoginError(err)
 	}
+	st.TermsAccepted = in.TermsAccepted
 	sealed, err := s.sealATProtoState(atprotoStatePayload{ATProtoState: st, IssuedAt: time.Now().Unix()})
 	if err != nil {
 		return err
@@ -246,6 +250,9 @@ func (s *Server) handleATProtoLoginCallback(c *echo.Context) error {
 	sess, err := s.atprotologinsvc.ResolveVerified(c.Request().Context(), p.ATProtoState, did, c.Request().UserAgent())
 	if err != nil {
 		switch {
+		case errors.Is(err, auth.ErrTermsRequired):
+			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "terms_required")
+			return oauthErrorRedirect(c, returnTo, "terms_required")
 		case errors.Is(err, auth.ErrAccountDisabled):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "account_disabled")
 			return oauthErrorRedirect(c, returnTo, "account_disabled")

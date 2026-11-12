@@ -101,6 +101,10 @@ type ATProtoState struct {
 	DPoPKeyJWK    string `json:"dpop_jwk"`
 	DPoPNonce     string `json:"dpop_nonce"`
 	ReturnTo      string `json:"return_to"`
+	// TermsAccepted is what the browser that started this attempt ticked; it
+	// rides in the signed state and matters only if the DID turns out to be a
+	// first sign-in.
+	TermsAccepted bool `json:"ta,omitempty"`
 }
 
 // ATProtoOAuthService implements ATProto identity login on top of the core auth
@@ -451,6 +455,11 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 	if err != nil {
 		return OAuthSession{}, err
 	}
+	// And its documents, on the create branch only (see the OIDC twin).
+	consent, err := s.auth.signupConsent(SignupAcceptance{Terms: st.TermsAccepted})
+	if err != nil {
+		return OAuthSession{}, err
+	}
 	if requireApproval {
 		return OAuthSession{}, s.auth.RequestProviderRegistration(ctx, ProviderRegistrationInput{
 			Username: username,
@@ -459,9 +468,10 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 			// The identity row stores '' and the account keeps the synthetic
 			// address, exactly as the direct create path below does.
 			IdentityEmail: "", EmailVerified: false,
+			consent: consent,
 		})
 	}
-	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
+	user, err := s.repo.CreateUser(ctx, consent.onCreate(sqlcgen.CreateUserParams{
 		Username: username,
 		// Synthetic, RFC 2606-reserved, never-routable email (ATProto login has no
 		// verified email, and users.email is NOT NULL + unique).
@@ -472,7 +482,7 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 		PasswordHash:   "",
 		Role:           "user",
 		HistoryEnabled: s.auth.newUserHistoryEnabled(),
-	})
+	}, ConsentSourceATProto))
 	if err != nil {
 		if pgconv.IsUniqueViolation(err) {
 			return OAuthSession{}, nameConflict(err)

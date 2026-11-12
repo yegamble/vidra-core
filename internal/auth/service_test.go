@@ -40,7 +40,8 @@ type fakeRegReq struct {
 type fakeRepo struct {
 	// requested is every CreateRegistrationRequest argument, in order: a queued
 	// request keeps what its applicant accepted.
-	requested []sqlcgen.CreateRegistrationRequestParams
+	requested         []sqlcgen.CreateRegistrationRequestParams
+	providerRequested []sqlcgen.CreateProviderRegistrationRequestParams
 	// created is every CreateUser argument, in order: the consent a signup
 	// recorded travels on it, in the same statement as the account.
 	created []sqlcgen.CreateUserParams
@@ -119,6 +120,7 @@ func (f *fakeRepo) CreateRegistrationRequest(_ context.Context, a sqlcgen.Create
 }
 
 func (f *fakeRepo) CreateProviderRegistrationRequest(_ context.Context, a sqlcgen.CreateProviderRegistrationRequestParams) (sqlcgen.CreateProviderRegistrationRequestRow, error) {
+	f.providerRequested = append(f.providerRequested, a)
 	for _, r := range f.regReqs {
 		if r.status != "pending" {
 			continue

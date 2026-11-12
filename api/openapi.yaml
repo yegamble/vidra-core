@@ -1837,6 +1837,19 @@ paths:
             Where to send the browser after the flow completes. Must be a
             same-origin relative path (`/...`); absolute URLs and `//...` are
             rejected. Defaults to `/`.
+        - name: terms_accepted
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["1"]
+          description: >-
+            `1` when the person ticked "I accept the terms of service and the
+            privacy policy" on the signup form. Carried in the signed attempt
+            state and consulted only if the sign-in turns out to create an
+            account: on an instance with `terms_url` or `privacy_url` set, a
+            first sign-in without it creates nothing and returns
+            `oauth_error=terms_required`. An existing account is never asked.
       responses:
         "302":
           description: Redirect to the provider's authorization endpoint.
@@ -1987,7 +2000,9 @@ paths:
 
         User-actionable failures redirect with an `oauth_error` query code
         (`access_denied`, `email_conflict`, `email_required`,
-        `account_disabled`, `conflict`, and for a provider that does not
+        `account_disabled`, `conflict`, `terms_required` for a first sign-in
+        started without `terms_accepted=1` on an instance that has terms or a
+        privacy policy, and for a provider that does not
         create accounts `signup_disabled` or `email_domain_not_allowed` — the
         latter also when the address in an allowed domain is unverified);
         protocol violations (missing/forged/
@@ -2083,6 +2098,15 @@ paths:
                   description: >-
                     Same-origin relative path to return to after login (`/...`);
                     absolute URLs and `//...` are rejected. Defaults to `/`.
+                terms_accepted:
+                  type: boolean
+                  description: >-
+                    The signup form's tick ("I accept the terms of service and
+                    the privacy policy"). Consulted only if the handle turns out
+                    to be a first sign-in: on an instance with `terms_url` or
+                    `privacy_url` set, that sign-in creates nothing without it
+                    and the callback returns `oauth_error=terms_required`. An
+                    existing account is never asked.
       responses:
         "200":
           description: The authorization URL to navigate the browser to.
@@ -2208,7 +2232,8 @@ paths:
         credentials — and the browser is redirected (302) to the validated
         `return_to` with `?oauth=1`. User-actionable failures redirect with an
         `oauth_error` query code (`access_denied`, `atproto_identity_mismatch`,
-        `atproto_upstream`, `account_disabled`, `conflict`); protocol violations
+        `atproto_upstream`, `account_disabled`, `conflict`, `terms_required`
+        for a first sign-in started without `terms_accepted`); protocol violations
         (missing/forged/expired state, missing code) are 400.
       tags: [auth]
       parameters:

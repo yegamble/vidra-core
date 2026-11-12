@@ -143,3 +143,88 @@ func TestQueuedSignupKeepsWhatTheApplicantAccepted(t *testing.T) {
 		t.Errorf("a request with nothing to accept kept %+v", got)
 	}
 }
+
+// A first sign-in through a provider is a signup: on an instance with documents
+// configured it creates nothing unless the attempt carried the acceptance, and
+// records it when it did. An identity that is already linked signs in without
+// being asked, whatever the attempt carried.
+func TestProviderFirstSignInMustAcceptTheTerms(t *testing.T) {
+	ctx := context.Background()
+	repo := newOAuthFakeRepo()
+	issuer := NewTokenIssuer("oauth-test-secret-oauth-test-secret-0", "vidra", "vidra", 60e9)
+	svc := NewService(repo.fakeRepo, issuer, 3600e9, WithSignupTermsFunc(func() SignupTerms { return bothDocuments }))
+	oidc := NewOAuthService(repo, svc, []OAuthProvider{{Name: "fake", IssuerURL: "https://idp.invalid", ClientID: "id", ClientSecret: "secret"}})
+	claims := oidcClaims{Email: "bob@example.test", EmailVerified: true, PreferredUsername: "bob"}
+
+	if _, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, false, "ua"); !errors.Is(err, ErrTermsRequired) {
+		t.Fatalf("first sign-in without the acceptance = %v, want ErrTermsRequired", err)
+	}
+	if len(repo.created) != 0 {
+		t.Fatalf("an account was created without the acceptance")
+	}
+	sess, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, true, "ua")
+	if err != nil || sess.Outcome != OAuthCreated {
+		t.Fatalf("first sign-in with the acceptance: outcome=%v err=%v", sess.Outcome, err)
+	}
+	got := repo.created[0]
+	if got.ConsentSource != ConsentSourceOIDC || !slices.Equal(got.ConsentDocuments, []string{"terms", "privacy"}) ||
+		!slices.Equal(got.ConsentVersions, []string{"2026-11-12", "v3"}) {
+		t.Errorf("recorded %q %v %v", got.ConsentSource, got.ConsentDocuments, got.ConsentVersions)
+	}
+	// The same subject again is a login: never asked, nothing created.
+	if sess, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, false, "ua"); err != nil || sess.Outcome != OAuthLogin {
+		t.Fatalf("returning sign-in without the acceptance: outcome=%v err=%v; want a login", sess.Outcome, err)
+	}
+	if len(repo.created) != 1 {
+		t.Fatalf("accounts created = %d, want 1", len(repo.created))
+	}
+
+	// ATProto: the acceptance rides in the attempt state.
+	at := NewATProtoOAuthService(repo, svc, defaultFlow(), WithATProtoEnabled(true), WithATProtoPublicBaseURL("https://vidra.test"))
+	_, st, err := at.Begin(ctx, "alice.example", "/home")
+	if err != nil {
+		t.Fatalf("atproto begin: %v", err)
+	}
+	if _, err := at.Complete(ctx, st, "code-1", st.Issuer, "ua"); !errors.Is(err, ErrTermsRequired) {
+		t.Fatalf("atproto first sign-in without the acceptance = %v, want ErrTermsRequired", err)
+	}
+	st.TermsAccepted = true
+	if sess, err := at.Complete(ctx, st, "code-2", st.Issuer, "ua"); err != nil || sess.Outcome != OAuthCreated {
+		t.Fatalf("atproto first sign-in with the acceptance: outcome=%v err=%v", sess.Outcome, err)
+	}
+	if got := repo.created[len(repo.created)-1]; got.ConsentSource != ConsentSourceATProto || !slices.Equal(got.ConsentDocuments, []string{"terms", "privacy"}) {
+		t.Errorf("atproto recorded %q %v", got.ConsentSource, got.ConsentDocuments)
+	}
+	st.TermsAccepted = false
+	if sess, err := at.Complete(ctx, st, "code-3", st.Issuer, "ua"); err != nil || sess.Outcome != OAuthLogin {
+		t.Fatalf("atproto returning sign-in: outcome=%v err=%v; want a login", sess.Outcome, err)
+	}
+}
+
+// Behind the approval queue a provider first sign-in files a request; the
+// request keeps the acceptance exactly as a password request does.
+func TestProviderRequestKeepsTheAcceptance(t *testing.T) {
+	ctx := context.Background()
+	repo := newOAuthFakeRepo()
+	issuer := NewTokenIssuer("oauth-test-secret-oauth-test-secret-0", "vidra", "vidra", 60e9)
+	svc := NewService(repo.fakeRepo, issuer, 3600e9,
+		WithSignupTermsFunc(func() SignupTerms { return bothDocuments }),
+		WithRegistrationPolicyFunc(func() (bool, bool) { return true, true }))
+	oidc := NewOAuthService(repo, svc, []OAuthProvider{{Name: "fake", IssuerURL: "https://idp.invalid", ClientID: "id", ClientSecret: "secret"}})
+	claims := oidcClaims{Email: "bob@example.test", EmailVerified: true, PreferredUsername: "bob"}
+
+	if _, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, false, "ua"); !errors.Is(err, ErrTermsRequired) {
+		t.Fatalf("queued provider sign-in without the acceptance = %v, want ErrTermsRequired", err)
+	}
+	if _, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, true, "ua"); !errors.Is(err, ErrRegistrationPending) {
+		t.Fatalf("queued provider sign-in with the acceptance = %v, want ErrRegistrationPending", err)
+	}
+	if len(repo.providerRequested) != 1 {
+		t.Fatalf("provider requests filed = %d, want 1", len(repo.providerRequested))
+	}
+	got := repo.providerRequested[0]
+	if !got.ConsentRecorded || got.ConsentTermsUrl == nil || *got.ConsentTermsUrl != "https://example.test/terms" ||
+		got.ConsentPrivacyVersion == nil || *got.ConsentPrivacyVersion != "v3" || got.ConsentMinimumAge != nil {
+		t.Errorf("the provider request kept %+v", got)
+	}
+}

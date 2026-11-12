@@ -630,6 +630,10 @@ type OAuthAssertion struct {
 	EmailVerified     bool
 	PreferredUsername string
 	Name              string
+	// TermsAccepted is NOT a provider claim: it is what the browser that
+	// started this attempt ticked, carried in the signed state. It matters
+	// only when the assertion turns out to be a first sign-in.
+	TermsAccepted bool
 }
 
 // VerifyIdentity runs the full protocol verification (exchange, JWKS, nonce)
@@ -662,7 +666,7 @@ func (s *OAuthService) ResolveAssertion(ctx context.Context, as OAuthAssertion, 
 		EmailVerified:     as.EmailVerified,
 		PreferredUsername: as.PreferredUsername,
 		Name:              as.Name,
-	}, userAgent)
+	}, as.TermsAccepted, userAgent)
 }
 
 // LinkIdentity attaches a verified provider identity to an EXISTING account —
@@ -766,7 +770,7 @@ func (s *OAuthService) HasProviderLinked(ctx context.Context, userID uuid.UUID, 
 // resolveIdentity maps a verified (provider, subject, claims) to a local
 // session, following the login / refuse / create ladder. There is deliberately
 // no link rung: see the file header.
-func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject string, claims oidcClaims, userAgent string) (OAuthSession, error) {
+func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject string, claims oidcClaims, termsAccepted bool, userAgent string) (OAuthSession, error) {
 	// Known identity → login. This is the ONLY match rule, and it is the reason
 	// a provider-created account is safe: its account is found by the subject
 	// that created it, never by the address that subject happens to assert.
@@ -821,14 +825,22 @@ func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject st
 	if err != nil {
 		return OAuthSession{}, err
 	}
+	// And its documents. Asked HERE, on the create branch only: an account that
+	// already exists signed in above and is never asked again, and whether this
+	// assertion is a signup is not known anywhere earlier than this.
+	consent, err := s.auth.signupConsent(SignupAcceptance{Terms: termsAccepted})
+	if err != nil {
+		return OAuthSession{}, err
+	}
 	if requireApproval {
 		return OAuthSession{}, s.auth.RequestProviderRegistration(ctx, ProviderRegistrationInput{
 			Username: username, Email: email,
 			Provider: provider, Subject: subject,
 			IdentityEmail: email, EmailVerified: claims.EmailVerified,
+			consent: consent,
 		})
 	}
-	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
+	user, err := s.repo.CreateUser(ctx, consent.onCreate(sqlcgen.CreateUserParams{
 		Username: username,
 		Email:    email,
 		// No password: OAuth is the account's credential. An empty hash can
@@ -840,7 +852,7 @@ func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject st
 		// attests the identity (claims.email_verified is honored below), so the
 		// W7 registration gate deliberately does not apply here.
 		HistoryEnabled: s.auth.newUserHistoryEnabled(),
-	})
+	}, ConsentSourceOIDC))
 	if err != nil {
 		if pgconv.IsUniqueViolation(err) {
 			return OAuthSession{}, nameConflict(err)
