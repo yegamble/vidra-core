@@ -152,7 +152,7 @@ func (s *Server) handlePodcastFeed(c *echo.Context) error {
 			GUID: uuid.NewSHA1(uuid.MustParse(podcastGUIDNamespace), []byte(ch.ID.String())).String(),
 		},
 	}
-	rows, _, err := s.videosvc.ListPublicByChannel(ctx, ch.ID, uuid.Nil, false, s.hideSensitiveVideos(), "", feedItemLimit, 0)
+	rows, _, err := s.videosvc.ListPublicByChannel(ctx, ch.ID, uuid.Nil, false, s.hideSensitiveOnOpenSurfaces(), "", feedItemLimit, 0)
 	if err != nil {
 		return err
 	}

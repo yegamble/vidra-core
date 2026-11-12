@@ -1,11 +1,14 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/vidra/vidra-core/internal/cdn"
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -185,7 +188,16 @@ func TestSensitiveGateDoesNotRevealABlockedVideo(t *testing.T) {
 // is refused (so it cannot refill), a signed-in viewer is served by the API
 // with a no-store answer, and a video that is not sensitive keeps its redirect.
 func TestSensitiveGateKeepsGatedBytesOffTheCDN(t *testing.T) {
-	srv, blobs, tcRepo := cdnServer(t, true, nil, false)
+	// A CDN that can purge: raising the wall in front of one that cannot is
+	// refused (TestSensitiveGateSwitchOnWithAWarmCDN).
+	provider, err := cdn.New(cdn.Config{BaseURL: testCDNBase}, nil)
+	if err != nil {
+		t.Fatalf("cdn.New: %v", err)
+	}
+	srv, blobs, tcRepo, _, _ := videoServerFullWith(t, testConfig(), []Option{
+		WithDeliveryCDN(provider.EdgeURL, provider.Purge), WithCDNPurgeAvailable(func() bool { return true }),
+	})
+	setCDNDelivery(t, srv, true)
 	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	memberTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
 	gated := publishedPublicVideo(t, srv, blobs, tcRepo, adminTok)
@@ -212,4 +224,178 @@ func TestSensitiveGateKeepsGatedBytesOffTheCDN(t *testing.T) {
 		t.Errorf("signed-in read of a gated video: Cache-Control %q, want private, no-store", cc)
 	}
 	assertCDNRedirect(t, getWith(srv, original(plain), "", ""), original(plain))
+}
+
+// A sensitive video that the policy still LISTS is marked for a caller without
+// an account while the wall is up — sign_in_required, and no poster, because
+// the poster route answers 401 — and is unmarked for a signed-in caller and
+// whenever the wall is down.
+func TestSensitiveGateMarksListedCardsForAnonymousCallers(t *testing.T) {
+	env := newSensitiveGateEnv(t)
+	patchSettings(t, env.srv, env.adminTok, `{"sensitive_content_policy":"blur"}`)
+	type card struct {
+		ID             string `json:"id"`
+		SignInRequired bool   `json:"sign_in_required"`
+		HasThumbnail   *bool  `json:"has_thumbnail"`
+	}
+	cards := func(path, tok string) map[string]card {
+		t.Helper()
+		rec := getWithAuth(env.srv, path, tok)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d; body=%s", path, rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Videos []card `json:"videos"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		out := map[string]card{}
+		for _, c := range body.Videos {
+			out[c.ID] = c
+		}
+		return out
+	}
+	check := func(step, tok string, wantMarked bool) {
+		t.Helper()
+		for _, path := range []string{"/api/v1/videos?limit=50", "/api/v1/videos/search?q=Flagged&limit=50", "/api/v1/channels/ada/videos?limit=50"} {
+			got := cards(path, tok)
+			s, ok := got[env.sensitive]
+			if !ok {
+				t.Fatalf("%s %s: the sensitive video is not listed under the blur policy", step, path)
+			}
+			if s.SignInRequired != wantMarked || s.HasThumbnail == nil || *s.HasThumbnail == wantMarked {
+				t.Errorf("%s %s: sensitive card sign_in_required=%v has_thumbnail=%v, want %v / %v", step, path, s.SignInRequired, s.HasThumbnail, wantMarked, !wantMarked)
+			}
+			if p, ok := got[env.plain]; ok && (p.SignInRequired || p.HasThumbnail == nil || !*p.HasThumbnail) {
+				t.Errorf("%s %s: the plain card was touched: %+v", step, path, p)
+			}
+		}
+	}
+	check("gate off, anonymous", "", false)
+	patchSettings(t, env.srv, env.adminTok, `{"sensitive_anonymous_access":"sign_in"}`)
+	check("gate on, anonymous", "", true)
+	check("gate on, signed in", env.userTok, false)
+}
+
+// A feed reader, a crawler and a third-party page can never sign in, so the
+// RSS feed, the sitemap and oEmbed leave a gated video out rather than hand out
+// a link that answers 401.
+func TestSensitiveGateLeavesGatedVideosOutOfFeedsSitemapAndOEmbed(t *testing.T) {
+	env := newSensitiveGateEnv(t)
+	patchSettings(t, env.srv, env.adminTok, `{"sensitive_content_policy":"blur"}`)
+	// The feed names a video by id, the sitemap by its short code.
+	shortCode := func(id string) string {
+		t.Helper()
+		var v struct {
+			ShortCode string `json:"short_code"`
+		}
+		rec := getWithAuth(env.srv, "/api/v1/videos/"+id, env.adminTok)
+		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil || v.ShortCode == "" {
+			t.Fatalf("short code of %s: %v; body=%s", id, err, rec.Body.String())
+		}
+		return v.ShortCode
+	}
+	codes := map[string]string{env.sensitive: shortCode(env.sensitive), env.plain: shortCode(env.plain)}
+	mentions := func(path, id string) bool {
+		t.Helper()
+		rec := getWithAuth(env.srv, path, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d; body=%s", path, rec.Code, rec.Body.String())
+		}
+		return strings.Contains(rec.Body.String(), id) || strings.Contains(rec.Body.String(), codes[id])
+	}
+	oembed := func(id string) int {
+		return getWithAuth(env.srv, "/services/oembed?url="+url.QueryEscape("https://videos.example/videos/"+id), "").Code
+	}
+	for _, path := range []string{"/feeds/videos.xml", "/sitemap.xml"} {
+		if !mentions(path, env.sensitive) || !mentions(path, env.plain) {
+			t.Fatalf("gate off: %s should carry both videos", path)
+		}
+	}
+	if oembed(env.sensitive) != http.StatusOK {
+		t.Fatalf("gate off: oEmbed of the sensitive video = %d, want 200", oembed(env.sensitive))
+	}
+
+	patchSettings(t, env.srv, env.adminTok, `{"sensitive_anonymous_access":"sign_in"}`)
+	for _, path := range []string{"/feeds/videos.xml", "/sitemap.xml"} {
+		if mentions(path, env.sensitive) {
+			t.Errorf("gate on: %s still advertises the gated video", path)
+		}
+		if !mentions(path, env.plain) {
+			t.Errorf("gate on: %s lost the plain video", path)
+		}
+	}
+	if got := oembed(env.sensitive); got != http.StatusUnauthorized {
+		t.Errorf("gate on: oEmbed of the gated video = %d, want 401", got)
+	}
+	if got := oembed(env.plain); got != http.StatusOK {
+		t.Errorf("gate on: oEmbed of the plain video = %d, want 200", got)
+	}
+}
+
+// Raising the wall on an instance whose CDN is already holding sensitive
+// videos: refused outright when nothing can recall those copies, and allowed
+// with an instruction to purge when something can.
+func TestSensitiveGateSwitchOnWithAWarmCDN(t *testing.T) {
+	provider, err := cdn.New(cdn.Config{BaseURL: testCDNBase}, nil)
+	if err != nil {
+		t.Fatalf("cdn.New: %v", err)
+	}
+	patch := func(srv *Server, tok, body string) (int, []string, string) {
+		rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/instance-settings", body, tok)
+		var out struct {
+			Notices []string `json:"notices"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out.Notices, rec.Body.String()
+	}
+	for _, tc := range []struct {
+		name            string
+		cdnWired, cdnOn bool
+		canPurge        bool
+		wantCode        int
+		wantNotice      bool
+	}{
+		{"no CDN", false, false, false, http.StatusOK, false},
+		{"CDN delivering, no purge endpoint", true, true, false, http.StatusUnprocessableEntity, false},
+		{"CDN delivering, purge endpoint", true, true, true, http.StatusOK, true},
+		{"CDN wired but delivery off", true, false, false, http.StatusOK, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var httpOpts []Option
+			if tc.cdnWired {
+				httpOpts = append(httpOpts, WithDeliveryCDN(provider.EdgeURL, provider.Purge),
+					WithCDNPurgeAvailable(func() bool { return tc.canPurge }))
+			}
+			srv, _, _, _, _ := videoServerFullWith(t, testConfig(), httpOpts)
+			adminTok := registerAndToken(t, srv, `{"username":"root","email":"root@example.test","password":"supersecret"}`)
+			if tc.cdnOn {
+				setCDNDelivery(t, srv, true)
+			}
+			code, notices, body := patch(srv, adminTok, `{"sensitive_anonymous_access":"sign_in"}`)
+			if code != tc.wantCode {
+				t.Fatalf("PATCH = %d, want %d; body=%s", code, tc.wantCode, body)
+			}
+			wantValue := "sign_in"
+			if tc.wantCode != http.StatusOK {
+				wantValue = "open"
+				if !strings.Contains(body, `"sensitive_anonymous_access"`) || !strings.Contains(body, "purge") {
+					t.Errorf("the refusal does not name the setting and the reason: %s", body)
+				}
+			}
+			if got := publicInstance(t, srv).SensitiveAnonymousAccess; got != wantValue {
+				t.Errorf("sensitive_anonymous_access = %q after the PATCH, want %q", got, wantValue)
+			}
+			if has := len(notices) == 1 && strings.Contains(notices[0], "Purge the CDN zone"); has != tc.wantNotice {
+				t.Errorf("notices = %v, want a purge notice: %v", notices, tc.wantNotice)
+			}
+			// Restating the value is not raising the wall again: no second notice.
+			if tc.wantCode == http.StatusOK {
+				if _, again, _ := patch(srv, adminTok, `{"sensitive_anonymous_access":"sign_in"}`); len(again) != 0 {
+					t.Errorf("a restated value produced notices: %v", again)
+				}
+			}
+		})
+	}
 }

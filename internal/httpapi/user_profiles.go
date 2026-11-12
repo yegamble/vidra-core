@@ -136,6 +136,7 @@ func (s *Server) handleListUserVideos(c *echo.Context) error {
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(ctx, views)
+	s.gateCards(anonymousCaller(c), views)
 	return c.JSON(http.StatusOK, videoListResponse{Videos: views, pageMeta: page.meta(total)})
 }
 

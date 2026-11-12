@@ -22083,6 +22083,15 @@ components:
           description: >-
             Whether a poster image is available at GET /videos/{id}/thumbnail.
             Present on the detail endpoint; omitted on list/feed views.
+        sign_in_required:
+          type: boolean
+          description: >-
+            Present (true) on a LISTED sensitive video for a caller without a
+            session while the instance's `sensitive_anonymous_access` is
+            `sign_in`: opening it answers 401 `sign_in_required`, and its
+            poster is withheld (`has_thumbnail` is false on that card). Absent
+            otherwise. Whether a sensitive video is listed at all is still
+            `sensitive_content_policy`'s decision.
         has_storyboard:
           type: boolean
           description: >-
@@ -29526,6 +29535,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/InstanceSetting"
+        notices:
+          type: array
+          description: >-
+            Present only on a PATCH whose change leaves something for the
+            operator to do by hand. Today: switching
+            `sensitive_anonymous_access` to `sign_in` on an instance with a CDN
+            wired answers with an instruction to purge the CDN zone, because
+            copies cached before the switch stay public until then. (The same
+            switch is REFUSED with a 422 on `sensitive_anonymous_access` while
+            CDN delivery is on and no purge endpoint is configured.)
+          items:
+            type: string
     SettingValidationIssue:
       type: object
       description: >-
