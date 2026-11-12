@@ -3010,6 +3010,34 @@ func (f *videoFakeRepo) CountPublicVideosSorted(ctx context.Context, a sqlcgen.C
 	return int64(len(rows)), err
 }
 
+// The anonymous-feed statements return the general statement's rows for the
+// anonymous, local, unfiltered shape, so the fake answers them from it.
+func (f *videoFakeRepo) ListPublicVideosRecent(ctx context.Context, a sqlcgen.ListPublicVideosRecentParams) ([]sqlcgen.ListPublicVideosRecentRow, error) {
+	rows, err := f.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
+		Sort: "recent", HideSensitive: a.HideSensitive, ResultLimit: a.ResultLimit, ResultOffset: a.ResultOffset,
+	})
+	out := make([]sqlcgen.ListPublicVideosRecentRow, len(rows))
+	for i, r := range rows {
+		out[i] = sqlcgen.ListPublicVideosRecentRow(r)
+	}
+	return out, err
+}
+
+func (f *videoFakeRepo) ListPublicVideosRanked(ctx context.Context, a sqlcgen.ListPublicVideosRankedParams) ([]sqlcgen.ListPublicVideosRankedRow, error) {
+	rows, err := f.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
+		Sort: a.Sort, HideSensitive: a.HideSensitive, ResultLimit: a.ResultLimit, ResultOffset: a.ResultOffset,
+	})
+	out := make([]sqlcgen.ListPublicVideosRankedRow, len(rows))
+	for i, r := range rows {
+		out[i] = sqlcgen.ListPublicVideosRankedRow(r)
+	}
+	return out, err
+}
+
+func (f *videoFakeRepo) CountPublicVideosLocal(ctx context.Context, hideSensitive bool) (int64, error) {
+	return f.CountPublicVideosSorted(ctx, sqlcgen.CountPublicVideosSortedParams{HideSensitive: hideSensitive})
+}
+
 func (f *videoFakeRepo) ListDownloadEnabledVideoIDs(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
 	f.downloadLookups++
 	var out []uuid.UUID
