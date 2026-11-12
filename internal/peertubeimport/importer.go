@@ -414,6 +414,7 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 		return nil, err
 	}
 	r.count(KindVideo).Planned = len(videos)
+	r.noteSourceVideos(videos)
 	if err := im.noteBlacklistUnavailable(ctx, r); err != nil {
 		return nil, err
 	}

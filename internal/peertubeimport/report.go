@@ -1,6 +1,9 @@
 package peertubeimport
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Entity kinds — the stable ledger entity_kind values and the report's per-kind
 // keys. They also name what a --dry-run plan counts.
@@ -147,7 +150,12 @@ type Report struct {
 	// SourceAuthoritative records which side won on this run. It is on the report
 	// rather than only on the run row because the report is what gets read months
 	// later when somebody asks why a title changed.
-	SourceAuthoritative bool               `json:"source_authoritative"`
+	SourceAuthoritative bool `json:"source_authoritative"`
+	// SourceNewestVideoAt is when the newest local video in the source was
+	// created, as this run read it. The source is often a restored copy of the
+	// live database, and a copy does not move: "imported 0" beside a date days
+	// old says the copy needs refreshing, which the counts alone cannot.
+	SourceNewestVideoAt *time.Time         `json:"source_newest_video_at,omitempty"`
 	Entities            map[string]*Counts `json:"entities"`
 	// Deferred lists entity families the importer intentionally does not migrate
 	// in this version (e.g. HLS renditions, moderation state), so the operator
@@ -171,6 +179,16 @@ func NewReport(dryRun bool, policy ConflictPolicy, sourceAuthoritative bool) *Re
 		r.Entities[k] = &Counts{}
 	}
 	return r
+}
+
+// noteSourceVideos records how new the source is from its local video list.
+func (r *Report) noteSourceVideos(videos []SourceVideo) {
+	for _, v := range videos {
+		if r.SourceNewestVideoAt == nil || v.CreatedAt.After(*r.SourceNewestVideoAt) {
+			at := v.CreatedAt
+			r.SourceNewestVideoAt = &at
+		}
+	}
 }
 
 // count returns the counter for a kind, creating it if absent.

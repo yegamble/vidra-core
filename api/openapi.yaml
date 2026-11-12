@@ -28874,6 +28874,16 @@ components:
             Whether this run was allowed to update rows the import already owns
             where the source and this instance had diverged. Recorded on the
             report because "why did that title change?" is asked long afterwards.
+        source_newest_video_at:
+          type: string
+          format: date-time
+          description: >-
+            When the newest local video in the source was created, as this run
+            read it. The source is often a restored copy of the live database,
+            which does not move between runs: a run that imports nothing beside
+            a date days old means the copy needs refreshing. Absent on reports
+            written before this field existed and when the source has no local
+            video.
         entities:
           type: object
           description: >-

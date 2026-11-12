@@ -436,6 +436,7 @@ func (im *Importer) importVideos(ctx context.Context, r *Report) error {
 	if err != nil {
 		return err
 	}
+	r.noteSourceVideos(videos)
 	if err := im.noteBlacklistUnavailable(ctx, r); err != nil {
 		return err
 	}
