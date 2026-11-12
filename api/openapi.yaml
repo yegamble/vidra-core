@@ -20508,6 +20508,18 @@ components:
             enforced server-side (flagged videos are excluded from the public
             feed and search); warn/blur/display are presentation-only hints
             the frontend applies.
+        sensitive_anonymous_access:
+          type: string
+          enum: [open, sign_in]
+          description: >-
+            Whether a visitor without an account may open a video flagged
+            sensitive. `open` (the default) changes nothing. With `sign_in`,
+            every read of such a video by a caller without a session — the
+            detail document, the embed policy, captions, chapters, the download
+            list and every media route — answers 401 `sign_in_required`, and
+            its bytes are no longer handed to a CDN or a presigned redirect. A
+            sign-in wall, not age verification: it proves an account, not an
+            age. Lists and search keep following `sensitive_content_policy`.
         contact_form_enabled:
           type: boolean
           description: >-

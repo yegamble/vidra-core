@@ -47,7 +47,7 @@ func (s *Server) serveVideoStoryboard(c *echo.Context, kind, contentType string)
 		key:         f.StorageKey,
 		contentType: contentType,
 		class:       delivery.ClassStoryboardVTT,
-		eligible:    publicVideoForIPFS(v.Privacy, v.State),
+		eligible:    s.videoEdgeEligible(v.Privacy, v.State, v.IsSensitive),
 		notFound:    "video not found",
 	}
 	if kind == "storyboard" {

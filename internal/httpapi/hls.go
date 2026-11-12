@@ -114,7 +114,7 @@ func (s *Server) handleGetHLSMaster(c *echo.Context) error {
 	if err := validateHLSVersion(c, sp); err != nil {
 		return err
 	}
-	eligible := publicVideoForIPFS(v.Privacy, v.State)
+	eligible := s.videoEdgeEligible(v.Privacy, v.State, v.IsSensitive)
 	if isPeerTubeHLSMasterKey(sp.MasterKey) {
 		return s.servePeerTubeHLSMaster(c, sp, eligible)
 	}
@@ -168,7 +168,7 @@ func (s *Server) handleGetHLSFile(c *echo.Context) error {
 	// native player propagates the token to segment requests), which is exactly
 	// why a playlist can never be delivered from anywhere but here; a segment is
 	// opaque binary and goes through the delivery resolver.
-	eligible := publicVideoForIPFS(v.Privacy, v.State)
+	eligible := s.videoEdgeEligible(v.Privacy, v.State, v.IsSensitive)
 	if strings.HasSuffix(file, ".m3u8") {
 		return s.serveHLSPlaylist(c, key, sp, eligible)
 	}
@@ -191,7 +191,7 @@ func (s *Server) handleGetHLSFile(c *echo.Context) error {
 		key:         key,
 		contentType: contentType,
 		class:       delivery.ClassHLSSegment,
-		eligible:    publicVideoForIPFS(v.Privacy, v.State),
+		eligible:    s.videoEdgeEligible(v.Privacy, v.State, v.IsSensitive),
 		versioned:   hlsVersionMatches(c, sp),
 		notFound:    "video not found",
 	})
