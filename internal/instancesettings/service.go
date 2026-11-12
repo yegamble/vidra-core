@@ -46,10 +46,16 @@ import (
 // Setting keys. These are the stable, snake_case identifiers stored in the
 // instance_settings.key column and accepted by PATCH /admin/instance-settings.
 const (
-	KeyInstanceName                = "instance_name"
-	KeyInstanceDescription         = "instance_description"
-	KeyTermsURL                    = "terms_url"
-	KeyPrivacyURL                  = "privacy_url"
+	KeyInstanceName        = "instance_name"
+	KeyInstanceDescription = "instance_description"
+	KeyTermsURL            = "terms_url"
+	KeyPrivacyURL          = "privacy_url"
+	// KeyTermsVersion / KeyPrivacyVersion are the operator's labels for the
+	// documents behind terms_url / privacy_url ("2026-11-12", "v3"). A signup
+	// records the label it accepted, so changing the document means changing
+	// the label. Typed by the operator; never derived from the page.
+	KeyTermsVersion                = "terms_version"
+	KeyPrivacyVersion              = "privacy_version"
 	KeyContactEmail                = "contact_email"
 	KeyRegistrationEnabled         = "registration_enabled"
 	KeyRegistrationRequireApproval = "registration_require_approval"
@@ -770,6 +776,10 @@ var specs = []spec{
 	{key: KeyTermsURL, kind: KindString, defString: func(d Defaults) string { return d.TermsURL }, validate: validateOptionalURL,
 		page: PageGeneral, section: "about"},
 	{key: KeyPrivacyURL, kind: KindString, defString: func(d Defaults) string { return d.PrivacyURL }, validate: validateOptionalURL,
+		page: PageGeneral, section: "about"},
+	{key: KeyTermsVersion, kind: KindString, defString: func(Defaults) string { return "" }, validate: validateDocumentVersion,
+		page: PageGeneral, section: "about"},
+	{key: KeyPrivacyVersion, kind: KindString, defString: func(Defaults) string { return "" }, validate: validateDocumentVersion,
 		page: PageGeneral, section: "about"},
 	{key: KeyContactEmail, kind: KindString, defString: func(d Defaults) string { return d.ContactEmail }, validate: validateOptionalEmail,
 		page: PageGeneral, section: "contact"},
@@ -1784,6 +1794,23 @@ func validateInstanceName(v string) error {
 
 // validateDescription bounds the long (markdown) instance description.
 func validateDescription(v string) error { return maxLen(10000)(v) }
+
+// MaxDocumentVersionLen bounds terms_version / privacy_version; the same bound
+// is a CHECK on user_consents.version, where every accepted label is stored.
+const MaxDocumentVersionLen = 64
+
+// validateDocumentVersion accepts a short printable label, or empty for none.
+func validateDocumentVersion(v string) error {
+	if len(v) > MaxDocumentVersionLen {
+		return fmt.Errorf("must be at most %d characters", MaxDocumentVersionLen)
+	}
+	for _, r := range v {
+		if !unicode.IsPrint(r) {
+			return errors.New("must not contain control characters or line breaks")
+		}
+	}
+	return nil
+}
 
 // maxLen returns a validator accepting any string up to n characters (bytes,
 // like the other length limits here). Empty is always fine — it clears the

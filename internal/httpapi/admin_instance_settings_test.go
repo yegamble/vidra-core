@@ -206,9 +206,12 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// newly published video; default OFF, effective only with transcription).
 	// + player_vast_midroll_interval_seconds (repeat midrolls; default 0 = one
 	// midroll, exactly as before).
+	// + terms_version and privacy_version (the operator's labels for the
+	// documents behind terms_url / privacy_url; default empty, recorded on a
+	// signup's consent rows).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 145 {
-		t.Fatalf("settings count = %d, want 145", len(got.Settings))
+	if len(got.Settings) != 147 {
+		t.Fatalf("settings count = %d, want 147", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

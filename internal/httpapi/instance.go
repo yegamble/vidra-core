@@ -308,7 +308,12 @@ type instanceResponse struct {
 	FederationEnabled bool   `json:"federation_enabled"`
 	TermsURL          string `json:"terms_url"`
 	PrivacyURL        string `json:"privacy_url"`
-	ContactEmail      string `json:"contact_email"`
+	// TermsVersion / PrivacyVersion are the operator's labels for the two
+	// documents above; a signup form shows them and the account's consent
+	// record keeps the ones it accepted. Empty when the operator set none.
+	TermsVersion   string `json:"terms_version"`
+	PrivacyVersion string `json:"privacy_version"`
+	ContactEmail   string `json:"contact_email"`
 	// DefaultLanguage is the instance's default content language (a taxonomy
 	// language id from GET /videos/config).
 	DefaultLanguage string `json:"default_language"`
@@ -418,6 +423,8 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 		FederationEnabled:                     s.cfg.FederationEnabled,
 		TermsURL:                              s.settingString(instancesettings.KeyTermsURL, s.cfg.InstanceTermsURL),
 		PrivacyURL:                            s.settingString(instancesettings.KeyPrivacyURL, s.cfg.InstancePrivacyURL),
+		TermsVersion:                          s.settingString(instancesettings.KeyTermsVersion, ""),
+		PrivacyVersion:                        s.settingString(instancesettings.KeyPrivacyVersion, ""),
 		ContactEmail:                          s.effectiveContactEmail(),
 		DefaultLanguage:                       s.settingString(instancesettings.KeyDefaultLanguage, instancesettings.DefaultDefaultLanguage),
 		Categories:                            s.settingStrings(instancesettings.KeyInstanceCategories),

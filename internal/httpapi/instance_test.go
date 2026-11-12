@@ -109,6 +109,8 @@ func TestInstancePlatformInfoOverlayAndAbout(t *testing.T) {
 		instancesettings.KeyXLink:                    {Value: "https://x.com/vidra"},
 		instancesettings.KeyBlueskyLink:              {Value: "https://bsky.app/profile/vidra.example.test"},
 		instancesettings.KeyTerms:                    {Value: "## Terms"},
+		instancesettings.KeyTermsVersion:             {Value: "2026-11-12"},
+		instancesettings.KeyPrivacyVersion:           {Value: "v3"},
 		instancesettings.KeyCodeOfConduct:            {Value: "Be kind."},
 		instancesettings.KeyModerationInfo:           {Value: "Moderated daily."},
 		instancesettings.KeyAdministratorInfo:        {Value: "A small team."},
@@ -135,6 +137,9 @@ func TestInstancePlatformInfoOverlayAndAbout(t *testing.T) {
 		body.ServerCountry != "France" || !body.IsSensitive ||
 		body.SensitiveContentPolicy != "warn" {
 		t.Errorf("platform instance fields = %+v", body)
+	}
+	if body.TermsVersion != "2026-11-12" || body.PrivacyVersion != "v3" {
+		t.Errorf("document versions = %q / %q, want 2026-11-12 / v3", body.TermsVersion, body.PrivacyVersion)
 	}
 	if len(body.Categories) != 2 || body.Categories[0] != "1" || body.Categories[1] != "7" {
 		t.Errorf("categories = %#v, want [1 7]", body.Categories)
