@@ -49,6 +49,12 @@ func (s *Service) RequestRegistration(ctx context.Context, in RegisterInput, not
 	if err := s.refuseIfOwnerUnclaimed(ctx); err != nil {
 		return RegistrationRequest{}, err
 	}
+	// The applicant accepts the instance's documents when they apply, exactly
+	// as a direct signup does; a request without the acceptance is not filed.
+	consent, err := s.signupConsent(in.Accepted)
+	if err != nil {
+		return RegistrationRequest{}, err
+	}
 	hash, err := HashPassword(in.Password)
 	if err != nil {
 		return RegistrationRequest{}, err
@@ -59,11 +65,21 @@ func (s *Service) RequestRegistration(ctx context.Context, in RegisterInput, not
 	if _, err := s.repo.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(in.Email))); err == nil {
 		return RegistrationRequest{}, ErrConflict
 	}
+	kept := consent.forRequest()
 	row, err := s.repo.CreateRegistrationRequest(ctx, sqlcgen.CreateRegistrationRequestParams{
 		Username:     strings.TrimSpace(in.Username),
 		Email:        strings.TrimSpace(in.Email),
 		PasswordHash: hash,
 		Note:         strings.TrimSpace(note),
+		// Kept on the request: approval creates the account, possibly days
+		// later, and its consent rows must carry the time the applicant
+		// accepted, which is now.
+		ConsentRecorded:       kept.recorded,
+		ConsentTermsUrl:       kept.termsURL,
+		ConsentTermsVersion:   kept.termsVersion,
+		ConsentPrivacyUrl:     kept.privacyURL,
+		ConsentPrivacyVersion: kept.privacyVersion,
+		ConsentMinimumAge:     kept.minimumAge,
 	})
 	if err != nil {
 		if pgconv.IsUniqueViolation(err) {

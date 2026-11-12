@@ -13,6 +13,9 @@ const (
 	ConsentAge     = "age"
 
 	ConsentSourceSignup = "signup"
+	// ConsentSourceApproval is written by the statement that approves a queued
+	// request (ApproveRegistrationRequest), from what the request kept.
+	ConsentSourceApproval = "approval"
 )
 
 // ErrTermsRequired is returned when the instance has terms or a privacy policy
@@ -95,4 +98,28 @@ func (s *Service) signupConsent(a SignupAcceptance) (consentRecord, error) {
 		r.add(ConsentAge, "", "", t.MinimumAge)
 	}
 	return r, nil
+}
+
+// requestConsent is a consentRecord in the columns a queued registration
+// request keeps until an admin decides: the applicant accepted when they
+// applied, and the account's rows must say so, with that time.
+type requestConsent struct {
+	recorded                                           bool
+	termsURL, termsVersion, privacyURL, privacyVersion *string
+	minimumAge                                         *int32
+}
+
+func (r consentRecord) forRequest() requestConsent {
+	out := requestConsent{recorded: len(r.documents) > 0}
+	for i, document := range r.documents {
+		switch document {
+		case ConsentTerms:
+			out.termsURL, out.termsVersion = &r.urls[i], &r.versions[i]
+		case ConsentPrivacy:
+			out.privacyURL, out.privacyVersion = &r.urls[i], &r.versions[i]
+		case ConsentAge:
+			out.minimumAge = &r.minimumAges[i]
+		}
+	}
+	return out
 }

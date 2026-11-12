@@ -58,3 +58,29 @@ func TestSignupMustAcceptTheConfiguredDocuments(t *testing.T) {
 		t.Fatalf("recorded consent = %q %v %v %v %v", got.ConsentSource, got.ConsentDocuments, got.ConsentVersions, got.ConsentUrls, got.ConsentMinimumAges)
 	}
 }
+
+// With approval required, the applicant accepts when they apply: the request is
+// refused without terms_accepted and otherwise keeps what was accepted.
+func TestQueuedSignupMustAcceptTheConfiguredDocuments(t *testing.T) {
+	srv := videoServer(t)
+	repo := authRepoBySrv[srv]
+	adminTok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	patchSettings(t, srv, adminTok, `{"terms_url":"https://example.test/terms","terms_version":"v1","registration_require_approval":true}`)
+
+	rec := postTo(srv, "/api/v1/auth/register", `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("queued signup without the acceptance = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(repo.requested) != 0 {
+		t.Fatalf("a request was filed without the acceptance")
+	}
+	rec = postTo(srv, "/api/v1/auth/register", `{"username":"bob","email":"bob@example.test","password":"supersecret","terms_accepted":true}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("queued signup with the acceptance = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	got := repo.requested[0]
+	if !got.ConsentRecorded || got.ConsentTermsUrl == nil || *got.ConsentTermsUrl != "https://example.test/terms" ||
+		got.ConsentTermsVersion == nil || *got.ConsentTermsVersion != "v1" || got.ConsentPrivacyUrl != nil || got.ConsentMinimumAge != nil {
+		t.Fatalf("the request kept %+v", got)
+	}
+}

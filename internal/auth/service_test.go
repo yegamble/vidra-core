@@ -38,6 +38,9 @@ type fakeRegReq struct {
 
 // fakeRepo is an in-memory auth.Repository keyed by lowercased email/username.
 type fakeRepo struct {
+	// requested is every CreateRegistrationRequest argument, in order: a queued
+	// request keeps what its applicant accepted.
+	requested []sqlcgen.CreateRegistrationRequestParams
 	// created is every CreateUser argument, in order: the consent a signup
 	// recorded travels on it, in the same statement as the account.
 	created []sqlcgen.CreateUserParams
@@ -98,6 +101,7 @@ func (f *fakeRepo) reset() {
 }
 
 func (f *fakeRepo) CreateRegistrationRequest(_ context.Context, a sqlcgen.CreateRegistrationRequestParams) (sqlcgen.CreateRegistrationRequestRow, error) {
+	f.requested = append(f.requested, a)
 	for _, r := range f.regReqs {
 		if r.status == "pending" && (lower(r.email) == lower(a.Email) || lower(r.username) == lower(a.Username)) {
 			return sqlcgen.CreateRegistrationRequestRow{}, &pgconn.PgError{Code: "23505"}

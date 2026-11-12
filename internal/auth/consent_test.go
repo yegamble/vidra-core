@@ -100,3 +100,46 @@ func TestSignupWithoutTermsWiredIsUnchanged(t *testing.T) {
 		t.Fatalf("created = %+v, want one account and no consent", repo.created)
 	}
 }
+
+// A signup held for approval is accepted by the applicant when they apply: the
+// request is refused without the acceptance, and otherwise keeps exactly what
+// was accepted so the approved account can record it.
+func TestQueuedSignupKeepsWhatTheApplicantAccepted(t *testing.T) {
+	ctx := context.Background()
+	in := RegisterInput{Username: "bob", Email: "bob@example.test", Password: "supersecret"}
+
+	repo := newFakeRepo()
+	svc := termsService(repo, bothDocuments)
+	if _, err := svc.RequestRegistration(ctx, in, ""); !errors.Is(err, ErrTermsRequired) {
+		t.Fatalf("RequestRegistration without the acceptance = %v, want ErrTermsRequired", err)
+	}
+	if len(repo.requested) != 0 {
+		t.Fatalf("a request was filed without the acceptance")
+	}
+
+	in.Accepted = SignupAcceptance{Terms: true, Age: true}
+	if _, err := svc.RequestRegistration(ctx, in, "hello"); err != nil {
+		t.Fatalf("RequestRegistration: %v", err)
+	}
+	got := repo.requested[0]
+	str := func(p *string) string {
+		if p == nil {
+			return "<nil>"
+		}
+		return *p
+	}
+	if !got.ConsentRecorded || str(got.ConsentTermsUrl) != "https://example.test/terms" || str(got.ConsentTermsVersion) != "2026-11-12" ||
+		str(got.ConsentPrivacyUrl) != "https://example.test/privacy" || str(got.ConsentPrivacyVersion) != "v3" ||
+		got.ConsentMinimumAge == nil || *got.ConsentMinimumAge != 16 {
+		t.Errorf("request kept %+v", got)
+	}
+
+	// Nothing configured: the request records nothing, as before.
+	plain := newFakeRepo()
+	if _, err := newTestService(plain).RequestRegistration(ctx, RegisterInput{Username: "cal", Email: "cal@example.test", Password: "supersecret"}, ""); err != nil {
+		t.Fatalf("RequestRegistration with nothing configured: %v", err)
+	}
+	if got := plain.requested[0]; got.ConsentRecorded || got.ConsentTermsUrl != nil || got.ConsentPrivacyUrl != nil || got.ConsentMinimumAge != nil {
+		t.Errorf("a request with nothing to accept kept %+v", got)
+	}
+}

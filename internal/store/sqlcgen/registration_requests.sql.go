@@ -19,7 +19,11 @@ WITH req AS (
            registration_requests.email, registration_requests.password_hash,
            registration_requests.oauth_provider, registration_requests.oauth_subject,
            registration_requests.oauth_handle, registration_requests.oauth_email,
-           registration_requests.oauth_email_verified
+           registration_requests.oauth_email_verified,
+           registration_requests.consent_accepted_at,
+           registration_requests.consent_terms_url, registration_requests.consent_terms_version,
+           registration_requests.consent_privacy_url, registration_requests.consent_privacy_version,
+           registration_requests.consent_minimum_age
     FROM registration_requests
     WHERE registration_requests.id = $1 AND registration_requests.status = 'pending'
 ),
@@ -41,6 +45,19 @@ ident AS (
     FROM req, ins
     WHERE req.oauth_provider IS NOT NULL
     RETURNING oauth_identities.id
+),
+consents AS (
+    INSERT INTO user_consents (user_id, document, version, url, minimum_age, source, accepted_at)
+    SELECT ins.id, d.document, COALESCE(d.version, ''), COALESCE(d.url, ''), d.minimum_age,
+           'approval', req.consent_accepted_at
+    FROM req, ins,
+         LATERAL (VALUES
+             ('terms',   req.consent_terms_version,   req.consent_terms_url,   NULL::int, req.consent_terms_url IS NOT NULL),
+             ('privacy', req.consent_privacy_version, req.consent_privacy_url, NULL::int, req.consent_privacy_url IS NOT NULL),
+             ('age',     NULL::text,                  NULL::text,              req.consent_minimum_age, req.consent_minimum_age IS NOT NULL)
+         ) AS d(document, version, url, minimum_age, accepted)
+    WHERE req.consent_accepted_at IS NOT NULL AND d.accepted
+    RETURNING user_consents.id
 ),
 upd AS (
     UPDATE registration_requests
@@ -87,6 +104,11 @@ type ApproveRegistrationRequestRow struct {
 // in through the same subject rather than merely one asserting the same address.
 // In the same statement as the user insert: an account with no credential is
 // exactly the state a second query could leave behind if it failed.
+// The account's consent record (0189), from what the request kept: the
+// documents the applicant accepted, at the time THEY accepted them. Same
+// statement as the account, as on every other path that creates one. A request
+// that recorded nothing (filed before 0189, or with no documents configured)
+// has a NULL consent_accepted_at and adds no row.
 func (q *Queries) ApproveRegistrationRequest(ctx context.Context, arg ApproveRegistrationRequestParams) (ApproveRegistrationRequestRow, error) {
 	row := q.db.QueryRow(ctx, approveRegistrationRequest,
 		arg.ID,
@@ -130,24 +152,38 @@ func (q *Queries) CountRegistrationRequests(ctx context.Context, status *string)
 const createProviderRegistrationRequest = `-- name: CreateProviderRegistrationRequest :one
 INSERT INTO registration_requests (
     username, email, password_hash, note,
-    oauth_provider, oauth_subject, oauth_handle, oauth_email, oauth_email_verified
+    oauth_provider, oauth_subject, oauth_handle, oauth_email, oauth_email_verified,
+    consent_accepted_at, consent_terms_url, consent_terms_version,
+    consent_privacy_url, consent_privacy_version, consent_minimum_age
 )
 VALUES (
     $1, $2, '', '',
     $3, $4, $5,
-    $6, $7
+    $6, $7,
+    -- What the applicant accepted, and when: NOW, as they submit this — not
+    -- whenever an admin gets to the queue. All NULL when nothing was accepted.
+    CASE WHEN $8::bool THEN now() END,
+    $9, $10,
+    $11, $12,
+    $13
 )
 RETURNING id, username, email, note, status, moderator_note, reviewed_at, created_at
 `
 
 type CreateProviderRegistrationRequestParams struct {
-	Username           string  `json:"username"`
-	Email              string  `json:"email"`
-	OauthProvider      *string `json:"oauth_provider"`
-	OauthSubject       *string `json:"oauth_subject"`
-	OauthHandle        *string `json:"oauth_handle"`
-	OauthEmail         string  `json:"oauth_email"`
-	OauthEmailVerified bool    `json:"oauth_email_verified"`
+	Username              string  `json:"username"`
+	Email                 string  `json:"email"`
+	OauthProvider         *string `json:"oauth_provider"`
+	OauthSubject          *string `json:"oauth_subject"`
+	OauthHandle           *string `json:"oauth_handle"`
+	OauthEmail            string  `json:"oauth_email"`
+	OauthEmailVerified    bool    `json:"oauth_email_verified"`
+	ConsentRecorded       bool    `json:"consent_recorded"`
+	ConsentTermsUrl       *string `json:"consent_terms_url"`
+	ConsentTermsVersion   *string `json:"consent_terms_version"`
+	ConsentPrivacyUrl     *string `json:"consent_privacy_url"`
+	ConsentPrivacyVersion *string `json:"consent_privacy_version"`
+	ConsentMinimumAge     *int32  `json:"consent_minimum_age"`
 }
 
 type CreateProviderRegistrationRequestRow struct {
@@ -176,6 +212,12 @@ func (q *Queries) CreateProviderRegistrationRequest(ctx context.Context, arg Cre
 		arg.OauthHandle,
 		arg.OauthEmail,
 		arg.OauthEmailVerified,
+		arg.ConsentRecorded,
+		arg.ConsentTermsUrl,
+		arg.ConsentTermsVersion,
+		arg.ConsentPrivacyUrl,
+		arg.ConsentPrivacyVersion,
+		arg.ConsentMinimumAge,
 	)
 	var i CreateProviderRegistrationRequestRow
 	err := row.Scan(
@@ -192,16 +234,34 @@ func (q *Queries) CreateProviderRegistrationRequest(ctx context.Context, arg Cre
 }
 
 const createRegistrationRequest = `-- name: CreateRegistrationRequest :one
-INSERT INTO registration_requests (username, email, password_hash, note)
-VALUES ($1, $2, $3, $4)
+INSERT INTO registration_requests (
+    username, email, password_hash, note,
+    consent_accepted_at, consent_terms_url, consent_terms_version,
+    consent_privacy_url, consent_privacy_version, consent_minimum_age
+)
+VALUES (
+    $1, $2, $3, $4,
+    -- What the applicant accepted, and when: NOW, as they submit this — not
+    -- whenever an admin gets to the queue. All NULL when nothing was accepted.
+    CASE WHEN $5::bool THEN now() END,
+    $6, $7,
+    $8, $9,
+    $10
+)
 RETURNING id, username, email, note, status, moderator_note, reviewed_at, created_at
 `
 
 type CreateRegistrationRequestParams struct {
-	Username     string `json:"username"`
-	Email        string `json:"email"`
-	PasswordHash string `json:"password_hash"`
-	Note         string `json:"note"`
+	Username              string  `json:"username"`
+	Email                 string  `json:"email"`
+	PasswordHash          string  `json:"password_hash"`
+	Note                  string  `json:"note"`
+	ConsentRecorded       bool    `json:"consent_recorded"`
+	ConsentTermsUrl       *string `json:"consent_terms_url"`
+	ConsentTermsVersion   *string `json:"consent_terms_version"`
+	ConsentPrivacyUrl     *string `json:"consent_privacy_url"`
+	ConsentPrivacyVersion *string `json:"consent_privacy_version"`
+	ConsentMinimumAge     *int32  `json:"consent_minimum_age"`
 }
 
 type CreateRegistrationRequestRow struct {
@@ -224,6 +284,12 @@ func (q *Queries) CreateRegistrationRequest(ctx context.Context, arg CreateRegis
 		arg.Email,
 		arg.PasswordHash,
 		arg.Note,
+		arg.ConsentRecorded,
+		arg.ConsentTermsUrl,
+		arg.ConsentTermsVersion,
+		arg.ConsentPrivacyUrl,
+		arg.ConsentPrivacyVersion,
+		arg.ConsentMinimumAge,
 	)
 	var i CreateRegistrationRequestRow
 	err := row.Scan(
