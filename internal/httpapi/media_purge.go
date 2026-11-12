@@ -349,7 +349,9 @@ func (s *Server) videoDownloadPurgeSnapshot(ctx context.Context, videoID uuid.UU
 		return edgePurgeSnapshot{}
 	}
 	v, err := s.videosvc.GetByID(ctx, videoID)
-	if err != nil || !s.publicDownload(v) {
+	// The wide fence, like videoEdgePurgeSnapshot: what the edge COULD be
+	// holding includes copies cached before a sign-in wall went up.
+	if err != nil || !publicVideoForIPFS(v.Privacy, v.State) || !s.downloadsEnabled() || !v.DownloadEnabled {
 		return edgePurgeSnapshot{}
 	}
 	snap := edgePurgeSnapshot{}

@@ -146,7 +146,7 @@ func (s *Server) handleDownloadCaption(c *echo.Context) error {
 	// Caption tracks had no cache policy at all before the delivery wave; they
 	// now take the same short private window as the other small per-video assets
 	// (and no-store when the request carries a playback token).
-	setMediaCacheControl(c, delivery.ClassCaption, publicVideoForIPFS(v.Privacy, v.State))
+	setMediaCacheControl(c, delivery.ClassCaption, s.videoEdgeEligible(v.Privacy, v.State, v.IsSensitive))
 	return c.Stream(http.StatusOK, "text/vtt; charset=utf-8", rc)
 }
 

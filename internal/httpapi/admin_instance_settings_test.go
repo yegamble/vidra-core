@@ -209,9 +209,11 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// + terms_version and privacy_version (the operator's labels for the
 	// documents behind terms_url / privacy_url; default empty, recorded on a
 	// signup's consent rows).
+	// + sensitive_anonymous_access (open|sign_in: whether a visitor without an
+	// account may open a sensitive video; default open, exactly as before).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 147 {
-		t.Fatalf("settings count = %d, want 147", len(got.Settings))
+	if len(got.Settings) != 148 {
+		t.Fatalf("settings count = %d, want 148", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

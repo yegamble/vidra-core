@@ -1270,7 +1270,9 @@ func (s *Server) applyVideoUpdate(c *echo.Context, userID uuid.UUID, role string
 	// privacy or state belongs in this list. Missing one is a missed purge, not
 	// a wrong one — the post-update check below is what decides.
 	var purge edgePurgeSnapshot
-	if in.Privacy != nil || in.PublishAt != nil || in.PublishAfterTranscode != nil {
+	// is_sensitive is in the list since the sensitive sign-in wall: flagging a
+	// video while that wall is up takes it out of the fence like a privacy flip.
+	if in.Privacy != nil || in.PublishAt != nil || in.PublishAfterTranscode != nil || in.IsSensitive != nil {
 		purge = s.videoEdgePurgeSnapshot(c.Request().Context(), id)
 	}
 	// The download gates are a SECOND fence (publicDownload, downloads.go) and
@@ -1325,9 +1327,9 @@ func (s *Server) applyVideoUpdate(c *echo.Context, userID uuid.UUID, role string
 	// edit must not cold-start the edge for the whole ladder; a flip to
 	// private/unlisted — or out of `published` — is the moment every shared copy
 	// became unauthorized.
-	if !publicVideoForIPFS(v.Privacy, v.State) {
+	if !s.videoEdgeEligible(v.Privacy, v.State, v.IsSensitive) {
 		s.purgeVideoEdgeCopies(c.Request().Context(), id, purge)
-	} else if in.DownloadEnabled != nil && !s.publicDownloadOf(v.Privacy, v.State, v.DownloadEnabled) {
+	} else if in.DownloadEnabled != nil && !s.publicDownloadOf(v.Privacy, v.State, v.IsSensitive, v.DownloadEnabled) {
 		// Still Eligible, so the ladder stays legitimately cached and the branch
 		// above correctly did nothing — but the download gate just shut, and the
 		// master file is at a stable, publicly derivable key. publicDownload is
@@ -1652,7 +1654,7 @@ func (s *Server) handleStreamVideoOriginal(c *echo.Context) error {
 		key:         f.StorageKey,
 		contentType: f.ContentType,
 		class:       delivery.ClassOriginal,
-		eligible:    publicVideoForIPFS(v.Privacy, v.State),
+		eligible:    s.videoEdgeEligible(v.Privacy, v.State, v.IsSensitive),
 		notFound:    "video not found",
 	})
 }
@@ -1682,7 +1684,7 @@ func (s *Server) handleGetVideoThumbnail(c *echo.Context) error {
 		contentType: f.ContentType,
 		class:       delivery.ClassThumbnail,
 		mirrorClass: ipfsmirror.ClassThumbnail,
-		eligible:    publicVideoForIPFS(v.Privacy, v.State),
+		eligible:    s.videoEdgeEligible(v.Privacy, v.State, v.IsSensitive),
 		notFound:    "video not found",
 	})
 }
@@ -1876,7 +1878,11 @@ func (s *Server) videoReadBase(c *echo.Context, videoID uuid.UUID) (sqlcgen.GetV
 		}
 		return sqlcgen.GetVideoByIDRow{}, err
 	}
-	if v.Privacy == "private" || v.Privacy == video.PrivacyInternal || v.State != "published" {
+	// A video behind the sensitive sign-in wall is read on the video-access
+	// cookie too, for the reason an internal one is: a <video> or <img> cannot
+	// send the bearer.
+	gated := s.sensitiveGated(v.IsSensitive)
+	if v.Privacy == "private" || v.Privacy == video.PrivacyInternal || v.State != "published" || gated {
 		s.restoreVideoReadPrincipal(c)
 	}
 	// An internal video refused to an anonymous caller is answered LAST, after
@@ -1906,7 +1912,9 @@ func (s *Server) videoReadBase(c *echo.Context, videoID uuid.UUID) (sqlcgen.GetV
 	if rejectedHidesVideo(c, v.State, v.OwnerID) {
 		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if signInRequired {
+	// The sensitive sign-in wall is answered here too, after the same gates and
+	// for the same reason: the 401 admits the video exists.
+	if _, _, ok := principalFromContext(c); signInRequired || (gated && !ok) {
 		return sqlcgen.GetVideoByIDRow{}, &SignInRequiredError{}
 	}
 	return v, nil

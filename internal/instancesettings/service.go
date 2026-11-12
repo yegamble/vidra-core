@@ -104,6 +104,12 @@ const (
 	KeyReportEmailAlertsEnabled = "report_email_alerts_enabled"
 	KeyInstanceIsSensitive      = "instance_is_sensitive"
 	KeySensitiveContentPolicy   = "sensitive_content_policy"
+	// KeySensitiveAnonymousAccess decides whether a visitor WITHOUT an account
+	// may open a video flagged sensitive: "open" (the default; today's
+	// behaviour) or "sign_in" (every read of such a video — metadata and bytes —
+	// answers 401 sign_in_required to them). A sign-in wall, not age
+	// verification: it proves an account, not an age.
+	KeySensitiveAnonymousAccess = "sensitive_anonymous_access"
 	KeyInstanceCategories       = "instance_categories"
 	// KeyInstanceCustomCategories REPLACES the built-in video category taxonomy
 	// when it is non-empty. Entries are "<numeric id>:<label>".
@@ -560,6 +566,15 @@ const (
 	SensitiveContentPolicyDisplay = "display"
 )
 
+// sensitive_anonymous_access values (KeySensitiveAnonymousAccess).
+const (
+	SensitiveAnonymousAccessOpen   = "open"
+	SensitiveAnonymousAccessSignIn = "sign_in"
+)
+
+// SensitiveAnonymousAccessOptions is the option order for the admin view.
+var SensitiveAnonymousAccessOptions = []string{SensitiveAnonymousAccessOpen, SensitiveAnonymousAccessSignIn}
+
 // SensitiveContentPolicyOptions is the canonical option order for the
 // sensitive_content_policy enum (also the admin-view/OpenAPI order).
 var SensitiveContentPolicyOptions = []string{
@@ -859,6 +874,9 @@ var specs = []spec{
 		page: PageGeneral, section: "moderation"},
 	{key: KeySensitiveContentPolicy, kind: KindEnum, defString: hardcoded(DefaultSensitiveContentPolicy),
 		options: SensitiveContentPolicyOptions, validate: enumOf(SensitiveContentPolicyOptions),
+		page: PageGeneral, section: "moderation"},
+	{key: KeySensitiveAnonymousAccess, kind: KindEnum, defString: hardcoded(SensitiveAnonymousAccessOpen),
+		options: SensitiveAnonymousAccessOptions, validate: enumOf(SensitiveAnonymousAccessOptions),
 		page: PageGeneral, section: "moderation"},
 	{key: KeyInstanceCategories, kind: KindList, defString: hardcoded(emptyList),
 		validate: listOf(video.IsCategory, "category"),

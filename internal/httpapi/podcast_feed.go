@@ -168,7 +168,7 @@ func (s *Server) handlePodcastFeed(c *echo.Context) error {
 	}
 	for _, it := range rows {
 		v := it.Video
-		if !s.publicDownloadOf(v.Privacy, v.State, dl[v.ID]) {
+		if !s.publicDownloadOf(v.Privacy, v.State, v.IsSensitive, dl[v.ID]) {
 			continue
 		}
 		// One item's storage/DB hiccup drops THAT episode, not the whole show:

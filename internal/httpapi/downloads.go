@@ -237,15 +237,15 @@ func (s *Server) downloadStoredVideoFile(c *echo.Context, kind, fallbackName str
 // download URL leaves the building, not "no download URL except the one the
 // moderator's browser can be talked into fetching".
 func (s *Server) publicDownload(v sqlcgen.GetVideoByIDRow) bool {
-	return s.publicDownloadOf(v.Privacy, v.State, v.DownloadEnabled)
+	return s.publicDownloadOf(v.Privacy, v.State, v.IsSensitive, v.DownloadEnabled)
 }
 
 // publicDownloadOf is publicDownload over plain values, for the callers that
 // hold a different row shape of the same video (the update handler writes and
 // re-reads a sqlcgen.Video). Same three-way AND, one definition — the fence and
 // the purge trigger that enforces it must never be able to disagree.
-func (s *Server) publicDownloadOf(privacy, state string, downloadEnabled bool) bool {
-	return publicVideoForIPFS(privacy, state) && s.downloadsEnabled() && downloadEnabled
+func (s *Server) publicDownloadOf(privacy, state string, isSensitive, downloadEnabled bool) bool {
+	return s.videoEdgeEligible(privacy, state, isSensitive) && s.downloadsEnabled() && downloadEnabled
 }
 
 func (s *Server) handleDownloadHLSRendition(c *echo.Context) error {
@@ -362,7 +362,7 @@ func (s *Server) handleDownloadVideoSubtitle(c *echo.Context) error {
 	// surfaces the storage key, so this route keeps the API-proxy path and takes
 	// the cache policy alone (see docs/operations.md — captions are deliberately
 	// outside presigned delivery).
-	setMediaCacheControl(c, delivery.ClassCaption, publicVideoForIPFS(v.Privacy, v.State))
+	setMediaCacheControl(c, delivery.ClassCaption, s.videoEdgeEligible(v.Privacy, v.State, v.IsSensitive))
 	return c.Stream(http.StatusOK, "text/vtt; charset=utf-8", rc)
 }
 
@@ -388,7 +388,7 @@ func (s *Server) handleStreamVideoWebM(c *echo.Context) error {
 		key:         f.StorageKey,
 		contentType: f.ContentType,
 		class:       delivery.ClassWebM,
-		eligible:    publicVideoForIPFS(v.Privacy, v.State),
+		eligible:    s.videoEdgeEligible(v.Privacy, v.State, v.IsSensitive),
 		notFound:    "video not found",
 	})
 }

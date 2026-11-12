@@ -327,6 +327,10 @@ type instanceResponse struct {
 	// SensitiveContentPolicy is hide|warn|blur|display. "hide" is enforced
 	// server-side (public browse/search); the others are presentation-only.
 	SensitiveContentPolicy string `json:"sensitive_content_policy"`
+	// SensitiveAnonymousAccess is open|sign_in: with sign_in, a visitor without
+	// an account is refused every read of a sensitive video (401
+	// sign_in_required). A sign-in wall, not age verification.
+	SensitiveAnonymousAccess string `json:"sensitive_anonymous_access"`
 	// ContactFormEnabled reports the EFFECTIVE contact-form availability: the
 	// admin toggle AND a non-empty effective contact email AND an outbound mail
 	// path on this deployment. POST /instance/contact answers 409 whenever this
@@ -432,6 +436,7 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 		ServerCountry:                         s.settingString(instancesettings.KeyServerCountry, ""),
 		IsSensitive:                           s.settingBool(instancesettings.KeyInstanceIsSensitive, false),
 		SensitiveContentPolicy:                s.sensitiveContentPolicy(),
+		SensitiveAnonymousAccess:              s.sensitiveAnonymousAccess(),
 		ContactFormEnabled:                    s.contactFormAvailable(),
 		SocialLinks: instanceSocialLinks{
 			Website:  s.settingString(instancesettings.KeyWebsiteLink, ""),
