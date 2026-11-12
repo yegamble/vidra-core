@@ -32,8 +32,8 @@ func addCarol(t *testing.T, ctx context.Context, src *pgxpool.Pool, passwordHash
 	mustExec(t, ctx, src, `INSERT INTO "account" (id,name,"userId","actorId") VALUES (6,'Carol',3,6)`)
 	mustExec(t, ctx, src, `INSERT INTO "videoChannel" (id,name,description,"accountId","actorId")
 		VALUES (3,'Carol Channel','',6,7)`)
-	mustExec(t, ctx, src, `INSERT INTO "video" (id,uuid,"channelId",name,description,privacy,state,duration,views)
-		VALUES (3,'33333333-3333-3333-3333-333333333333',3,'Carol Video','',1,1,30,0)`)
+	mustExec(t, ctx, src, `INSERT INTO "video" (id,uuid,"channelId",name,description,privacy,state,duration,views,"createdAt")
+		VALUES (3,'33333333-3333-3333-3333-333333333333',3,'Carol Video','',1,1,30,0,'2026-11-02T09:00:00Z')`)
 }
 
 // TestPeerTubeImportRerunCarriesWhatTheSourceGained is the plain delta: nothing
@@ -60,9 +60,26 @@ func TestPeerTubeImportRerunCarriesWhatTheSourceGained(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
-	if _, err := imp.Run(ctx, version, nil); err != nil {
+	// The report says how new the source is: a source that is a restored copy
+	// does not move, and "imported 0" alone cannot tell that from a quiet week.
+	seededAt := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	mustExec(t, ctx, src, `UPDATE "video" SET "createdAt" = $1`, seededAt)
+	wantNewest := func(step string, r *Report, want time.Time) {
+		t.Helper()
+		if r.SourceNewestVideoAt == nil || !r.SourceNewestVideoAt.Equal(want) {
+			t.Errorf("%s: source_newest_video_at = %v, want %s", step, r.SourceNewestVideoAt, want)
+		}
+	}
+	plan, err := imp.Plan(ctx, version)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	wantNewest("dry run", plan, seededAt)
+	first, err := imp.Run(ctx, version, nil)
+	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
+	wantNewest("first run", first, seededAt)
 	before := map[string]int{}
 	for _, table := range []string{"users", "channels", "videos", "comments"} {
 		before[table] = countRows(t, ctx, dest, table)
@@ -70,8 +87,9 @@ func TestPeerTubeImportRerunCarriesWhatTheSourceGained(t *testing.T) {
 
 	// ── the still-live source grows ──
 	addCarol(t, ctx, src, string(hash))
-	mustExec(t, ctx, src, `INSERT INTO "video" (id,uuid,"channelId",name,description,privacy,state,duration,views)
-		VALUES (4,'44444444-4444-4444-4444-444444444444',1,'Alice Third Video','',1,1,45,0)`)
+	grownAt := seededAt.Add(72 * time.Hour)
+	mustExec(t, ctx, src, `INSERT INTO "video" (id,uuid,"channelId",name,description,privacy,state,duration,views,"createdAt")
+		VALUES (4,'44444444-4444-4444-4444-444444444444',1,'Alice Third Video','',1,1,45,0,$1)`, grownAt)
 	mustExec(t, ctx, src, `INSERT INTO "videoComment" (id,text,"videoId","accountId","inReplyToCommentId") VALUES
 		(10,'carol on an old video',1,6,NULL),
 		(11,'alice on a new video',3,1,NULL)`)
@@ -81,6 +99,7 @@ func TestPeerTubeImportRerunCarriesWhatTheSourceGained(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
+	wantNewest("second run", report, grownAt)
 
 	for kind, want := range map[string]int{KindUser: 1, KindChannel: 1, KindVideo: 2, KindComment: 2, KindFollow: 1} {
 		if got := report.Entities[kind].Imported; got != want {
@@ -109,6 +128,8 @@ func TestPeerTubeImportRerunCarriesWhatTheSourceGained(t *testing.T) {
 	if err != nil {
 		t.Fatalf("third run: %v", err)
 	}
+	// Nothing new to import, and the report still says how new the source is.
+	wantNewest("third run", report, grownAt)
 	for _, kind := range []string{KindUser, KindChannel, KindVideo, KindComment, KindFollow} {
 		if got := report.Entities[kind].Imported; got != 0 {
 			t.Errorf("third run imported %d %s, want 0", got, kind)
