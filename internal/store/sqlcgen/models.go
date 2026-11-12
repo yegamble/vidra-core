@@ -934,22 +934,28 @@ type QoeRollup struct {
 }
 
 type RegistrationRequest struct {
-	ID                 uuid.UUID          `json:"id"`
-	Username           string             `json:"username"`
-	Email              string             `json:"email"`
-	PasswordHash       string             `json:"password_hash"`
-	Note               string             `json:"note"`
-	Status             string             `json:"status"`
-	ModeratorNote      string             `json:"moderator_note"`
-	ReviewedBy         pgtype.UUID        `json:"reviewed_by"`
-	ReviewedAt         pgtype.Timestamptz `json:"reviewed_at"`
-	CreatedAt          time.Time          `json:"created_at"`
-	UpdatedAt          time.Time          `json:"updated_at"`
-	OauthProvider      *string            `json:"oauth_provider"`
-	OauthSubject       *string            `json:"oauth_subject"`
-	OauthHandle        *string            `json:"oauth_handle"`
-	OauthEmail         string             `json:"oauth_email"`
-	OauthEmailVerified bool               `json:"oauth_email_verified"`
+	ID                    uuid.UUID          `json:"id"`
+	Username              string             `json:"username"`
+	Email                 string             `json:"email"`
+	PasswordHash          string             `json:"password_hash"`
+	Note                  string             `json:"note"`
+	Status                string             `json:"status"`
+	ModeratorNote         string             `json:"moderator_note"`
+	ReviewedBy            pgtype.UUID        `json:"reviewed_by"`
+	ReviewedAt            pgtype.Timestamptz `json:"reviewed_at"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+	OauthProvider         *string            `json:"oauth_provider"`
+	OauthSubject          *string            `json:"oauth_subject"`
+	OauthHandle           *string            `json:"oauth_handle"`
+	OauthEmail            string             `json:"oauth_email"`
+	OauthEmailVerified    bool               `json:"oauth_email_verified"`
+	ConsentAcceptedAt     pgtype.Timestamptz `json:"consent_accepted_at"`
+	ConsentTermsUrl       *string            `json:"consent_terms_url"`
+	ConsentTermsVersion   *string            `json:"consent_terms_version"`
+	ConsentPrivacyUrl     *string            `json:"consent_privacy_url"`
+	ConsentPrivacyVersion *string            `json:"consent_privacy_version"`
+	ConsentMinimumAge     *int32             `json:"consent_minimum_age"`
 }
 
 type RemoteActor struct {
@@ -1351,6 +1357,17 @@ type UserBlock struct {
 	BlockerID uuid.UUID `json:"blocker_id"`
 	BlockedID uuid.UUID `json:"blocked_id"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type UserConsent struct {
+	ID         uuid.UUID `json:"id"`
+	UserID     uuid.UUID `json:"user_id"`
+	Document   string    `json:"document"`
+	Version    string    `json:"version"`
+	Url        string    `json:"url"`
+	MinimumAge *int32    `json:"minimum_age"`
+	Source     string    `json:"source"`
+	AcceptedAt time.Time `json:"accepted_at"`
 }
 
 type UserContentPref struct {

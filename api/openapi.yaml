@@ -20596,6 +20596,19 @@ components:
         privacy_url:
           type: string
           description: Link to the instance privacy policy; may be empty.
+        terms_version:
+          type: string
+          maxLength: 64
+          description: >-
+            The operator's label for the document behind `terms_url` (for
+            example a date). A signup records the label it accepted. Empty when
+            the operator has set none.
+        privacy_version:
+          type: string
+          maxLength: 64
+          description: >-
+            The operator's label for the document behind `privacy_url`; same
+            rules as `terms_version`.
         contact_email:
           type: string
           description: Operator contact email; may be empty.
