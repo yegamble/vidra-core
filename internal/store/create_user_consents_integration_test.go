@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -116,5 +117,84 @@ func TestCreateUserWritesTheAccountAndItsConsentsTogether(t *testing.T) {
 	var n int
 	if err := st.Pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE username = $1`, d.Username).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("accounts left behind by the refused statement = %d, %v; want 0", n, err)
+	}
+}
+
+// Approving a queued request creates the account AND its consent rows in the
+// one approval statement, from what the request kept: the documents the
+// applicant accepted, at the time they accepted them, not the time of approval.
+func TestApprovalRecordsTheApplicantsConsentAtTheTimeTheyGaveIt(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	sfx := uuid.NewString()[:8]
+	defer func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE username LIKE $1`, "queued_"+sfx+"%")
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM registration_requests WHERE username LIKE $1`, "queued_"+sfx+"%")
+	}()
+	termsURL, termsVersion, privacyURL, noLabel := "https://example.test/terms", "2026-11-12", "https://example.test/privacy", ""
+	age := int32(16)
+
+	req, err := q.CreateRegistrationRequest(ctx, sqlcgen.CreateRegistrationRequestParams{
+		Username: "queued_" + sfx + "a", Email: "queued_" + sfx + "a@example.test", PasswordHash: "x",
+		ConsentRecorded: true, ConsentTermsUrl: &termsURL, ConsentTermsVersion: &termsVersion,
+		ConsentPrivacyUrl: &privacyURL, ConsentPrivacyVersion: &noLabel, ConsentMinimumAge: &age,
+	})
+	if err != nil {
+		t.Fatalf("CreateRegistrationRequest: %v", err)
+	}
+	// The applicant accepted three days before the admin got to the queue.
+	ticked := time.Now().Add(-72 * time.Hour).UTC().Truncate(time.Second)
+	if _, err := st.Pool.Exec(ctx, `UPDATE registration_requests SET consent_accepted_at = $2 WHERE id = $1`, req.ID, ticked); err != nil {
+		t.Fatalf("backdate the request: %v", err)
+	}
+	user, err := q.ApproveRegistrationRequest(ctx, sqlcgen.ApproveRegistrationRequestParams{ID: req.ID, HistoryEnabled: true})
+	if err != nil {
+		t.Fatalf("ApproveRegistrationRequest: %v", err)
+	}
+	rows, err := st.Pool.Query(ctx, `SELECT document, version, url, COALESCE(minimum_age, 0), source, accepted_at
+		FROM user_consents WHERE user_id = $1 ORDER BY document`, user.ID)
+	if err != nil {
+		t.Fatalf("read consents: %v", err)
+	}
+	var got []string
+	for rows.Next() {
+		var document, version, url, source string
+		var minimumAge int
+		var acceptedAt time.Time
+		if err := rows.Scan(&document, &version, &url, &minimumAge, &source, &acceptedAt); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if source != "approval" || !acceptedAt.Equal(ticked) {
+			t.Errorf("%s: source %q at %v, want approval at %v", document, source, acceptedAt, ticked)
+		}
+		got = append(got, fmt.Sprintf("%s|%s|%s|%d", document, version, url, minimumAge))
+	}
+	rows.Close()
+	want := []string{"age|||16", "privacy||https://example.test/privacy|0", "terms|2026-11-12|https://example.test/terms|0"}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("consent rows = %v, want %v", got, want)
+	}
+
+	// A request that kept nothing (filed before the columns existed, or with no
+	// documents configured) approves into an account with no consent rows.
+	bare, err := q.CreateRegistrationRequest(ctx, sqlcgen.CreateRegistrationRequestParams{
+		Username: "queued_" + sfx + "b", Email: "queued_" + sfx + "b@example.test", PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatalf("CreateRegistrationRequest (bare): %v", err)
+	}
+	bareUser, err := q.ApproveRegistrationRequest(ctx, sqlcgen.ApproveRegistrationRequestParams{ID: bare.ID, HistoryEnabled: true})
+	if err != nil {
+		t.Fatalf("ApproveRegistrationRequest (bare): %v", err)
+	}
+	var n int
+	if err := st.Pool.QueryRow(ctx, `SELECT count(*) FROM user_consents WHERE user_id = $1`, bareUser.ID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("consent rows for a request that kept nothing = %d, %v; want 0", n, err)
 	}
 }

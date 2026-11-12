@@ -47,6 +47,8 @@ type regReqRow struct {
 
 // authFakeRepo is a tiny in-memory auth.Repository for handler tests.
 type authFakeRepo struct {
+	// requested is every CreateRegistrationRequest argument, in order.
+	requested []sqlcgen.CreateRegistrationRequestParams
 	// created is every CreateUser argument, in order (the consent a signup
 	// recorded travels on it).
 	created []sqlcgen.CreateUserParams
@@ -567,6 +569,7 @@ func (f *authFakeRepo) GetPublicUserProfileByUsername(_ context.Context, usernam
 }
 
 func (f *authFakeRepo) CreateRegistrationRequest(_ context.Context, a sqlcgen.CreateRegistrationRequestParams) (sqlcgen.CreateRegistrationRequestRow, error) {
+	f.requested = append(f.requested, a)
 	for _, r := range f.regReqs {
 		if r.status == "pending" && (strings.EqualFold(r.email, a.Email) || strings.EqualFold(r.username, a.Username)) {
 			return sqlcgen.CreateRegistrationRequestRow{}, &pgconn.PgError{Code: "23505"}

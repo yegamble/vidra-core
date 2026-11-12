@@ -2,8 +2,20 @@
 -- File a pending registration request. A duplicate PENDING request for the same
 -- email/username raises a unique violation (23505), which the service maps to a
 -- conflict.
-INSERT INTO registration_requests (username, email, password_hash, note)
-VALUES ($1, $2, $3, $4)
+INSERT INTO registration_requests (
+    username, email, password_hash, note,
+    consent_accepted_at, consent_terms_url, consent_terms_version,
+    consent_privacy_url, consent_privacy_version, consent_minimum_age
+)
+VALUES (
+    sqlc.arg('username'), sqlc.arg('email'), sqlc.arg('password_hash'), sqlc.arg('note'),
+    -- What the applicant accepted, and when: NOW, as they submit this — not
+    -- whenever an admin gets to the queue. All NULL when nothing was accepted.
+    CASE WHEN sqlc.arg('consent_recorded')::bool THEN now() END,
+    sqlc.narg('consent_terms_url'), sqlc.narg('consent_terms_version'),
+    sqlc.narg('consent_privacy_url'), sqlc.narg('consent_privacy_version'),
+    sqlc.narg('consent_minimum_age')
+)
 RETURNING id, username, email, note, status, moderator_note, reviewed_at, created_at;
 
 -- name: CreateProviderRegistrationRequest :one
@@ -15,12 +27,20 @@ RETURNING id, username, email, note, status, moderator_note, reviewed_at, create
 -- unique violation (23505).
 INSERT INTO registration_requests (
     username, email, password_hash, note,
-    oauth_provider, oauth_subject, oauth_handle, oauth_email, oauth_email_verified
+    oauth_provider, oauth_subject, oauth_handle, oauth_email, oauth_email_verified,
+    consent_accepted_at, consent_terms_url, consent_terms_version,
+    consent_privacy_url, consent_privacy_version, consent_minimum_age
 )
 VALUES (
     sqlc.arg('username'), sqlc.arg('email'), '', '',
     sqlc.arg('oauth_provider'), sqlc.arg('oauth_subject'), sqlc.narg('oauth_handle'),
-    sqlc.arg('oauth_email'), sqlc.arg('oauth_email_verified')
+    sqlc.arg('oauth_email'), sqlc.arg('oauth_email_verified'),
+    -- What the applicant accepted, and when: NOW, as they submit this — not
+    -- whenever an admin gets to the queue. All NULL when nothing was accepted.
+    CASE WHEN sqlc.arg('consent_recorded')::bool THEN now() END,
+    sqlc.narg('consent_terms_url'), sqlc.narg('consent_terms_version'),
+    sqlc.narg('consent_privacy_url'), sqlc.narg('consent_privacy_version'),
+    sqlc.narg('consent_minimum_age')
 )
 RETURNING id, username, email, note, status, moderator_note, reviewed_at, created_at;
 
@@ -70,7 +90,11 @@ WITH req AS (
            registration_requests.email, registration_requests.password_hash,
            registration_requests.oauth_provider, registration_requests.oauth_subject,
            registration_requests.oauth_handle, registration_requests.oauth_email,
-           registration_requests.oauth_email_verified
+           registration_requests.oauth_email_verified,
+           registration_requests.consent_accepted_at,
+           registration_requests.consent_terms_url, registration_requests.consent_terms_version,
+           registration_requests.consent_privacy_url, registration_requests.consent_privacy_version,
+           registration_requests.consent_minimum_age
     FROM registration_requests
     WHERE registration_requests.id = sqlc.arg('id') AND registration_requests.status = 'pending'
 ),
@@ -96,6 +120,24 @@ ident AS (
     FROM req, ins
     WHERE req.oauth_provider IS NOT NULL
     RETURNING oauth_identities.id
+),
+-- The account's consent record (0189), from what the request kept: the
+-- documents the applicant accepted, at the time THEY accepted them. Same
+-- statement as the account, as on every other path that creates one. A request
+-- that recorded nothing (filed before 0189, or with no documents configured)
+-- has a NULL consent_accepted_at and adds no row.
+consents AS (
+    INSERT INTO user_consents (user_id, document, version, url, minimum_age, source, accepted_at)
+    SELECT ins.id, d.document, COALESCE(d.version, ''), COALESCE(d.url, ''), d.minimum_age,
+           'approval', req.consent_accepted_at
+    FROM req, ins,
+         LATERAL (VALUES
+             ('terms',   req.consent_terms_version,   req.consent_terms_url,   NULL::int, req.consent_terms_url IS NOT NULL),
+             ('privacy', req.consent_privacy_version, req.consent_privacy_url, NULL::int, req.consent_privacy_url IS NOT NULL),
+             ('age',     NULL::text,                  NULL::text,              req.consent_minimum_age, req.consent_minimum_age IS NOT NULL)
+         ) AS d(document, version, url, minimum_age, accepted)
+    WHERE req.consent_accepted_at IS NOT NULL AND d.accepted
+    RETURNING user_consents.id
 ),
 upd AS (
     UPDATE registration_requests

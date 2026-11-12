@@ -383,6 +383,9 @@ func (s *Server) handleRegister(c *echo.Context) error {
 	// verified), applied in ApproveRegistration.
 	if s.registrationRequiresApproval() {
 		if _, err := s.authsvc.RequestRegistration(c.Request().Context(), regInput, in.Note); err != nil {
+			if errors.Is(err, auth.ErrTermsRequired) {
+				return termsRequiredError()
+			}
 			if errors.Is(err, auth.ErrOwnerClaimRequired) {
 				return &OwnerClaimRequiredError{}
 			}
