@@ -1650,6 +1650,7 @@ func run() error {
 			// fires in the worker process too.
 			cdnpurge.WithRecorder(httpapi.RecordEdgePurgeRun))
 		opts = append(opts, httpapi.WithCDNPurgeQueue(cdnPurgeSvc))
+		opts = append(opts, httpapi.WithCDNPurgeAvailable(cdnProvider.CanPurge))
 		logger.Info("cdn delivery available",
 			"cdn", cdnProvider.Describe(),
 			"origin", "point the CDN's origin at THIS api host; it must forward Range and the query string (the ?v= generation tag is part of the cache key)",

@@ -210,6 +210,11 @@ type videoView struct {
 	// which do not look it up); when set it reports whether a poster image is
 	// available at GET /videos/{id}/thumbnail.
 	HasThumbnail *bool `json:"has_thumbnail,omitempty"`
+	// SignInRequired is set on a LISTED sensitive video for a caller without
+	// an account while sensitive_anonymous_access is sign_in: opening it
+	// answers 401 sign_in_required, and its poster is withheld
+	// (has_thumbnail=false). Absent otherwise.
+	SignInRequired bool `json:"sign_in_required,omitempty"`
 	// HasStoryboard is set on the detail endpoint; when true a seek-preview
 	// storyboard is available at GET /videos/{id}/storyboard.jpg (+ .vtt map).
 	HasStoryboard *bool `json:"has_storyboard,omitempty"`
@@ -802,6 +807,7 @@ func (s *Server) handleListPublicVideos(c *echo.Context) error {
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(c.Request().Context(), views)
+	s.gateCards(anonymousCaller(c), views)
 	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: sort, Scope: scope, pageMeta: page.meta(total)})
 }
 
@@ -823,6 +829,7 @@ func (s *Server) handleListSubscriptionVideos(c *echo.Context) error {
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(c.Request().Context(), views)
+	s.gateCards(anonymousCaller(c), views)
 	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: "recent", pageMeta: page.meta(total)})
 }
 
@@ -995,6 +1002,7 @@ func (s *Server) handleSearchVideos(c *echo.Context) error {
 		}
 	}
 	s.attachIPFSPinned(c.Request().Context(), views)
+	s.gateCards(anonymousCaller(c), views)
 	// Additive: record the search as a behavioural event (async via the outbox).
 	s.emitSearchSubmitted(c, q, len(views), source)
 	resp := videoSearchResponse{
@@ -1095,6 +1103,7 @@ func (s *Server) handleListChannelVideos(c *echo.Context) error {
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(c.Request().Context(), views)
+	s.gateCards(anonymousCaller(c), views)
 	return c.JSON(http.StatusOK, videoListResponse{Videos: views, pageMeta: page.meta(total)})
 }
 

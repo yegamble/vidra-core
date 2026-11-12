@@ -279,6 +279,9 @@ type Server struct {
 	// provider (phase-4 item 2). Both nil — the default — means no CDN source.
 	mediaCDNEdge  delivery.CDNLookup
 	mediaCDNPurge delivery.CDNPurge
+	// cdnPurgeAvailable reports whether that CDN has an invalidation path
+	// (WithCDNPurgeAvailable); nil = no.
+	cdnPurgeAvailable func() bool
 	// cdnpurgesvc is the DURABLE half of the invalidation seam (migration
 	// 0137): it persists whatever an immediate pass could not purge and owns
 	// the account-deletion snapshot and the downloads-revocation walk. Nil when
@@ -825,6 +828,14 @@ func WithDeliveryCDN(edge delivery.CDNLookup, purge delivery.CDNPurge) Option {
 		s.mediaCDNEdge = edge
 		s.mediaCDNPurge = purge
 	}
+}
+
+// WithCDNPurgeAvailable tells the server whether the wired CDN can invalidate
+// what it holds. The purge func above is always present; whether it reaches
+// anything is the provider's configuration, and a change that depends on being
+// able to recall cached bytes (raising the sensitive sign-in wall) has to know.
+func WithCDNPurgeAvailable(f func() bool) Option {
+	return func(s *Server) { s.cdnPurgeAvailable = f }
 }
 
 // WithCDNPurgeQueue wires the durable purge queue (internal/cdnpurge). Unset —

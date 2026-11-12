@@ -352,6 +352,9 @@ type instanceSettingView struct {
 // mutable setting's effective state, in stable registry order.
 type instanceSettingsResponse struct {
 	Settings []instanceSettingView `json:"settings"`
+	// Notices are things the operator must do themselves as a consequence of
+	// the change just applied (PATCH only; absent otherwise).
+	Notices []string `json:"notices,omitempty"`
 }
 
 func (s *Server) instanceSettingsResponse() instanceSettingsResponse {
@@ -406,6 +409,11 @@ func (s *Server) handleUpdateInstanceSettings(c *echo.Context) error {
 		return &ValidationError{Fields: fields}
 	}
 
+	if msg := s.sensitiveGateSwitchRefusal(updates); msg != "" {
+		s.audit(c, observability.ActionAdminInstanceUpdate, observability.ResultFailure, callerID.String(), "invalid:"+instancesettings.KeySensitiveAnonymousAccess)
+		return &ValidationError{Fields: []FieldError{{Field: instancesettings.KeySensitiveAnonymousAccess, Message: msg}}}
+	}
+	gateRaised := s.raisesSensitiveGate(updates)
 	// Read BEFORE the write: the downloads-revocation purge below needs to know
 	// whether this PATCH is what closed the gate, and a restated
 	// downloads_enabled:false must not re-run a walk over the whole catalogue.
@@ -433,7 +441,15 @@ func (s *Server) handleUpdateInstanceSettings(c *echo.Context) error {
 	// (search-service W4). Best-effort.
 	s.emitSearchConfigChangedIfNeeded(c.Request().Context(), changed)
 	s.purgeEdgeDownloadsIfRevoked(c.Request().Context(), changed, downloadsWereOpen)
-	return c.JSON(http.StatusOK, s.instanceSettingsResponse())
+	resp := s.instanceSettingsResponse()
+	if gateRaised {
+		// The anonymous lists were cached with posters and no marker.
+		s.videosvc.InvalidateAnonymous()
+		if s.mediaCDNEdge != nil {
+			resp.Notices = append(resp.Notices, sensitiveGateRaisedNotice)
+		}
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 // settingValueStrings is the allowlist of KindString keys whose VALUE may be

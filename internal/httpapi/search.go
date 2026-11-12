@@ -364,6 +364,7 @@ func (s *Server) hydrateRankedRecs(ctx context.Context, items []searchclient.Rec
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(ctx, views)
+	s.gateCards(!authed, views)
 	out := make([]recItemView, 0, len(views))
 	for i := range views {
 		id, _ := uuid.Parse(views[i].ID)
@@ -426,7 +427,7 @@ func (s *Server) handleHomeRecommendations(c *echo.Context) error {
 			// Simple mode ranks from the catalogue alone (it reads neither the
 			// session nor a user), so every anonymous caller gets the same rail.
 			// Advanced mode ranks per session and is never shared.
-			views, err = video.AnonymousCached(ctx, s.videosvc, fmt.Sprintf("home|%d|%t", limit, hideSensitive), load)
+			views, err = video.AnonymousCached(ctx, s.videosvc, fmt.Sprintf("home|%d|%t|%t", limit, hideSensitive, s.sensitiveGated(true)), load)
 		} else {
 			views, err = load(ctx)
 		}
@@ -455,6 +456,7 @@ func (s *Server) homeRecommendationsFallback(c *echo.Context, limit int, viewerI
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(ctx, views)
+	s.gateCards(anonymousCaller(c), views)
 	out := make([]recItemView, 0, len(views))
 	for i := range views {
 		out = append(out, recItemView{videoView: views[i], Reason: "trending"})
@@ -514,6 +516,7 @@ func (s *Server) videoRecommendationsFallback(c *echo.Context, id uuid.UUID, lim
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(ctx, views)
+	s.gateCards(anonymousCaller(c), views)
 	out := make([]recItemView, 0, len(views))
 	for i := range views {
 		out = append(out, recItemView{videoView: views[i], Reason: "related"})

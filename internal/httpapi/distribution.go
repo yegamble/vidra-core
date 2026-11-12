@@ -345,7 +345,7 @@ func (s *Server) handleVideosFeed(c *echo.Context) error {
 		// The feed cap is the query's LIMIT now, so the RSS route never pulls a
 		// whole channel into memory to throw most of it away.
 		for _, ch := range scope.channels {
-			chItems, _, lerr := s.videosvc.ListPublicByChannel(ctx, ch.ID, uuid.Nil, false, s.hideSensitiveVideos(), "", feedItemLimit, 0)
+			chItems, _, lerr := s.videosvc.ListPublicByChannel(ctx, ch.ID, uuid.Nil, false, s.hideSensitiveOnOpenSurfaces(), "", feedItemLimit, 0)
 			if lerr != nil {
 				return lerr
 			}
@@ -372,7 +372,7 @@ func (s *Server) handleVideosFeed(c *echo.Context) error {
 	} else {
 		// Anonymous surface: honour the INSTANCE sensitive-content policy (0100).
 		items, _, err = s.videosvc.ListPublic(ctx, "recent", "local",
-			video.FeedFilter{HideSensitive: s.hideSensitiveVideos()}, uuid.Nil, false, feedItemLimit, 0)
+			video.FeedFilter{HideSensitive: s.hideSensitiveOnOpenSurfaces()}, uuid.Nil, false, feedItemLimit, 0)
 		if err != nil {
 			return err
 		}
@@ -455,6 +455,11 @@ func (s *Server) handleOEmbed(c *echo.Context) error {
 		return herr
 	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "no video matches the url")
+	}
+	// Behind the sensitive sign-in wall: not something a third-party page can
+	// embed for its anonymous readers, exactly like an internal video below.
+	if s.sensitiveGated(v.IsSensitive) {
+		return echo.NewHTTPError(http.StatusUnauthorized, "video is not publicly embeddable")
 	}
 	switch v.Privacy {
 	case "public", "unlisted":
@@ -602,7 +607,7 @@ func (s *Server) handleSitemap(c *echo.Context) error {
 	// Anonymous surface: honour the INSTANCE sensitive-content policy (0100), so
 	// flagged videos never leak into the sitemap under the "hide" policy.
 	items, _, err := s.videosvc.ListPublic(ctx, "recent", "local",
-		video.FeedFilter{HideSensitive: s.hideSensitiveVideos()}, uuid.Nil, false, sitemapVideoLimit, 0)
+		video.FeedFilter{HideSensitive: s.hideSensitiveOnOpenSurfaces()}, uuid.Nil, false, sitemapVideoLimit, 0)
 	if err != nil {
 		return err
 	}
