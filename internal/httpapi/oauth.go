@@ -55,6 +55,11 @@ type oauthStatePayload struct {
 	Verifier string `json:"verifier"`
 	ReturnTo string `json:"return_to"`
 	IssuedAt int64  `json:"iat"`
+	// TermsAccepted is the signup form's tick ("I accept the terms and the
+	// privacy policy"), sent as ?terms_accepted=1 on the begin request. It is
+	// sealed with the attempt because only the callback learns whether this
+	// sign-in creates an account; an existing account is never asked.
+	TermsAccepted bool `json:"ta,omitempty"`
 	// Purpose is "" for a login and "step_up" for a re-authentication started
 	// from an existing session (auth_step_up.go); UserID and SessionID bind
 	// that attempt to the browser that started it. All three are inside the
@@ -180,6 +185,8 @@ func (s *Server) handleOAuthBegin(c *echo.Context) error {
 		Verifier: st.Verifier,
 		ReturnTo: returnTo,
 		IssuedAt: time.Now().Unix(),
+
+		TermsAccepted: c.QueryParam("terms_accepted") == "1",
 	})
 	if err != nil {
 		return err
@@ -279,9 +286,16 @@ func (s *Server) handleOAuthCallback(c *echo.Context) error {
 		return s.completeOAuthLink(c, returnTo, uid, as, nil, "oauth_error")
 	}
 
+	as.TermsAccepted = st.TermsAccepted
 	sess, err := s.oauthsvc.ResolveAssertion(c.Request().Context(), as, c.Request().UserAgent())
 	if err != nil {
 		switch {
+		// A first sign-in on an instance with terms or a privacy policy, started
+		// without the acceptance. Nothing was created; the signup page shows the
+		// documents and starts the flow again with the tick.
+		case errors.Is(err, auth.ErrTermsRequired):
+			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "terms_required")
+			return oauthErrorRedirect(c, returnTo, "terms_required")
 		case errors.Is(err, auth.ErrOAuthEmailConflict):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_email_conflict")
 			return oauthErrorRedirect(c, returnTo, "email_conflict")

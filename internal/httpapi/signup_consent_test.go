@@ -3,8 +3,12 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"slices"
 	"testing"
+
+	"github.com/vidra/vidra-core/internal/auth"
 )
 
 // TestSignupMustAcceptTheConfiguredDocuments: while the instance has terms or a
@@ -82,5 +86,55 @@ func TestQueuedSignupMustAcceptTheConfiguredDocuments(t *testing.T) {
 	if !got.ConsentRecorded || got.ConsentTermsUrl == nil || *got.ConsentTermsUrl != "https://example.test/terms" ||
 		got.ConsentTermsVersion == nil || *got.ConsentTermsVersion != "v1" || got.ConsentPrivacyUrl != nil || got.ConsentMinimumAge != nil {
 		t.Fatalf("the request kept %+v", got)
+	}
+}
+
+// TestOAuthFirstSignInCarriesTheAcceptance drives the provider flow end to end
+// on an instance with terms configured: a first sign-in begun without
+// ?terms_accepted=1 creates nothing and lands back with
+// oauth_error=terms_required; begun with it, the account is created and the
+// acceptance recorded; and the same person signing in again is never asked.
+func TestOAuthFirstSignInCarriesTheAcceptance(t *testing.T) {
+	terms := auth.SignupTerms{TermsURL: "https://example.test/terms", TermsVersion: "2026-11-12"}
+	env := newOAuthEnv(t, auth.WithSignupTermsFunc(func() auth.SignupTerms { return terms }))
+	claims := map[string]any{"sub": "sub-200", "email": "bob@example.com", "email_verified": true, "name": "Bob"}
+	flow := func(query string) *httptest.ResponseRecorder {
+		t.Helper()
+		loc, stateCookie := env.begin(t, query)
+		env.fake.setNonce(loc.Query().Get("nonce"))
+		env.fake.setClaims(claims)
+		return env.callback(t, "?code=fake-code&state="+url.QueryEscape(loc.Query().Get("state")), stateCookie)
+	}
+
+	rec := flow("?return_to=" + url.QueryEscape("/signup"))
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusFound || got != "/signup?oauth_error=terms_required" {
+		t.Fatalf("first sign-in without the tick = %d → %q, want 302 → /signup?oauth_error=terms_required", rec.Code, got)
+	}
+	if sessionCookieFrom(rec) != nil {
+		t.Fatal("a refused first sign-in must not set a session")
+	}
+	if len(env.repo.created) != 0 {
+		t.Fatalf("a refused first sign-in created an account")
+	}
+
+	rec = flow("?terms_accepted=1&return_to=" + url.QueryEscape("/welcome"))
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusFound || got != "/welcome" {
+		t.Fatalf("first sign-in with the tick = %d → %q, want 302 → /welcome (body=%s)", rec.Code, got, rec.Body.String())
+	}
+	if len(env.repo.created) != 1 {
+		t.Fatalf("accounts created = %d, want 1", len(env.repo.created))
+	}
+	if got := env.repo.created[0]; got.ConsentSource != "oidc" || !slices.Equal(got.ConsentDocuments, []string{"terms"}) ||
+		!slices.Equal(got.ConsentVersions, []string{"2026-11-12"}) || !slices.Equal(got.ConsentUrls, []string{"https://example.test/terms"}) {
+		t.Fatalf("recorded %q %v %v %v", got.ConsentSource, got.ConsentDocuments, got.ConsentVersions, got.ConsentUrls)
+	}
+
+	// An existing account signs in with no tick at all.
+	rec = flow("")
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusFound || got != "/" || sessionCookieFrom(rec) == nil {
+		t.Fatalf("returning sign-in without the tick = %d → %q, want a session and 302 → /", rec.Code, got)
+	}
+	if len(env.repo.created) != 1 {
+		t.Fatalf("a returning sign-in created an account")
 	}
 }

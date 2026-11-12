@@ -16,6 +16,9 @@ const (
 	// ConsentSourceApproval is written by the statement that approves a queued
 	// request (ApproveRegistrationRequest), from what the request kept.
 	ConsentSourceApproval = "approval"
+	// A first sign-in through a provider creates the account.
+	ConsentSourceOIDC    = "oidc"
+	ConsentSourceATProto = "atproto"
 )
 
 // ErrTermsRequired is returned when the instance has terms or a privacy policy

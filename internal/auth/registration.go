@@ -239,6 +239,10 @@ type ProviderRegistrationInput struct {
 	// while the account carries a synthetic placeholder (A30).
 	IdentityEmail string
 	EmailVerified bool
+	// consent is what the applicant accepted when they started the sign-in;
+	// the request keeps it for the approval statement, as a password request
+	// does.
+	consent consentRecord
 }
 
 // RequestProviderRegistration files (or re-reports) a pending registration
@@ -259,14 +263,21 @@ func (s *Service) RequestProviderRegistration(ctx context.Context, in ProviderRe
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
+	kept := in.consent.forRequest()
 	if prow, err := s.repo.CreateProviderRegistrationRequest(ctx, sqlcgen.CreateProviderRegistrationRequestParams{
-		Username:           in.Username,
-		Email:              in.Email,
-		OauthProvider:      &in.Provider,
-		OauthSubject:       &in.Subject,
-		OauthHandle:        in.Handle,
-		OauthEmail:         in.IdentityEmail,
-		OauthEmailVerified: in.EmailVerified,
+		Username:              in.Username,
+		Email:                 in.Email,
+		OauthProvider:         &in.Provider,
+		OauthSubject:          &in.Subject,
+		OauthHandle:           in.Handle,
+		OauthEmail:            in.IdentityEmail,
+		OauthEmailVerified:    in.EmailVerified,
+		ConsentRecorded:       kept.recorded,
+		ConsentTermsUrl:       kept.termsURL,
+		ConsentTermsVersion:   kept.termsVersion,
+		ConsentPrivacyUrl:     kept.privacyURL,
+		ConsentPrivacyVersion: kept.privacyVersion,
+		ConsentMinimumAge:     kept.minimumAge,
 	}); err != nil {
 		if pgconv.IsUniqueViolation(err) {
 			// A pending request already claims this username or address. The
