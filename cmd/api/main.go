@@ -650,6 +650,11 @@ func run() error {
 		auth.WithEmailVerificationGateFunc(func() bool {
 			return mailAvailable() && settingssvc.Bool(instancesettings.KeyRegistrationRequireEmailVerification)
 		}),
+		// What a new account must accept (terms, privacy policy, minimum
+		// age), read live: the service refuses a signup that did not accept
+		// them and records what was accepted in the statement that creates
+		// the account.
+		auth.WithSignupTermsFunc(func() auth.SignupTerms { return httpapi.SignupTerms(settingssvc) }),
 		// The registration policy the PROVIDER signup paths must honour. The
 		// password path reads these two settings in the HTTP layer; OIDC and
 		// ATProto cannot, because whether an assertion is a signup or a login

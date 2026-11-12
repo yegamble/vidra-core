@@ -38,6 +38,9 @@ type fakeRegReq struct {
 
 // fakeRepo is an in-memory auth.Repository keyed by lowercased email/username.
 type fakeRepo struct {
+	// created is every CreateUser argument, in order: the consent a signup
+	// recorded travels on it, in the same statement as the account.
+	created []sqlcgen.CreateUserParams
 	byEmail map[string]sqlcgen.User
 	names   map[string]bool
 	// channelHandles are names a CHANNEL holds in the one shared handle
@@ -524,6 +527,7 @@ func (f *fakeRepo) CountUsers(context.Context) (int64, error) {
 }
 
 func (f *fakeRepo) CreateUser(_ context.Context, arg sqlcgen.CreateUserParams) (sqlcgen.User, error) {
+	f.created = append(f.created, arg)
 	email := lower(arg.Email)
 	if _, ok := f.byEmail[email]; ok || f.names[lower(arg.Username)] {
 		return sqlcgen.User{}, &pgconn.PgError{Code: "23505", ConstraintName: "users_username_lower_idx"}

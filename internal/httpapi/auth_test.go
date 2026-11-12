@@ -47,7 +47,10 @@ type regReqRow struct {
 
 // authFakeRepo is a tiny in-memory auth.Repository for handler tests.
 type authFakeRepo struct {
-	users map[string]sqlcgen.User // keyed by lowercased email
+	// created is every CreateUser argument, in order (the consent a signup
+	// recorded travels on it).
+	created []sqlcgen.CreateUserParams
+	users   map[string]sqlcgen.User // keyed by lowercased email
 	// failDeactivate makes DeactivateUser fail, to test a rollback that cannot roll back.
 	failDeactivate bool
 	bans           map[uuid.UUID]sqlcgen.UserBan
@@ -449,6 +452,7 @@ func (f *authFakeRepo) ClaimOwnerAndCreateAdmin(ctx context.Context, a sqlcgen.C
 }
 
 func (f *authFakeRepo) CreateUser(_ context.Context, a sqlcgen.CreateUserParams) (sqlcgen.User, error) {
+	f.created = append(f.created, a)
 	key := strings.ToLower(a.Email)
 	if _, ok := f.users[key]; ok {
 		return sqlcgen.User{}, &pgconn.PgError{Code: "23505"}

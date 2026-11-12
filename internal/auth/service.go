@@ -250,6 +250,9 @@ type Service struct {
 	// the OIDC and ATProto signups. nil leaves both paths unpoliced, which is
 	// what every caller that does not wire it (tests, the importer) expects.
 	registrationPolicyFn func() (bool, bool)
+	// signupTermsFn resolves what a new account must accept right now
+	// (WithSignupTermsFunc); nil = nothing to accept or record.
+	signupTermsFn func() SignupTerms
 
 	// fixedOwnerClaimToken pins owner-claim mints to a deterministic value
 	// (WithFixedOwnerClaimToken — dev/test-only). "" = random mint.
@@ -474,6 +477,9 @@ type RegisterInput struct {
 	Username string
 	Email    string
 	Password string
+	// Accepted is what the person signing up said yes to; the service checks
+	// it against the instance's signup terms and records it with the account.
+	Accepted SignupAcceptance
 }
 
 // LoginInput is validated login data. Sign-in accepts an email OR a username;
@@ -509,12 +515,16 @@ func (s *Service) Register(ctx context.Context, in RegisterInput, userAgent stri
 	if err := s.refuseIfOwnerUnclaimed(ctx); err != nil {
 		return sqlcgen.User{}, Tokens{}, err
 	}
+	consent, err := s.signupConsent(in.Accepted)
+	if err != nil {
+		return sqlcgen.User{}, Tokens{}, err
+	}
 	hash, err := HashPassword(in.Password)
 	if err != nil {
 		return sqlcgen.User{}, Tokens{}, err
 	}
 
-	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
+	user, err := s.repo.CreateUser(ctx, consent.onCreate(sqlcgen.CreateUserParams{
 		Username:     strings.TrimSpace(in.Username),
 		Email:        strings.TrimSpace(in.Email),
 		PasswordHash: hash,
@@ -522,7 +532,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput, userAgent stri
 		// Seed the per-user watch-history preference from the instance setting
 		// (new_user_history_enabled, config-parity W7).
 		HistoryEnabled: s.newUserHistoryEnabled(),
-	})
+	}, ConsentSourceSignup))
 	if err != nil {
 		if pgconv.IsUniqueViolation(err) {
 			return sqlcgen.User{}, Tokens{}, nameConflict(err)
@@ -548,19 +558,23 @@ func (s *Service) RegisterPendingVerification(ctx context.Context, in RegisterIn
 	if err := s.refuseIfOwnerUnclaimed(ctx); err != nil {
 		return sqlcgen.User{}, err
 	}
+	consent, err := s.signupConsent(in.Accepted)
+	if err != nil {
+		return sqlcgen.User{}, err
+	}
 	hash, err := HashPassword(in.Password)
 	if err != nil {
 		return sqlcgen.User{}, err
 	}
 
-	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
+	user, err := s.repo.CreateUser(ctx, consent.onCreate(sqlcgen.CreateUserParams{
 		Username:                 strings.TrimSpace(in.Username),
 		Email:                    strings.TrimSpace(in.Email),
 		PasswordHash:             hash,
 		Role:                     "user",
 		PendingEmailVerification: true,
 		HistoryEnabled:           s.newUserHistoryEnabled(),
-	})
+	}, ConsentSourceSignup))
 	if err != nil {
 		if pgconv.IsUniqueViolation(err) {
 			return sqlcgen.User{}, nameConflict(err)

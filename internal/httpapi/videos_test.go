@@ -1502,6 +1502,7 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		auth.WithEmailVerificationGateFunc(func() bool {
 			return settingsRef != nil && settingsRef.Bool(instancesettings.KeyRegistrationRequireEmailVerification)
 		}),
+		auth.WithSignupTermsFunc(func() auth.SignupTerms { return SignupTerms(settingsRef) }),
 	)
 	blobs, err := storage.NewLocal(t.TempDir())
 	if err != nil {
@@ -1714,12 +1715,17 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	finalizeSvcBySrv[srv] = uploadfinalizesvc
 	finalizeRepoBySrv[srv] = finalizeRepo
 	captureMailerBySrv[srv] = captureMailer
+	authRepoBySrv[srv] = authRepo
 	return srv, blobs, tcRepo, notifRepo, repo
 }
 
 // captureMailerBySrv lets a test reach the capture mailer behind a harness
 // server (e.g. to read the verification token minted by a gated signup, W7).
 var captureMailerBySrv = map[*Server]*auth.CaptureMailer{}
+
+// authRepoBySrv exposes each test server's in-memory account repo, for tests
+// that assert what a signup stored.
+var authRepoBySrv = map[*Server]*authFakeRepo{}
 
 // fakeProber lets handler tests drive the publish/fail outcome and metadata of
 // an upload.
