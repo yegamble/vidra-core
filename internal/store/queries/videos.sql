@@ -521,7 +521,7 @@ ORDER BY
     CASE WHEN sqlc.arg('sort')::text = 'popular' THEN feed.views END DESC,
     CASE WHEN sqlc.arg('sort')::text = 'trending'
          THEN feed.views::float8
-              / power(EXTRACT(EPOCH FROM (now() - feed.created_at)) / 3600.0 + 2.0, 1.5)
+              / power(EXTRACT(EPOCH FROM (now() - feed.created_at))::float8 / 3600.0 + 2.0, 1.5)
     END DESC,
     CASE WHEN sqlc.arg('sort')::text = 'originally_published_at' THEN feed.sort_at END DESC,
     CASE WHEN sqlc.arg('sort')::text = 'name' THEN lower(feed.title) END ASC,
@@ -941,7 +941,11 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid))
+      -- A flagless row's answer is hide_sensitive itself (the function's first
+      -- branch); asking the function per row was most of this statement's time.
+      AND NOT (v.is_sensitive AND CASE WHEN cardinality(v.sensitive_flags) = 0
+                                       THEN sqlc.arg('hide_sensitive')::bool
+                                       ELSE vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid) END)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -1091,7 +1095,11 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid))
+      -- A flagless row's answer is hide_sensitive itself (the function's first
+      -- branch); asking the function per row was most of this statement's time.
+      AND NOT (v.is_sensitive AND CASE WHEN cardinality(v.sensitive_flags) = 0
+                                       THEN sqlc.arg('hide_sensitive')::bool
+                                       ELSE vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid) END)
     UNION ALL
     SELECT rv.id,
            true AS remote,

@@ -473,7 +473,11 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $9::bool, $2::uuid))
+      -- A flagless row's answer is hide_sensitive itself (the function's first
+      -- branch); asking the function per row was most of this statement's time.
+      AND NOT (v.is_sensitive AND CASE WHEN cardinality(v.sensitive_flags) = 0
+                                       THEN $9::bool
+                                       ELSE vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $9::bool, $2::uuid) END)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -1987,7 +1991,7 @@ ORDER BY
     CASE WHEN $7::text = 'popular' THEN feed.views END DESC,
     CASE WHEN $7::text = 'trending'
          THEN feed.views::float8
-              / power(EXTRACT(EPOCH FROM (now() - feed.created_at)) / 3600.0 + 2.0, 1.5)
+              / power(EXTRACT(EPOCH FROM (now() - feed.created_at))::float8 / 3600.0 + 2.0, 1.5)
     END DESC,
     CASE WHEN $7::text = 'originally_published_at' THEN feed.sort_at END DESC,
     CASE WHEN $7::text = 'name' THEN lower(feed.title) END ASC,
@@ -2799,7 +2803,11 @@ FROM (
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $9::bool, $2::uuid))
+      -- A flagless row's answer is hide_sensitive itself (the function's first
+      -- branch); asking the function per row was most of this statement's time.
+      AND NOT (v.is_sensitive AND CASE WHEN cardinality(v.sensitive_flags) = 0
+                                       THEN $9::bool
+                                       ELSE vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, $9::bool, $2::uuid) END)
     UNION ALL
     SELECT rv.id,
            true AS remote,
