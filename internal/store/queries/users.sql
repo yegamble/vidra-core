@@ -77,8 +77,34 @@ WHERE lower(username) = lower($1) AND is_active = true;
 -- the registration email-verification gate is active (W7 — the grandfather
 -- clause lives in this flag, never in a retroactive check); history_enabled
 -- is seeded from the new_user_history_enabled instance setting.
-INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
-VALUES ($1, $2, $3, $4, $5, $6)
+--
+-- The account and the record of what its holder accepted (0189) are ONE
+-- statement: the consent arrays hold one element per accepted document, and
+-- there is no moment at which the account exists without them, or they
+-- without it. The id is drawn first so both inserts can name it; the foreign
+-- key is checked when the statement ends, by which time both rows exist.
+-- Empty arrays record nothing (no documents configured; an account an admin
+-- creates for someone else). A minimum age of 0 means "not an age row".
+WITH account AS (
+    SELECT uuid_generate_v4() AS id
+),
+consents AS (
+    INSERT INTO user_consents (user_id, document, version, url, minimum_age, source, accepted_at)
+    -- The four arrays are the same length and unnest in step (the
+    -- video_chapters pattern).
+    SELECT account.id,
+           unnest(sqlc.arg('consent_documents')::text[]),
+           unnest(sqlc.arg('consent_versions')::text[]),
+           unnest(sqlc.arg('consent_urls')::text[]),
+           NULLIF(unnest(sqlc.arg('consent_minimum_ages')::int[]), 0),
+           sqlc.arg('consent_source')::text,
+           COALESCE(sqlc.narg('consent_accepted_at')::timestamptz, now())
+    FROM account
+)
+INSERT INTO users (id, username, email, password_hash, role, pending_email_verification, history_enabled)
+SELECT account.id, sqlc.arg('username')::text, sqlc.arg('email')::text, sqlc.arg('password_hash')::text,
+       sqlc.arg('role')::text, sqlc.arg('pending_email_verification')::bool, sqlc.arg('history_enabled')::bool
+FROM account
 RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner;
 
 -- name: CountUsers :one

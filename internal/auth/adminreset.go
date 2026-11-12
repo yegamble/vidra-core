@@ -117,6 +117,8 @@ func (s *Service) AdminCreateAccount(ctx context.Context, adminID uuid.UUID, adm
 	if err := s.refuseIfOwnerUnclaimed(ctx); err != nil {
 		return sqlcgen.User{}, err
 	}
+	// No consent is recorded: the admin is creating the account FOR someone,
+	// and that person has accepted nothing yet.
 	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
 		Username:       strings.TrimSpace(in.Username),
 		Email:          strings.TrimSpace(in.Email),

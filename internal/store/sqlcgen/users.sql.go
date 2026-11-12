@@ -225,24 +225,56 @@ func (q *Queries) CountUsersMatching(ctx context.Context, query string) (int64, 
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
-VALUES ($1, $2, $3, $4, $5, $6)
+WITH account AS (
+    SELECT uuid_generate_v4() AS id
+),
+consents AS (
+    INSERT INTO user_consents (user_id, document, version, url, minimum_age, source, accepted_at)
+    -- The four arrays are the same length and unnest in step (the
+    -- video_chapters pattern).
+    SELECT account.id,
+           unnest($7::text[]),
+           unnest($8::text[]),
+           unnest($9::text[]),
+           NULLIF(unnest($10::int[]), 0),
+           $11::text,
+           COALESCE($12::timestamptz, now())
+    FROM account
+)
+INSERT INTO users (id, username, email, password_hash, role, pending_email_verification, history_enabled)
+SELECT account.id, $1::text, $2::text, $3::text,
+       $4::text, $5::bool, $6::bool
+FROM account
 RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 `
 
 type CreateUserParams struct {
-	Username                 string `json:"username"`
-	Email                    string `json:"email"`
-	PasswordHash             string `json:"password_hash"`
-	Role                     string `json:"role"`
-	PendingEmailVerification bool   `json:"pending_email_verification"`
-	HistoryEnabled           bool   `json:"history_enabled"`
+	Username                 string             `json:"username"`
+	Email                    string             `json:"email"`
+	PasswordHash             string             `json:"password_hash"`
+	Role                     string             `json:"role"`
+	PendingEmailVerification bool               `json:"pending_email_verification"`
+	HistoryEnabled           bool               `json:"history_enabled"`
+	ConsentDocuments         []string           `json:"consent_documents"`
+	ConsentVersions          []string           `json:"consent_versions"`
+	ConsentUrls              []string           `json:"consent_urls"`
+	ConsentMinimumAges       []int32            `json:"consent_minimum_ages"`
+	ConsentSource            string             `json:"consent_source"`
+	ConsentAcceptedAt        pgtype.Timestamptz `json:"consent_accepted_at"`
 }
 
 // pending_email_verification is TRUE only when the account is created while
 // the registration email-verification gate is active (W7 — the grandfather
 // clause lives in this flag, never in a retroactive check); history_enabled
 // is seeded from the new_user_history_enabled instance setting.
+//
+// The account and the record of what its holder accepted (0189) are ONE
+// statement: the consent arrays hold one element per accepted document, and
+// there is no moment at which the account exists without them, or they
+// without it. The id is drawn first so both inserts can name it; the foreign
+// key is checked when the statement ends, by which time both rows exist.
+// Empty arrays record nothing (no documents configured; an account an admin
+// creates for someone else). A minimum age of 0 means "not an age row".
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, createUser,
 		arg.Username,
@@ -251,6 +283,12 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		arg.Role,
 		arg.PendingEmailVerification,
 		arg.HistoryEnabled,
+		arg.ConsentDocuments,
+		arg.ConsentVersions,
+		arg.ConsentUrls,
+		arg.ConsentMinimumAges,
+		arg.ConsentSource,
+		arg.ConsentAcceptedAt,
 	)
 	var i User
 	err := row.Scan(

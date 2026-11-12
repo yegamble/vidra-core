@@ -101,6 +101,11 @@ type registerRequest struct {
 	// W7): "I am at least N years old". Required (true) while
 	// registration_minimum_age is active; no birthdate is collected.
 	AgeAttestation bool `json:"age_attestation,omitempty"`
+	// TermsAccepted is the signup form's unticked-by-default checkbox: "I accept
+	// the terms of service and the privacy policy". Required (true) while the
+	// instance has either document configured; what was accepted (URL, the
+	// operator's version label, the time) is recorded with the account.
+	TermsAccepted bool `json:"terms_accepted,omitempty"`
 	// CookieMode opts the new session into cookie mode: the refresh token is
 	// set as an httpOnly vidra_refresh cookie and omitted from the body.
 	CookieMode bool `json:"cookie_mode,omitempty"`
@@ -361,7 +366,16 @@ func (s *Server) handleRegister(c *echo.Context) error {
 			Message: fmt.Sprintf("you must confirm you are at least %d years old", minAge),
 		}}}
 	}
-	regInput := auth.RegisterInput{Username: in.Username, Email: in.Email, Password: in.Password}
+	// The instance's documents: checked here so the answer is a field error
+	// the form can show, and again inside the service, which is what actually
+	// refuses to create the account and writes the record.
+	if SignupTerms(s.settingssvc).Required() && !in.TermsAccepted {
+		return termsRequiredError()
+	}
+	regInput := auth.RegisterInput{
+		Username: in.Username, Email: in.Email, Password: in.Password,
+		Accepted: auth.SignupAcceptance{Terms: in.TermsAccepted, Age: in.AgeAttestation},
+	}
 
 	// When the instance requires approval, signup files a pending request instead
 	// of creating an account + session. The response reveals no token. The
@@ -390,6 +404,9 @@ func (s *Server) handleRegister(c *echo.Context) error {
 	if s.registrationRequiresEmailVerification() {
 		user, err := s.authsvc.RegisterPendingVerification(c.Request().Context(), regInput)
 		if err != nil {
+			if errors.Is(err, auth.ErrTermsRequired) {
+				return termsRequiredError()
+			}
 			if errors.Is(err, auth.ErrOwnerClaimRequired) {
 				return &OwnerClaimRequiredError{}
 			}
@@ -414,6 +431,9 @@ func (s *Server) handleRegister(c *echo.Context) error {
 
 	user, tokens, err := s.authsvc.Register(c.Request().Context(), regInput, c.Request().UserAgent())
 	if err != nil {
+		if errors.Is(err, auth.ErrTermsRequired) {
+			return termsRequiredError()
+		}
 		if errors.Is(err, auth.ErrOwnerClaimRequired) {
 			return &OwnerClaimRequiredError{}
 		}

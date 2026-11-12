@@ -30047,6 +30047,17 @@ components:
             registration_minimum_age setting is active (GET /api/v1/instance
             reports the threshold); no birthdate is collected. Missing/false
             while active is a 422 field error on `age_attestation`.
+        terms_accepted:
+          type: boolean
+          description: >-
+            "I accept the terms of service and the privacy policy." Required
+            (true) while the instance has `terms_url` or `privacy_url` set (GET
+            /api/v1/instance reports both, with the operator's version labels);
+            missing/false while either is set is a 422 field error on
+            `terms_accepted`. What was accepted — each document's URL and
+            version label, and the time — is recorded with the account and is
+            part of its data export. Ignored when neither document is
+            configured.
         cookie_mode:
           type: boolean
           default: false
