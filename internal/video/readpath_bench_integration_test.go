@@ -12,6 +12,7 @@ package video_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -34,6 +35,16 @@ func BenchmarkAnonymousReadPath(b *testing.B) {
 			}
 		})
 	}
+	// The same calls with the anonymous cache wired as cmd/api wires it: every
+	// call after the first inside the TTL. The runs above are the cache miss.
+	cached := video.NewService(st.Queries(), nil, video.WithAnonymousCache(15*time.Second))
+	b.Run("cached_list_trending", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			if items, _, err := cached.ListPublic(ctx, "trending", "local", video.FeedFilter{}, uuid.Nil, false, 20, 0); err != nil || len(items) != 20 {
+				b.Fatalf("cached ListPublic = %d items, %v", len(items), err)
+			}
+		}
+	})
 	b.Run("search_count", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			if n, err := svc.CountSearchPublic(ctx, "coffee", video.SearchFilter{}, uuid.Nil, false); err != nil || n == 0 {

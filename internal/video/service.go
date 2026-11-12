@@ -344,6 +344,9 @@ type Service struct {
 	onDelete             []func(context.Context, uuid.UUID, uuid.UUID, bool)
 	onMediaReplaced      []func(context.Context, uuid.UUID, string)
 	onCaptionChange      []func(ctx context.Context, videoID uuid.UUID, storageKey string, deleted bool)
+	// anon shares anonymous callers' answers briefly (WithAnonymousCache);
+	// nil = every call reads the database.
+	anon *anonCache
 	// own persists ownership change requests (T21, 0165); nil = the routes
 	// answer ErrOwnershipUnavailable.
 	own OwnershipRepository
@@ -2701,6 +2704,13 @@ type FeedFilter struct {
 // taxonomy); the default local scope never includes them. The caller clamps
 // limit/offset.
 func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, int64, error) {
+	if !viewerAuthed && s.anon != nil {
+		return s.listPublicAnonymous(ctx, sort, scope, filter, limit, offset)
+	}
+	return s.listPublic(ctx, sort, scope, filter, viewerID, viewerAuthed, limit, offset)
+}
+
+func (s *Service) listPublic(ctx context.Context, sort, scope string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, int64, error) {
 	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
 	includeRemote := NormalizeFeedScope(scope) == FeedScopeAll
 	tag, category, language := nilIfEmpty(strings.ToLower(filter.Tag)), nilIfEmpty(filter.Category), filter.Languages
@@ -3146,6 +3156,9 @@ func (s *Service) SearchPublic(ctx context.Context, query string, filter SearchF
 // rows the caller could actually be shown, which is what a "N results" label
 // has to mean.
 func (s *Service) CountSearchPublic(ctx context.Context, query string, filter SearchFilter, viewerID uuid.UUID, viewerAuthed bool) (int64, error) {
+	if !viewerAuthed && s.anon != nil {
+		return s.countSearchPublicAnonymous(ctx, query, filter)
+	}
 	return s.repo.CountSearchPublicVideos(ctx, filter.searchParams(query, pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}))
 }
 

@@ -639,6 +639,9 @@ func (f *fakeRepo) duration(id uuid.UUID) *int32 {
 func (f *fakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error) {
 	var rows []sqlcgen.ListPublicVideosSortedRow
 	for _, r := range f.videos {
+		if a.HideSensitive && r.IsSensitive {
+			continue // the "hide" policy, as the SQL filters it
+		}
 		if r.Privacy == "public" && r.State == "published" {
 			rows = append(rows, sqlcgen.ListPublicVideosSortedRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
