@@ -528,6 +528,110 @@ ORDER BY
     feed.created_at DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: ListPublicVideosRecent :many
+-- ListPublicVideosSorted for the one shape most page loads ask for: an
+-- ANONYMOUS caller, local scope, no tag/category/language, sort=recent. With no
+-- viewer the per-viewer predicates are constants (no mutes, no blocks, no
+-- 'internal' rows) and vidra_sensitive_hidden(.., NULL) is exactly
+-- "is_sensitive AND hide_sensitive", so the page can be read off
+-- videos_public_published_idx and stop after LIMIT rows instead of building
+-- every public row first. The unlisted-owner rule is an anti-join on the few
+-- unlisted owners' channels. Card columns are joined for the page only, and are
+-- the same columns in the same order as ListPublicVideosSorted.
+WITH page AS MATERIALIZED (
+    SELECT v.id, v.created_at
+    FROM videos v
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM channels uc JOIN users u ON u.id = uc.owner_id
+          WHERE uc.id = v.channel_id AND u.unlisted
+      )
+      AND NOT (v.is_sensitive AND sqlc.arg('hide_sensitive')::bool)
+    ORDER BY v.created_at DESC, v.id DESC
+    LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset')
+)
+SELECT v.id, false AS remote, v.channel_id, v.title, v.description,
+       v.privacy, v.state, v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds,
+       ''::text AS domain, ''::text AS watch_url, NULL::text AS stream_url,
+       v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+FROM page p
+JOIN videos v ON v.id = p.id
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+ORDER BY p.created_at DESC, p.id DESC;
+
+-- name: ListPublicVideosRanked :many
+-- The same anonymous, local, unfiltered shape as ListPublicVideosRecent for the
+-- sorts no index can order (popular, trending, originally_published_at, name):
+-- rank on the id and the sort key alone, keep the page, then join the card
+-- columns for those rows. The ORDER BY terms mirror ListPublicVideosSorted one
+-- for one, so both statements return the same rows in the same order.
+WITH page AS MATERIALIZED (
+    SELECT v.id, v.created_at,
+           CASE WHEN sqlc.arg('sort')::text = 'popular' THEN COALESCE(vc.views, 0)::bigint END AS by_views,
+           CASE WHEN sqlc.arg('sort')::text = 'trending'
+                THEN COALESCE(vc.views, 0)::float8
+                     / power(EXTRACT(EPOCH FROM (now() - v.created_at))::float8 / 3600.0 + 2.0, 1.5)
+           END AS by_score,
+           CASE WHEN sqlc.arg('sort')::text = 'originally_published_at'
+                THEN COALESCE(v.originally_published_at, v.created_at) END AS by_date,
+           CASE WHEN sqlc.arg('sort')::text = 'name' THEN lower(v.title) END AS by_name
+    FROM videos v
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM channels uc JOIN users u ON u.id = uc.owner_id
+          WHERE uc.id = v.channel_id AND u.unlisted
+      )
+      AND NOT (v.is_sensitive AND sqlc.arg('hide_sensitive')::bool)
+    ORDER BY by_views DESC, by_score DESC, by_date DESC, by_name ASC, v.created_at DESC, v.id DESC
+    LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset')
+)
+SELECT v.id, false AS remote, v.channel_id, v.title, v.description,
+       v.privacy, v.state, v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds,
+       ''::text AS domain, ''::text AS watch_url, NULL::text AS stream_url,
+       v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+FROM page p
+JOIN videos v ON v.id = p.id
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+ORDER BY p.by_views DESC, p.by_score DESC, p.by_date DESC, p.by_name ASC, p.created_at DESC, p.id DESC;
+
+-- name: CountPublicVideosLocal :one
+-- CountPublicVideosSorted for the anonymous, local, unfiltered shape: the total
+-- that goes with ListPublicVideosRecent and ListPublicVideosRanked.
+SELECT count(*)::bigint
+FROM videos v
+WHERE v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM channels uc JOIN users u ON u.id = uc.owner_id
+      WHERE uc.id = v.channel_id AND u.unlisted
+  )
+  AND NOT (v.is_sensitive AND sqlc.arg('hide_sensitive')::bool);
+
 -- name: CountPublicVideosSorted :one
 -- How many rows ListPublicVideosSorted would return for the same filters,
 -- viewer and scope, ignoring pagination. The whole UNION body is repeated

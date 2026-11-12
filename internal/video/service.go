@@ -158,6 +158,9 @@ type Repository interface {
 	CountPublicVideosByOwnerVisible(ctx context.Context, arg sqlcgen.CountPublicVideosByOwnerVisibleParams) (int64, error)
 	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
 	CountPublicVideosSorted(ctx context.Context, arg sqlcgen.CountPublicVideosSortedParams) (int64, error)
+	ListPublicVideosRecent(ctx context.Context, arg sqlcgen.ListPublicVideosRecentParams) ([]sqlcgen.ListPublicVideosRecentRow, error)
+	ListPublicVideosRanked(ctx context.Context, arg sqlcgen.ListPublicVideosRankedParams) ([]sqlcgen.ListPublicVideosRankedRow, error)
+	CountPublicVideosLocal(ctx context.Context, hideSensitive bool) (int64, error)
 	ListSubscriptionVideos(ctx context.Context, arg sqlcgen.ListSubscriptionVideosParams) ([]sqlcgen.ListSubscriptionVideosRow, error)
 	CountSubscriptionVideos(ctx context.Context, followerID uuid.UUID) (int64, error)
 	ListSavedVideos(ctx context.Context, arg sqlcgen.ListSavedVideosParams) ([]sqlcgen.ListSavedVideosRow, error)
@@ -2704,30 +2707,39 @@ func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter Fee
 	if len(language) == 0 {
 		language = nil // NULL = no filter; an empty array would match nothing
 	}
-	rows, err := s.repo.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
-		Sort:          NormalizeFeedSort(sort),
-		IncludeRemote: includeRemote,
-		ViewerID:      viewer,
-		Tag:           tag,
-		Category:      category,
-		Language:      language,
-		HideSensitive: filter.HideSensitive,
-		ResultLimit:   limit,
-		ResultOffset:  offset,
-	})
-	if err != nil {
-		return nil, 0, err
+	sort = NormalizeFeedSort(sort)
+	var (
+		rows  []sqlcgen.ListPublicVideosSortedRow
+		total int64
+		err   error
+	)
+	if !viewerAuthed && !includeRemote && tag == nil && category == nil && language == nil {
+		rows, total, err = s.listPublicLocalAnonymous(ctx, sort, filter.HideSensitive, limit, offset)
+	} else {
+		rows, err = s.repo.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
+			Sort:          sort,
+			IncludeRemote: includeRemote,
+			ViewerID:      viewer,
+			Tag:           tag,
+			Category:      category,
+			Language:      language,
+			HideSensitive: filter.HideSensitive,
+			ResultLimit:   limit,
+			ResultOffset:  offset,
+		})
+		if err == nil {
+			// Same filters, same viewer, same scope — only the ordering and
+			// the page bounds are dropped.
+			total, err = s.repo.CountPublicVideosSorted(ctx, sqlcgen.CountPublicVideosSortedParams{
+				IncludeRemote: includeRemote,
+				ViewerID:      viewer,
+				Tag:           tag,
+				Category:      category,
+				Language:      language,
+				HideSensitive: filter.HideSensitive,
+			})
+		}
 	}
-	// Same filters, same viewer, same scope — only the ordering and the page
-	// bounds are dropped.
-	total, err := s.repo.CountPublicVideosSorted(ctx, sqlcgen.CountPublicVideosSortedParams{
-		IncludeRemote: includeRemote,
-		ViewerID:      viewer,
-		Tag:           tag,
-		Category:      category,
-		Language:      language,
-		HideSensitive: filter.HideSensitive,
-	})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2738,6 +2750,39 @@ func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter Fee
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, total, nil
+}
+
+// listPublicLocalAnonymous serves the feed shape most page loads ask for (no
+// viewer, local scope, no filter) from the statements written for it. They
+// return ListPublicVideosSorted's columns, rows and order without building
+// every public row to keep twenty.
+func (s *Service) listPublicLocalAnonymous(ctx context.Context, sort string, hideSensitive bool, limit, offset int32) ([]sqlcgen.ListPublicVideosSortedRow, int64, error) {
+	var rows []sqlcgen.ListPublicVideosSortedRow
+	if sort == "recent" {
+		page, err := s.repo.ListPublicVideosRecent(ctx, sqlcgen.ListPublicVideosRecentParams{
+			HideSensitive: hideSensitive, ResultLimit: limit, ResultOffset: offset,
+		})
+		if err != nil {
+			return nil, 0, err
+		}
+		rows = make([]sqlcgen.ListPublicVideosSortedRow, len(page))
+		for i, r := range page {
+			rows[i] = sqlcgen.ListPublicVideosSortedRow(r)
+		}
+	} else {
+		page, err := s.repo.ListPublicVideosRanked(ctx, sqlcgen.ListPublicVideosRankedParams{
+			Sort: sort, HideSensitive: hideSensitive, ResultLimit: limit, ResultOffset: offset,
+		})
+		if err != nil {
+			return nil, 0, err
+		}
+		rows = make([]sqlcgen.ListPublicVideosSortedRow, len(page))
+		for i, r := range page {
+			rows[i] = sqlcgen.ListPublicVideosSortedRow(r)
+		}
+	}
+	total, err := s.repo.CountPublicVideosLocal(ctx, hideSensitive)
+	return rows, total, err
 }
 
 // ListSubscriptions returns the user's subscriptions feed (remote-content §3):
