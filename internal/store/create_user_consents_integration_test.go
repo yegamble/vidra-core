@@ -198,3 +198,50 @@ func TestApprovalRecordsTheApplicantsConsentAtTheTimeTheyGaveIt(t *testing.T) {
 		t.Fatalf("consent rows for a request that kept nothing = %d, %v; want 0", n, err)
 	}
 }
+
+// ListUserConsents is what the account export reads: every acceptance, oldest
+// first, a later re-acceptance after the signup's rows.
+func TestListUserConsentsIsOldestFirst(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	sfx := uuid.NewString()[:8]
+	defer func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE username = $1`, "listed_"+sfx)
+	}()
+	signedUp := time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC)
+	user, err := q.CreateUser(ctx, sqlcgen.CreateUserParams{
+		Username: "listed_" + sfx, Email: "listed_" + sfx + "@example.test", PasswordHash: "x", Role: "user",
+		ConsentSource: "signup", ConsentAcceptedAt: pgtype.Timestamptz{Time: signedUp, Valid: true},
+		ConsentDocuments: []string{"terms", "age"}, ConsentVersions: []string{"v1", ""},
+		ConsentUrls: []string{"https://example.test/terms", ""}, ConsentMinimumAges: []int32{0, 16},
+	})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO user_consents (user_id, document, version, url, source, accepted_at)
+		VALUES ($1, 'terms', 'v2', 'https://example.test/terms', 'reaccept', $2)`, user.ID, signedUp.Add(48*time.Hour)); err != nil {
+		t.Fatalf("insert the re-acceptance: %v", err)
+	}
+	rows, err := q.ListUserConsents(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("ListUserConsents: %v", err)
+	}
+	var got []string
+	for _, r := range rows {
+		age := int32(0)
+		if r.MinimumAge != nil {
+			age = *r.MinimumAge
+		}
+		got = append(got, fmt.Sprintf("%s|%s|%s|%d", r.Document, r.Version, r.Source, age))
+	}
+	want := []string{"age||signup|16", "terms|v1|signup|0", "terms|v2|reaccept|0"}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("ListUserConsents = %v, want %v", got, want)
+	}
+}

@@ -24,16 +24,32 @@ const ArchiveVersion = 1
 // The same shape is what POST /api/v1/me/import accepts; only the safe subsets
 // documented on ImportSummary are re-created.
 type Archive struct {
-	Meta              ArchiveMeta       `json:"vidra_export"`
-	Profile           ArchiveProfile    `json:"profile"`
-	NotificationPrefs []ArchivePref     `json:"notification_prefs"`
-	Channels          []ArchiveChannel  `json:"channels"`
-	Videos            []ArchiveVideo    `json:"videos"`
-	Playlists         []ArchivePlaylist `json:"playlists"`
-	Comments          []ArchiveComment  `json:"comments"`
-	Follows           []ArchiveFollow   `json:"follows"`
-	SavedVideos       []ArchiveSaved    `json:"saved_videos"`
-	WatchHistory      []ArchiveHistory  `json:"watch_history"`
+	Meta              ArchiveMeta    `json:"vidra_export"`
+	Profile           ArchiveProfile `json:"profile"`
+	NotificationPrefs []ArchivePref  `json:"notification_prefs"`
+	// Consents is what the account holder accepted and when (terms, privacy
+	// policy, age attestation). Export only: an import never creates one — a
+	// consent is something a person gives, not something a file asserts.
+	Consents     []ArchiveConsent  `json:"consents"`
+	Channels     []ArchiveChannel  `json:"channels"`
+	Videos       []ArchiveVideo    `json:"videos"`
+	Playlists    []ArchivePlaylist `json:"playlists"`
+	Comments     []ArchiveComment  `json:"comments"`
+	Follows      []ArchiveFollow   `json:"follows"`
+	SavedVideos  []ArchiveSaved    `json:"saved_videos"`
+	WatchHistory []ArchiveHistory  `json:"watch_history"`
+}
+
+// ArchiveConsent is one acceptance: which document, the operator's version
+// label and the URL as they were at the time, how it arrived (signup, approval,
+// oidc, atproto, reaccept), and when.
+type ArchiveConsent struct {
+	Document   string    `json:"document"`
+	Version    string    `json:"version"`
+	URL        string    `json:"url"`
+	MinimumAge *int32    `json:"minimum_age,omitempty"`
+	Source     string    `json:"source"`
+	AcceptedAt time.Time `json:"accepted_at"`
 }
 
 // ArchiveMeta identifies the archive format and origin.
@@ -148,6 +164,7 @@ func (s *Service) buildArchive(ctx context.Context, user sqlcgen.User) (Archive,
 		// Initialise every section to an empty (not null) list so archives are
 		// shape-stable regardless of how much data the account has.
 		NotificationPrefs: []ArchivePref{},
+		Consents:          []ArchiveConsent{},
 		Channels:          []ArchiveChannel{},
 		Videos:            []ArchiveVideo{},
 		Playlists:         []ArchivePlaylist{},
@@ -163,6 +180,17 @@ func (s *Service) buildArchive(ctx context.Context, user sqlcgen.User) (Archive,
 	}
 	for _, p := range prefs {
 		a.NotificationPrefs = append(a.NotificationPrefs, ArchivePref{Type: p.Type, Enabled: p.Enabled})
+	}
+
+	consents, err := s.repo.ListUserConsents(ctx, user.ID)
+	if err != nil {
+		return Archive{}, fmt.Errorf("account: export consents: %w", err)
+	}
+	for _, c := range consents {
+		a.Consents = append(a.Consents, ArchiveConsent{
+			Document: c.Document, Version: c.Version, URL: c.Url,
+			MinimumAge: c.MinimumAge, Source: c.Source, AcceptedAt: c.AcceptedAt,
+		})
 	}
 
 	channels, err := s.repo.ListChannelsByOwner(ctx, user.ID)

@@ -25935,6 +25935,35 @@ components:
                 type: string
               enabled:
                 type: boolean
+        consents:
+          type: array
+          description: >-
+            What the account holder accepted and when: the instance's terms and
+            privacy policy (with the operator's version label and the URL as
+            they were at the time) and the age attestation. Export only — an
+            import never creates a consent.
+          items:
+            type: object
+            required: [document, version, url, source, accepted_at]
+            properties:
+              document:
+                type: string
+                enum: [terms, privacy, age]
+              version:
+                type: string
+                description: The operator's label for the document; may be empty.
+              url:
+                type: string
+                description: Where the document lived; empty for `age`.
+              minimum_age:
+                type: integer
+                description: The age attested; `age` entries only.
+              source:
+                type: string
+                enum: [signup, approval, oidc, atproto, reaccept]
+              accepted_at:
+                type: string
+                format: date-time
         channels:
           type: array
           description: Owned channels (metadata only; not re-created by import).
