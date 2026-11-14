@@ -157,6 +157,9 @@ const (
 	// Public GA4 browser configuration, disabled unless explicitly configured.
 	KeyAnalyticsGoogleEnabled       = "analytics_google_enabled"
 	KeyAnalyticsGoogleMeasurementID = "analytics_google_measurement_id"
+	// Default true: visitors are asked before GA4 loads. false lets the
+	// frontend treat analytics as granted without a banner.
+	KeyAnalyticsGoogleConsentRequired = "analytics_google_consent_required"
 
 	// Public browser advertising configuration; the server never fetches these URLs.
 	KeyPlayerVASTEnabled                   = "player_vast_enabled"
@@ -1030,6 +1033,8 @@ var specs = []spec{
 	{key: KeyAnalyticsGoogleEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageGeneral, section: "analytics"},
 	{key: KeyAnalyticsGoogleMeasurementID, kind: KindString, defString: hardcoded(""), validate: validateOptionalGoogleMeasurementID,
+		page: PageGeneral, section: "analytics"},
+	{key: KeyAnalyticsGoogleConsentRequired, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
 		page: PageGeneral, section: "analytics"},
 	{key: KeyEmailSubjectPrefix, kind: KindString, defString: hardcoded(""), validate: maxLen(128),
 		page: PageCustomization, section: "email"},

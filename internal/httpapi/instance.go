@@ -185,6 +185,9 @@ type instanceAds struct {
 type instanceAnalytics struct {
 	GoogleEnabled       bool   `json:"google_enabled"`
 	GoogleMeasurementID string `json:"google_measurement_id"`
+	// GoogleConsentRequired is true unless the admin turned the consent gate
+	// off; it is always true while analytics is disabled (fail closed).
+	GoogleConsentRequired bool `json:"google_consent_required"`
 }
 
 // instanceFeatured is the admin featured-banner block (home-featured-banner).
@@ -658,8 +661,9 @@ func (s *Server) instanceAnalyticsBlock() instanceAnalytics {
 		id = "" // Disabled or invalid settings must not expose a public ID.
 	}
 	return instanceAnalytics{
-		GoogleEnabled:       id != "",
-		GoogleMeasurementID: id,
+		GoogleEnabled:         id != "",
+		GoogleMeasurementID:   id,
+		GoogleConsentRequired: id == "" || s.settingBool(instancesettings.KeyAnalyticsGoogleConsentRequired, true),
 	}
 }
 
