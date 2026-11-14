@@ -663,8 +663,19 @@ func (s *Server) instanceAnalyticsBlock() instanceAnalytics {
 	return instanceAnalytics{
 		GoogleEnabled:         id != "",
 		GoogleMeasurementID:   id,
-		GoogleConsentRequired: id == "" || s.settingBool(instancesettings.KeyAnalyticsGoogleConsentRequired, true),
+		GoogleConsentRequired: id == "" || s.analyticsConsentRequired(),
 	}
+}
+
+// analyticsConsentRequired is false ONLY for a stored value of exactly "false".
+// Bool() reads any non-"true" text as false, which for this key would silently
+// drop the consent gate, so a corrupt value must fail closed instead.
+func (s *Server) analyticsConsentRequired() bool {
+	if s.settingssvc == nil {
+		return true
+	}
+	raw, set := s.settingssvc.OverrideRaw(instancesettings.KeyAnalyticsGoogleConsentRequired)
+	return !set || raw != "false"
 }
 
 func (s *Server) instanceFeaturedBlock() instanceFeatured {

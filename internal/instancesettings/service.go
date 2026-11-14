@@ -1493,6 +1493,13 @@ func (s *Service) Bool(key string) bool {
 	return sp.defBool(s.defaults)
 }
 
+// OverrideRaw returns the stored override text for key, exactly as persisted
+// (including values Bool would read as false because they are not "true").
+// Callers whose safe default is the opposite of false use it to fail closed.
+func (s *Service) OverrideRaw(key string) (string, bool) {
+	return s.override(key)
+}
+
 // String returns the effective string value for a string- or enum-kind key:
 // the DB override if present, else the config default. An unknown key (or a
 // bool/list key) returns "".

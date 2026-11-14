@@ -133,3 +133,33 @@ func TestGoogleAnalyticsConsentRequiredProjection(t *testing.T) {
 		t.Fatal("reset must restore consent required")
 	}
 }
+
+// A stored value that is not exactly "false" (hand edit, import, restore —
+// the API cannot write one) must never switch the consent gate off.
+func TestGoogleAnalyticsConsentRequiredGarbageStoredValue(t *testing.T) {
+	for _, stored := range []string{"True", "1", "FALSE", "no", " false", ""} {
+		repo := newInstanceSettingsFakeRepo()
+		repo.rows["analytics_google_enabled"] = sqlcgen.InstanceSetting{Key: "analytics_google_enabled", Value: "true"}
+		repo.rows["analytics_google_measurement_id"] = sqlcgen.InstanceSetting{Key: "analytics_google_measurement_id", Value: "G-PSW1MY7HB4"}
+		repo.rows["analytics_google_consent_required"] = sqlcgen.InstanceSetting{Key: "analytics_google_consent_required", Value: stored}
+		svc := instancesettings.NewService(repo, instancesettings.Defaults{})
+		if err := svc.Load(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		a, _ := readGoogleAnalytics(t, New(testConfig(), nil, nil, WithSettingsService(svc)))
+		if !a.Enabled || a.ConsentRequired == nil || !*a.ConsentRequired {
+			t.Errorf("stored %q must project consent required", stored)
+		}
+	}
+	repo := newInstanceSettingsFakeRepo()
+	repo.rows["analytics_google_enabled"] = sqlcgen.InstanceSetting{Key: "analytics_google_enabled", Value: "true"}
+	repo.rows["analytics_google_measurement_id"] = sqlcgen.InstanceSetting{Key: "analytics_google_measurement_id", Value: "G-PSW1MY7HB4"}
+	repo.rows["analytics_google_consent_required"] = sqlcgen.InstanceSetting{Key: "analytics_google_consent_required", Value: "false"}
+	svc := instancesettings.NewService(repo, instancesettings.Defaults{})
+	if err := svc.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := readGoogleAnalytics(t, New(testConfig(), nil, nil, WithSettingsService(svc))); a.ConsentRequired == nil || *a.ConsentRequired {
+		t.Error("an exact stored false must project consent not required")
+	}
+}
