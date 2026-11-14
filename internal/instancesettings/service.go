@@ -110,7 +110,14 @@ const (
 	// answers 401 sign_in_required to them). A sign-in wall, not age
 	// verification: it proves an account, not an age.
 	KeySensitiveAnonymousAccess = "sensitive_anonymous_access"
-	KeyInstanceCategories       = "instance_categories"
+	// KeyAgeGateEnabled asks a visitor WITHOUT an account to confirm they are
+	// at least registration_minimum_age before the frontend shows any page or
+	// embed. Self-declared and enforced in the browser: it refuses no API or
+	// media request, so it is not age verification. Effective only while a
+	// minimum age is set; the admin PATCH refuses a batch that would leave it
+	// on without one.
+	KeyAgeGateEnabled     = "age_gate_enabled"
+	KeyInstanceCategories = "instance_categories"
 	// KeyInstanceCustomCategories REPLACES the built-in video category taxonomy
 	// when it is non-empty. Entries are "<numeric id>:<label>".
 	//
@@ -877,6 +884,8 @@ var specs = []spec{
 		page: PageGeneral, section: "moderation"},
 	{key: KeySensitiveAnonymousAccess, kind: KindEnum, defString: hardcoded(SensitiveAnonymousAccessOpen),
 		options: SensitiveAnonymousAccessOptions, validate: enumOf(SensitiveAnonymousAccessOptions),
+		page: PageGeneral, section: "moderation"},
+	{key: KeyAgeGateEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageGeneral, section: "moderation"},
 	{key: KeyInstanceCategories, kind: KindList, defString: hardcoded(emptyList),
 		validate: listOf(video.IsCategory, "category"),

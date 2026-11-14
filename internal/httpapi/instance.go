@@ -331,6 +331,11 @@ type instanceResponse struct {
 	// an account is refused every read of a sensitive video (401
 	// sign_in_required). A sign-in wall, not age verification.
 	SensitiveAnonymousAccess string `json:"sensitive_anonymous_access"`
+	// AgeGateEnabled reports whether the frontend asks a visitor without an
+	// account to confirm registration_minimum_age before showing any page:
+	// age_gate_enabled AND an age set. Self-declared and browser-enforced; no
+	// API or media request is refused.
+	AgeGateEnabled bool `json:"age_gate_enabled"`
 	// ContactFormEnabled reports the EFFECTIVE contact-form availability: the
 	// admin toggle AND a non-empty effective contact email AND an outbound mail
 	// path on this deployment. POST /instance/contact answers 409 whenever this
@@ -437,6 +442,7 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 		IsSensitive:                           s.settingBool(instancesettings.KeyInstanceIsSensitive, false),
 		SensitiveContentPolicy:                s.sensitiveContentPolicy(),
 		SensitiveAnonymousAccess:              s.sensitiveAnonymousAccess(),
+		AgeGateEnabled:                        s.ageGateEnabled(),
 		ContactFormEnabled:                    s.contactFormAvailable(),
 		SocialLinks: instanceSocialLinks{
 			Website:  s.settingString(instancesettings.KeyWebsiteLink, ""),
