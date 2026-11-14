@@ -14,6 +14,8 @@ import (
 type googleAnalyticsConfig struct {
 	Enabled bool   `json:"google_enabled"`
 	ID      string `json:"google_measurement_id"`
+	// Pointer: the field must be PRESENT in the payload, true or false.
+	ConsentRequired *bool `json:"google_consent_required"`
 }
 
 func readGoogleAnalytics(t *testing.T, srv *Server) (googleAnalyticsConfig, string) {
@@ -93,5 +95,71 @@ func TestGoogleAnalyticsConfig(t *testing.T) {
 	e.patch(t, `{"analytics_google_enabled":null,"analytics_google_measurement_id":null}`)
 	if analytics, _ := readGoogleAnalytics(t, e.srv); analytics.Enabled || analytics.ID != "" {
 		t.Fatal("reset must restore disabled defaults")
+	}
+}
+
+func TestGoogleAnalyticsConsentRequiredProjection(t *testing.T) {
+	e := newSettingsAuditEnv(t)
+	consent := func() bool {
+		a, _ := readGoogleAnalytics(t, e.srv)
+		if a.ConsentRequired == nil {
+			t.Fatal("public analytics block must carry google_consent_required")
+		}
+		return *a.ConsentRequired
+	}
+	if !consent() {
+		t.Fatal("consent must be required by default")
+	}
+	e.patch(t, `{"analytics_google_enabled":true,"analytics_google_measurement_id":"G-PSW1MY7HB4"}`)
+	if !consent() {
+		t.Fatal("enabling analytics must not change the consent default")
+	}
+	e.patch(t, `{"analytics_google_consent_required":false}`)
+	if consent() {
+		t.Fatal("admin opt-out of consent must be projected")
+	}
+	if rec := sendJSONAuth(e.srv, http.MethodPatch, "/api/v1/admin/instance-settings", `{"analytics_google_consent_required":"no"}`, e.admin); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("non-boolean consent value = %d, want 422", rec.Code)
+	}
+	if consent() {
+		t.Fatal("rejected write changed the effective configuration")
+	}
+	e.patch(t, `{"analytics_google_enabled":false}`)
+	if !consent() {
+		t.Fatal("a disabled block must fail closed to consent required")
+	}
+	e.patch(t, `{"analytics_google_enabled":true,"analytics_google_consent_required":null}`)
+	if !consent() {
+		t.Fatal("reset must restore consent required")
+	}
+}
+
+// A stored value that is not exactly "false" (hand edit, import, restore —
+// the API cannot write one) must never switch the consent gate off.
+func TestGoogleAnalyticsConsentRequiredGarbageStoredValue(t *testing.T) {
+	for _, stored := range []string{"True", "1", "FALSE", "no", " false", ""} {
+		repo := newInstanceSettingsFakeRepo()
+		repo.rows["analytics_google_enabled"] = sqlcgen.InstanceSetting{Key: "analytics_google_enabled", Value: "true"}
+		repo.rows["analytics_google_measurement_id"] = sqlcgen.InstanceSetting{Key: "analytics_google_measurement_id", Value: "G-PSW1MY7HB4"}
+		repo.rows["analytics_google_consent_required"] = sqlcgen.InstanceSetting{Key: "analytics_google_consent_required", Value: stored}
+		svc := instancesettings.NewService(repo, instancesettings.Defaults{})
+		if err := svc.Load(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		a, _ := readGoogleAnalytics(t, New(testConfig(), nil, nil, WithSettingsService(svc)))
+		if !a.Enabled || a.ConsentRequired == nil || !*a.ConsentRequired {
+			t.Errorf("stored %q must project consent required", stored)
+		}
+	}
+	repo := newInstanceSettingsFakeRepo()
+	repo.rows["analytics_google_enabled"] = sqlcgen.InstanceSetting{Key: "analytics_google_enabled", Value: "true"}
+	repo.rows["analytics_google_measurement_id"] = sqlcgen.InstanceSetting{Key: "analytics_google_measurement_id", Value: "G-PSW1MY7HB4"}
+	repo.rows["analytics_google_consent_required"] = sqlcgen.InstanceSetting{Key: "analytics_google_consent_required", Value: "false"}
+	svc := instancesettings.NewService(repo, instancesettings.Defaults{})
+	if err := svc.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := readGoogleAnalytics(t, New(testConfig(), nil, nil, WithSettingsService(svc))); a.ConsentRequired == nil || *a.ConsentRequired {
+		t.Error("an exact stored false must project consent not required")
 	}
 }

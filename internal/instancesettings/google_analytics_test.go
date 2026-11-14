@@ -8,6 +8,28 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestGoogleAnalyticsConsentRequiredSetting(t *testing.T) {
+	const key = "analytics_google_consent_required"
+	svc := NewService(newFakeRepo(), testDefaults())
+	if !svc.Bool(key) {
+		t.Fatal("consent must default to required")
+	}
+	if kind, ok := KindOf(key); !ok || kind != KindBool {
+		t.Fatal("consent setting must be a registered bool")
+	}
+	for _, entry := range svc.Snapshot() {
+		if entry.Key == key && (entry.Page != PageGeneral || entry.Section != "analytics") {
+			t.Errorf("unexpected metadata: %+v", entry)
+		}
+	}
+	if err := Validate(key, "maybe"); err == nil {
+		t.Error("non-boolean value accepted")
+	}
+	if err := Validate(key, "false"); err != nil {
+		t.Errorf("false rejected: %v", err)
+	}
+}
+
 func TestGoogleAnalyticsSettings(t *testing.T) {
 	const enabled, id = "analytics_google_enabled", "analytics_google_measurement_id"
 	repo := newFakeRepo()

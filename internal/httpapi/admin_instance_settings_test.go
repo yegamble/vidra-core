@@ -214,8 +214,8 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// + age_gate_enabled (ask a visitor without an account to confirm the
 	// minimum age before any page; default OFF, exactly as before).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 149 {
-		t.Fatalf("settings count = %d, want 149", len(got.Settings))
+	if len(got.Settings) != 150 {
+		t.Fatalf("settings count = %d, want 150", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

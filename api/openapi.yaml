@@ -17123,6 +17123,9 @@ paths:
         analytics_google_measurement_id defaults empty and must match
         ^G-[A-Z0-9]{4,20}$ when set. It is a public GA4 browser identifier,
         not a secret or server-fetched resource. Empty clears the ID.
+        analytics_google_consent_required defaults true (visitors are asked
+        before GA4 loads); false makes the frontend load GA4 without asking,
+        still honouring Do-Not-Track and Global Privacy Control.
         Restricted to admins.
       tags: [admin]
       security:
@@ -17261,7 +17264,8 @@ paths:
         sensitive-content filtering, and the upload/import/live/comment/download/
         registration gates reflect them.
         Google Analytics uses the boolean analytics_google_enabled and string
-        analytics_google_measurement_id (empty or ^G-[A-Z0-9]{4,20}$).
+        analytics_google_measurement_id (empty or ^G-[A-Z0-9]{4,20}$), plus the
+        boolean analytics_google_consent_required (default true).
       tags: [admin]
       security:
         - bearerAuth: []
@@ -20958,6 +20962,9 @@ components:
               maxLength: 22
               pattern: '^(G-[A-Z0-9]{4,20})?$'
               description: Public GA4 measurement ID; empty when disabled, unconfigured or invalid. The saved admin setting is retained when disabled.
+            google_consent_required:
+              type: boolean
+              description: False only when the admin turned off analytics_google_consent_required and analytics is active; clients then load GA4 without a consent prompt (still honouring Do-Not-Track and Global Privacy Control). True otherwise; absent on older servers means true.
         ads:
           type: object
           description: >-
