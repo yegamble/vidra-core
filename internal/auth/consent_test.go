@@ -53,9 +53,6 @@ func TestSignupRecordsWhatWasAccepted(t *testing.T) {
 		{"terms, privacy and age", bothDocuments, SignupAcceptance{Terms: true, Age: true},
 			[]string{"terms", "privacy", "age"}, []string{"2026-11-12", "v3", ""},
 			[]string{"https://example.test/terms", "https://example.test/privacy", ""}, []int32{0, 0, 16}},
-		{"age not attested is not recorded", bothDocuments, SignupAcceptance{Terms: true},
-			[]string{"terms", "privacy"}, []string{"2026-11-12", "v3"},
-			[]string{"https://example.test/terms", "https://example.test/privacy"}, []int32{0, 0}},
 		{"only a privacy policy, no label", SignupTerms{PrivacyURL: "https://example.test/privacy"}, SignupAcceptance{Terms: true},
 			[]string{"privacy"}, []string{""}, []string{"https://example.test/privacy"}, []int32{0}},
 		{"only a minimum age", SignupTerms{MinimumAge: 13}, SignupAcceptance{Age: true},
@@ -87,6 +84,29 @@ func TestSignupRecordsWhatWasAccepted(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// With a minimum age set, no account is created and no request is filed unless
+// the signup attested it — on every password path, documents or not.
+func TestSignupWithoutTheAgeAttestationCreatesNothing(t *testing.T) {
+	ctx := context.Background()
+	in := RegisterInput{Username: "bob", Email: "bob@example.test", Password: "supersecret", Accepted: SignupAcceptance{Terms: true}}
+	for _, terms := range []SignupTerms{bothDocuments, {MinimumAge: 18}} {
+		repo := newFakeRepo()
+		svc := termsService(repo, terms)
+		if _, _, err := svc.Register(ctx, in, "agent"); !errors.Is(err, ErrAgeRequired) {
+			t.Errorf("Register with %+v = %v, want ErrAgeRequired", terms, err)
+		}
+		if _, err := svc.RegisterPendingVerification(ctx, in); !errors.Is(err, ErrAgeRequired) {
+			t.Errorf("RegisterPendingVerification with %+v = %v, want ErrAgeRequired", terms, err)
+		}
+		if _, err := svc.RequestRegistration(ctx, in, ""); !errors.Is(err, ErrAgeRequired) {
+			t.Errorf("RequestRegistration with %+v = %v, want ErrAgeRequired", terms, err)
+		}
+		if len(repo.created) != 0 || len(repo.requested) != 0 {
+			t.Errorf("created %+v / requested %+v without the attestation", repo.created, repo.requested)
+		}
 	}
 }
 
@@ -156,23 +176,23 @@ func TestProviderFirstSignInMustAcceptTheTerms(t *testing.T) {
 	oidc := NewOAuthService(repo, svc, []OAuthProvider{{Name: "fake", IssuerURL: "https://idp.invalid", ClientID: "id", ClientSecret: "secret"}})
 	claims := oidcClaims{Email: "bob@example.test", EmailVerified: true, PreferredUsername: "bob"}
 
-	if _, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, false, "ua"); !errors.Is(err, ErrTermsRequired) {
+	if _, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, SignupAcceptance{Age: true}, "ua"); !errors.Is(err, ErrTermsRequired) {
 		t.Fatalf("first sign-in without the acceptance = %v, want ErrTermsRequired", err)
 	}
 	if len(repo.created) != 0 {
 		t.Fatalf("an account was created without the acceptance")
 	}
-	sess, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, true, "ua")
+	sess, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, SignupAcceptance{Terms: true, Age: true}, "ua")
 	if err != nil || sess.Outcome != OAuthCreated {
 		t.Fatalf("first sign-in with the acceptance: outcome=%v err=%v", sess.Outcome, err)
 	}
 	got := repo.created[0]
-	if got.ConsentSource != ConsentSourceOIDC || !slices.Equal(got.ConsentDocuments, []string{"terms", "privacy"}) ||
-		!slices.Equal(got.ConsentVersions, []string{"2026-11-12", "v3"}) {
+	if got.ConsentSource != ConsentSourceOIDC || !slices.Equal(got.ConsentDocuments, []string{"terms", "privacy", "age"}) ||
+		!slices.Equal(got.ConsentVersions, []string{"2026-11-12", "v3", ""}) {
 		t.Errorf("recorded %q %v %v", got.ConsentSource, got.ConsentDocuments, got.ConsentVersions)
 	}
 	// The same subject again is a login: never asked, nothing created.
-	if sess, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, false, "ua"); err != nil || sess.Outcome != OAuthLogin {
+	if sess, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, SignupAcceptance{}, "ua"); err != nil || sess.Outcome != OAuthLogin {
 		t.Fatalf("returning sign-in without the acceptance: outcome=%v err=%v; want a login", sess.Outcome, err)
 	}
 	if len(repo.created) != 1 {
@@ -188,14 +208,14 @@ func TestProviderFirstSignInMustAcceptTheTerms(t *testing.T) {
 	if _, err := at.Complete(ctx, st, "code-1", st.Issuer, "ua"); !errors.Is(err, ErrTermsRequired) {
 		t.Fatalf("atproto first sign-in without the acceptance = %v, want ErrTermsRequired", err)
 	}
-	st.TermsAccepted = true
+	st.TermsAccepted, st.AgeAttested = true, true
 	if sess, err := at.Complete(ctx, st, "code-2", st.Issuer, "ua"); err != nil || sess.Outcome != OAuthCreated {
 		t.Fatalf("atproto first sign-in with the acceptance: outcome=%v err=%v", sess.Outcome, err)
 	}
-	if got := repo.created[len(repo.created)-1]; got.ConsentSource != ConsentSourceATProto || !slices.Equal(got.ConsentDocuments, []string{"terms", "privacy"}) {
+	if got := repo.created[len(repo.created)-1]; got.ConsentSource != ConsentSourceATProto || !slices.Equal(got.ConsentDocuments, []string{"terms", "privacy", "age"}) {
 		t.Errorf("atproto recorded %q %v", got.ConsentSource, got.ConsentDocuments)
 	}
-	st.TermsAccepted = false
+	st.TermsAccepted, st.AgeAttested = false, false
 	if sess, err := at.Complete(ctx, st, "code-3", st.Issuer, "ua"); err != nil || sess.Outcome != OAuthLogin {
 		t.Fatalf("atproto returning sign-in: outcome=%v err=%v; want a login", sess.Outcome, err)
 	}
@@ -213,10 +233,16 @@ func TestProviderRequestKeepsTheAcceptance(t *testing.T) {
 	oidc := NewOAuthService(repo, svc, []OAuthProvider{{Name: "fake", IssuerURL: "https://idp.invalid", ClientID: "id", ClientSecret: "secret"}})
 	claims := oidcClaims{Email: "bob@example.test", EmailVerified: true, PreferredUsername: "bob"}
 
-	if _, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, false, "ua"); !errors.Is(err, ErrTermsRequired) {
+	if _, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, SignupAcceptance{Age: true}, "ua"); !errors.Is(err, ErrTermsRequired) {
 		t.Fatalf("queued provider sign-in without the acceptance = %v, want ErrTermsRequired", err)
 	}
-	if _, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, true, "ua"); !errors.Is(err, ErrRegistrationPending) {
+	if _, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, SignupAcceptance{Terms: true}, "ua"); !errors.Is(err, ErrAgeRequired) {
+		t.Fatalf("queued provider sign-in without the attestation = %v, want ErrAgeRequired", err)
+	}
+	if len(repo.providerRequested) != 0 {
+		t.Fatalf("a provider request was filed without the acceptance and attestation")
+	}
+	if _, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, SignupAcceptance{Terms: true, Age: true}, "ua"); !errors.Is(err, ErrRegistrationPending) {
 		t.Fatalf("queued provider sign-in with the acceptance = %v, want ErrRegistrationPending", err)
 	}
 	if len(repo.providerRequested) != 1 {
@@ -224,7 +250,58 @@ func TestProviderRequestKeepsTheAcceptance(t *testing.T) {
 	}
 	got := repo.providerRequested[0]
 	if !got.ConsentRecorded || got.ConsentTermsUrl == nil || *got.ConsentTermsUrl != "https://example.test/terms" ||
-		got.ConsentPrivacyVersion == nil || *got.ConsentPrivacyVersion != "v3" || got.ConsentMinimumAge != nil {
+		got.ConsentPrivacyVersion == nil || *got.ConsentPrivacyVersion != "v3" || got.ConsentMinimumAge == nil || *got.ConsentMinimumAge != 16 {
 		t.Errorf("the provider request kept %+v", got)
+	}
+}
+
+// A first sign-in through either provider is a signup for the minimum age too:
+// with only an age set it creates nothing unless the attempt carried the
+// attestation, and records the age when it did. A returning identity is never
+// asked. This is the path that skipped the age before: providers passed the
+// terms acceptance alone.
+func TestProviderFirstSignInMustAttestTheAge(t *testing.T) {
+	ctx := context.Background()
+	repo := newOAuthFakeRepo()
+	issuer := NewTokenIssuer("oauth-test-secret-oauth-test-secret-0", "vidra", "vidra", 60e9)
+	svc := NewService(repo.fakeRepo, issuer, 3600e9, WithSignupTermsFunc(func() SignupTerms { return SignupTerms{MinimumAge: 18} }))
+	oidc := NewOAuthService(repo, svc, []OAuthProvider{{Name: "fake", IssuerURL: "https://idp.invalid", ClientID: "id", ClientSecret: "secret"}})
+	claims := oidcClaims{Email: "bob@example.test", EmailVerified: true, PreferredUsername: "bob"}
+
+	if _, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, SignupAcceptance{Terms: true}, "ua"); !errors.Is(err, ErrAgeRequired) {
+		t.Fatalf("first sign-in without the attestation = %v, want ErrAgeRequired", err)
+	}
+	if len(repo.created) != 0 {
+		t.Fatalf("an account was created without the attestation")
+	}
+	if sess, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, SignupAcceptance{Age: true}, "ua"); err != nil || sess.Outcome != OAuthCreated {
+		t.Fatalf("first sign-in with the attestation: outcome=%v err=%v", sess.Outcome, err)
+	}
+	if got := repo.created[0]; got.ConsentSource != ConsentSourceOIDC || !slices.Equal(got.ConsentDocuments, []string{"age"}) ||
+		!slices.Equal(got.ConsentMinimumAges, []int32{18}) {
+		t.Errorf("recorded %q %v %v", got.ConsentSource, got.ConsentDocuments, got.ConsentMinimumAges)
+	}
+	if sess, err := oidc.resolveIdentity(ctx, "fake", "sub-bob", claims, SignupAcceptance{}, "ua"); err != nil || sess.Outcome != OAuthLogin {
+		t.Fatalf("returning sign-in without the attestation: outcome=%v err=%v; want a login", sess.Outcome, err)
+	}
+
+	at := NewATProtoOAuthService(repo, svc, defaultFlow(), WithATProtoEnabled(true), WithATProtoPublicBaseURL("https://vidra.test"))
+	_, st, err := at.Begin(ctx, "alice.example", "/home")
+	if err != nil {
+		t.Fatalf("atproto begin: %v", err)
+	}
+	if _, err := at.Complete(ctx, st, "code-1", st.Issuer, "ua"); !errors.Is(err, ErrAgeRequired) {
+		t.Fatalf("atproto first sign-in without the attestation = %v, want ErrAgeRequired", err)
+	}
+	if len(repo.created) != 1 {
+		t.Fatalf("accounts created = %d, want 1", len(repo.created))
+	}
+	st.AgeAttested = true
+	if sess, err := at.Complete(ctx, st, "code-2", st.Issuer, "ua"); err != nil || sess.Outcome != OAuthCreated {
+		t.Fatalf("atproto first sign-in with the attestation: outcome=%v err=%v", sess.Outcome, err)
+	}
+	if got := repo.created[len(repo.created)-1]; got.ConsentSource != ConsentSourceATProto ||
+		!slices.Equal(got.ConsentDocuments, []string{"age"}) || !slices.Equal(got.ConsentMinimumAges, []int32{18}) {
+		t.Errorf("atproto recorded %q %v %v", got.ConsentSource, got.ConsentDocuments, got.ConsentMinimumAges)
 	}
 }

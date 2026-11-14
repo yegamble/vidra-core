@@ -25,6 +25,10 @@ const (
 // configured and a signup did not accept them.
 var ErrTermsRequired = errors.New("auth: the terms and privacy policy were not accepted")
 
+// ErrAgeRequired is returned when the instance has a minimum age set and a
+// signup did not attest it.
+var ErrAgeRequired = errors.New("auth: the minimum age was not attested")
+
 // SignupTerms is what a new account has to accept on this instance right now:
 // the operator's two documents with their version labels, and the minimum age.
 type SignupTerms struct {
@@ -80,8 +84,11 @@ func (r consentRecord) onCreate(p sqlcgen.CreateUserParams, source string) sqlcg
 
 // signupConsent is the one place a signup's acceptance is checked and turned
 // into rows. It refuses when the instance has documents configured and they
-// were not accepted, and it records the documents as configured NOW — the
-// caller says only yes or no, never which version it thinks it saw.
+// were not accepted, or a minimum age set and it was not attested, and it
+// records what is configured NOW — the caller says only yes or no, never which
+// version or age it thinks it saw. Every account-creating path (the form, the
+// approval queue, a provider's first sign-in) calls it, so no path can skip
+// the age.
 func (s *Service) signupConsent(a SignupAcceptance) (consentRecord, error) {
 	var t SignupTerms
 	if s.signupTermsFn != nil {
@@ -90,6 +97,9 @@ func (s *Service) signupConsent(a SignupAcceptance) (consentRecord, error) {
 	if t.Required() && !a.Terms {
 		return consentRecord{}, ErrTermsRequired
 	}
+	if t.MinimumAge > 0 && !a.Age {
+		return consentRecord{}, ErrAgeRequired
+	}
 	var r consentRecord
 	if t.TermsURL != "" {
 		r.add(ConsentTerms, t.TermsVersion, t.TermsURL, 0)
@@ -97,7 +107,7 @@ func (s *Service) signupConsent(a SignupAcceptance) (consentRecord, error) {
 	if t.PrivacyURL != "" {
 		r.add(ConsentPrivacy, t.PrivacyVersion, t.PrivacyURL, 0)
 	}
-	if t.MinimumAge > 0 && a.Age {
+	if t.MinimumAge > 0 {
 		r.add(ConsentAge, "", "", t.MinimumAge)
 	}
 	return r, nil

@@ -157,11 +157,13 @@ func newATProtoLoginEnv(t *testing.T, enabled bool) *atprotoLoginEnv {
 
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, "vidra", "vidra", 15*time.Minute)
 	mailer := &captureResetMailer{}
-	authsvc := auth.NewService(repo.authFakeRepo, issuer, 720*time.Hour, auth.WithMailer(mailer))
 	settingssvc := instancesettings.NewService(newInstanceSettingsFakeRepo(), settingsDefaultsFromConfig(cfg))
 	if err := settingssvc.Load(context.Background()); err != nil {
 		t.Fatalf("settings load: %v", err)
 	}
+	// Signup terms come from the overlay, as cmd/api wires them.
+	authsvc := auth.NewService(repo.authFakeRepo, issuer, 720*time.Hour, auth.WithMailer(mailer),
+		auth.WithSignupTermsFunc(func() auth.SignupTerms { return SignupTerms(settingssvc) }))
 	loginsvc := auth.NewATProtoOAuthService(repo, authsvc, client,
 		auth.WithATProtoEnabled(enabled),
 		auth.WithATProtoPublicBaseURL(cfg.PublicBaseURL),
