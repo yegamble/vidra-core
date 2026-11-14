@@ -413,6 +413,10 @@ func (s *Server) handleUpdateInstanceSettings(c *echo.Context) error {
 		s.audit(c, observability.ActionAdminInstanceUpdate, observability.ResultFailure, callerID.String(), "invalid:"+instancesettings.KeySensitiveAnonymousAccess)
 		return &ValidationError{Fields: []FieldError{{Field: instancesettings.KeySensitiveAnonymousAccess, Message: msg}}}
 	}
+	if field, msg := s.ageGateSwitchRefusal(updates); msg != "" {
+		s.audit(c, observability.ActionAdminInstanceUpdate, observability.ResultFailure, callerID.String(), "invalid:"+field)
+		return &ValidationError{Fields: []FieldError{{Field: field, Message: msg}}}
+	}
 	gateRaised := s.raisesSensitiveGate(updates)
 	// Read BEFORE the write: the downloads-revocation purge below needs to know
 	// whether this PATCH is what closed the gate, and a restated
