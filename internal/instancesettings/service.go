@@ -157,6 +157,9 @@ const (
 	// Public GA4 browser configuration, disabled unless explicitly configured.
 	KeyAnalyticsGoogleEnabled       = "analytics_google_enabled"
 	KeyAnalyticsGoogleMeasurementID = "analytics_google_measurement_id"
+	// Default true: visitors are asked before GA4 loads. false lets the
+	// frontend treat analytics as granted without a banner.
+	KeyAnalyticsGoogleConsentRequired = "analytics_google_consent_required"
 
 	// Public browser advertising configuration; the server never fetches these URLs.
 	KeyPlayerVASTEnabled                   = "player_vast_enabled"
@@ -1031,6 +1034,8 @@ var specs = []spec{
 		page: PageGeneral, section: "analytics"},
 	{key: KeyAnalyticsGoogleMeasurementID, kind: KindString, defString: hardcoded(""), validate: validateOptionalGoogleMeasurementID,
 		page: PageGeneral, section: "analytics"},
+	{key: KeyAnalyticsGoogleConsentRequired, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageGeneral, section: "analytics"},
 	{key: KeyEmailSubjectPrefix, kind: KindString, defString: hardcoded(""), validate: maxLen(128),
 		page: PageCustomization, section: "email"},
 	{key: KeyEmailBodySignature, kind: KindString, defString: hardcoded(""), validate: maxLen(5000),
@@ -1486,6 +1491,13 @@ func (s *Service) Bool(key string) bool {
 		return raw == "true"
 	}
 	return sp.defBool(s.defaults)
+}
+
+// OverrideRaw returns the stored override text for key, exactly as persisted
+// (including values Bool would read as false because they are not "true").
+// Callers whose safe default is the opposite of false use it to fail closed.
+func (s *Service) OverrideRaw(key string) (string, bool) {
+	return s.override(key)
 }
 
 // String returns the effective string value for a string- or enum-kind key:
