@@ -102,7 +102,7 @@ func TestOAuthProviderSignupPolicy(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	if _, err := s.resolveIdentity(ctx, "closed", "s1", oidcClaims{Email: "a@x.example", EmailVerified: true}, false, "ua"); !errors.Is(err, ErrOAuthSignupDisabled) {
+	if _, err := s.resolveIdentity(ctx, "closed", "s1", oidcClaims{Email: "a@x.example", EmailVerified: true}, SignupAcceptance{}, "ua"); !errors.Is(err, ErrOAuthSignupDisabled) {
 		t.Errorf("closed provider, unknown subject: err = %v, want ErrOAuthSignupDisabled", err)
 	}
 	u, err := repo.CreateUser(ctx, sqlcgen.CreateUserParams{Username: "linked", Email: "l@x.example", PasswordHash: "x", Role: "user"})
@@ -110,7 +110,7 @@ func TestOAuthProviderSignupPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo.identities[identKey("closed", "s-linked")] = sqlcgen.OauthIdentity{Provider: "closed", Subject: "s-linked", UserID: u.ID}
-	if sess, err := s.resolveIdentity(ctx, "closed", "s-linked", oidcClaims{}, false, "ua"); err != nil || sess.Outcome != OAuthLogin {
+	if sess, err := s.resolveIdentity(ctx, "closed", "s-linked", oidcClaims{}, SignupAcceptance{}, "ua"); err != nil || sess.Outcome != OAuthLogin {
 		t.Errorf("closed provider, linked subject: outcome=%v err=%v; want login", sess.Outcome, err)
 	}
 
@@ -123,11 +123,11 @@ func TestOAuthProviderSignupPolicy(t *testing.T) {
 		{"verified other domain", "bob@evil.example", true},
 		{"subdomain is not the domain", "bob@x.corp.example", true},
 	} {
-		if _, err := s.resolveIdentity(ctx, "corp", "sub-"+tc.name, oidcClaims{Email: tc.email, EmailVerified: tc.verified}, false, "ua"); !errors.Is(err, ErrOAuthEmailDomainNotAllowed) {
+		if _, err := s.resolveIdentity(ctx, "corp", "sub-"+tc.name, oidcClaims{Email: tc.email, EmailVerified: tc.verified}, SignupAcceptance{}, "ua"); !errors.Is(err, ErrOAuthEmailDomainNotAllowed) {
 			t.Errorf("%s: err = %v, want ErrOAuthEmailDomainNotAllowed", tc.name, err)
 		}
 	}
-	if sess, err := s.resolveIdentity(ctx, "corp", "sub-ok", oidcClaims{Email: "Bob@CORP.example", EmailVerified: true}, false, "ua"); err != nil || sess.Outcome != OAuthCreated {
+	if sess, err := s.resolveIdentity(ctx, "corp", "sub-ok", oidcClaims{Email: "Bob@CORP.example", EmailVerified: true}, SignupAcceptance{}, "ua"); err != nil || sess.Outcome != OAuthCreated {
 		t.Errorf("verified allowed domain: outcome=%v err=%v; want created", sess.Outcome, err)
 	}
 }

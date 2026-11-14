@@ -60,6 +60,9 @@ type oauthStatePayload struct {
 	// sealed with the attempt because only the callback learns whether this
 	// sign-in creates an account; an existing account is never asked.
 	TermsAccepted bool `json:"ta,omitempty"`
+	// AgeAttested is the signup form's "I am at least N years old" tick, sent
+	// as ?age_attestation=1 and sealed for the same reason.
+	AgeAttested bool `json:"aa,omitempty"`
 	// Purpose is "" for a login and "step_up" for a re-authentication started
 	// from an existing session (auth_step_up.go); UserID and SessionID bind
 	// that attempt to the browser that started it. All three are inside the
@@ -187,6 +190,7 @@ func (s *Server) handleOAuthBegin(c *echo.Context) error {
 		IssuedAt: time.Now().Unix(),
 
 		TermsAccepted: c.QueryParam("terms_accepted") == "1",
+		AgeAttested:   c.QueryParam("age_attestation") == "1",
 	})
 	if err != nil {
 		return err
@@ -287,6 +291,7 @@ func (s *Server) handleOAuthCallback(c *echo.Context) error {
 	}
 
 	as.TermsAccepted = st.TermsAccepted
+	as.AgeAttested = st.AgeAttested
 	sess, err := s.oauthsvc.ResolveAssertion(c.Request().Context(), as, c.Request().UserAgent())
 	if err != nil {
 		switch {
@@ -296,6 +301,10 @@ func (s *Server) handleOAuthCallback(c *echo.Context) error {
 		case errors.Is(err, auth.ErrTermsRequired):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "terms_required")
 			return oauthErrorRedirect(c, returnTo, "terms_required")
+		// The same, for the instance's minimum age.
+		case errors.Is(err, auth.ErrAgeRequired):
+			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "age_required")
+			return oauthErrorRedirect(c, returnTo, "age_required")
 		case errors.Is(err, auth.ErrOAuthEmailConflict):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_email_conflict")
 			return oauthErrorRedirect(c, returnTo, "email_conflict")

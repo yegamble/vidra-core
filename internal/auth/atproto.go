@@ -105,6 +105,8 @@ type ATProtoState struct {
 	// rides in the signed state and matters only if the DID turns out to be a
 	// first sign-in.
 	TermsAccepted bool `json:"ta,omitempty"`
+	// AgeAttested is the same browser's minimum-age tick, carried the same way.
+	AgeAttested bool `json:"aa,omitempty"`
 }
 
 // ATProtoOAuthService implements ATProto identity login on top of the core auth
@@ -455,8 +457,9 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 	if err != nil {
 		return OAuthSession{}, err
 	}
-	// And its documents, on the create branch only (see the OIDC twin).
-	consent, err := s.auth.signupConsent(SignupAcceptance{Terms: st.TermsAccepted})
+	// And its documents and minimum age, on the create branch only (see the
+	// OIDC twin).
+	consent, err := s.auth.signupConsent(SignupAcceptance{Terms: st.TermsAccepted, Age: st.AgeAttested})
 	if err != nil {
 		return OAuthSession{}, err
 	}

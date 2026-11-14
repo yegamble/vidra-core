@@ -202,7 +202,7 @@ func TestOAuthCollisionMatrix(t *testing.T) {
 	// password registration, 0104) — and inherits email_verified.
 	sess, err := s.resolveIdentity(ctx, "fake", "sub-1", oidcClaims{
 		Email: "new@example.com", EmailVerified: true, Name: "New Person",
-	}, false, "ua")
+	}, SignupAcceptance{}, "ua")
 	if err != nil || sess.Outcome != OAuthCreated {
 		t.Fatalf("create: outcome=%v err=%v", sess.Outcome, err)
 	}
@@ -219,7 +219,7 @@ func TestOAuthCollisionMatrix(t *testing.T) {
 
 	// LOGIN BY SUBJECT: the same identity comes back → the same account, no
 	// duplicate. This is the ONLY matching rule there is.
-	again, err := s.resolveIdentity(ctx, "fake", "sub-1", oidcClaims{Email: "new@example.com", EmailVerified: true}, false, "ua")
+	again, err := s.resolveIdentity(ctx, "fake", "sub-1", oidcClaims{Email: "new@example.com", EmailVerified: true}, SignupAcceptance{}, "ua")
 	if err != nil || again.Outcome != OAuthLogin || again.User.ID != created.ID {
 		t.Fatalf("login: outcome=%v err=%v id match=%v", again.Outcome, err, again.User.ID == created.ID)
 	}
@@ -229,7 +229,7 @@ func TestOAuthCollisionMatrix(t *testing.T) {
 	// password is exactly the one an email rule could not protect.
 	if _, err := s.resolveIdentity(ctx, "other", "other-sub", oidcClaims{
 		Email: "new@example.com", EmailVerified: true,
-	}, false, "ua"); !errors.Is(err, ErrOAuthEmailConflict) {
+	}, SignupAcceptance{}, "ua"); !errors.Is(err, ErrOAuthEmailConflict) {
 		t.Errorf("second provider claiming a provider account's address: err = %v, want ErrOAuthEmailConflict", err)
 	}
 	if n, _ := repo.CountOAuthIdentitiesByUser(ctx, created.ID); n != 1 {
@@ -247,14 +247,14 @@ func TestOAuthCollisionMatrix(t *testing.T) {
 	// case that used to link, and the one the owner takeover rode in on.
 	if _, err := s.resolveIdentity(ctx, "fake", "sub-2", oidcClaims{
 		Email: "Linked@example.com", EmailVerified: true,
-	}, false, "ua"); !errors.Is(err, ErrOAuthEmailConflict) {
+	}, SignupAcceptance{}, "ua"); !errors.Is(err, ErrOAuthEmailConflict) {
 		t.Errorf("verified email match: err = %v, want ErrOAuthEmailConflict", err)
 	}
 	// …and UNVERIFIED is the same refusal, so the answer cannot be probed for
 	// whether the provider verified the address.
 	if _, err := s.resolveIdentity(ctx, "fake", "sub-3", oidcClaims{
 		Email: "linked@example.com", EmailVerified: false,
-	}, false, "ua"); !errors.Is(err, ErrOAuthEmailConflict) {
+	}, SignupAcceptance{}, "ua"); !errors.Is(err, ErrOAuthEmailConflict) {
 		t.Errorf("unverified email match: err = %v, want ErrOAuthEmailConflict", err)
 	}
 	// NOTHING was written by either refusal: no identity, no session, and the
@@ -267,7 +267,7 @@ func TestOAuthCollisionMatrix(t *testing.T) {
 	}
 
 	// EMAIL REQUIRED: a new identity without an email cannot create an account.
-	if _, err := s.resolveIdentity(ctx, "fake", "sub-4", oidcClaims{}, false, "ua"); !errors.Is(err, ErrOAuthEmailMissing) {
+	if _, err := s.resolveIdentity(ctx, "fake", "sub-4", oidcClaims{}, SignupAcceptance{}, "ua"); !errors.Is(err, ErrOAuthEmailMissing) {
 		t.Errorf("no email: err = %v, want ErrOAuthEmailMissing", err)
 	}
 
@@ -275,7 +275,7 @@ func TestOAuthCollisionMatrix(t *testing.T) {
 	if err := repo.DeactivateUser(ctx, created.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.resolveIdentity(ctx, "fake", "sub-1", oidcClaims{Email: "new@example.com", EmailVerified: true}, false, "ua"); !errors.Is(err, ErrAccountDisabled) {
+	if _, err := s.resolveIdentity(ctx, "fake", "sub-1", oidcClaims{Email: "new@example.com", EmailVerified: true}, SignupAcceptance{}, "ua"); !errors.Is(err, ErrAccountDisabled) {
 		t.Errorf("disabled account login: err = %v, want ErrAccountDisabled", err)
 	}
 }
@@ -366,7 +366,7 @@ func TestOAuthUnlinkLastCredentialGuard(t *testing.T) {
 	ctx := context.Background()
 
 	// A passwordless (OAuth-created) account with one identity cannot drop it.
-	soloSess, err := s.resolveIdentity(ctx, "fake", "solo", oidcClaims{Email: "solo@example.com", EmailVerified: true}, false, "ua")
+	soloSess, err := s.resolveIdentity(ctx, "fake", "solo", oidcClaims{Email: "solo@example.com", EmailVerified: true}, SignupAcceptance{}, "ua")
 	if err != nil {
 		t.Fatal(err)
 	}

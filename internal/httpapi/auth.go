@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -361,10 +360,7 @@ func (s *Server) handleRegister(c *echo.Context) error {
 	// never a birthdate). Contextual, so validated here rather than in
 	// registerRequest.Validate.
 	if minAge := s.registrationMinimumAge(); minAge > 0 && !in.AgeAttestation {
-		return &ValidationError{Fields: []FieldError{{
-			Field:   "age_attestation",
-			Message: fmt.Sprintf("you must confirm you are at least %d years old", minAge),
-		}}}
+		return ageRequiredError(minAge)
 	}
 	// The instance's documents: checked here so the answer is a field error
 	// the form can show, and again inside the service, which is what actually
@@ -385,6 +381,9 @@ func (s *Server) handleRegister(c *echo.Context) error {
 		if _, err := s.authsvc.RequestRegistration(c.Request().Context(), regInput, in.Note); err != nil {
 			if errors.Is(err, auth.ErrTermsRequired) {
 				return termsRequiredError()
+			}
+			if errors.Is(err, auth.ErrAgeRequired) {
+				return ageRequiredError(s.registrationMinimumAge())
 			}
 			if errors.Is(err, auth.ErrOwnerClaimRequired) {
 				return &OwnerClaimRequiredError{}
@@ -409,6 +408,9 @@ func (s *Server) handleRegister(c *echo.Context) error {
 		if err != nil {
 			if errors.Is(err, auth.ErrTermsRequired) {
 				return termsRequiredError()
+			}
+			if errors.Is(err, auth.ErrAgeRequired) {
+				return ageRequiredError(s.registrationMinimumAge())
 			}
 			if errors.Is(err, auth.ErrOwnerClaimRequired) {
 				return &OwnerClaimRequiredError{}
@@ -436,6 +438,9 @@ func (s *Server) handleRegister(c *echo.Context) error {
 	if err != nil {
 		if errors.Is(err, auth.ErrTermsRequired) {
 			return termsRequiredError()
+		}
+		if errors.Is(err, auth.ErrAgeRequired) {
+			return ageRequiredError(s.registrationMinimumAge())
 		}
 		if errors.Is(err, auth.ErrOwnerClaimRequired) {
 			return &OwnerClaimRequiredError{}

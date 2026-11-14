@@ -6,9 +6,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 )
 
 // TestSignupMustAcceptTheConfiguredDocuments: while the instance has terms or a
@@ -78,6 +80,16 @@ func TestQueuedSignupMustAcceptTheConfiguredDocuments(t *testing.T) {
 	if len(repo.requested) != 0 {
 		t.Fatalf("a request was filed without the acceptance")
 	}
+	// The minimum age is asked of a queued signup too.
+	patchSettings(t, srv, adminTok, `{"registration_minimum_age":18}`)
+	rec = postTo(srv, "/api/v1/auth/register", `{"username":"bob","email":"bob@example.test","password":"supersecret","terms_accepted":true}`)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"age_attestation"`) {
+		t.Fatalf("queued signup without the attestation = %d %s, want a 422 on age_attestation", rec.Code, rec.Body.String())
+	}
+	if len(repo.requested) != 0 {
+		t.Fatalf("a request was filed without the attestation")
+	}
+	patchSettings(t, srv, adminTok, `{"registration_minimum_age":null}`)
 	rec = postTo(srv, "/api/v1/auth/register", `{"username":"bob","email":"bob@example.test","password":"supersecret","terms_accepted":true}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("queued signup with the acceptance = %d, want 202; body=%s", rec.Code, rec.Body.String())
@@ -136,5 +148,82 @@ func TestOAuthFirstSignInCarriesTheAcceptance(t *testing.T) {
 	}
 	if len(env.repo.created) != 1 {
 		t.Fatalf("a returning sign-in created an account")
+	}
+}
+
+// TestOAuthFirstSignInMustAttestTheAge drives the OIDC flow on an instance with
+// a minimum age: a first sign-in begun without ?age_attestation=1 creates
+// nothing and lands back with oauth_error=age_required; begun with it, the
+// account is created with its age row; a returning sign-in is never asked.
+func TestOAuthFirstSignInMustAttestTheAge(t *testing.T) {
+	env := newOAuthEnv(t, auth.WithSignupTermsFunc(func() auth.SignupTerms { return auth.SignupTerms{MinimumAge: 18} }))
+	claims := map[string]any{"sub": "sub-300", "email": "cal@example.com", "email_verified": true, "name": "Cal"}
+	flow := func(query string) *httptest.ResponseRecorder {
+		t.Helper()
+		loc, stateCookie := env.begin(t, query)
+		env.fake.setNonce(loc.Query().Get("nonce"))
+		env.fake.setClaims(claims)
+		return env.callback(t, "?code=fake-code&state="+url.QueryEscape(loc.Query().Get("state")), stateCookie)
+	}
+
+	rec := flow("?terms_accepted=1&return_to=" + url.QueryEscape("/signup"))
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusFound || got != "/signup?oauth_error=age_required" {
+		t.Fatalf("first sign-in without the attestation = %d → %q, want 302 → /signup?oauth_error=age_required", rec.Code, got)
+	}
+	if sessionCookieFrom(rec) != nil || len(env.repo.created) != 0 {
+		t.Fatal("a refused first sign-in must set no session and create no account")
+	}
+
+	rec = flow("?age_attestation=1&return_to=" + url.QueryEscape("/welcome"))
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusFound || got != "/welcome" {
+		t.Fatalf("first sign-in with the attestation = %d → %q, want 302 → /welcome (body=%s)", rec.Code, got, rec.Body.String())
+	}
+	if len(env.repo.created) != 1 {
+		t.Fatalf("accounts created = %d, want 1", len(env.repo.created))
+	}
+	if got := env.repo.created[0]; got.ConsentSource != "oidc" || !slices.Equal(got.ConsentDocuments, []string{"age"}) ||
+		!slices.Equal(got.ConsentMinimumAges, []int32{18}) {
+		t.Fatalf("recorded %q %v %v", got.ConsentSource, got.ConsentDocuments, got.ConsentMinimumAges)
+	}
+
+	rec = flow("")
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusFound || got != "/" || sessionCookieFrom(rec) == nil {
+		t.Fatalf("returning sign-in without the attestation = %d → %q, want a session and 302 → /", rec.Code, got)
+	}
+	if len(env.repo.created) != 1 {
+		t.Fatalf("a returning sign-in created an account")
+	}
+}
+
+// TestATProtoFirstSignInMustAttestTheAge is the same rule through the ATProto
+// start body, with the minimum age read from the settings overlay.
+func TestATProtoFirstSignInMustAttestTheAge(t *testing.T) {
+	env := newATProtoLoginEnv(t, true)
+	env.setSetting(t, instancesettings.KeyRegistrationMinimumAge, "18")
+	callback := func(cookie *http.Cookie) *httptest.ResponseRecorder {
+		t.Helper()
+		return env.callback(t, "?code=the-code&state="+url.QueryEscape(env.backend.parState)+"&iss="+url.QueryEscape(env.backend.srv.URL), cookie)
+	}
+
+	_, cookie := env.start(t, `{"handle":"alice.example","return_to":"/signup"}`)
+	cb := callback(cookie)
+	if got := cb.Header().Get("Location"); cb.Code != http.StatusFound || got != "/signup?oauth_error=age_required" {
+		t.Fatalf("first sign-in without the attestation = %d → %q, want 302 → /signup?oauth_error=age_required", cb.Code, got)
+	}
+	if atprotoSessionCookie(cb) != nil || len(env.repo.created) != 0 {
+		t.Fatal("a refused first sign-in must set no session and create no account")
+	}
+
+	_, cookie = env.start(t, `{"handle":"alice.example","return_to":"/welcome","age_attestation":true}`)
+	cb = callback(cookie)
+	if cb.Code != http.StatusFound || atprotoSessionCookie(cb) == nil {
+		t.Fatalf("first sign-in with the attestation = %d → %q, want a session", cb.Code, cb.Header().Get("Location"))
+	}
+	if len(env.repo.created) != 1 {
+		t.Fatalf("accounts created = %d, want 1", len(env.repo.created))
+	}
+	if got := env.repo.created[0]; got.ConsentSource != "atproto" || !slices.Equal(got.ConsentDocuments, []string{"age"}) ||
+		!slices.Equal(got.ConsentMinimumAges, []int32{18}) {
+		t.Fatalf("recorded %q %v %v", got.ConsentSource, got.ConsentDocuments, got.ConsentMinimumAges)
 	}
 }

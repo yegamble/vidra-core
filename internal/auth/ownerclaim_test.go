@@ -180,7 +180,7 @@ func TestOAuthSignupRefusedWhileOwnerUnclaimed(t *testing.T) {
 	mintOwnerClaim(t, s.auth)
 	_, err := s.resolveIdentity(context.Background(), "fake", "sub-1", oidcClaims{
 		Email: "new@example.com", EmailVerified: true, Name: "New Person",
-	}, false, "ua")
+	}, SignupAcceptance{}, "ua")
 	if !errors.Is(err, ErrOwnerClaimRequired) {
 		t.Fatalf("err = %v, want ErrOwnerClaimRequired", err)
 	}

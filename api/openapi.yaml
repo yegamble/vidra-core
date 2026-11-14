@@ -1850,6 +1850,19 @@ paths:
             account: on an instance with `terms_url` or `privacy_url` set, a
             first sign-in without it creates nothing and returns
             `oauth_error=terms_required`. An existing account is never asked.
+        - name: age_attestation
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["1"]
+          description: >-
+            `1` when the person ticked "I am at least N years old" on the
+            signup form. Carried in the signed attempt state and consulted only
+            if the sign-in turns out to create an account: while the instance's
+            `registration_minimum_age` is above 0, a first sign-in without it
+            creates nothing and returns `oauth_error=age_required`. An existing
+            account is never asked.
       responses:
         "302":
           description: Redirect to the provider's authorization endpoint.
@@ -2002,7 +2015,9 @@ paths:
         (`access_denied`, `email_conflict`, `email_required`,
         `account_disabled`, `conflict`, `terms_required` for a first sign-in
         started without `terms_accepted=1` on an instance that has terms or a
-        privacy policy, and for a provider that does not
+        privacy policy, `age_required` for one started without
+        `age_attestation=1` while `registration_minimum_age` is above 0, and
+        for a provider that does not
         create accounts `signup_disabled` or `email_domain_not_allowed` — the
         latter also when the address in an allowed domain is unverified);
         protocol violations (missing/forged/
@@ -2107,6 +2122,15 @@ paths:
                     `privacy_url` set, that sign-in creates nothing without it
                     and the callback returns `oauth_error=terms_required`. An
                     existing account is never asked.
+                age_attestation:
+                  type: boolean
+                  description: >-
+                    The signup form's "I am at least N years old" tick.
+                    Consulted only if the handle turns out to be a first
+                    sign-in: while the instance's `registration_minimum_age` is
+                    above 0, that sign-in creates nothing without it and the
+                    callback returns `oauth_error=age_required`. An existing
+                    account is never asked.
       responses:
         "200":
           description: The authorization URL to navigate the browser to.
@@ -2233,7 +2257,8 @@ paths:
         `return_to` with `?oauth=1`. User-actionable failures redirect with an
         `oauth_error` query code (`access_denied`, `atproto_identity_mismatch`,
         `atproto_upstream`, `account_disabled`, `conflict`, `terms_required`
-        for a first sign-in started without `terms_accepted`); protocol violations
+        for a first sign-in started without `terms_accepted`, `age_required`
+        for one started without `age_attestation`); protocol violations
         (missing/forged/expired state, missing code) are 400.
       tags: [auth]
       parameters:
