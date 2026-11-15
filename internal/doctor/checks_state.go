@@ -461,7 +461,7 @@ func checkBackupAge(_ context.Context, s *state) []Finding {
 		if os.IsNotExist(err) {
 			return []Finding{warnf(
 				"backups never succeeded here (or are not configured): "+rel+" does not exist",
-				"run `./deploy/backup.sh` once by hand to prove it works, then install the timer (deploy/vidra-backup.service and .timer). A droplet with no dump is one `docker compose down -v` from being the whole company's outage")}
+				"prove it works, then install the timer (deploy/vidra-backup.service and .timer). Before the timer exists, run `./deploy/backup.sh` by hand; once it does, `sudo systemctl start vidra-backup.service` is the run that sees the timer's own environment (a hand run exits non-zero with \"no off-site target\" when the target lives only in /etc/vidra/backup.env). A droplet with no dump is one `docker compose down -v` from being the whole company's outage")}
 		}
 		return []Finding{skipf(rel + " could not be read")}
 	}
@@ -481,7 +481,7 @@ func checkBackupAge(_ context.Context, s *state) []Finding {
 	case age > maxBackupAge:
 		return []Finding{failf(
 			fmt.Sprintf("the last successful backup was %s ago (%s), which is more than the %s a daily schedule allows", roundAge(age), when.UTC().Format(time.RFC3339), maxBackupAge),
-			"run `./deploy/backup.sh` now and read why it stopped: `journalctl -u vidra-backup.service -n 50`. Every hour this stays red is an hour of uploads that cannot be restored")}
+			"run `sudo systemctl start vidra-backup.service` and read why it stopped: `journalctl -u vidra-backup.service -n 50`. That is the run with the timer's own environment; a hand-run `./deploy/backup.sh` is fine only with no off-site target or one in env/production.env, and its \"no off-site target\" failure means the target lives only in the timer's file. Every hour this stays red is an hour of uploads that cannot be restored")}
 	case age < 0:
 		return []Finding{warnf(
 			fmt.Sprintf("%s is dated in the future (%s), so the backup age could not be judged", rel, when.UTC().Format(time.RFC3339)),
