@@ -75,7 +75,7 @@ serving; it does not back up media.
 
 On a host whose off-site target is set only in /etc/vidra/backup.env (loaded by
 the systemd unit, not by this command), a hand run writes the local dump and then
-exits non-zero with a "no off-site target" message. Run sudo systemctl start
+exits non-zero saying NOTHING went off-site. Run sudo systemctl start
 vidra-backup.service there, or export an empty BACKUP_RCLONE_REMOTE= to choose
 local-only on purpose.
 
