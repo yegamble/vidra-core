@@ -24562,7 +24562,11 @@ components:
         video_count:
           type: integer
           format: int64
-          description: Number of public, published videos in the playlist.
+          description: >-
+            Number of public, published, not moderator-blocked videos in the
+            playlist. Viewer-independent: the sensitive-content "hide" policy
+            is per viewer, so it is reflected only in the detail response's
+            `total`.
         has_thumbnail:
           type: boolean
           description: Whether an uploaded cover image is available at GET /playlists/{id}/thumbnail.
@@ -24585,8 +24589,12 @@ components:
     PlaylistDetailResponse:
       description: >-
         A playlist's fields plus one page of its ordered public, published video
-        cards. total/limit/offset describe the VIDEOS; the playlist's own
-        video_count is unchanged.
+        cards. Moderator-blocked videos are never listed, and under the
+        sensitive-content "hide" policy (the instance default, or the signed-in
+        viewer's own override) sensitive videos are left out too, for the
+        playlist's owner as for anyone else. total/limit/offset describe the
+        VIDEOS actually listed for this viewer; the playlist's own video_count
+        is viewer-independent.
       allOf:
         - $ref: "#/components/schemas/Playlist"
         - $ref: "#/components/schemas/PageMeta"

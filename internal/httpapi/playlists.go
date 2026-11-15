@@ -257,7 +257,11 @@ func (s *Server) handleGetPlaylist(c *echo.Context) error {
 		}
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	items, total, err := s.playlistsvc.ListItems(ctx, id, page.Limit32(), page.Offset32())
+	// The listing is per viewer: the sensitive "hide" policy (instance default or
+	// the caller's override) is applied in SQL like every other browse surface,
+	// and the owner gets the same list — see ListPlaylistItems.
+	viewerID, _, viewerAuthed := principalFromContext(c)
+	items, total, err := s.playlistsvc.ListItems(ctx, id, viewerID, viewerAuthed, s.effectiveHideSensitive(c), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}

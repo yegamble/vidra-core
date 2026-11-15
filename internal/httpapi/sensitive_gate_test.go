@@ -284,6 +284,9 @@ func TestSensitiveGateMarksListedCardsForAnonymousCallers(t *testing.T) {
 // signed-in caller and whenever the wall is down.
 func TestSensitiveGateMarksPlaylistCardsForAnonymousCallers(t *testing.T) {
 	env := newSensitiveGateEnv(t)
+	// The shipped default policy hides sensitive videos from every listing, a
+	// playlist's now included; blur is what lists them as gated cards.
+	patchSettings(t, env.srv, env.adminTok, `{"sensitive_content_policy":"blur"}`)
 	rec := sendJSONAuth(env.srv, http.MethodPost, "/api/v1/playlists", `{"title":"Mix","visibility":"public"}`, env.ownerTok)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create playlist = %d; body=%s", rec.Code, rec.Body.String())
@@ -448,4 +451,96 @@ func TestSensitiveGateSwitchOnWithAWarmCDN(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A playlist's item cards obey the same two server-side filters as every other
+// browse surface: a moderator-blocked video is not listed (nor counted), and
+// under the "hide" sensitive policy — instance default or the viewer's own
+// override, in either direction — a sensitive video is not listed (nor
+// counted). Before, GET /playlists/:id kept listing both.
+func TestPlaylistItemsHonourVideoBlocksAndHidePolicy(t *testing.T) {
+	env := newSensitiveGateEnv(t)
+	rec := sendJSONAuth(env.srv, http.MethodPost, "/api/v1/playlists", `{"title":"Mix","visibility":"public"}`, env.ownerTok)
+	var pl struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &pl); err != nil || pl.ID == "" {
+		t.Fatalf("create playlist: %v; body=%s", err, rec.Body.String())
+	}
+	blocked := createPublishedVideo(t, env.srv, env.ownerTok, "ada", `{"title":"Blocked","privacy":"public"}`)
+	for _, vid := range []string{env.sensitive, env.plain, blocked} {
+		if rec := sendJSONAuth(env.srv, http.MethodPost, "/api/v1/playlists/"+pl.ID+"/videos", `{"video_id":"`+vid+`"}`, env.ownerTok); rec.Code != http.StatusNoContent {
+			t.Fatalf("add %s = %d; body=%s", vid, rec.Code, rec.Body.String())
+		}
+	}
+	// listed returns the ids on the page and the reported total.
+	listed := func(step, tok string) (map[string]bool, int64) {
+		t.Helper()
+		rec := getWithAuth(env.srv, "/api/v1/playlists/"+pl.ID, tok)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: GET playlist = %d; body=%s", step, rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Videos []struct {
+				ID string `json:"id"`
+			} `json:"videos"`
+			Total int64 `json:"total"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: decode: %v", step, err)
+		}
+		ids := map[string]bool{}
+		for _, v := range body.Videos {
+			ids[v.ID] = true
+		}
+		return ids, body.Total
+	}
+	expect := func(step, tok string, wantSensitive, wantBlocked bool) {
+		t.Helper()
+		ids, total := listed(step, tok)
+		want := int64(1)
+		for _, c := range []struct {
+			id   string
+			want bool
+		}{{env.sensitive, wantSensitive}, {blocked, wantBlocked}} {
+			if ids[c.id] != c.want {
+				t.Errorf("%s: video %s listed=%v, want %v", step, c.id, ids[c.id], c.want)
+			}
+			if c.want {
+				want++
+			}
+		}
+		if !ids[env.plain] || total != want || int64(len(ids)) != want {
+			t.Errorf("%s: listed %d (plain=%v), total %d, want %d of both", step, len(ids), ids[env.plain], total, want)
+		}
+	}
+	// Pin the instance policy: the shipped default hides sensitive videos, which
+	// would make every "listed" expectation below ambiguous.
+	patchSettings(t, env.srv, env.adminTok, `{"sensitive_content_policy":"display"}`)
+	expect("nothing blocked, instance display", "", true, true)
+
+	if rec := sendJSONAuth(env.srv, http.MethodPost, "/api/v1/admin/videos/"+blocked+"/block", `{"reason":"tos"}`, env.adminTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("block = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	for step, tok := range map[string]string{"blocked, anonymous": "", "blocked, non-owner": env.userTok, "blocked, owner": env.ownerTok} {
+		expect(step, tok, true, false)
+	}
+
+	patchSettings(t, env.srv, env.adminTok, `{"sensitive_content_policy":"hide"}`)
+	expect("instance hide, anonymous", "", false, false)
+	expect("instance hide, non-owner", env.userTok, false, false)
+	// A per-user override beats the instance policy in either direction.
+	setPolicy := func(tok, policy string) {
+		t.Helper()
+		if r := sendJSONAuth(env.srv, http.MethodPatch, "/api/v1/auth/me", `{"sensitive_content_policy":"`+policy+`"}`, tok); r.Code != http.StatusOK {
+			t.Fatalf("set policy %s = %d; body=%s", policy, r.Code, r.Body.String())
+		}
+	}
+	setPolicy(env.userTok, "display")
+	expect("instance hide, viewer override display", env.userTok, true, false)
+	expect("instance hide, anonymous unaffected by the override", "", false, false)
+	patchSettings(t, env.srv, env.adminTok, `{"sensitive_content_policy":"display"}`)
+	setPolicy(env.userTok, "hide")
+	expect("instance display, viewer override hide", env.userTok, false, false)
+	expect("instance display, anonymous", "", true, false)
 }

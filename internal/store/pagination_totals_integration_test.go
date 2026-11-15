@@ -145,9 +145,12 @@ func TestListTotalsExecuteAgainstPostgres(t *testing.T) {
 			"CountSubscriptionVideos": func() error { _, e := q.CountSubscriptionVideos(ctx, someID); return e },
 			"CountVideosByChannel":    func() error { _, e := q.CountVideosByChannel(ctx, someID); return e },
 			"CountPlaylistsByOwner":   func() error { _, e := q.CountPlaylistsByOwner(ctx, someID); return e },
-			"CountPlaylistItems":      func() error { _, e := q.CountPlaylistItems(ctx, someID); return e },
-			"CountChannelMembers":     func() error { _, e := q.CountChannelMembers(ctx, someID); return e },
-			"CountManagedChannels":    func() error { _, e := q.CountManagedChannels(ctx, someID); return e },
+			"CountPlaylistItems": func() error {
+				_, e := q.CountPlaylistItems(ctx, sqlcgen.CountPlaylistItemsParams{PlaylistID: someID})
+				return e
+			},
+			"CountChannelMembers":  func() error { _, e := q.CountChannelMembers(ctx, someID); return e },
+			"CountManagedChannels": func() error { _, e := q.CountManagedChannels(ctx, someID); return e },
 			"CountLiveStreamsByChannel": func() error {
 				_, e := q.CountLiveStreamsByChannel(ctx, someID)
 				return e

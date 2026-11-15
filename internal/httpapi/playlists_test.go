@@ -35,7 +35,7 @@ func (f *playlistFakeRepo) pubPub(vid uuid.UUID) (sqlcgen.GetVideoByIDRow, bool)
 func (f *playlistFakeRepo) publicCount(playlistID uuid.UUID) int64 {
 	var n int64
 	for _, vid := range f.items[playlistID] {
-		if _, ok := f.pubPub(vid); ok {
+		if _, ok := f.pubPub(vid); ok && !f.videos.blockedFromFeed(vid) {
 			n++
 		}
 	}
@@ -171,6 +171,10 @@ func (f *playlistFakeRepo) ListPlaylistItems(_ context.Context, a sqlcgen.ListPl
 	for _, vid := range f.items[playlistID] {
 		v, ok := f.pubPub(vid)
 		if !ok {
+			continue
+		}
+		// Mirror the SQL's moderator-block and sensitive-hide predicates.
+		if f.videos.blockedFromFeed(vid) || (a.HideSensitive && v.IsSensitive) {
 			continue
 		}
 		handle, name := f.videos.channelInfo(v.ChannelID)
@@ -551,8 +555,10 @@ func (f *playlistFakeRepo) CountPlaylistsByOwner(ctx context.Context, ownerID uu
 	return int64(len(rows)), err
 }
 
-func (f *playlistFakeRepo) CountPlaylistItems(ctx context.Context, playlistID uuid.UUID) (int64, error) {
-	rows, err := f.ListPlaylistItems(ctx, sqlcgen.ListPlaylistItemsParams{PlaylistID: playlistID, ResultLimit: 1 << 30})
+func (f *playlistFakeRepo) CountPlaylistItems(ctx context.Context, a sqlcgen.CountPlaylistItemsParams) (int64, error) {
+	rows, err := f.ListPlaylistItems(ctx, sqlcgen.ListPlaylistItemsParams{
+		PlaylistID: a.PlaylistID, HideSensitive: a.HideSensitive, ViewerID: a.ViewerID, ResultLimit: 1 << 30,
+	})
 	return int64(len(rows)), err
 }
 
