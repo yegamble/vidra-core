@@ -178,7 +178,7 @@ func (f *playlistFakeRepo) ListPlaylistItems(_ context.Context, a sqlcgen.ListPl
 			ID: v.ID, ShortCode: v.ShortCode, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
 			Privacy: v.Privacy, State: v.State, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 			Views: f.videos.views[v.ID], HasThumbnail: f.videos.hasThumb(v.ID),
-			ChannelHandle: handle, ChannelDisplayName: name,
+			ChannelHandle: handle, ChannelDisplayName: name, IsSensitive: v.IsSensitive,
 		})
 	}
 	return rows, nil

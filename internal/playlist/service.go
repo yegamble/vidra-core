@@ -123,6 +123,9 @@ type VideoCard struct {
 	// ShortCode is the video's opaque public id (videos.short_code), so a
 	// playlist card can build the same /v/{code} link a feed card does.
 	ShortCode string
+	// IsSensitive is the video's sensitive flag, which the HTTP layer needs to
+	// mark the card for the sign-in wall (sensitive_anonymous_access).
+	IsSensitive bool
 }
 
 // CreateInput is validated, normalized playlist-creation data. Visibility must
@@ -399,7 +402,7 @@ func (s *Service) ListItems(ctx context.Context, playlistID uuid.UUID, limit, of
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt,
 			Views: r.Views, HasThumbnail: r.HasThumbnail,
 			ChannelHandle: r.ChannelHandle, ChannelDisplayName: r.ChannelDisplayName,
-			ShortCode: r.ShortCode,
+			ShortCode: r.ShortCode, IsSensitive: r.IsSensitive,
 		})
 	}
 	return cards, total, nil
