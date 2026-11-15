@@ -233,7 +233,7 @@ type playlistDetailResponse struct {
 	playlistView
 	Videos []videoView `json:"videos"`
 	// The item list is paginated, so total/limit/offset describe the VIDEOS, not
-	// the playlist. video_count on the playlist itself is unchanged.
+	// the playlist. video_count here equals total (the viewer's filtered count).
 	pageMeta
 }
 
@@ -257,7 +257,11 @@ func (s *Server) handleGetPlaylist(c *echo.Context) error {
 		}
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	items, total, err := s.playlistsvc.ListItems(ctx, id, page.Limit32(), page.Offset32())
+	// The listing is per viewer: the sensitive "hide" policy (instance default or
+	// the caller's override) is applied in SQL like every other browse surface,
+	// and the owner gets the same list — see ListPlaylistItems.
+	viewerID, _, viewerAuthed := principalFromContext(c)
+	items, total, err := s.playlistsvc.ListItems(ctx, id, viewerID, viewerAuthed, s.effectiveHideSensitive(c), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -266,8 +270,13 @@ func (s *Server) handleGetPlaylist(c *echo.Context) error {
 		videos = append(videos, playlistCardView(it))
 	}
 	s.gateCards(anonymousCaller(c), videos)
+	// The header count must match the tiles under it. GetPlaylistByID's count is
+	// viewer-independent (it cannot apply the per-viewer sensitive policy), so on
+	// THIS route it is replaced by the filtered total.
+	view := playlistViewRow(p)
+	view.VideoCount = total
 	return c.JSON(http.StatusOK, playlistDetailResponse{
-		playlistView: playlistViewRow(p), Videos: videos, pageMeta: page.meta(total),
+		playlistView: view, Videos: videos, pageMeta: page.meta(total),
 	})
 }
 

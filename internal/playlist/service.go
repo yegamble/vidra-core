@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/pgconv"
@@ -59,7 +60,7 @@ type Repository interface {
 	AddPlaylistItem(ctx context.Context, arg sqlcgen.AddPlaylistItemParams) error
 	RemovePlaylistItem(ctx context.Context, arg sqlcgen.RemovePlaylistItemParams) error
 	ListPlaylistItems(ctx context.Context, arg sqlcgen.ListPlaylistItemsParams) ([]sqlcgen.ListPlaylistItemsRow, error)
-	CountPlaylistItems(ctx context.Context, playlistID uuid.UUID) (int64, error)
+	CountPlaylistItems(ctx context.Context, arg sqlcgen.CountPlaylistItemsParams) (int64, error)
 	ListPlaylistItemVideoIDs(ctx context.Context, playlistID uuid.UUID) ([]uuid.UUID, error)
 	ReorderPlaylistItems(ctx context.Context, arg sqlcgen.ReorderPlaylistItemsParams) error
 	MovePlaylistItem(ctx context.Context, arg sqlcgen.MovePlaylistItemParams) (int64, error)
@@ -381,17 +382,26 @@ func samePermutation(want, have []uuid.UUID) bool {
 	return true
 }
 
-// ListItems returns a playlist's public, published videos in order, as cards.
-func (s *Service) ListItems(ctx context.Context, playlistID uuid.UUID, limit, offset int32) ([]VideoCard, int64, error) {
+// ListItems returns a playlist's public, published, unblocked videos in order,
+// as cards, for ONE viewer: hideSensitive is the viewer's resolved sensitive
+// policy (true only under "hide") and viewerID/viewerAuthed feed the per-user
+// flag overrides, exactly as the other browse surfaces pass them. The total is
+// counted under the same predicate so it matches what the pages can serve.
+func (s *Service) ListItems(ctx context.Context, playlistID, viewerID uuid.UUID, viewerAuthed, hideSensitive bool, limit, offset int32) ([]VideoCard, int64, error) {
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
 	rows, err := s.repo.ListPlaylistItems(ctx, sqlcgen.ListPlaylistItemsParams{
-		PlaylistID:   playlistID,
-		ResultLimit:  limit,
-		ResultOffset: offset,
+		PlaylistID:    playlistID,
+		HideSensitive: hideSensitive,
+		ViewerID:      viewer,
+		ResultLimit:   limit,
+		ResultOffset:  offset,
 	})
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := s.repo.CountPlaylistItems(ctx, playlistID)
+	total, err := s.repo.CountPlaylistItems(ctx, sqlcgen.CountPlaylistItemsParams{
+		PlaylistID: playlistID, HideSensitive: hideSensitive, ViewerID: viewer,
+	})
 	if err != nil {
 		return nil, 0, err
 	}

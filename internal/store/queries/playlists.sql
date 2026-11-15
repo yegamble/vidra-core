@@ -4,12 +4,15 @@ VALUES ($1, $2, $3, $4, sqlc.narg('channel_id'))
 RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext, channel_id;
 
 -- name: GetPlaylistByID :one
--- A single playlist with its public+published video count (matches what
--- ListPlaylistItems returns, so the count and the listed items agree).
+-- A single playlist with its public+published, unblocked video count. This is
+-- the viewer-independent part of what ListPlaylistItems returns: the sensitive
+-- "hide" policy is per viewer, so it cannot be in a count with no viewer — the
+-- detail response's `total` (CountPlaylistItems) is the per-viewer figure.
 SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.channel_id, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
-        WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
+        WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published'
+          AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id))::bigint AS video_count
 FROM playlists p
 WHERE p.id = $1;
 
@@ -18,7 +21,8 @@ WHERE p.id = $1;
 SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.channel_id, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
-        WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
+        WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published'
+          AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id))::bigint AS video_count
 FROM playlists p
 WHERE p.owner_id = sqlc.arg('owner_id')
 ORDER BY p.created_at DESC, p.id DESC
@@ -36,7 +40,8 @@ SELECT count(*)::bigint FROM playlists p WHERE p.owner_id = sqlc.arg('owner_id')
 SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.channel_id, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
-        WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
+        WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published'
+          AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id))::bigint AS video_count
 FROM playlists p
 WHERE p.channel_id = sqlc.arg('channel_id')::uuid
   AND (p.visibility = 'public' OR p.owner_id = sqlc.narg('viewer_id'))
@@ -76,7 +81,8 @@ WHERE p.channel_id = sqlc.arg('channel_id')::uuid
 SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.channel_id, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
-        WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
+        WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published'
+          AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id))::bigint AS video_count
 FROM playlists p
 WHERE p.owner_id = $1
 ORDER BY p.created_at DESC, p.id DESC;
@@ -206,7 +212,13 @@ WHERE pi.playlist_id = sqlc.arg('playlist_id') AND pi.video_id = renum.video_id;
 
 -- name: ListPlaylistItems :many
 -- A playlist's videos in order, as discovery cards (the same card data as the
--- main feed). Only public, published videos are returned.
+-- main feed). Only public, published videos are returned, and — like every other
+-- card/browse query — never a moderator-blocked one, nor one the viewer's
+-- effective sensitive policy is 'hide' (instance default or per-user override;
+-- hide_sensitive is the resolved policy, viewer_id NULL when anonymous). The
+-- same listing serves the playlist's owner: the owner already does not see a
+-- private/unpublished item here, and management (remove, move, reorder) works
+-- off ListPlaylistItemVideoIDs, which is unfiltered. TWIN: CountPlaylistItems.
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,
        COALESCE(vc.views, 0)::bigint AS views,
@@ -222,6 +234,8 @@ JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE pi.playlist_id = sqlc.arg('playlist_id')
   AND v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid))
 -- video_id ends the ORDER BY so the order is TOTAL: positions can tie (two
 -- racing appends both take MAX+1) and so can added_at, and a tie is free to
 -- sort differently per LIMIT/OFFSET, showing one item on two pages and
@@ -231,11 +245,13 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: CountPlaylistItems :one
 -- How many rows ListPlaylistItems would return, ignoring pagination. The
--- public+published predicate must stay identical: an item whose video went
--- private is not listed and must not be counted.
+-- predicate must stay identical: an item whose video went private, was blocked
+-- or is hidden from this viewer is not listed and must not be counted.
 SELECT count(*)::bigint
 FROM playlist_items pi
 JOIN videos v ON v.id = pi.video_id
 JOIN channels c ON c.id = v.channel_id
 WHERE pi.playlist_id = sqlc.arg('playlist_id')
-  AND v.privacy = 'public' AND v.state = 'published';
+  AND v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid));

@@ -214,7 +214,7 @@ func TestCreateGetAndItems(t *testing.T) {
 	if err := svc.AddItem(ctx, owner, p.ID, v1); err != nil { // idempotent
 		t.Fatalf("AddItem v1 again: %v", err)
 	}
-	items, _, err := svc.ListItems(ctx, p.ID, 100, 0)
+	items, _, err := svc.ListItems(ctx, p.ID, uuid.Nil, false, false, 100, 0)
 	if err != nil {
 		t.Fatalf("ListItems: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestCreateGetAndItems(t *testing.T) {
 	if err := svc.RemoveItem(ctx, owner, p.ID, v1); err != nil {
 		t.Fatalf("RemoveItem: %v", err)
 	}
-	if items, _, _ := svc.ListItems(ctx, p.ID, 100, 0); len(items) != 1 || items[0].ID != v2 {
+	if items, _, _ := svc.ListItems(ctx, p.ID, uuid.Nil, false, false, 100, 0); len(items) != 1 || items[0].ID != v2 {
 		t.Errorf("after remove = %+v, want [v2]", items)
 	}
 }
@@ -381,8 +381,8 @@ func (f *fakeRepo) CountPlaylistsByOwner(ctx context.Context, ownerID uuid.UUID)
 	return int64(len(rows)), err
 }
 
-func (f *fakeRepo) CountPlaylistItems(ctx context.Context, playlistID uuid.UUID) (int64, error) {
-	rows, err := f.ListPlaylistItems(ctx, sqlcgen.ListPlaylistItemsParams{PlaylistID: playlistID, ResultLimit: 1 << 30})
+func (f *fakeRepo) CountPlaylistItems(ctx context.Context, a sqlcgen.CountPlaylistItemsParams) (int64, error) {
+	rows, err := f.ListPlaylistItems(ctx, sqlcgen.ListPlaylistItemsParams{PlaylistID: a.PlaylistID, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
 }
 
