@@ -278,6 +278,56 @@ func TestSensitiveGateMarksListedCardsForAnonymousCallers(t *testing.T) {
 	check("gate on, signed in", env.userTok, false)
 }
 
+// A playlist's item cards are listed cards like any other: a sensitive video
+// inside a public playlist is marked sign_in_required, with no poster, for a
+// caller without an account while the wall is up, and untouched for a
+// signed-in caller and whenever the wall is down.
+func TestSensitiveGateMarksPlaylistCardsForAnonymousCallers(t *testing.T) {
+	env := newSensitiveGateEnv(t)
+	rec := sendJSONAuth(env.srv, http.MethodPost, "/api/v1/playlists", `{"title":"Mix","visibility":"public"}`, env.ownerTok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create playlist = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var pl struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &pl); err != nil || pl.ID == "" {
+		t.Fatalf("decode playlist: %v; body=%s", err, rec.Body.String())
+	}
+	for _, vid := range []string{env.sensitive, env.plain} {
+		if rec := sendJSONAuth(env.srv, http.MethodPost, "/api/v1/playlists/"+pl.ID+"/videos", `{"video_id":"`+vid+`"}`, env.ownerTok); rec.Code != http.StatusNoContent {
+			t.Fatalf("add %s = %d; body=%s", vid, rec.Code, rec.Body.String())
+		}
+	}
+	check := func(step, tok string, wantMarked bool) {
+		t.Helper()
+		rec := getWithAuth(env.srv, "/api/v1/playlists/"+pl.ID, tok)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: GET playlist = %d; body=%s", step, rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Videos []struct {
+				ID             string `json:"id"`
+				SignInRequired bool   `json:"sign_in_required"`
+				HasThumbnail   *bool  `json:"has_thumbnail"`
+			} `json:"videos"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Videos) != 2 {
+			t.Fatalf("%s: decode: %v; body=%s", step, err, rec.Body.String())
+		}
+		for _, c := range body.Videos {
+			marked := c.ID == env.sensitive && wantMarked
+			if c.SignInRequired != marked || c.HasThumbnail == nil || *c.HasThumbnail == marked {
+				t.Errorf("%s: card %s sign_in_required=%v has_thumbnail=%v, want %v / %v", step, c.ID, c.SignInRequired, c.HasThumbnail, marked, !marked)
+			}
+		}
+	}
+	check("gate off, anonymous", "", false)
+	patchSettings(t, env.srv, env.adminTok, `{"sensitive_anonymous_access":"sign_in"}`)
+	check("gate on, anonymous", "", true)
+	check("gate on, signed in", env.userTok, false)
+}
+
 // A feed reader, a crawler and a third-party page can never sign in, so the
 // RSS feed, the sitemap and oEmbed leave a gated video out rather than hand out
 // a link that answers 401.

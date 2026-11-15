@@ -94,6 +94,7 @@ func playlistCardView(c playlist.VideoCard) videoView {
 		Description:        c.Description,
 		Privacy:            c.Privacy,
 		State:              c.State,
+		IsSensitive:        c.IsSensitive,
 		CreatedAt:          c.CreatedAt,
 		Views:              &views,
 		HasThumbnail:       &has,
@@ -264,6 +265,7 @@ func (s *Server) handleGetPlaylist(c *echo.Context) error {
 	for _, it := range items {
 		videos = append(videos, playlistCardView(it))
 	}
+	s.gateCards(anonymousCaller(c), videos)
 	return c.JSON(http.StatusOK, playlistDetailResponse{
 		playlistView: playlistViewRow(p), Videos: videos, pageMeta: page.meta(total),
 	})

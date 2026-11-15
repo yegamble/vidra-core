@@ -228,7 +228,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
-       v.short_code
+       v.short_code, v.is_sensitive
 FROM playlist_items pi
 JOIN videos v ON v.id = pi.video_id
 JOIN channels c ON c.id = v.channel_id
@@ -259,6 +259,7 @@ type ListPlaylistItemsRow struct {
 	ChannelHandle      string    `json:"channel_handle"`
 	ChannelDisplayName string    `json:"channel_display_name"`
 	ShortCode          string    `json:"short_code"`
+	IsSensitive        bool      `json:"is_sensitive"`
 }
 
 // A playlist's videos in order, as discovery cards (the same card data as the
@@ -290,6 +291,7 @@ func (q *Queries) ListPlaylistItems(ctx context.Context, arg ListPlaylistItemsPa
 			&i.ChannelHandle,
 			&i.ChannelDisplayName,
 			&i.ShortCode,
+			&i.IsSensitive,
 		); err != nil {
 			return nil, err
 		}
