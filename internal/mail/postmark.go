@@ -47,6 +47,13 @@ type postmarkPayload struct {
 	TextBody      string `json:"TextBody"`
 	ReplyTo       string `json:"ReplyTo,omitempty"`
 	MessageStream string `json:"MessageStream"`
+	// Headers is Postmark's documented custom-header array of Name/Value pairs.
+	Headers []postmarkHeader `json:"Headers,omitempty"`
+}
+
+type postmarkHeader struct {
+	Name  string `json:"Name"`
+	Value string `json:"Value"`
 }
 
 // postmarkResponse covers both halves of Postmark's envelope: a success carries
@@ -77,14 +84,18 @@ func (t *postmarkTransport) Send(ctx context.Context, m Message) error {
 	if err := validateMessage(m); err != nil {
 		return err
 	}
-	body, err := json.Marshal(postmarkPayload{
+	payload := postmarkPayload{
 		From:          formatAddress(m.From),
 		To:            m.To,
 		Subject:       sanitizeHeader(m.Subject),
 		TextBody:      m.Text,
 		ReplyTo:       sanitizeHeader(m.ReplyTo),
 		MessageStream: t.stream,
-	})
+	}
+	for _, h := range listUnsubscribeHeaders(m) {
+		payload.Headers = append(payload.Headers, postmarkHeader{Name: h[0], Value: h[1]})
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return &SendError{Reason: ReasonRejected, Err: err}
 	}

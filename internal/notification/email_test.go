@@ -82,7 +82,7 @@ var drainNow = time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
 
 func owedRow(mut func(*sqlcgen.ClaimDueNotificationEmailsRow)) sqlcgen.ClaimDueNotificationEmailsRow {
 	r := sqlcgen.ClaimDueNotificationEmailsRow{
-		NotificationID: uuid.New(), Attempts: 1, QueuedAt: drainNow.Add(-time.Minute),
+		NotificationID: uuid.New(), UserID: uuid.New(), Attempts: 1, QueuedAt: drainNow.Add(-time.Minute),
 		Type: TypeComment, Email: "ada@example.test", ActorName: "bob",
 		VideoID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, VideoTitle: "Soldering 101",
 		Deliverable: true,
@@ -109,7 +109,7 @@ func TestEmailDrainSendsAndForgets(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("DrainOnce = %d, %v; want 1, nil", n, err)
 	}
-	want := mail.NotificationEmail{Type: TypeComment, ActorName: "bob",
+	want := mail.NotificationEmail{Type: TypeComment, UserID: row.UserID.String(), ActorName: "bob",
 		VideoID: uuid.UUID(row.VideoID.Bytes).String(), VideoTitle: "Soldering 101"}
 	if len(sender.sent) != 1 || sender.sent[0].to != "ada@example.test" || sender.sent[0].n != want {
 		t.Fatalf("sent = %+v, want one %+v to ada", sender.sent, want)

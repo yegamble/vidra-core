@@ -24,7 +24,8 @@ type fakeRepo struct {
 	// emailPrefs maps "userID\x00type" → the EXPLICIT email choice, mirroring
 	// notification_prefs.email_enabled: a separate column, so an absent key is
 	// the type's default whatever prefs says.
-	emailPrefs map[string]bool
+	emailPrefs  map[string]bool
+	emailWrites int // UpsertNotificationEmailPref calls
 	// fanOut records the videos handed to the new-video fan-out and what the
 	// (SQL-side) statement reported back. The fan-out's real rules live in the
 	// query, so they are proved against a live schema in the integration test —
@@ -216,6 +217,7 @@ func (f *fakeRepo) UpsertNotificationEmailPref(_ context.Context, a sqlcgen.Upse
 		f.emailPrefs = map[string]bool{}
 	}
 	f.emailPrefs[prefKey(a.UserID, a.Type)] = a.EmailEnabled
+	f.emailWrites++
 	return nil
 }
 
@@ -1092,6 +1094,50 @@ func TestSetEmailPrefsRejectsTypesWithoutEmail(t *testing.T) {
 	}
 	if len(repo.emailPrefs) != 0 {
 		t.Fatalf("a refused update wrote %v", repo.emailPrefs)
+	}
+}
+
+// TestUnsubscribeEmailTurnsEveryEmailTypeOff proves the one-click unsubscribe
+// uses the existing preference: every email-capable type goes off, repeating it
+// changes nothing, other users are untouched and the in-app switches are never
+// written.
+func TestUnsubscribeEmailTurnsEveryEmailTypeOff(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	ctx, user, other := context.Background(), uuid.New(), uuid.New()
+	if err := svc.SetEmailPrefs(ctx, user, map[string]bool{TypeComment: true, TypeCommentReply: true, TypeNewVideo: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetEmailPrefs(ctx, other, map[string]bool{TypeComment: true}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ { // idempotent
+		before := repo.emailWrites
+		changed, err := svc.UnsubscribeEmail(ctx, user)
+		if err != nil {
+			t.Fatalf("UnsubscribeEmail #%d: %v", i+1, err)
+		}
+		if wantChanged := i == 0; changed != wantChanged {
+			t.Errorf("run %d: changed = %v, want %v", i+1, changed, wantChanged)
+		}
+		if i > 0 && repo.emailWrites != before {
+			t.Errorf("run %d: repeat unsubscribe performed %d writes, want none", i+1, repo.emailWrites-before)
+		}
+		got, err := svc.EmailPrefs(ctx, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, typ := range EmailTypes() {
+			if got[typ] {
+				t.Errorf("run %d: %s still on", i+1, typ)
+			}
+		}
+	}
+	if o, _ := svc.EmailPrefs(ctx, other); !o[TypeComment] {
+		t.Error("another user's email preference was changed")
+	}
+	if len(repo.prefs) != 0 {
+		t.Errorf("in-app switches were written: %v", repo.prefs)
 	}
 }
 

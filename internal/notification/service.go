@@ -753,6 +753,31 @@ func (s *Service) SetEmailPrefs(ctx context.Context, userID uuid.UUID, changes m
 	return nil
 }
 
+// UnsubscribeEmail turns every email type off for the user: the effect of a
+// one-click List-Unsubscribe (RFC 8058). It writes through the same preference
+// the settings page edits, so the page shows the result, and the in-app
+// switches are untouched. Idempotent, and it reports whether it changed
+// anything: when every type is already off (including a user with no rows, or
+// no user at all) it performs NO write, so a holder of a valid link cannot turn
+// repeat requests into repeat database writes, and the caller audits only real
+// changes.
+func (s *Service) UnsubscribeEmail(ctx context.Context, userID uuid.UUID) (bool, error) {
+	on, err := s.EmailPrefs(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	off := make(map[string]bool, len(on))
+	for typ, enabled := range on {
+		if enabled {
+			off[typ] = false
+		}
+	}
+	if len(off) == 0 {
+		return false, nil
+	}
+	return true, s.SetEmailPrefs(ctx, userID, off)
+}
+
 // uuidString renders a (possibly null) pgtype.UUID, returning "" when null.
 func uuidString(u pgtype.UUID) string {
 	if !u.Valid {

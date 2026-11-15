@@ -115,6 +115,17 @@ func (s *Server) rateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
 			if isMediaRoute(c) && s.mediaLimit != nil {
 				active, key = s.mediaLimit, "media:"+c.RealIP()
 			}
+			// One-click unsubscribe is pressed by mailbox providers from shared
+			// pools, in a burst right after a mailing, and behind a CDN without
+			// TRUSTED_PROXY_CIDRS every such call shares the edge IP with all
+			// other API traffic. A 429 there is the worst outcome: the provider
+			// tells the user they unsubscribed and nothing was written. So it
+			// draws on the large budget (MEDIA_RATE_LIMIT_REQUESTS, no new knob)
+			// under its own key, and spends none of the general one. Abuse of a
+			// valid link is bounded separately: repeat calls do no write.
+			if isUnsubscribeRoute(c) && s.mediaLimit != nil {
+				active, key = s.mediaLimit, "unsub:"+c.RealIP()
+			}
 			return active, key, true
 		},
 		unavailable: "rate limiter unavailable, failing open",

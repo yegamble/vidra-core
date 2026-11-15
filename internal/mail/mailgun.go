@@ -66,6 +66,10 @@ func (t *mailgunTransport) Send(ctx context.Context, m Message) error {
 		// missing Reply-To on contact-form mail, never a failed send.
 		fields = append(fields, [2]string{"h:Reply-To", sanitizeHeader(m.ReplyTo)})
 	}
+	// The `h:` prefix is the same documented custom-header form as above.
+	for _, h := range listUnsubscribeHeaders(m) {
+		fields = append(fields, [2]string{"h:" + h[0], h[1]})
+	}
 	for _, f := range fields {
 		if err := w.WriteField(f[0], f[1]); err != nil {
 			return &SendError{Reason: ReasonRejected, Err: err}

@@ -35,7 +35,7 @@ WITH due AS (
     WHERE ne.notification_id = due.notification_id
     RETURNING ne.notification_id, ne.attempts, ne.created_at
 )
-SELECT c.notification_id, c.attempts, c.created_at AS queued_at, n.type, u.email,
+SELECT c.notification_id, c.attempts, c.created_at AS queued_at, n.type, n.user_id, u.email,
        COALESCE(NULLIF(a.display_name, ''), a.username, '')::text AS actor_name,
        COALESCE(NULLIF(ch.display_name, ''), ch.handle, '')::text AS channel_name,
        n.video_id, COALESCE(v.title, '')::text AS video_title,

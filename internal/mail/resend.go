@@ -36,6 +36,8 @@ type resendPayload struct {
 	Subject string   `json:"subject"`
 	Text    string   `json:"text"`
 	ReplyTo string   `json:"reply_to,omitempty"`
+	// Headers is Resend's documented custom-header object (name -> value).
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // resendError is the documented error envelope (https://resend.com/docs/api-reference/errors).
@@ -49,13 +51,20 @@ func (t *resendTransport) Send(ctx context.Context, m Message) error {
 	if err := validateMessage(m); err != nil {
 		return err
 	}
-	body, err := json.Marshal(resendPayload{
+	payload := resendPayload{
 		From:    formatAddress(m.From),
 		To:      []string{m.To},
 		Subject: sanitizeHeader(m.Subject),
 		Text:    m.Text,
 		ReplyTo: sanitizeHeader(m.ReplyTo),
-	})
+	}
+	for _, h := range listUnsubscribeHeaders(m) {
+		if payload.Headers == nil {
+			payload.Headers = map[string]string{}
+		}
+		payload.Headers[h[0]] = h[1]
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return &SendError{Reason: ReasonRejected, Err: err}
 	}

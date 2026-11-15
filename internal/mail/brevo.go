@@ -43,6 +43,8 @@ type brevoPayload struct {
 	TextContent string         `json:"textContent"`
 	HTMLContent string         `json:"htmlContent"`
 	ReplyTo     *brevoAddress  `json:"replyTo,omitempty"`
+	// Headers is Brevo's documented custom-header object (name -> value).
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 type brevoError struct {
@@ -63,6 +65,12 @@ func (t *brevoTransport) Send(ctx context.Context, m Message) error {
 	}
 	if m.ReplyTo != "" {
 		payload.ReplyTo = &brevoAddress{Email: sanitizeHeader(m.ReplyTo)}
+	}
+	for _, h := range listUnsubscribeHeaders(m) {
+		if payload.Headers == nil {
+			payload.Headers = map[string]string{}
+		}
+		payload.Headers[h[0]] = h[1]
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

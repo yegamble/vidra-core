@@ -64,6 +64,7 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/storagemigration"
 	"github.com/vidra/vidra-core/internal/transcode"
+	"github.com/vidra/vidra-core/internal/unsubscribe"
 	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/uploadfinalize"
 	"github.com/vidra/vidra-core/internal/video"
@@ -158,6 +159,7 @@ type Server struct {
 	commentsvc        *comment.Service
 	ratingsvc         *rating.Service
 	notifsvc          *notification.Service
+	unsubscribeSigner *unsubscribe.Signer
 	playersettingssvc *playersettings.Service
 	peertubeArchive   *peertubearchive.Importer
 	peertubeFollows   *peertubefollows.Service
@@ -1244,6 +1246,9 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// bytes), so nothing to configure and no deployment to break. An install with
 	// no secret yields a nil digester and simply no subject_id — see
 	// search_subject.go.
+	// One-click List-Unsubscribe verifier, keyed from the same JWT secret under
+	// its own label (internal/unsubscribe); nil without a secret.
+	s.unsubscribeSigner = unsubscribe.New([]byte(cfg.JWTSecret))
 	s.searchSubjects = pseudonym.New([]byte(cfg.JWTSecret), searchSubjectDomainSeparation)
 	for _, opt := range opts {
 		opt(s)
@@ -2105,6 +2110,11 @@ func (s *Server) routes() {
 		// side effects consult them at create time).
 		api.GET("/me/notification-prefs", s.handleGetNotificationPrefs, s.requireAuth)
 		api.PATCH("/me/notification-prefs", s.handleUpdateNotificationPrefs, s.requireAuth)
+		// One-click unsubscribe from notification email (RFC 8058). Deliberately
+		// NO auth: a mailbox provider presses it without a session; the signed
+		// token in the URL is the credential. GET never changes state.
+		api.POST(notificationUnsubscribePath, s.handleNotificationUnsubscribe)
+		api.GET(notificationUnsubscribePath, s.handleNotificationUnsubscribePage)
 	}
 
 	// Per-user player settings (PLAY-07): the signed-in user's playback defaults

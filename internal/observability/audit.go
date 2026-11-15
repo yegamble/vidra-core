@@ -71,6 +71,10 @@ const (
 	// ActionSecurityPrefsUpdate: an account holder changed the new-device email
 	// switch (a stolen session turning the alert off must leave a trace).
 	ActionSecurityPrefsUpdate = "auth.security_prefs.update"
+	// ActionNotificationEmailUnsubscribe: notification email was switched off by
+	// the one-click List-Unsubscribe link (no session). Recorded only when the
+	// call changed something; the token is never recorded.
+	ActionNotificationEmailUnsubscribe = "notification.email.unsubscribe"
 	// ActionAdminLoginLockoutClear: an administrator cleared an account's
 	// failed-login counters and locks. No credential or address is recorded.
 	ActionAdminLoginLockoutClear = "admin.user.login_lockout_clear"

@@ -55,6 +55,11 @@ type Composer struct {
 	subjectPrefix func() string // email_subject_prefix; {instance_name} substituted
 	bodySignature func() string // email_body_signature; appended after a blank line
 	instanceName  func() string // EFFECTIVE instance name for the substitution (else cfg.InstanceName)
+
+	// unsubscribeURL builds the one-click unsubscribe URL for a user id; nil, or
+	// "" back, means the mail goes without the header. Used ONLY by
+	// SendNotificationEmail, the one opt-out-able message vidra sends.
+	unsubscribeURL func(userID string) string
 }
 
 // SMTP is the composer under the name the environment-configured path has
@@ -70,6 +75,8 @@ type options struct {
 	subjectPrefix func() string
 	bodySignature func() string
 	instanceName  func() string
+
+	unsubscribeURL func(userID string) string
 }
 
 // Option customises the mailer.
@@ -111,6 +118,14 @@ func WithBodySignatureFunc(f func() string) Option {
 	return func(o *options) { o.bodySignature = f }
 }
 
+// WithUnsubscribeURLFunc wires the RFC 8058 one-click unsubscribe URL builder
+// for notification email. It receives the recipient's user id and returns the
+// https URL of the unsubscribe endpoint (with its signed token), or "" for no
+// header. Transactional mail never consults it.
+func WithUnsubscribeURLFunc(f func(userID string) string) Option {
+	return func(o *options) { o.unsubscribeURL = f }
+}
+
 // WithInstanceNameFunc wires the EFFECTIVE instance-name provider (the
 // DB-overlaid instance_name) used for the {instance_name} substitution. When
 // unset, the boot-time InstanceName is used.
@@ -134,6 +149,8 @@ func NewComposer(cfg ComposerConfig, r Resolver, opts ...Option) *Composer {
 		subjectPrefix: o.subjectPrefix,
 		bodySignature: o.bodySignature,
 		instanceName:  o.instanceName,
+
+		unsubscribeURL: o.unsubscribeURL,
 	}
 }
 
@@ -461,6 +478,13 @@ func (s *Composer) SendEmailChanged(ctx context.Context, oldEmail, newEmail stri
 // replyTo, when non-empty, is the caller's explicit choice (the contact form's
 // visitor address) and wins over the configured default.
 func (s *Composer) send(ctx context.Context, to, replyTo, subject, body string) error {
+	return s.sendWithUnsubscribe(ctx, to, replyTo, subject, body, "")
+}
+
+// sendWithUnsubscribe is send plus the RFC 8058 one-click URL. It is separate so
+// that no transactional call site can pick the header up by accident: only a
+// caller that names the URL explicitly (SendNotificationEmail) gets it.
+func (s *Composer) sendWithUnsubscribe(ctx context.Context, to, replyTo, subject, body, listUnsubscribe string) error {
 	if hasCRLF(to) || strings.TrimSpace(to) == "" {
 		return fmt.Errorf("mail: invalid recipient address")
 	}
@@ -488,6 +512,8 @@ func (s *Composer) send(ctx context.Context, to, replyTo, subject, body string) 
 		ReplyTo: replyTo,
 		Subject: subject,
 		Text:    body,
+
+		ListUnsubscribe: listUnsubscribe,
 	})
 }
 

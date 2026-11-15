@@ -547,6 +547,10 @@ func run() error {
 		mail.WithInstanceNameFunc(func() string {
 			return settingssvc.String(instancesettings.KeyInstanceName)
 		}),
+		// RFC 8058 one-click unsubscribe, on notification email only. The token
+		// is an HMAC under a key derived from JWT_SECRET (internal/unsubscribe);
+		// with no public origin there is no URL to build, so no header.
+		mail.WithUnsubscribeURLFunc(unsubscribeURLFunc(cfg.PublicBaseURL, cfg.JWTSecret)),
 	)
 	authOpts = append(authOpts, auth.WithMailer(smtpMailer))
 	if cfg.MailEnabled {

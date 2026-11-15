@@ -14,6 +14,9 @@ import (
 type NotificationEmail struct {
 	// Type is the notification type: new_video, comment or comment_reply.
 	Type string
+	// UserID is the recipient's account id. It exists only to mint the signed
+	// one-click unsubscribe link; it never appears in the body.
+	UserID string
 	// ActorName is who acted (display name, else username) — the commenter or
 	// replier. new_video names the channel instead.
 	ActorName   string
@@ -25,8 +28,10 @@ type NotificationEmail struct {
 // Frontend pages a notification email links to (see redemptionLink for why the
 // mailer is the one place that names pages).
 const (
-	videoPathPrefix           = "/videos/"
-	notificationSettingsPath  = "/settings/notifications"
+	videoPathPrefix = "/videos/"
+	// NotificationSettingsPath is the frontend page that turns these emails off;
+	// the one-click unsubscribe GET redirects there too.
+	NotificationSettingsPath  = "/settings/notifications"
 	notificationTextMaxRunes  = 100
 	notificationTextEllipsis  = "…"
 	notificationSettingsWords = "your notification settings"
@@ -62,11 +67,11 @@ func (s *Composer) SendNotificationEmail(ctx context.Context, to string, n Notif
 	settings := notificationSettingsWords
 	if base := strings.TrimRight(s.cfg.PublicBaseURL, "/"); base != "" {
 		body += "\nWatch it here: " + base + videoPathPrefix + url.PathEscape(n.VideoID) + "\n"
-		settings += ": " + base + notificationSettingsPath
+		settings += ": " + base + NotificationSettingsPath
 	}
 	body += "\nYou are receiving this because you turned on email for " + what +
 		". To stop, turn it off in " + settings + ".\n"
-	return s.send(ctx, to, "", subject, body)
+	return s.sendWithUnsubscribe(ctx, to, "", subject, body, s.unsubscribeLink(n.UserID))
 }
 
 // foldUserText collapses every run of whitespace (line breaks included) to one
@@ -77,4 +82,19 @@ func foldUserText(v string) string {
 		v = strings.TrimSpace(string(r[:notificationTextMaxRunes])) + notificationTextEllipsis
 	}
 	return v
+}
+
+// unsubscribeLink is the RFC 8058 one-click URL for a recipient, or "" when the
+// instance cannot build one (no signer wired, no user id) — mail then goes
+// without the header rather than with a broken or unsigned one.
+func (s *Composer) unsubscribeLink(userID string) string {
+	if s.unsubscribeURL == nil || userID == "" {
+		return ""
+	}
+	// A URL a transport would refuse (an http:// dev origin) must not turn a
+	// deliverable notification into a failed send: drop the header instead.
+	if u := s.unsubscribeURL(userID); validListUnsubscribeURL(u) {
+		return u
+	}
+	return ""
 }
