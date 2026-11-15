@@ -21,6 +21,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
@@ -28,6 +29,11 @@ import (
 
 // domain labels the derived key. Never reuse it for another purpose.
 const domain = "vidra/list-unsubscribe/v1"
+
+// enc decodes STRICTLY: non-zero trailing bits are rejected, so exactly one
+// string decodes to a given user id and MAC. Without it a second, differently
+// spelled token for the same user would verify (malleable tokens).
+var enc = base64.RawURLEncoding.Strict()
 
 // maxTokenLen bounds what Verify will even decode: a real token is ~70 bytes.
 const maxTokenLen = 256
@@ -65,22 +71,37 @@ func (s *Signer) Token(userID uuid.UUID) string {
 // Verify returns the user a token names, or ok=false for anything malformed or
 // not signed by this instance. The comparison is hmac.Equal (constant time).
 func (s *Signer) Verify(token string) (uuid.UUID, bool) {
-	if s == nil || token == "" || len(token) > maxTokenLen {
+	// encoding/base64 skips CR and LF even in strict mode, so a token with a line
+	// break embedded would otherwise decode to the canonical bytes.
+	if s == nil || token == "" || len(token) > maxTokenLen || strings.ContainsAny(token, "\r\n") {
 		return uuid.Nil, false
 	}
 	idPart, sigPart, ok := strings.Cut(token, ".")
 	if !ok {
 		return uuid.Nil, false
 	}
-	idBytes, err := base64.RawURLEncoding.DecodeString(idPart)
+	idBytes, err := enc.DecodeString(idPart)
 	if err != nil || len(idBytes) != len(uuid.UUID{}) {
 		return uuid.Nil, false
 	}
-	sig, err := base64.RawURLEncoding.DecodeString(sigPart)
+	sig, err := enc.DecodeString(sigPart)
 	if err != nil || !hmac.Equal(sig, s.sum(idBytes)) {
 		return uuid.Nil, false
 	}
 	var id uuid.UUID
 	copy(id[:], idBytes)
 	return id, true
+}
+
+// URL builds the one-click unsubscribe URL for a user: publicBase (the instance
+// origin) + apiPath (the route, API base included) + the signed token. It
+// returns "" when there is nothing safe to build — no signer, no origin — so a
+// caller sends no header rather than a broken one.
+func (s *Signer) URL(publicBase, apiPath string, userID uuid.UUID) string {
+	base := strings.TrimRight(publicBase, "/")
+	tok := s.Token(userID)
+	if base == "" || tok == "" {
+		return ""
+	}
+	return base + apiPath + "?token=" + url.QueryEscape(tok)
 }

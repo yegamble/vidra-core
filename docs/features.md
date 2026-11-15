@@ -194,6 +194,26 @@ still be public and unblocked. While the instance has no mail path the outbox wa
 pruned at a day old. The plain-text message carries no comment text and links only to
 `PUBLIC_BASE_URL` (the video and `/settings/notifications`).
 
+*One-click unsubscribe (RFC 8058).* These messages (and only these — never
+verification, reset or security mail) carry `List-Unsubscribe: <https://…/api/v1/
+notifications/unsubscribe?token=…>` and `List-Unsubscribe-Post:
+List-Unsubscribe=One-Click`, so Gmail/Yahoo can offer an unsubscribe button. The
+unauthenticated `POST` turns every email type off through the same preference as
+the settings page; `GET` never changes anything (it redirects to the settings page).
+The token is an HMAC of the user id keyed from `JWT_SECRET` (no new secret) and does
+not expire; **rotating `JWT_SECRET` silently voids the links in mail already
+delivered.** No header is sent without `PUBLIC_BASE_URL` or over an `http://` origin.
+Operator caveats per route (all **unverified live** — checked against vendor docs only):
+- **SMTP relays** must DKIM-sign both `List-Unsubscribe` and `List-Unsubscribe-Post`
+  (RFC 8058 §4) or Gmail will not offer one-click. Check your relay's signed-header list.
+- **Brevo**: its API documents `headers` as non-standard headers only, and Brevo adds its
+  own `List-Unsubscribe` to transactional mail, so a one-click there may hit Brevo's
+  suppression instead of this endpoint. Do not rely on this endpoint on Brevo.
+- **Mailgun** adds its own header when unsubscribe tracking is enabled for the sending
+  domain; turn that off for it to carry ours.
+- **Postmark** Broadcast message streams add their own header; use a transactional stream.
+- **Resend**: custom `headers` are documented as passed through; not verified live.
+
 ### Avatars & banners
 
 Avatars and banners: accounts and channels each take an avatar and a banner image.

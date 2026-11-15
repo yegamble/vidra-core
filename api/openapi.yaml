@@ -9717,10 +9717,12 @@ paths:
         `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. No session: the
         signed per-user `token` in the URL is the credential. It turns every
         email type off through the same preference as
-        PATCH /api/v1/me/notification-prefs, and is idempotent. Every request,
-        including an unknown, forged or empty token, answers the same 204 with
-        no body, so it reveals neither which accounts exist nor which tokens
-        verify; it never signs anyone in. Transactional mail (verification,
+        PATCH /api/v1/me/notification-prefs, and is idempotent (a repeat does
+        no write). A valid token and an unknown, forged or empty one are
+        indistinguishable: both answer 204 with no body, so it reveals neither
+        which accounts exist nor which tokens verify. It never signs anyone in.
+        It is rate limited per client IP on the large media budget under its
+        own key, so a 429 is still possible under extreme load. Transactional mail (verification,
         password reset, security notices) carries no such header.
       tags: [notifications]
       security: []
@@ -9734,6 +9736,12 @@ paths:
       responses:
         "204":
           description: Processed (or ignored); the response never says which.
+        "429":
+          description: Per-IP rate limit exceeded; the caller should retry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     get:
       operationId: unsubscribeNotificationEmailPage
       summary: Where the unsubscribe link lands (never unsubscribes)

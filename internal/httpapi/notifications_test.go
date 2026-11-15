@@ -38,6 +38,10 @@ type notifFakeRepo struct {
 	// emailPrefs mirrors notification_prefs.email_enabled: a separate column,
 	// so an absent key is the type's (opt-in) default whatever prefs says.
 	emailPrefs map[string]bool
+	// emailWrites counts UpsertNotificationEmailPref calls; emailWriteErr, when
+	// set, fails them (storage-failure and FK-violation tests).
+	emailWrites   int
+	emailWriteErr error
 }
 
 func (f *notifFakeRepo) NotifyCommentMentions(_ context.Context, a sqlcgen.NotifyCommentMentionsParams) (int64, error) {
@@ -203,6 +207,10 @@ func (f *notifFakeRepo) ListNotificationEmailPrefs(_ context.Context, userID uui
 }
 
 func (f *notifFakeRepo) UpsertNotificationEmailPref(_ context.Context, a sqlcgen.UpsertNotificationEmailPrefParams) error {
+	f.emailWrites++
+	if f.emailWriteErr != nil {
+		return f.emailWriteErr
+	}
 	if f.emailPrefs == nil {
 		f.emailPrefs = map[string]bool{}
 	}

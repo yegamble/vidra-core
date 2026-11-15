@@ -24,7 +24,8 @@ type fakeRepo struct {
 	// emailPrefs maps "userID\x00type" → the EXPLICIT email choice, mirroring
 	// notification_prefs.email_enabled: a separate column, so an absent key is
 	// the type's default whatever prefs says.
-	emailPrefs map[string]bool
+	emailPrefs  map[string]bool
+	emailWrites int // UpsertNotificationEmailPref calls
 	// fanOut records the videos handed to the new-video fan-out and what the
 	// (SQL-side) statement reported back. The fan-out's real rules live in the
 	// query, so they are proved against a live schema in the integration test —
@@ -216,6 +217,7 @@ func (f *fakeRepo) UpsertNotificationEmailPref(_ context.Context, a sqlcgen.Upse
 		f.emailPrefs = map[string]bool{}
 	}
 	f.emailPrefs[prefKey(a.UserID, a.Type)] = a.EmailEnabled
+	f.emailWrites++
 	return nil
 }
 
@@ -1110,8 +1112,16 @@ func TestUnsubscribeEmailTurnsEveryEmailTypeOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ { // idempotent
-		if err := svc.UnsubscribeEmail(ctx, user); err != nil {
+		before := repo.emailWrites
+		changed, err := svc.UnsubscribeEmail(ctx, user)
+		if err != nil {
 			t.Fatalf("UnsubscribeEmail #%d: %v", i+1, err)
+		}
+		if wantChanged := i == 0; changed != wantChanged {
+			t.Errorf("run %d: changed = %v, want %v", i+1, changed, wantChanged)
+		}
+		if i > 0 && repo.emailWrites != before {
+			t.Errorf("run %d: repeat unsubscribe performed %d writes, want none", i+1, repo.emailWrites-before)
 		}
 		got, err := svc.EmailPrefs(ctx, user)
 		if err != nil {

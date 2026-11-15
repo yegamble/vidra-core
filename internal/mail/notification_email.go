@@ -28,8 +28,10 @@ type NotificationEmail struct {
 // Frontend pages a notification email links to (see redemptionLink for why the
 // mailer is the one place that names pages).
 const (
-	videoPathPrefix           = "/videos/"
-	notificationSettingsPath  = "/settings/notifications"
+	videoPathPrefix = "/videos/"
+	// NotificationSettingsPath is the frontend page that turns these emails off;
+	// the one-click unsubscribe GET redirects there too.
+	NotificationSettingsPath  = "/settings/notifications"
 	notificationTextMaxRunes  = 100
 	notificationTextEllipsis  = "…"
 	notificationSettingsWords = "your notification settings"
@@ -65,7 +67,7 @@ func (s *Composer) SendNotificationEmail(ctx context.Context, to string, n Notif
 	settings := notificationSettingsWords
 	if base := strings.TrimRight(s.cfg.PublicBaseURL, "/"); base != "" {
 		body += "\nWatch it here: " + base + videoPathPrefix + url.PathEscape(n.VideoID) + "\n"
-		settings += ": " + base + notificationSettingsPath
+		settings += ": " + base + NotificationSettingsPath
 	}
 	body += "\nYou are receiving this because you turned on email for " + what +
 		". To stop, turn it off in " + settings + ".\n"
