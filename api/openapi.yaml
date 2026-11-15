@@ -9707,6 +9707,58 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/notifications/unsubscribe:
+    post:
+      operationId: unsubscribeNotificationEmail
+      summary: One-click unsubscribe from notification email (RFC 8058)
+      description: >-
+        The target of the `List-Unsubscribe` header on notification email
+        (new video, comment, reply), pressed by a mailbox provider with
+        `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. No session: the
+        signed per-user `token` in the URL is the credential. It turns every
+        email type off through the same preference as
+        PATCH /api/v1/me/notification-prefs, and is idempotent. Every request,
+        including an unknown, forged or empty token, answers the same 204 with
+        no body, so it reveals neither which accounts exist nor which tokens
+        verify; it never signs anyone in. Transactional mail (verification,
+        password reset, security notices) carries no such header.
+      tags: [notifications]
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: false
+          schema:
+            type: string
+          description: The signed token from the email's List-Unsubscribe URL.
+      responses:
+        "204":
+          description: Processed (or ignored); the response never says which.
+    get:
+      operationId: unsubscribeNotificationEmailPage
+      summary: Where the unsubscribe link lands (never unsubscribes)
+      description: >-
+        Mail scanners and link previewers GET every link in a message, so a GET
+        of the unsubscribe URL changes nothing: it redirects to the frontend's
+        notification settings (the token is not carried), or, with no public
+        origin configured, answers a short text saying where to find them.
+      tags: [notifications]
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: No public origin is configured; plain-text pointer to the settings.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "302":
+          description: Redirect to the notification settings page.
   /api/v1/me/content-preferences:
     get:
       operationId: getContentPreferences

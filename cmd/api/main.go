@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -91,6 +92,7 @@ import (
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/storyboardbackfill"
 	"github.com/vidra/vidra-core/internal/transcode"
+	"github.com/vidra/vidra-core/internal/unsubscribe"
 	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/uploadfinalize"
 	"github.com/vidra/vidra-core/internal/urlsafety"
@@ -546,6 +548,18 @@ func run() error {
 		}),
 		mail.WithInstanceNameFunc(func() string {
 			return settingssvc.String(instancesettings.KeyInstanceName)
+		}),
+		// RFC 8058 one-click unsubscribe, on notification email only. The token
+		// is an HMAC under a key derived from JWT_SECRET (internal/unsubscribe);
+		// with no public origin there is no URL to build, so no header.
+		mail.WithUnsubscribeURLFunc(func(userID string) string {
+			id, err := uuid.Parse(userID)
+			base := strings.TrimRight(cfg.PublicBaseURL, "/")
+			tok := unsubscribe.New([]byte(cfg.JWTSecret)).Token(id)
+			if err != nil || base == "" || tok == "" {
+				return ""
+			}
+			return base + httpapi.UnsubscribeURLPath + "?token=" + url.QueryEscape(tok)
 		}),
 	)
 	authOpts = append(authOpts, auth.WithMailer(smtpMailer))

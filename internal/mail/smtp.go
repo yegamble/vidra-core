@@ -260,6 +260,9 @@ func render(m Message) []byte {
 		b.WriteString("Reply-To: " + sanitizeHeader(m.ReplyTo) + "\r\n")
 	}
 	b.WriteString("Subject: " + sanitizeHeader(m.Subject) + "\r\n")
+	for _, h := range listUnsubscribeHeaders(m) {
+		b.WriteString(h[0] + ": " + h[1] + "\r\n")
+	}
 	b.WriteString("Date: " + time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 -0700") + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")

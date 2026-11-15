@@ -1095,6 +1095,42 @@ func TestSetEmailPrefsRejectsTypesWithoutEmail(t *testing.T) {
 	}
 }
 
+// TestUnsubscribeEmailTurnsEveryEmailTypeOff proves the one-click unsubscribe
+// uses the existing preference: every email-capable type goes off, repeating it
+// changes nothing, other users are untouched and the in-app switches are never
+// written.
+func TestUnsubscribeEmailTurnsEveryEmailTypeOff(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	ctx, user, other := context.Background(), uuid.New(), uuid.New()
+	if err := svc.SetEmailPrefs(ctx, user, map[string]bool{TypeComment: true, TypeCommentReply: true, TypeNewVideo: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetEmailPrefs(ctx, other, map[string]bool{TypeComment: true}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ { // idempotent
+		if err := svc.UnsubscribeEmail(ctx, user); err != nil {
+			t.Fatalf("UnsubscribeEmail #%d: %v", i+1, err)
+		}
+		got, err := svc.EmailPrefs(ctx, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, typ := range EmailTypes() {
+			if got[typ] {
+				t.Errorf("run %d: %s still on", i+1, typ)
+			}
+		}
+	}
+	if o, _ := svc.EmailPrefs(ctx, other); !o[TypeComment] {
+		t.Error("another user's email preference was changed")
+	}
+	if len(repo.prefs) != 0 {
+		t.Errorf("in-app switches were written: %v", repo.prefs)
+	}
+}
+
 // TestEmailAndInAppSwitchesAreIndependent proves the two columns never write
 // through each other: turning email on leaves the in-app switch alone, and
 // turning the in-app switch off leaves the email choice alone.

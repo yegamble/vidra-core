@@ -114,7 +114,7 @@ func (d *EmailDrain) drainBatch(ctx context.Context) (claimed, done int, err err
 func (d *EmailDrain) deliver(ctx context.Context, r sqlcgen.ClaimDueNotificationEmailsRow) bool {
 	if r.Deliverable && d.now().Sub(r.QueuedAt) <= emailMaxAge {
 		err := d.sender.SendNotificationEmail(ctx, r.Email, mail.NotificationEmail{
-			Type: r.Type, ActorName: r.ActorName, ChannelName: r.ChannelName,
+			Type: r.Type, UserID: r.UserID.String(), ActorName: r.ActorName, ChannelName: r.ChannelName,
 			VideoID: uuidString(r.VideoID), VideoTitle: r.VideoTitle,
 		})
 		if err != nil {

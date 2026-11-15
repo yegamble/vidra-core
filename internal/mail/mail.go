@@ -35,6 +35,7 @@ import (
 	"errors"
 	"net/http"
 	netmail "net/mail"
+	"net/url"
 	"strings"
 )
 
@@ -119,6 +120,45 @@ type Message struct {
 	// Text is the plain-text body. vidra bodies are plain text by design; a
 	// transport whose vendor demands HTML derives it with TextToHTML.
 	Text string
+	// ListUnsubscribe, when set, is the https URL of the one-click unsubscribe
+	// endpoint (RFC 8058). A transport then sends BOTH `List-Unsubscribe:
+	// <url>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`; empty
+	// sends neither. Only opt-out-able notification mail sets it — never a
+	// token or security message, where a mailbox provider's unsubscribe button
+	// would be a way to silence mail the user must receive.
+	ListUnsubscribe string
+}
+
+// The two headers RFC 8058 pairs. The post header's value is fixed by the RFC.
+const (
+	headerListUnsubscribe     = "List-Unsubscribe"
+	headerListUnsubscribePost = "List-Unsubscribe-Post"
+	valueListUnsubscribePost  = "List-Unsubscribe=One-Click"
+)
+
+// listUnsubscribeHeaders returns the RFC 8058 header pair for m, or nil when m
+// is not one-click mail. Every transport renders from this one function, so
+// "which headers, with what values" cannot drift between providers.
+func listUnsubscribeHeaders(m Message) [][2]string {
+	if m.ListUnsubscribe == "" {
+		return nil
+	}
+	return [][2]string{
+		{headerListUnsubscribe, "<" + m.ListUnsubscribe + ">"},
+		{headerListUnsubscribePost, valueListUnsubscribePost},
+	}
+}
+
+// validListUnsubscribeURL reports whether v is safe to put inside `<...>` in a
+// header: ONE absolute https URL with a host. RFC 8058 requires https; CRLF
+// would forge headers; `<`, `>`, `,` or whitespace would let a value escape the
+// angle brackets or become a second URI in the comma-separated list.
+func validListUnsubscribeURL(v string) bool {
+	if hasCRLF(v) || strings.ContainsAny(v, "<>, \t\"") {
+		return false
+	}
+	u, err := url.Parse(v)
+	return err == nil && u.Scheme == "https" && u.Host != ""
 }
 
 // Transport delivers composed messages over one route.
@@ -303,6 +343,8 @@ func validateMessage(m Message) error {
 		return &SendError{Reason: ReasonSenderRejected, Err: errors.New("invalid sender address")}
 	case m.ReplyTo != "" && !IsAddrSpec(m.ReplyTo):
 		return &SendError{Reason: ReasonRejected, Err: errors.New("invalid reply-to address")}
+	case m.ListUnsubscribe != "" && !validListUnsubscribeURL(m.ListUnsubscribe):
+		return &SendError{Reason: ReasonRejected, Err: errors.New("invalid list-unsubscribe url")}
 	}
 	return nil
 }
