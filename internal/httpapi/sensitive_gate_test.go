@@ -484,10 +484,19 @@ func TestPlaylistItemsHonourVideoBlocksAndHidePolicy(t *testing.T) {
 			Videos []struct {
 				ID string `json:"id"`
 			} `json:"videos"`
-			Total int64 `json:"total"`
+			Total      int64 `json:"total"`
+			VideoCount int64 `json:"video_count"`
 		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 			t.Fatalf("%s: decode: %v", step, err)
+		}
+		// vidra-user renders "N videos" from video_count: it must match the tiles.
+		if body.VideoCount != body.Total || body.VideoCount != int64(len(body.Videos)) {
+			t.Errorf("%s: video_count=%d total=%d listed=%d, want all equal", step, body.VideoCount, body.Total, len(body.Videos))
+		}
+		// Per-viewer body: it must not be marked shareable.
+		if cc := rec.Header().Get("Cache-Control"); strings.Contains(cc, "public") || strings.Contains(cc, "s-maxage") {
+			t.Errorf("%s: Cache-Control = %q on a per-viewer response", step, cc)
 		}
 		ids := map[string]bool{}
 		for _, v := range body.Videos {

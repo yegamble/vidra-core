@@ -233,7 +233,7 @@ type playlistDetailResponse struct {
 	playlistView
 	Videos []videoView `json:"videos"`
 	// The item list is paginated, so total/limit/offset describe the VIDEOS, not
-	// the playlist. video_count on the playlist itself is unchanged.
+	// the playlist. video_count here equals total (the viewer's filtered count).
 	pageMeta
 }
 
@@ -270,8 +270,13 @@ func (s *Server) handleGetPlaylist(c *echo.Context) error {
 		videos = append(videos, playlistCardView(it))
 	}
 	s.gateCards(anonymousCaller(c), videos)
+	// The header count must match the tiles under it. GetPlaylistByID's count is
+	// viewer-independent (it cannot apply the per-viewer sensitive policy), so on
+	// THIS route it is replaced by the filtered total.
+	view := playlistViewRow(p)
+	view.VideoCount = total
 	return c.JSON(http.StatusOK, playlistDetailResponse{
-		playlistView: playlistViewRow(p), Videos: videos, pageMeta: page.meta(total),
+		playlistView: view, Videos: videos, pageMeta: page.meta(total),
 	})
 }
 
