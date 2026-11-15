@@ -461,7 +461,7 @@ func checkBackupAge(_ context.Context, s *state) []Finding {
 		if os.IsNotExist(err) {
 			return []Finding{warnf(
 				"backups never succeeded here (or are not configured): "+rel+" does not exist",
-				"run `./deploy/backup.sh` once by hand to prove it works, then install the timer (deploy/vidra-backup.service and .timer). A droplet with no dump is one `docker compose down -v` from being the whole company's outage")}
+				"run `./deploy/backup.sh` once by hand to prove it works, then install the timer (deploy/vidra-backup.service and .timer). If the hand run fails saying NOTHING went off-site, the off-site target is in a file only the unit loads: run `sudo systemctl start vidra-backup.service` instead. A droplet with no dump is one `docker compose down -v` from being the whole company's outage")}
 		}
 		return []Finding{skipf(rel + " could not be read")}
 	}
@@ -481,7 +481,7 @@ func checkBackupAge(_ context.Context, s *state) []Finding {
 	case age > maxBackupAge:
 		return []Finding{failf(
 			fmt.Sprintf("the last successful backup was %s ago (%s), which is more than the %s a daily schedule allows", roundAge(age), when.UTC().Format(time.RFC3339), maxBackupAge),
-			"run `./deploy/backup.sh` now and read why it stopped: `journalctl -u vidra-backup.service -n 50`. Every hour this stays red is an hour of uploads that cannot be restored")}
+			"run `sudo systemctl start vidra-backup.service` and read why it stopped: `journalctl -u vidra-backup.service -n 50`. That run has the timer's own environment; on a host without the unit run `./deploy/backup.sh` instead. A hand run that fails saying NOTHING went off-site means the off-site target is in a file only the unit loads. Every hour this stays red is an hour of uploads that cannot be restored")}
 	case age < 0:
 		return []Finding{warnf(
 			fmt.Sprintf("%s is dated in the future (%s), so the backup age could not be judged", rel, when.UTC().Format(time.RFC3339)),

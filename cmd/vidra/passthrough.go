@@ -73,6 +73,12 @@ backups/, then prunes to 14 daily + 8 weekly. One dump covers vidra-search too â
 it lives in its own schema in the same database. Safe to run while the stack is
 serving; it does not back up media.
 
+On a host whose off-site target is set only in /etc/vidra/backup.env (loaded by
+the systemd unit, not by this command), a hand run writes the local dump and then
+exits non-zero saying NOTHING went off-site. Run sudo systemctl start
+vidra-backup.service there, or export an empty BACKUP_RCLONE_REMOTE= to choose
+local-only on purpose.
+
 It refuses outright when VIDRA_EXTERNAL_POSTGRES is true: there is no bundled
 container to dump, and the managed provider's own backups are the answer.`,
 	}
