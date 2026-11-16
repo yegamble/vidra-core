@@ -5520,10 +5520,10 @@ paths:
         that object is the download. When the rung's audio lives in a separate
         audio-only MP4, `url` is a video+audio file built on request (see
         downloadVideoHLSRendition), `video_only_url` is the video object, and
-        `size_bytes` is the sum of the two objects, which is approximate. On a
-        host without ffmpeg such a rung is listed with `url` pointing at the
-        video-only file and no `video_only_url`; the audio-only entry is
-        still listed. Regular/anonymous callers require the LAYERED download policy
+        `size_bytes` is the sum of the two objects, which is approximate (the
+        built file differs by container overhead). On a host without ffmpeg
+        such a rung is not listed at all, because its only file has no audio;
+        the audio-only entry is still listed. Regular/anonymous callers require the LAYERED download policy
         (config-parity W9): the instance-wide downloads_enabled setting AND
         the video's own download_enabled flag (instance gate off means no
         downloads regardless of the per-video flag), plus ordinary video
@@ -5692,9 +5692,12 @@ paths:
         is always 200 `video/mp4` with `Cache-Control: no-store`, no
         Content-Length, no Range support (a Range header is ignored and the
         full file is sent) and is never redirected. The number of such builds
-        running at once is bounded server-wide; when all slots are taken the
-        route answers 503 with code `download_busy` and a Retry-After, without
-        queueing. A failure before the first byte is a 502. audio=false for
+        running at once is bounded server-wide, and a single client address
+        may have only one running; when a slot is not available the route
+        answers 503 with code `download_busy` and a Retry-After, without
+        queueing. A build that fails after the 200 was sent ends by severing
+        the connection, so the client sees a failed download rather than a
+        truncated file. A failure before the first byte is a 502. audio=false for
         that rung serves the video object itself with range support.
       tags: [videos]
       security:
@@ -5758,8 +5761,9 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "503":
           description: >-
-            Every on-request build slot is taken (code `download_busy`); retry
-            after the Retry-After delay, or take the video-only file.
+            Every on-request build slot is taken, or this client already has
+            one running (code `download_busy`); retry after the Retry-After
+            delay, or take the video-only file.
           headers:
             Retry-After:
               schema: { type: integer }
@@ -23010,8 +23014,9 @@ components:
           type: integer
           format: int64
           description: >-
-            Stored size in bytes, omitted when the backend cannot determine it.
-            For an HLS entry whose video+audio file is built on request (an
+            Stored size in bytes, omitted when the backend cannot determine it
+            (a store that can neither stat a path nor report an object's size
+            from its metadata). For an HLS entry whose video+audio file is built on request (an
             imported video with a separate audio object) it is the sum of the
             two source objects and approximate: the built file differs by
             container overhead.

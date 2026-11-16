@@ -1360,14 +1360,6 @@ func run() error {
 	tcopts = append(tcopts, transcode.WithJobTrace(jobTrace))
 	transcodesvc = transcode.NewService(db.Queries(), hlsTranscoder, tcopts...)
 	opts = append(opts, httpapi.WithTranscodeService(transcodesvc))
-	// Video+audio downloads of imported split-audio HLS are stream-copied by ffmpeg
-	// on request. Wired by the boot capability alone (ffmpeg on PATH), like the
-	// transcoder: it is read-side serving of already-stored media, so it does not
-	// follow the transcoding_enabled runtime gate. Without ffmpeg those rungs are
-	// listed video-only (see httpapi.importedRenditionEntry).
-	if _, lookErr := exec.LookPath("ffmpeg"); lookErr == nil {
-		opts = append(opts, httpapi.WithHLSMuxer(media.NewHLSMuxer(blobs)))
-	}
 	// Publish-after-transcode seams (0098): whether a transcode will actually run
 	// (so a video is held only when the hold can be released) and whether a live
 	// job exists (the update-toggle edge case). Both consult transcodesvc, which
@@ -1570,6 +1562,16 @@ func run() error {
 		mediaForServing = storage.NewFallback(blobs, migrationTarget, logger)
 	}
 	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(mediaForServing))
+	// Video+audio downloads of imported split-audio HLS are stream-copied by ffmpeg
+	// on request. Wired by the boot capability alone (ffmpeg on PATH), like the
+	// transcoder: it is read-side serving of already-stored media, so it does not
+	// follow the transcoding_enabled runtime gate. Without ffmpeg those rungs are
+	// omitted from the listing (see httpapi.importedRenditionEntry). It reads through
+	// mediaForServing, the same view the existence checks use, so an object a
+	// storage-migration fallback proved to exist is one the muxer can open.
+	if _, lookErr := exec.LookPath("ffmpeg"); lookErr == nil {
+		opts = append(opts, httpapi.WithHLSMuxer(media.NewHLSMuxer(mediaForServing)))
+	}
 
 	// DIRECT DELIVERY (phase-2 storage item 6): the presigner for signed-URL
 	// redirects is the RAW primary backend, and only when no migration is in

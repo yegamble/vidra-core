@@ -22,92 +22,154 @@ const maxHLSManifestBytes = 1 << 20
 // "//host"), absolute paths, "." / ".." and any separator.
 var hlsLeafName = regexp.MustCompile(`^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$`)
 
+// maxHLSVariants caps how many STREAM-INF variants of one master are
+// considered, so a hostile master cannot make a request resolve (and read the
+// playlist of) an unbounded number of them.
+const maxHLSVariants = 32
+
 // HLSDownloadRung is one video variant of a master playlist that is provably a
 // single complete MP4 object.
 type HLSDownloadRung struct {
 	Width, Height int
 	// VideoKey is the storage key of the rung's MP4.
 	VideoKey string
-	// AudioKey is the storage key of the audio group's MP4 when the rung's video
-	// object carries NO audio (PeerTube's split-audio layout). Empty means the
-	// rung's MP4 already contains its audio.
+	// SplitAudio reports that the rung's video object carries NO audio: its
+	// audio is a separate audio-group object (PeerTube's split-audio layout).
+	// False means the rung's MP4 already contains its audio.
+	SplitAudio bool
+	// AudioKey is that audio object's key. It is filled only when the caller
+	// asked for it (needAudio), so a video-only request never reads the audio
+	// playlist.
 	AudioKey string
 }
 
-// HLSDownloadSources is what ResolveHLSDownloadSources proved about a master.
-type HLSDownloadSources struct {
-	Rungs []HLSDownloadRung
-	// AudioKey is the single audio-only MP4 of the playlist's audio group, or ""
-	// when there is none (older imports and every muxed ladder).
-	AudioKey string
+// HLSDownloadResolver lazily proves what a master playlist's objects are. The
+// master is read once on first use; each variant (and the audio) playlist is
+// read at most once and only when asked for.
+type HLSDownloadResolver struct {
+	ctx       context.Context
+	blobs     storage.Backend
+	masterKey string
+
+	loaded bool
+	master hlsMaster
+	err    error
+	cache  map[string]hlsResolved
 }
 
-// ResolveHLSDownloadSources reads masterKey and each variant playlist once and
-// returns, for every variant that PeerTube-style byte-range HLS stores as ONE
-// complete fragmented MP4, the key of that object — plus the audio group's
-// object when the audio is split out.
-//
-// Only the master being unreadable or malformed is an error. A variant that is
-// encrypted, discontinuous, spread over several objects, incomplete (no
-// ENDLIST), or that names anything but a same-directory leaf is skipped: it
-// just is not downloadable, and must never fail the whole listing. No URL is
-// ever followed; every read goes through blobs.
-func ResolveHLSDownloadSources(ctx context.Context, blobs storage.Backend, masterKey string) (HLSDownloadSources, error) {
-	var out HLSDownloadSources
-	if !strings.HasSuffix(masterKey, ".m3u8") {
-		return out, errors.New("media: HLS master key is not a playlist")
+type hlsResolved struct {
+	key string
+	err error
+}
+
+// NewHLSDownloadResolver prepares a resolver; nothing is read yet.
+func NewHLSDownloadResolver(ctx context.Context, blobs storage.Backend, masterKey string) *HLSDownloadResolver {
+	return &HLSDownloadResolver{ctx: ctx, blobs: blobs, masterKey: masterKey, cache: map[string]hlsResolved{}}
+}
+
+func (r *HLSDownloadResolver) load() error {
+	if r.loaded {
+		return r.err
 	}
-	master, err := parseHLSMaster(ctx, blobs, masterKey)
-	if err != nil {
-		return out, err
+	r.loaded = true
+	if !strings.HasSuffix(r.masterKey, ".m3u8") {
+		r.err = errors.New("media: HLS master key is not a playlist")
+		return r.err
 	}
-	type result struct {
-		key string
-		err error
+	r.master, r.err = parseHLSMaster(r.ctx, r.blobs, r.masterKey)
+	if len(r.master.variants) > maxHLSVariants {
+		r.master.variants = r.master.variants[:maxHLSVariants]
 	}
-	cache := map[string]result{}
-	resolve := func(uri string) (string, error) {
-		if r, ok := cache[uri]; ok {
-			return r.key, r.err
+	return r.err
+}
+
+func (r *HLSDownloadResolver) resolve(uri string) (string, error) {
+	if c, ok := r.cache[uri]; ok {
+		return c.key, c.err
+	}
+	key, err := hlsSingleMP4(r.ctx, r.blobs, r.masterKey, uri)
+	r.cache[uri] = hlsResolved{key, err}
+	return key, err
+}
+
+// Rung finds the variant of the given HEIGHT that is a single complete MP4. Among
+// variants of the same height one with an equal width wins, else the first (a
+// recorded width can differ from the manifest's). A variant that is encrypted,
+// discontinuous, multi-object, incomplete, or names anything but a
+// same-directory leaf is skipped, as is one whose audio group cannot be proven;
+// nothing here follows a URL. Only an unreadable or malformed master is an
+// error. needAudio asks for the audio object's key as well (and skips a
+// variant whose audio object is not a single complete MP4).
+func (r *HLSDownloadResolver) Rung(height, widthHint int, needAudio bool) (HLSDownloadRung, bool, error) {
+	if err := r.load(); err != nil {
+		return HLSDownloadRung{}, false, err
+	}
+	var candidates []hlsMasterVariant
+	for _, v := range r.master.variants {
+		if v.height == height && v.width > 0 {
+			if v.width == widthHint {
+				candidates = append([]hlsMasterVariant{v}, candidates...)
+			} else {
+				candidates = append(candidates, v)
+			}
 		}
-		key, err := hlsSingleMP4(ctx, blobs, masterKey, uri)
-		cache[uri] = result{key, err}
-		return key, err
 	}
-	for _, v := range master.variants {
-		if v.width <= 0 || v.height <= 0 {
-			continue // audio-only or unsized variant: not a video rung
-		}
-		videoKey, err := resolve(v.uri)
+	for _, v := range candidates {
+		videoKey, err := r.resolve(v.uri)
 		if err != nil {
-			if cerr := ctx.Err(); cerr != nil {
-				return HLSDownloadSources{}, cerr
+			if cerr := r.ctx.Err(); cerr != nil {
+				return HLSDownloadRung{}, false, cerr
 			}
 			continue
 		}
 		rung := HLSDownloadRung{Width: v.width, Height: v.height, VideoKey: videoKey}
 		if v.audioGroup != "" {
-			uri, separate, ok := master.audioURI(v.audioGroup)
+			uri, separate, ok := r.master.audioURI(v.audioGroup)
 			if !ok {
-				continue // the audio is somewhere we cannot prove: do not offer a silent file as complete
+				continue // the audio is somewhere we cannot prove
 			}
-			if separate {
-				audioKey, err := resolve(uri)
+			rung.SplitAudio = separate
+			if separate && needAudio {
+				audioKey, err := r.resolve(uri)
 				if err != nil {
-					if cerr := ctx.Err(); cerr != nil {
-						return HLSDownloadSources{}, cerr
+					if cerr := r.ctx.Err(); cerr != nil {
+						return HLSDownloadRung{}, false, cerr
 					}
 					continue
 				}
 				rung.AudioKey = audioKey
-				if out.AudioKey == "" {
-					out.AudioKey = audioKey
-				}
 			}
 		}
-		out.Rungs = append(out.Rungs, rung)
+		return rung, true, nil
 	}
-	return out, nil
+	return HLSDownloadRung{}, false, nil
+}
+
+// Audio returns the single audio-only MP4 of the playlist's audio group (the
+// group the first video variants name), or "" when there is none. It reads the
+// master and that one audio playlist only.
+func (r *HLSDownloadResolver) Audio() (string, error) {
+	if err := r.load(); err != nil {
+		return "", err
+	}
+	for _, v := range r.master.variants {
+		if v.audioGroup == "" {
+			continue
+		}
+		uri, separate, ok := r.master.audioURI(v.audioGroup)
+		if !ok || !separate {
+			continue
+		}
+		key, err := r.resolve(uri)
+		if err != nil {
+			if cerr := r.ctx.Err(); cerr != nil {
+				return "", cerr
+			}
+			continue
+		}
+		return key, nil
+	}
+	return "", nil
 }
 
 type hlsMasterVariant struct {

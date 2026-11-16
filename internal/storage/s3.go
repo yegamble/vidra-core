@@ -689,6 +689,22 @@ func (s *S3) Exists(ctx context.Context, key string) (bool, error) {
 	return true, nil
 }
 
+// Stat implements ObjectStatter: the same StatObject Exists performs, keeping
+// the size it returns.
+func (s *S3) Stat(ctx context.Context, key string) (int64, bool, error) {
+	if err := validateKey(key); err != nil {
+		return 0, false, err
+	}
+	info, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		if isS3NotFound(err) {
+			return 0, false, nil
+		}
+		return 0, false, classifyS3("stat", fmt.Errorf("storage: s3: stat %q: %w", key, err))
+	}
+	return info.Size, true, nil
+}
+
 // isS3NotFound reports whether err is the S3 "object does not exist" error.
 func isS3NotFound(err error) bool {
 	resp := minio.ToErrorResponse(err)

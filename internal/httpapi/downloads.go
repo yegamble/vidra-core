@@ -133,18 +133,20 @@ func (s *Server) handleGetVideoDownloads(c *echo.Context) error {
 
 	if s.transcodesvc != nil && s.media != nil {
 		if sp, ok := s.transcodesvc.Playlist(ctx, id); ok && sp.State == "ready" && sp.MasterKey != "" {
-			// The master and variant manifests are read at most once, and only if a
-			// rung (or the audio entry) has no stored remux — a Vidra-transcoded
-			// video whose remuxes all exist never touches them.
-			imported := &importedSources{s: s, ctx: ctx, masterKey: sp.MasterKey}
-			for _, rendition := range s.transcodesvc.Renditions(ctx, id) {
+			// Manifests are read lazily and only for IMPORTED-layout renditions that
+			// have no stored remux (see importedSources): a Vidra-transcoded video
+			// never reads one.
+			renditions := s.transcodesvc.Renditions(ctx, id)
+			probe := &downloadProbe{s: s, ctx: ctx}
+			imported := newImportedSources(s, ctx, sp.MasterKey, renditions)
+			for _, rendition := range renditions {
 				muxedKey := media.HLSDownloadKey(rendition.KeyPrefix, true)
-				muxedSize, exists, sizeErr := s.downloadObjectSize(ctx, muxedKey)
+				muxedSize, exists, sizeErr := probe.size(muxedKey)
 				if sizeErr != nil {
 					return sizeErr
 				}
 				if !exists {
-					entry, ok, ierr := s.importedRenditionEntry(ctx, imported, id, base, rendition)
+					entry, ok, ierr := s.importedRenditionEntry(probe, imported, id, base, rendition)
 					if ierr != nil {
 						return ierr
 					}
@@ -154,7 +156,7 @@ func (s *Server) handleGetVideoDownloads(c *echo.Context) error {
 					continue
 				}
 				videoOnlyURL := ""
-				if _, videoOnlyExists, verr := s.downloadObjectSize(ctx, media.HLSDownloadKey(rendition.KeyPrefix, false)); verr != nil {
+				if _, videoOnlyExists, verr := probe.size(media.HLSDownloadKey(rendition.KeyPrefix, false)); verr != nil {
 					return verr
 				} else if videoOnlyExists {
 					videoOnlyURL = base + "/hls/" + strconv.Itoa(int(rendition.Height)) + "?audio=false"
@@ -170,15 +172,14 @@ func (s *Server) handleGetVideoDownloads(c *echo.Context) error {
 					Width:        rendition.Width,
 				})
 			}
-			audioKey := media.HLSAudioDownloadKey(sp.MasterKey)
-			audioSize, exists, aerr := s.downloadObjectSize(ctx, audioKey)
+			audioSize, exists, aerr := probe.size(media.HLSAudioDownloadKey(sp.MasterKey))
 			if aerr != nil {
 				return aerr
 			}
 			if !exists {
 				// Imported split-audio HLS: the audio group's own MP4.
-				if key := imported.get().AudioKey; key != "" {
-					audioSize, exists, aerr = s.downloadObjectSize(ctx, key)
+				if key := imported.audioKey(); key != "" {
+					audioSize, exists, aerr = probe.size(key)
 					if aerr != nil {
 						return aerr
 					}
@@ -384,9 +385,9 @@ func (s *Server) handleStreamVideoWebM(c *echo.Context) error {
 }
 
 // downloadObjectSize returns (size, exists) without opening every remote object.
-// Local storage exposes a path for an exact stat; remote backends use their
-// cheap existence/HEAD operation and omit size rather than issuing a GET per
-// rendition.
+// Local storage exposes a path for an exact stat; a remote backend that can
+// stat (S3's HEAD) reports the real size from that one call, and one that can
+// only say "exists" omits the size rather than issuing a GET per rendition.
 func (s *Server) downloadObjectSize(ctx context.Context, key string) (int64, bool, error) {
 	if s.media == nil {
 		return 0, false, nil
@@ -407,6 +408,9 @@ func (s *Server) downloadObjectSize(ctx context.Context, key string) (int64, boo
 			return 0, false, nil
 		}
 		return info.Size(), true, nil
+	}
+	if st, ok := s.media.(storage.ObjectStatter); ok {
+		return st.Stat(ctx, key)
 	}
 	exists, err := s.media.Exists(ctx, key)
 	return 0, exists, err

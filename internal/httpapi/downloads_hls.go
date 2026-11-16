@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
@@ -40,47 +42,100 @@ func WithHLSMuxer(m HLSMuxer) Option {
 	return func(s *Server) { s.hlsMuxer = m }
 }
 
-// importedSources lazily resolves a ready playlist's single-file MP4 objects, at
-// most once per request: the master and variant manifests are read the first
-// time anything asks, and never when every rung has a stored remux.
+// downloadProbe answers "how big is this object and does it exist" once per
+// key per request. The listing and the byte routes ask about the same objects
+// repeatedly (a rung's video object, the shared audio object); each costs a
+// stat or a HEAD on a remote store.
+type downloadProbe struct {
+	s   *Server
+	ctx context.Context
+	m   map[string]probeResult
+}
+
+type probeResult struct {
+	size   int64
+	exists bool
+	err    error
+}
+
+func (p *downloadProbe) size(key string) (int64, bool, error) {
+	if r, ok := p.m[key]; ok {
+		return r.size, r.exists, r.err
+	}
+	size, exists, err := p.s.downloadObjectSize(p.ctx, key)
+	if p.m == nil {
+		p.m = map[string]probeResult{}
+	}
+	p.m[key] = probeResult{size, exists, err}
+	return size, exists, err
+}
+
+// importedSources resolves the single-file MP4 objects behind an IMPORTED
+// playlist (PeerTube byte-range HLS), lazily and at most once per request.
+//
+// It only ever acts on that layout: a rendition qualifies when its key_prefix is
+// the master playlist's own directory. Vidra's own ladders keep their rungs under
+// <master dir>/<n>p/, so they never reach a manifest read here — including the
+// silent video that has no audio remux, which would otherwise cost a master read
+// on every listing.
 type importedSources struct {
 	s         *Server
 	ctx       context.Context
 	masterKey string
-	done      bool
-	val       media.HLSDownloadSources
+	// layout reports that at least one rendition uses the imported layout.
+	layout bool
+	res    *media.HLSDownloadResolver
 }
 
-func (is *importedSources) get() media.HLSDownloadSources {
-	if is.done {
-		return is.val
-	}
-	is.done = true
-	if is.s.media == nil {
-		return is.val
-	}
-	val, err := media.ResolveHLSDownloadSources(is.ctx, is.s.media, is.masterKey)
-	if err != nil {
-		// Not an error for the caller: the video just has no fallback downloads.
-		// The message never carries a presigned URL (manifests are read through
-		// the storage backend) and is redacted like every other logged error.
-		is.s.logger.Debug("hls download fallback unavailable", "error", jobstatus.RedactDetail(err.Error()))
-		return is.val
-	}
-	is.val = val
-	return val
-}
-
-// rung finds the resolved single-file rung for a rendition row, matching BOTH
-// height and width (a portrait 720x1280 rendition is height 1280 / width 720).
-// A row with no recorded width matches on height alone.
-func (is *importedSources) rung(r sqlcgen.VideoRendition) (media.HLSDownloadRung, bool) {
-	for _, candidate := range is.get().Rungs {
-		if candidate.Height == int(r.Height) && (r.Width == 0 || candidate.Width == int(r.Width)) {
-			return candidate, true
+func newImportedSources(s *Server, ctx context.Context, masterKey string, renditions []sqlcgen.VideoRendition) *importedSources {
+	is := &importedSources{s: s, ctx: ctx, masterKey: masterKey}
+	for _, r := range renditions {
+		if is.owns(r) {
+			is.layout = true
 		}
 	}
-	return media.HLSDownloadRung{}, false
+	return is
+}
+
+func (is *importedSources) owns(r sqlcgen.VideoRendition) bool {
+	return r.KeyPrefix == path.Dir(is.masterKey)
+}
+
+func (is *importedSources) resolver() *media.HLSDownloadResolver {
+	if is.res == nil {
+		is.res = media.NewHLSDownloadResolver(is.ctx, is.s.media, is.masterKey)
+	}
+	return is.res
+}
+
+// rung finds the rendition's single-file rung, matching on HEIGHT (a rendition
+// is unique per video and height; a width recorded at import can be a guess that
+// differs from the manifest — the resolver prefers an equal width among same-
+// height variants). needAudio also resolves the audio object.
+func (is *importedSources) rung(r sqlcgen.VideoRendition, needAudio bool) (media.HLSDownloadRung, bool) {
+	if !is.owns(r) || is.s.media == nil {
+		return media.HLSDownloadRung{}, false
+	}
+	rung, ok, err := is.resolver().Rung(int(r.Height), int(r.Width), needAudio)
+	if err != nil {
+		// Not an error for the caller: the video just has no fallback download.
+		is.s.logger.Debug("hls download fallback unavailable", "error", jobstatus.RedactDetail(err.Error()))
+		return media.HLSDownloadRung{}, false
+	}
+	return rung, ok
+}
+
+// audioKey is the audio group's single MP4, "" when there is none.
+func (is *importedSources) audioKey() string {
+	if !is.layout || is.s.media == nil {
+		return ""
+	}
+	key, err := is.resolver().Audio()
+	if err != nil {
+		is.s.logger.Debug("hls audio fallback unavailable", "error", jobstatus.RedactDetail(err.Error()))
+		return ""
+	}
+	return key
 }
 
 // hlsDownload is what a rendition download request resolved to: either one
@@ -106,31 +161,33 @@ func (s *Server) resolveHLSDownload(ctx context.Context, id uuid.UUID, height in
 	if !ok || sp.State != "ready" || sp.MasterKey == "" {
 		return hlsDownload{}, notFound
 	}
-	imported := &importedSources{s: s, ctx: ctx, masterKey: sp.MasterKey}
-	for _, rendition := range s.transcodesvc.Renditions(ctx, id) {
+	renditions := s.transcodesvc.Renditions(ctx, id)
+	probe := &downloadProbe{s: s, ctx: ctx}
+	imported := newImportedSources(s, ctx, sp.MasterKey, renditions)
+	for _, rendition := range renditions {
 		if int(rendition.Height) != height {
 			continue
 		}
 		key := media.HLSDownloadKey(rendition.KeyPrefix, includeAudio)
-		if _, exists, err := s.downloadObjectSize(ctx, key); err != nil {
+		if _, exists, err := probe.size(key); err != nil {
 			return hlsDownload{}, err
 		} else if exists {
 			return hlsDownload{rendition: rendition, key: key}, nil
 		}
-		rung, ok := imported.rung(rendition)
+		rung, ok := imported.rung(rendition, includeAudio)
 		if !ok {
 			return hlsDownload{}, notFound
 		}
-		if _, exists, err := s.downloadObjectSize(ctx, rung.VideoKey); err != nil {
+		if _, exists, err := probe.size(rung.VideoKey); err != nil {
 			return hlsDownload{}, err
 		} else if !exists {
 			return hlsDownload{}, notFound
 		}
 		switch {
-		case rung.AudioKey == "" && includeAudio:
+		case !rung.SplitAudio && includeAudio:
 			// The rung's own MP4 already carries its audio.
 			return hlsDownload{rendition: rendition, key: rung.VideoKey}, nil
-		case rung.AudioKey == "":
+		case !rung.SplitAudio:
 			// There is no video-only copy of a rung whose audio is inside it.
 			return hlsDownload{}, notFound
 		case !includeAudio:
@@ -138,7 +195,7 @@ func (s *Server) resolveHLSDownload(ctx context.Context, id uuid.UUID, height in
 		case s.hlsMuxer == nil:
 			return hlsDownload{}, notFound
 		}
-		if _, exists, err := s.downloadObjectSize(ctx, rung.AudioKey); err != nil {
+		if _, exists, err := probe.size(rung.AudioKey); err != nil {
 			return hlsDownload{}, err
 		} else if !exists {
 			return hlsDownload{}, notFound
@@ -165,8 +222,8 @@ func (s *Server) resolveHLSAudioDownload(ctx context.Context, id uuid.UUID) (str
 	} else if exists {
 		return key, nil
 	}
-	imported := &importedSources{s: s, ctx: ctx, masterKey: sp.MasterKey}
-	audioKey := imported.get().AudioKey
+	imported := newImportedSources(s, ctx, sp.MasterKey, s.transcodesvc.Renditions(ctx, id))
+	audioKey := imported.audioKey()
 	if audioKey == "" {
 		return "", notFound
 	}
@@ -178,6 +235,41 @@ func (s *Server) resolveHLSAudioDownload(ctx context.Context, id uuid.UUID) (str
 	return audioKey, nil
 }
 
+// muxIdleWriteTimeout is how long one write to the client may block before the
+// connection is dropped. It is renewed on every chunk, so it bounds a STALLED
+// reader (which would otherwise hold a mux slot, and an ffmpeg process, for the
+// whole 30-minute cap) without bounding a slow but moving one. A variable only so
+// a test can shorten it.
+var muxIdleWriteTimeout = 60 * time.Second
+
+// admitMux takes the per-client and global slots, without queueing. One
+// concurrent mux per client, keyed on the same client address the rate limiter
+// uses (c.RealIP(), which honours forwarded headers only from trusted proxies);
+// behind a CDN with no trusted-proxy list every visitor shares the edge address
+// and so shares one slot — the safe failure for a process-spawning route.
+func (s *Server) admitMux(client string) (release func(), ok bool) {
+	s.muxMu.Lock()
+	defer s.muxMu.Unlock()
+	if _, busy := s.muxClients[client]; busy {
+		return nil, false
+	}
+	select {
+	case s.muxSlots <- struct{}{}:
+	default:
+		return nil, false
+	}
+	if s.muxClients == nil {
+		s.muxClients = map[string]struct{}{}
+	}
+	s.muxClients[client] = struct{}{}
+	return func() {
+		s.muxMu.Lock()
+		delete(s.muxClients, client)
+		s.muxMu.Unlock()
+		<-s.muxSlots
+	}, true
+}
+
 // serveHLSMux streams a video+audio MP4 built on request from two stored
 // objects by ffmpeg stream copy. Nothing is stored, nothing is redirected (a
 // presigned URL cannot point at a file that does not exist), and there is no
@@ -185,9 +277,11 @@ func (s *Server) resolveHLSAudioDownload(ctx context.Context, id uuid.UUID) (str
 // ends, so a Range request is answered 200 with the full body.
 //
 // Order matters: the caller has already authorised the request and resolved both
-// objects; the slot is taken BEFORE the process starts; and the 200 header is
+// objects; the slots are taken BEFORE the process starts; and the 200 header is
 // not written until ffmpeg has produced its first bytes, so a failure to start
 // (or an immediate exit) is a clean 502 rather than a 200 with a broken body.
+// After that point a failure can only end the connection: the handler aborts it,
+// so the client's download fails instead of being saved as a truncated file.
 func (s *Server) serveHLSMux(c *echo.Context, v sqlcgen.GetVideoByIDRow, filename, videoKey, audioKey string) error {
 	header := c.Response().Header()
 	// Success headers go on only once the response is known to be a 200, so an
@@ -204,15 +298,15 @@ func (s *Server) serveHLSMux(c *echo.Context, v sqlcgen.GetVideoByIDRow, filenam
 		return c.NoContent(http.StatusOK)
 	}
 
-	select {
-	case s.muxSlots <- struct{}{}:
-	default:
+	release, ok := s.admitMux(c.RealIP())
+	if !ok {
 		header.Set("Retry-After", hlsMuxRetryAfter)
 		return &DownloadBusyError{}
 	}
-	defer func() { <-s.muxSlots }()
+	defer release()
 
-	rc, err := s.hlsMuxer.Mux(c.Request().Context(), videoKey, audioKey)
+	ctx := c.Request().Context()
+	rc, err := s.hlsMuxer.Mux(ctx, videoKey, audioKey)
 	if err != nil {
 		return s.muxFailed(c, err)
 	}
@@ -231,13 +325,39 @@ func (s *Server) serveHLSMux(c *echo.Context, v sqlcgen.GetVideoByIDRow, filenam
 	}
 	successHeaders()
 	c.Response().WriteHeader(http.StatusOK)
-	if _, werr := c.Response().Write(buf[:n]); werr != nil {
-		return nil
+	controller := http.NewResponseController(c.Response())
+	write := func(b []byte) error {
+		// Renewed per chunk. It replaces the long streaming-route deadline the
+		// request middleware set; the overall bound is the request context and
+		// the mux timeout, so nothing is lost by tightening it here.
+		_ = controller.SetWriteDeadline(time.Now().Add(muxIdleWriteTimeout))
+		_, werr := c.Response().Write(b)
+		return werr
 	}
-	// Headers are committed: whatever happens next (client gone, ffmpeg died
-	// mid-file) can only end the connection, never change the status.
-	if _, cerr := io.Copy(c.Response(), rc); cerr != nil && c.Request().Context().Err() == nil {
-		s.logger.Warn("hls mux download ended early", "error", jobstatus.RedactDetail(cerr.Error()))
+	for {
+		if werr := write(buf[:n]); werr != nil {
+			return nil // the client is gone or stalled; nothing left to tell it
+		}
+		if err != nil {
+			break
+		}
+		n, err = rc.Read(buf)
+		for n == 0 && err == nil {
+			n, err = rc.Read(buf)
+		}
+		if n == 0 && err != nil {
+			break
+		}
+	}
+	if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
+		s.logger.Warn("hls mux download failed mid-stream", "error", jobstatus.RedactDetail(err.Error()))
+		// Headers are committed, so the status can no longer change. Returning
+		// normally would end the chunked body cleanly and the browser would save
+		// a truncated MP4 as a finished download; aborting severs the connection
+		// so the download fails. net/http suppresses this sentinel's stack trace,
+		// and echo's Recover re-panics it, so the deferred close and slot release
+		// above still run.
+		panic(http.ErrAbortHandler)
 	}
 	return nil
 }
@@ -262,26 +382,27 @@ func hlsDownloadURL(base string, height int32) string {
 //
 //   - audio inside the rung's MP4: one entry, the object itself.
 //   - audio split into its own object: url is the video+audio file built on
-//     request, video_only_url the video object. size_bytes is the SUM of the two
-//     objects — approximate, since the muxed file adds container overhead (and on
-//     a remote backend an object's size is not known without a GET, so the
-//     rendition row's recorded size stands in for the video part).
-//   - audio split but no muxer wired (no ffmpeg on this host): the muxed URL
-//     would be a 404, so the entry's url IS the video-only file, with a
-//     video-only filename and no video_only_url. The separate audio entry is
-//     still listed, so the viewer can take both parts instead of being offered a
-//     link that cannot work.
-func (s *Server) importedRenditionEntry(ctx context.Context, imported *importedSources, id uuid.UUID, base string, rendition sqlcgen.VideoRendition) (videoDownloadFileView, bool, error) {
-	rung, ok := imported.rung(rendition)
+//     request, video_only_url the video object, and size_bytes the SUM of the two
+//     objects (approximate: the built file differs by container overhead).
+//   - audio split but no muxer wired (no ffmpeg on this host): the rung is NOT
+//     listed. Its only file is silent, and an entry labelled with the rung's
+//     quality would hand people a video that is not the one the row describes;
+//     the muxed URL would be a dead link. The separate audio entry is still
+//     listed, so nothing is hidden that could be downloaded honestly.
+func (s *Server) importedRenditionEntry(probe *downloadProbe, imported *importedSources, id uuid.UUID, base string, rendition sqlcgen.VideoRendition) (videoDownloadFileView, bool, error) {
+	rung, ok := imported.rung(rendition, true)
 	if !ok {
 		return videoDownloadFileView{}, false, nil
 	}
-	videoSize, exists, err := s.downloadObjectSize(ctx, rung.VideoKey)
+	if rung.SplitAudio && s.hlsMuxer == nil {
+		return videoDownloadFileView{}, false, nil
+	}
+	videoSize, exists, err := probe.size(rung.VideoKey)
 	if err != nil || !exists {
 		return videoDownloadFileView{}, false, err
 	}
 	if videoSize == 0 {
-		videoSize = rendition.SizeBytes
+		videoSize = rendition.SizeBytes // a backend that cannot size an object
 	}
 	entry := videoDownloadFileView{
 		Kind:        "hls",
@@ -292,21 +413,14 @@ func (s *Server) importedRenditionEntry(ctx context.Context, imported *importedS
 		Height:      rendition.Height,
 		Width:       rendition.Width,
 	}
-	if rung.AudioKey == "" {
+	if !rung.SplitAudio {
 		return entry, true, nil
 	}
-	audioSize, exists, err := s.downloadObjectSize(ctx, rung.AudioKey)
+	audioSize, exists, err := probe.size(rung.AudioKey)
 	if err != nil || !exists {
 		return videoDownloadFileView{}, false, err
 	}
 	entry.SizeBytes += audioSize
-	videoOnly := hlsDownloadURL(base, rendition.Height) + "?audio=false"
-	if s.hlsMuxer != nil {
-		entry.VideoOnlyURL = videoOnly
-		return entry, true, nil
-	}
-	entry.URL = videoOnly
-	entry.Filename = fmt.Sprintf("video-%s-%dp-video-only.mp4", id, rendition.Height)
-	entry.SizeBytes = videoSize
+	entry.VideoOnlyURL = hlsDownloadURL(base, rendition.Height) + "?audio=false"
 	return entry, true, nil
 }

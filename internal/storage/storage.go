@@ -82,6 +82,15 @@ type ObjectInventory interface {
 	ListObjects(ctx context.Context, prefix string) ([]ObjectInfo, error)
 }
 
+// ObjectStatter is an optional capability implemented by backends that learn an
+// object's size and existence from one cheap metadata call (S3's HEAD). It lets
+// a listing report real sizes on a remote store without opening every object.
+type ObjectStatter interface {
+	// Stat returns the object's size and whether it exists. A missing object is
+	// (0, false, nil). ErrInvalidKey for an unsafe key.
+	Stat(ctx context.Context, key string) (size int64, exists bool, err error)
+}
+
 // PathProvider is an optional capability implemented by backends that can expose
 // a local filesystem path for an object (the local backend does). Tools that
 // need a seekable file on disk — e.g. ffprobe — use it; backends without it

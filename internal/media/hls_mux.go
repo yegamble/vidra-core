@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -26,12 +27,24 @@ const (
 	hlsMuxStderrCap = 16 << 10
 )
 
-// hlsMuxProtocols is the ffmpeg input protocol allowlist: a local file, or the
-// plain/TLS HTTP a presigned object URL needs. The inputs are server-resolved
-// storage keys and fragmented MP4 needs nothing else, so every other protocol
-// (concat:, subfile:, tcp/udp to arbitrary hosts via a crafted container) stays
-// off.
-const hlsMuxProtocols = "file,http,https,tcp,tls"
+// hlsMuxInputArgs renders one mux input with its hardening: an allowlist
+// matching the kind of input (a local file, or exactly the transport a presigned
+// object URL needs), the container forced to mov (which demuxes MP4) so the
+// format is never probed from content, and external data references off. The
+// inputs are server-resolved storage keys and fragmented MP4 needs nothing
+// else, so every other protocol and demuxer stays unreachable.
+func hlsMuxInputArgs(src source) []string {
+	whitelist := "file"
+	if src.remote {
+		whitelist = "https,tls,tcp"
+		if strings.HasPrefix(src.arg, "http:") {
+			whitelist = "http,tcp"
+		}
+	}
+	args := []string{"-protocol_whitelist", whitelist}
+	args = append(args, src.opts...)
+	return append(args, "-enable_drefs", "0", "-f", "mov", "-i", src.arg)
+}
 
 // hlsMuxArgs is the ffmpeg argument vector that stream-copies one video-only and
 // one audio-only fragmented MP4 into a single fragmented MP4 on stdout. Pure, so
@@ -40,10 +53,8 @@ const hlsMuxProtocols = "file,http,https,tcp,tls"
 // pipe:1 requires.
 func hlsMuxArgs(video, audio source) []string {
 	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error"}
-	for _, src := range []source{video, audio} {
-		args = append(args, "-protocol_whitelist", hlsMuxProtocols)
-		args = append(args, src.inputArgs()...)
-	}
+	args = append(args, hlsMuxInputArgs(video)...)
+	args = append(args, hlsMuxInputArgs(audio)...)
 	return append(args,
 		"-map", "0:v:0", "-map", "1:a:0",
 		"-c", "copy",
@@ -51,6 +62,23 @@ func hlsMuxArgs(video, audio source) []string {
 		"-f", "mp4", "pipe:1",
 	)
 }
+
+// hlsMuxEnv is the environment ffmpeg runs with: PATH, plus the TLS trust-store
+// pointers a presigned https input may need. Nothing else of the API's
+// environment (JWT secret, database URL, storage keys) is handed to the child.
+func hlsMuxEnv() []string {
+	env := []string{"PATH=" + os.Getenv("PATH")}
+	for _, k := range []string{"SSL_CERT_FILE", "SSL_CERT_DIR"} {
+		if v := os.Getenv(k); v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
+	return env
+}
+
+// hlsMuxPresignTTL is how long a mux input URL must stay valid: the longest the
+// process may run, plus a margin. Far shorter than the 6h transcode default.
+const hlsMuxPresignTTL = HLSMuxTimeout + 5*time.Minute
 
 // HLSMuxer joins a split-audio rung's video and audio objects into one MP4 on
 // request. Nothing is written to storage.
@@ -72,11 +100,11 @@ func NewHLSMuxer(blobs storage.Backend) *HLSMuxer {
 // successful one. Errors carry a bounded stderr tail with presigned URLs
 // redacted.
 func (m *HLSMuxer) Mux(ctx context.Context, videoKey, audioKey string) (io.ReadCloser, error) {
-	vsrc, vclean, err := openSource(ctx, m.blobs, videoKey)
+	vsrc, vclean, err := openSourceTTL(ctx, m.blobs, videoKey, hlsMuxPresignTTL)
 	if err != nil {
 		return nil, fmt.Errorf("media: mux video input: %w", err)
 	}
-	asrc, aclean, err := openSource(ctx, m.blobs, audioKey)
+	asrc, aclean, err := openSourceTTL(ctx, m.blobs, audioKey, hlsMuxPresignTTL)
 	if err != nil {
 		vclean()
 		return nil, fmt.Errorf("media: mux audio input: %w", err)
@@ -84,6 +112,7 @@ func (m *HLSMuxer) Mux(ctx context.Context, videoKey, audioKey string) (io.ReadC
 	ctx, cancel := context.WithTimeout(ctx, HLSMuxTimeout)
 	cmd := exec.CommandContext(ctx, m.bin, hlsMuxArgs(vsrc, asrc)...)
 	cmd.WaitDelay = hlsMuxWaitDelay
+	cmd.Env = hlsMuxEnv()
 	stderr := &cappedBuffer{limit: hlsMuxStderrCap}
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()

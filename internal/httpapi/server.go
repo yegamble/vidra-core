@@ -116,6 +116,9 @@ type Server struct {
 	// how many run at once (maxConcurrentHLSMuxes).
 	hlsMuxer HLSMuxer
 	muxSlots chan struct{}
+	// muxClients holds the clients with a mux in flight (one each); muxMu guards it.
+	muxMu      sync.Mutex
+	muxClients map[string]struct{}
 	// playbackStats + playbackLimit back the watch-time beacon and its owner
 	// report (playback_stats.go). Nil playbackStats leaves both routes unmounted.
 	playbackStats playbackStatsService

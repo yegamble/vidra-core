@@ -97,7 +97,7 @@ func TestHLSMuxerRealFFmpeg(t *testing.T) {
 	}
 
 	t.Run("failure surfaces as a Read error with no presigned URL", func(t *testing.T) {
-		if err := os.WriteFile(filepath.Join(dir, "bad.mp4"), []byte("not an mp4"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "bad.mp4"), []byte("<?xml version=\"1.0\"?>\n#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nhttps://example.test/x.m3u8\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		rc, err := NewHLSMuxer(urlBackend{Backend: local, base: srv.URL}).Mux(context.Background(), "bad.mp4", "a.mp4")
