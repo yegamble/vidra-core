@@ -13,12 +13,13 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
-// PeerTube keeps the AUDIO-ONLY file that accompanies split-audio HLS as a
-// "videoFile" row with resolution = 0 bound to the video. It is not the
-// uploader's file and not a playable video; carrying it as the original made
+// A "videoFile" row with resolution = 0 bound to the video is an audio-only web
+// file. Beside HLS video it is an audio rendition, not the uploader's file and
+// not a playable video (the seeded row is synthetic; the shape was measured on
+// a real source, see Source.VideoFiles); carrying it as the original made
 // the download dialog offer a few MB of audio as "Original file", /original
 // stream audio only, and a re-transcode from it rebuild the ladder audio-only.
-func audioOnlyFixture(t *testing.T, withRealFile bool) (*Report, *Report, func(sql string) []string) {
+func audioOnlyFixture(t *testing.T, withRealFile, dropHLS bool) (*Report, *Report, func(sql string) []string) {
 	t.Helper()
 	base := os.Getenv("DATABASE_URL")
 	if base == "" {
@@ -35,6 +36,10 @@ func audioOnlyFixture(t *testing.T, withRealFile bool) (*Report, *Report, func(s
 	if withRealFile {
 		stmt += `INSERT INTO "videoFile" (id,"videoId",resolution,size,extname,filename) VALUES (31,1,720,` +
 			strconv.Itoa(len(sourceVideoBytes)) + `,'.mp4','v1-720.mp4');`
+	}
+	if dropHLS {
+		stmt += `DELETE FROM "videoFile" WHERE "videoStreamingPlaylistId" IN (SELECT id FROM "videoStreamingPlaylist" WHERE "videoId"=1);
+			DELETE FROM "videoStreamingPlaylist" WHERE "videoId"=1;`
 	}
 	mustExec(t, ctx, src, stmt)
 	srcDir := t.TempDir()
@@ -65,7 +70,7 @@ func audioOnlyFixture(t *testing.T, withRealFile bool) (*Report, *Report, func(s
 }
 
 func TestPeerTubeImportAudioOnlyWebFileIsNotTheOriginal(t *testing.T) {
-	plan, r, q := audioOnlyFixture(t, false)
+	plan, r, q := audioOnlyFixture(t, false, false)
 	if got := q(`SELECT name FROM (SELECT original_name AS name FROM video_files WHERE kind='original') s`); len(got) != 0 {
 		t.Fatalf("an audio-only web file was carried as an original: %v", got)
 	}
@@ -86,11 +91,23 @@ func TestPeerTubeImportAudioOnlyWebFileIsNotTheOriginal(t *testing.T) {
 }
 
 func TestPeerTubeImportRealWebFileBeatsAudioOnlyOne(t *testing.T) {
-	_, r, q := audioOnlyFixture(t, true)
+	_, r, q := audioOnlyFixture(t, true, false)
 	if r.Entities[KindVideoFile].Imported != 1 {
 		t.Fatalf("original not carried: %+v", r.Entities[KindVideoFile])
 	}
 	if got := q(`SELECT original_name FROM video_files WHERE kind='original'`); strings.Join(got, ",") != "v1-720.mp4" {
 		t.Fatalf("originals = %v, want the 720p web file", got)
+	}
+}
+
+// With no HLS video rung the audio file is the only media the video has (a
+// genuine audio upload): dropping it would import the video with nothing to play.
+func TestPeerTubeImportAudioOnlyWebFileIsKeptWhenItIsTheOnlyMedia(t *testing.T) {
+	_, r, q := audioOnlyFixture(t, false, true)
+	if r.Entities[KindVideoFile].Imported != 1 {
+		t.Fatalf("the only media was not carried: %+v", r.Entities[KindVideoFile])
+	}
+	if got := q(`SELECT original_name FROM video_files WHERE kind='original'`); strings.Join(got, ",") != "v1-0.mp4" {
+		t.Fatalf("originals = %v, want the audio file", got)
 	}
 }
