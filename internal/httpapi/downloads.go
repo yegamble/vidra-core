@@ -85,6 +85,21 @@ func (s *Server) videoForDownload(c *echo.Context, id uuid.UUID) (sqlcgen.GetVid
 	if err != nil {
 		return sqlcgen.GetVideoByIDRow{}, uuid.Nil, false, err
 	}
+	// The visibility check can sign a browser in from the video-access cookie
+	// (a request with no Authorization header), which happens after the audience
+	// was chosen above. Judge that caller as who they turned out to be, or a
+	// member could reach a members-only video through the logged-out switch
+	// while the signed-in switch is off.
+	if !authed {
+		if viewerID, role, authed = principalFromContext(c); authed {
+			if isStaff(role) {
+				return v, v.OwnerID, true, nil
+			}
+			if !s.userDownloadsEnabled() {
+				return sqlcgen.GetVideoByIDRow{}, uuid.Nil, false, &FeatureDisabledError{Feature: "downloads"}
+			}
+		}
+	}
 	// Per-video download policy (config-parity W9), checked AFTER visibility so
 	// a hidden video keeps answering 404, and only once the instance gates
 	// above passed (the layering contract).

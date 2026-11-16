@@ -299,3 +299,27 @@ func TestVideoDownloadsVisibility(t *testing.T) {
 		t.Errorf("malformed id = %d, want 404", rec.Code)
 	}
 }
+
+// A browser opening a download link sends the video-access cookie, not a
+// bearer token, so the caller only becomes signed-in during the visibility
+// check. The signed-in switch must still be the one that decides.
+func TestDownloadAudienceFollowsTheCookieSignedInCaller(t *testing.T) {
+	srv := videoServer(t)
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	owner := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	private := createPublishedVideo(t, srv, owner, "bob", `{"title":"Private","privacy":"private"}`)
+	onCookie := func(token string) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+private+"/download", nil)
+		req.AddCookie(&http.Cookie{Name: "vidra_video_access", Value: token})
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if got := onCookie(owner); got != http.StatusOK {
+		t.Fatalf("owner on the cookie, everything on = %d, want 200", got)
+	}
+	setToggle(t, srv, admin, "downloads_users_enabled", false)
+	if got := onCookie(owner); got != http.StatusForbidden {
+		t.Errorf("owner on the cookie, signed-in off and logged-out on = %d, want 403", got)
+	}
+}

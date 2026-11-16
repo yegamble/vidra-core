@@ -936,6 +936,12 @@ The boot log says which applies (`direct object delivery available` /
 | `storyboard.vtt` | Its cues reference `storyboard.jpg` relatively; it only works served next to that route |
 | The IPFS gateway's own redirect | Unchanged — a pinned public asset still prefers the immutable CID |
 
+`downloads_users_enabled` off on its own is a soft limit: while
+`downloads_anonymous_enabled` is on, a member can sign out and download any
+public video as a visitor. It is binding only for videos a visitor cannot see
+(private, internal, sensitive-gated). To stop account holders from
+downloading public videos, turn the logged-out switch off as well.
+
 Everything else — originals, the VP9 alternate, downloads, extracted audio, HLS
 **segments** (canonical and imported-PeerTube shapes), thumbnails, storyboard
 sprites, avatars, banners, public playlist covers — is eligible.
