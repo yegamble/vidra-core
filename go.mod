@@ -8,7 +8,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/labstack/echo-otel/v5 v5.0.0
 	github.com/labstack/echo/v5 v5.4.4
 	github.com/labstack/gommon v0.5.0
