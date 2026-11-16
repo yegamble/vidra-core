@@ -1,9 +1,12 @@
 package media
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/vidra/vidra-core/internal/storage"
 )
 
 func TestHLSMuxArgs(t *testing.T) {
@@ -89,5 +92,59 @@ func TestHLSMuxPresignTTLIsShort(t *testing.T) {
 	}
 	if pb.ttl != hlsMuxPresignTTL || pb.ttl >= remoteSourceTTL {
 		t.Errorf("ttl = %v, want %v (< %v)", pb.ttl, hlsMuxPresignTTL, remoteSourceTTL)
+	}
+}
+
+// The command is built by one pure function so the hardening is assertable.
+func TestNewHLSMuxCmd(t *testing.T) {
+	t.Setenv("JWT_SECRET", "must-not-leak")
+	cmd := newHLSMuxCmd(t.Context(), "ffmpeg", localSource("/m/v.mp4"), localSource("/m/a.mp4"))
+	for _, kv := range cmd.Env {
+		if strings.HasPrefix(kv, "JWT_SECRET") {
+			t.Fatalf("child environment leaks %q", kv)
+		}
+	}
+	if cmd.Env == nil || !reflect.DeepEqual(cmd.Env, hlsMuxEnv()) {
+		t.Errorf("cmd.Env = %v, want the minimal env", cmd.Env)
+	}
+	if cmd.WaitDelay != hlsMuxWaitDelay {
+		t.Errorf("WaitDelay = %v", cmd.WaitDelay)
+	}
+	if !reflect.DeepEqual(cmd.Args[1:], hlsMuxArgs(localSource("/m/v.mp4"), localSource("/m/a.mp4"))) {
+		t.Errorf("argv = %v", cmd.Args)
+	}
+}
+
+// The presign lifetime is asserted through Mux itself, not just the helper.
+func TestHLSMuxerPresignsWithTheShortTTL(t *testing.T) {
+	pb := &presignBackend{url: "https://s3.test/x?sig=1"}
+	m := &HLSMuxer{blobs: pb, bin: "/nonexistent/ffmpeg"}
+	_, _ = m.Mux(t.Context(), "v.mp4", "a.mp4") // fails at Start; the TTL was already used
+	if pb.ttl != hlsMuxPresignTTL {
+		t.Errorf("ttl = %v, want %v", pb.ttl, hlsMuxPresignTTL)
+	}
+}
+
+// Without a local path or a presigner the only way to give ffmpeg an input is to
+// spool the whole object to disk, which an anonymous request must not cause.
+func TestHLSMuxerRefusesToSpoolToDisk(t *testing.T) {
+	local, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &countingBackend{Backend: local} // embeds the interface: no PathProvider, no Presigner
+	m := NewHLSMuxer(b)
+	if m.Supported() {
+		t.Error("Supported() = true for a backend with neither capability")
+	}
+	_, err = m.Mux(t.Context(), "v.mp4", "a.mp4")
+	if !errors.Is(err, ErrMuxUnsupported) {
+		t.Fatalf("err = %v, want ErrMuxUnsupported", err)
+	}
+	if len(b.opens) != 0 {
+		t.Errorf("objects were opened: %v", b.opens)
+	}
+	if !NewHLSMuxer(local).Supported() || !NewHLSMuxer(&presignBackend{Backend: b}).Supported() {
+		t.Error("path and presign backends must be supported")
 	}
 }

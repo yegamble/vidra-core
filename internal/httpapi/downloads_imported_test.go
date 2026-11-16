@@ -407,7 +407,11 @@ func TestHLSMuxDownloadClientDisconnectStopsRunner(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+id+"/download/hls/1280", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})
-	go func() { srv.Handler().ServeHTTP(rec, req); close(done) }()
+	go func() {
+		defer close(done)
+		defer func() { _ = recover() }() // the abort sentinel; a disconnected client needs nothing else
+		srv.Handler().ServeHTTP(rec, req)
+	}()
 	select {
 	case <-mux.started:
 	case <-time.After(5 * time.Second):
@@ -587,7 +591,8 @@ func TestHLSMuxMidStreamFailureAbortsTheConnection(t *testing.T) {
 	}
 }
 
-// C: one concurrent mux per client on top of the global bound.
+// C: one concurrent mux per client (an IPv6 /64 is one client) on top of the
+// global bound.
 func TestHLSMuxOnePerClient(t *testing.T) {
 	mux := newFakeMuxer("x")
 	mux.hang = true
@@ -598,31 +603,115 @@ func TestHLSMuxOnePerClient(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+id+"/download/hls/1280", nil).WithContext(ctx)
 		req.RemoteAddr = addr
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, req)
+		func() {
+			defer func() { _ = recover() }()
+			srv.Handler().ServeHTTP(rec, req)
+		}()
 		return rec
 	}
-	done := make(chan struct{}, 2)
-	go func() { do("198.51.100.1:1000"); done <- struct{}{} }()
-	<-mux.started
+	waitStarted := func(what string) {
+		t.Helper()
+		select {
+		case <-mux.started:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s: muxer never started", what)
+		}
+	}
+	done := make(chan struct{}, 3)
+	go func() { do("[2001:db8:1:2::1]:1000"); done <- struct{}{} }()
+	waitStarted("first client")
 	time.Sleep(50 * time.Millisecond)
-	rec := do("198.51.100.1:2000")
-	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" || errorCode(t, rec) != "download_busy" {
-		t.Fatalf("second request from the same client = %d code=%s", rec.Code, errorCode(t, rec))
+	for _, addr := range []string{"[2001:db8:1:2::1]:2000", "[2001:db8:1:2:ffff::9]:1"} { // same address, then same /64
+		rec := do(addr)
+		if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" || errorCode(t, rec) != "download_busy" {
+			t.Fatalf("%s = %d code=%s, want 503 download_busy", addr, rec.Code, errorCode(t, rec))
+		}
 	}
-	go func() { do("203.0.113.9:1"); done <- struct{}{} }()
-	select {
-	case <-mux.started:
-	case <-time.After(3 * time.Second):
-		t.Fatal("a different client was refused")
-	}
+	go func() { do("[2001:db8:1:3::1]:1"); done <- struct{}{} }() // a different /64 is admitted
+	waitStarted("different client")
 	cancel()
-	<-done
-	<-done
+	for i := 0; i < 2; i++ {
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("handlers did not finish after cancel")
+		}
+	}
 	srv.muxMu.Lock()
 	left := len(srv.muxClients)
 	srv.muxMu.Unlock()
 	if left != 0 {
 		t.Errorf("client entries leaked: %d", left)
+	}
+}
+
+// 2: a deadline-truncated file must not look complete either.
+func TestHLSMuxDeadlineAbortsTheConnection(t *testing.T) {
+	mux := newFakeMuxer("PARTIAL")
+	mux.hang = true
+	srv, _, id, _ := importedServer(t, true, mux)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+id+"/download/hls/1280", nil).WithContext(ctx)
+	var got any
+	func() {
+		defer func() { got = recover() }()
+		srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+	}()
+	if got != http.ErrAbortHandler {
+		t.Fatalf("recovered %v, want http.ErrAbortHandler after the deadline expired mid-stream", got)
+	}
+	if len(srv.muxSlots) != 0 {
+		t.Errorf("slot leaked: %d", len(srv.muxSlots))
+	}
+}
+
+// 1: the serving backend cannot supply inputs without spooling. The listing
+// treats that like "no muxer", and nothing is fetched or written.
+type allOpens struct {
+	storage.Backend
+	mu    sync.Mutex
+	opens []string
+}
+
+func (a *allOpens) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	a.mu.Lock()
+	a.opens = append(a.opens, key)
+	a.mu.Unlock()
+	return a.Backend.Open(ctx, key)
+}
+
+func TestImportedMuxUnsupportedBackend(t *testing.T) {
+	srv, blobs, tcRepo, _, _ := videoServerFullWith(t, testConfig(), nil)
+	// Neither a PathProvider nor a Presigner: the shape of a migration Fallback.
+	nocap := &allOpens{Backend: blobs}
+	srv.media = nocap
+	srv.hlsMuxer = media.NewHLSMuxer(nocap)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Imp","privacy":"public"}`)
+	seedImportedHLS(t, tcRepo, blobs, id, true)
+
+	body := decodeDownloads(t, getDownloads(srv, id, ""))
+	if findFile(body.Files, "hls", 1280) != nil {
+		t.Errorf("split rung advertised though it cannot be built: %+v", body.Files)
+	}
+	nocap.mu.Lock()
+	nocap.opens = nil
+	nocap.mu.Unlock()
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/"+id+"/download/hls/1280", "", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("muxed route = %d, want 404", rec.Code)
+	}
+	for _, k := range nocap.opens {
+		if strings.HasSuffix(k, ".mp4") {
+			t.Errorf("an object was opened: %s", k)
+		}
+	}
+
+	// A muxer that reports the condition after resolution is a clean 503.
+	srv.hlsMuxer = &fakeMuxer{startErr: media.ErrMuxUnsupported, started: make(chan struct{}, 2), closed: make(chan struct{}, 2)}
+	rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/"+id+"/download/hls/1280", "", "")
+	if rec.Code != http.StatusServiceUnavailable || errorCode(t, rec) != "download_unavailable" || rec.Header().Get("Content-Disposition") != "" {
+		t.Errorf("unsupported mux = %d/%s", rec.Code, errorCode(t, rec))
 	}
 }
 

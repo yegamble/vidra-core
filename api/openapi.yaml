@@ -5763,7 +5763,9 @@ paths:
           description: >-
             Every on-request build slot is taken, or this client already has
             one running (code `download_busy`); retry after the Retry-After
-            delay, or take the video-only file.
+            delay, or take the video-only file. Also `download_unavailable`
+            when the serving storage cannot supply the build's inputs without
+            spooling objects to disk (such rungs are then not listed).
           headers:
             Retry-After:
               schema: { type: integer }

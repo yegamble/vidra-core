@@ -36,6 +36,21 @@ type HLSMuxer interface {
 	Mux(ctx context.Context, videoKey, audioKey string) (io.ReadCloser, error)
 }
 
+// muxAvailable reports whether video+audio downloads can actually be built: a
+// muxer is wired and, when it can say, its backend can supply inputs (a muxer
+// that would have to spool whole objects to disk declares itself unsupported).
+// Listings and the byte route both use it, so a split-audio rung is never
+// advertised when the build would fail.
+func (s *Server) muxAvailable() bool {
+	if s.hlsMuxer == nil {
+		return false
+	}
+	if sup, ok := s.hlsMuxer.(interface{ Supported() bool }); ok {
+		return sup.Supported()
+	}
+	return true
+}
+
 // WithHLSMuxer enables on-request video+audio downloads for imported (split
 // audio) HLS renditions. Without it those rungs are offered video-only.
 func WithHLSMuxer(m HLSMuxer) Option {
@@ -192,7 +207,7 @@ func (s *Server) resolveHLSDownload(ctx context.Context, id uuid.UUID, height in
 			return hlsDownload{}, notFound
 		case !includeAudio:
 			return hlsDownload{rendition: rendition, key: rung.VideoKey}, nil
-		case s.hlsMuxer == nil:
+		case !s.muxAvailable():
 			return hlsDownload{}, notFound
 		}
 		if _, exists, err := probe.size(rung.AudioKey); err != nil {
@@ -244,7 +259,8 @@ var muxIdleWriteTimeout = 60 * time.Second
 
 // admitMux takes the per-client and global slots, without queueing. One
 // concurrent mux per client, keyed on the same client address the rate limiter
-// uses (c.RealIP(), which honours forwarded headers only from trusted proxies);
+// uses (c.RealIP(), which honours forwarded headers only from trusted proxies,
+// folded by limiterIPKey so an IPv6 /64 is one client);
 // behind a CDN with no trusted-proxy list every visitor shares the edge address
 // and so shares one slot — the safe failure for a process-spawning route.
 func (s *Server) admitMux(client string) (release func(), ok bool) {
@@ -298,7 +314,7 @@ func (s *Server) serveHLSMux(c *echo.Context, v sqlcgen.GetVideoByIDRow, filenam
 		return c.NoContent(http.StatusOK)
 	}
 
-	release, ok := s.admitMux(c.RealIP())
+	release, ok := s.admitMux(limiterIPKey(c.RealIP()))
 	if !ok {
 		header.Set("Retry-After", hlsMuxRetryAfter)
 		return &DownloadBusyError{}
@@ -308,6 +324,11 @@ func (s *Server) serveHLSMux(c *echo.Context, v sqlcgen.GetVideoByIDRow, filenam
 	ctx := c.Request().Context()
 	rc, err := s.hlsMuxer.Mux(ctx, videoKey, audioKey)
 	if err != nil {
+		if errors.Is(err, media.ErrMuxUnsupported) {
+			// Nothing was fetched or written: this backend cannot feed ffmpeg
+			// without spooling objects to disk, which a public route must not do.
+			return &DownloadUnavailableError{}
+		}
 		return s.muxFailed(c, err)
 	}
 	defer func() { _ = rc.Close() }()
@@ -349,8 +370,14 @@ func (s *Server) serveHLSMux(c *echo.Context, v sqlcgen.GetVideoByIDRow, filenam
 			break
 		}
 	}
-	if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
-		s.logger.Warn("hls mux download failed mid-stream", "error", jobstatus.RedactDetail(err.Error()))
+	if err != nil && !errors.Is(err, io.EOF) {
+		// ANY error but a clean EOF aborts, including an expired request deadline:
+		// a file cut short by a timeout must not look complete either. The context
+		// check only decides whether this is worth a log line (a client that went
+		// away is not a server fault).
+		if ctx.Err() == nil {
+			s.logger.Warn("hls mux download failed mid-stream", "error", jobstatus.RedactDetail(err.Error()))
+		}
 		// Headers are committed, so the status can no longer change. Returning
 		// normally would end the chunked body cleanly and the browser would save
 		// a truncated MP4 as a finished download; aborting severs the connection
@@ -394,7 +421,7 @@ func (s *Server) importedRenditionEntry(probe *downloadProbe, imported *imported
 	if !ok {
 		return videoDownloadFileView{}, false, nil
 	}
-	if rung.SplitAudio && s.hlsMuxer == nil {
+	if rung.SplitAudio && !s.muxAvailable() {
 		return videoDownloadFileView{}, false, nil
 	}
 	videoSize, exists, err := probe.size(rung.VideoKey)

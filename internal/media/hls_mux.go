@@ -80,6 +80,11 @@ func hlsMuxEnv() []string {
 // process may run, plus a margin. Far shorter than the 6h transcode default.
 const hlsMuxPresignTTL = HLSMuxTimeout + 5*time.Minute
 
+// ErrMuxUnsupported means the backend can hand ffmpeg neither a local path nor a
+// presigned URL, so the only input would be a full copy of the object spooled to
+// the temp directory. A public, anonymous route must not do that.
+var ErrMuxUnsupported = errors.New("media: backend cannot supply mux inputs without spooling to disk")
+
 // HLSMuxer joins a split-audio rung's video and audio objects into one MP4 on
 // request. Nothing is written to storage.
 type HLSMuxer struct {
@@ -93,6 +98,44 @@ func NewHLSMuxer(blobs storage.Backend) *HLSMuxer {
 	return &HLSMuxer{blobs: blobs, bin: "ffmpeg"}
 }
 
+// Supported reports whether Mux can run against this backend at all: it needs a
+// local path or a presigner. Cheap (type assertions), so listings can use it.
+func (m *HLSMuxer) Supported() bool {
+	if _, ok := m.blobs.(storage.PathProvider); ok {
+		return true
+	}
+	_, ok := m.blobs.(storage.Presigner)
+	return ok
+}
+
+// openMuxSource is openSourceTTL without the spool-to-temp-file fallback.
+func (m *HLSMuxer) openMuxSource(ctx context.Context, key string) (source, error) {
+	if pp, ok := m.blobs.(storage.PathProvider); ok {
+		p, err := pp.Path(key)
+		if err != nil {
+			return source{}, err
+		}
+		return localSource(p), nil
+	}
+	if pr, ok := m.blobs.(storage.Presigner); ok {
+		u, err := pr.PresignGet(ctx, key, hlsMuxPresignTTL)
+		if err != nil {
+			return source{}, err
+		}
+		return source{arg: u, opts: httpSourceOpts, remote: true}, nil
+	}
+	return source{}, ErrMuxUnsupported
+}
+
+// newHLSMuxCmd builds the ffmpeg command. Pure (nothing is started), so the
+// environment and process limits are assertable.
+func newHLSMuxCmd(ctx context.Context, bin string, video, audio source) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, bin, hlsMuxArgs(video, audio)...)
+	cmd.WaitDelay = hlsMuxWaitDelay
+	cmd.Env = hlsMuxEnv()
+	return cmd
+}
+
 // Mux starts ffmpeg and returns its stdout. The caller must Close the result.
 // Cancelling ctx, closing the reader, or HLSMuxTimeout kills the process. A
 // non-zero exit surfaces as the error of the Read that hits end of output, so a
@@ -100,19 +143,20 @@ func NewHLSMuxer(blobs storage.Backend) *HLSMuxer {
 // successful one. Errors carry a bounded stderr tail with presigned URLs
 // redacted.
 func (m *HLSMuxer) Mux(ctx context.Context, videoKey, audioKey string) (io.ReadCloser, error) {
-	vsrc, vclean, err := openSourceTTL(ctx, m.blobs, videoKey, hlsMuxPresignTTL)
+	if !m.Supported() {
+		return nil, ErrMuxUnsupported
+	}
+	vsrc, err := m.openMuxSource(ctx, videoKey)
 	if err != nil {
 		return nil, fmt.Errorf("media: mux video input: %w", err)
 	}
-	asrc, aclean, err := openSourceTTL(ctx, m.blobs, audioKey, hlsMuxPresignTTL)
+	asrc, err := m.openMuxSource(ctx, audioKey)
 	if err != nil {
-		vclean()
 		return nil, fmt.Errorf("media: mux audio input: %w", err)
 	}
+	vclean, aclean := func() {}, func() {}
 	ctx, cancel := context.WithTimeout(ctx, HLSMuxTimeout)
-	cmd := exec.CommandContext(ctx, m.bin, hlsMuxArgs(vsrc, asrc)...)
-	cmd.WaitDelay = hlsMuxWaitDelay
-	cmd.Env = hlsMuxEnv()
+	cmd := newHLSMuxCmd(ctx, m.bin, vsrc, asrc)
 	stderr := &cappedBuffer{limit: hlsMuxStderrCap}
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
