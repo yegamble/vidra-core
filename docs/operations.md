@@ -931,7 +931,7 @@ The boot log says which applies (`direct object delivery available` /
 | Anything not `public` + `published` | Private, unlisted-by-password, draft, scheduled, quarantined and blocked media stay behind per-request authorization. A signed URL is transferable; an authorization decision is not |
 | Password-protected media, even with a valid `?pt=` token | The token is scoped to one viewer's unlock; a signed URL would outlive and outrank it |
 | Any request carrying `?pt=` or an `Authorization` header | Trading one credential for a longer-lived one, and keeping `?pt=` out of intermediary logs |
-| Official downloads while `downloads_enabled` is off, or with the video's own download flag off | Moderators keep their gate bypass for the **bytes**; they do not get a shareable URL |
+| Official downloads a logged-out visitor could not take: `downloads_enabled` or `downloads_anonymous_enabled` off, or the video's own download flag off | A signed-in user or moderator who may still download gets the **bytes**; they do not get a shareable URL. With `downloads_enabled` off nobody downloads at all |
 | HLS playlists (`.m3u8`) | This origin rewrites their relative URIs (playback token, generation version). A copy served from the store points players at URIs that do not resolve |
 | `storyboard.vtt` | Its cues reference `storyboard.jpg` relatively; it only works served next to that route |
 | The IPFS gateway's own redirect | Unchanged — a pinned public asset still prefers the immutable CID |

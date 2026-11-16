@@ -5523,14 +5523,16 @@ paths:
         `size_bytes` is the sum of the two objects, which is approximate (the
         built file differs by container overhead). On a host without ffmpeg
         such a rung is not listed at all, because its only file has no audio;
-        the audio-only entry is still listed. Regular/anonymous callers require the LAYERED download policy
-        (config-parity W9): the instance-wide downloads_enabled setting AND
-        the video's own download_enabled flag (instance gate off means no
-        downloads regardless of the per-video flag), plus ordinary video
-        visibility. The same layered gate guards every /download/* byte
-        route. Moderators/admins bypass both gates and may download any local
-        video for moderation. A visible video with no stored files yet
-        returns an empty list.
+        the audio-only entry is still listed. The download policy is LAYERED:
+        the instance-wide downloads_enabled setting off means no downloads
+        for anyone, moderators and admins included. With it on, a logged-out
+        visitor also needs downloads_anonymous_enabled and a signed-in regular
+        user downloads_users_enabled, and both need the video's own
+        download_enabled flag (config-parity W9), plus ordinary video
+        visibility. Moderators/admins are subject to downloads_enabled only
+        and may otherwise download any local video for moderation. The same
+        layered gate guards every /download/* byte route. A visible video
+        with no stored files yet returns an empty list.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -5556,9 +5558,10 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "403":
           description: >-
-            Downloads are disabled for this non-privileged caller — by the
-            instance downloads_enabled setting or this video's
-            download_enabled flag (code "feature_disabled").
+            Downloads are disabled for this caller — by the instance
+            downloads_enabled setting (everyone), the caller's audience
+            switch or this video's download_enabled flag (regular and
+            logged-out callers) (code "feature_disabled").
           content:
             application/json:
               schema:
@@ -5612,9 +5615,10 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "403":
           description: >-
-            Downloads are disabled for this non-privileged caller — by the
-            instance downloads_enabled setting or this video's
-            download_enabled flag (code "feature_disabled").
+            Downloads are disabled for this caller — by the instance
+            downloads_enabled setting (everyone), the caller's audience
+            switch or this video's download_enabled flag (regular and
+            logged-out callers) (code "feature_disabled").
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -5663,9 +5667,10 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "403":
           description: >-
-            Downloads are disabled for this non-privileged caller — by the
-            instance downloads_enabled setting or this video's
-            download_enabled flag (code "feature_disabled").
+            Downloads are disabled for this caller — by the instance
+            downloads_enabled setting (everyone), the caller's audience
+            switch or this video's download_enabled flag (regular and
+            logged-out callers) (code "feature_disabled").
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -5743,9 +5748,10 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "403":
           description: >-
-            Downloads are disabled for this non-privileged caller — by the
-            instance downloads_enabled setting or this video's
-            download_enabled flag (code "feature_disabled").
+            Downloads are disabled for this caller — by the instance
+            downloads_enabled setting (everyone), the caller's audience
+            switch or this video's download_enabled flag (regular and
+            logged-out callers) (code "feature_disabled").
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -5816,9 +5822,10 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "403":
           description: >-
-            Downloads are disabled for this non-privileged caller — by the
-            instance downloads_enabled setting or this video's
-            download_enabled flag (code "feature_disabled").
+            Downloads are disabled for this caller — by the instance
+            downloads_enabled setting (everyone), the caller's audience
+            switch or this video's download_enabled flag (regular and
+            logged-out callers) (code "feature_disabled").
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -5858,9 +5865,10 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "403":
           description: >-
-            Downloads are disabled for this non-privileged caller — by the
-            instance downloads_enabled setting or this video's
-            download_enabled flag (code "feature_disabled").
+            Downloads are disabled for this caller — by the instance
+            downloads_enabled setting (everyone), the caller's audience
+            switch or this video's download_enabled flag (regular and
+            logged-out callers) (code "feature_disabled").
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -17195,8 +17203,12 @@ paths:
         gates (registration_enabled, registration_require_approval), the upload
         quarantine gate (quarantine_new_uploads), and the feature toggles
         (uploads_enabled, imports_enabled, live_enabled, comments_enabled,
-        downloads_enabled). Downloads default to enabled and are controlled only
-        by this runtime setting (there is no env/config counterpart).
+        downloads_enabled, and under it the audience switches
+        downloads_anonymous_enabled for logged-out visitors and
+        downloads_users_enabled for signed-in regular users; moderators and
+        admins are subject to downloads_enabled only). Downloads default to
+        enabled for every audience and are controlled only by these runtime
+        settings (there is no env/config counterpart).
         Boot-time-only secrets and infrastructure (database DSN, KEKs, JWT secret,
         storage backend) are NOT represented here — they stay in config.
         Player advertising is opt-in: player_vast_enabled defaults false and
@@ -17265,7 +17277,8 @@ paths:
         object of setting key → new value: a boolean for the toggle keys
         (registration_enabled, registration_require_approval,
         quarantine_new_uploads, uploads_enabled, imports_enabled, live_enabled,
-        comments_enabled, downloads_enabled, contact_form_enabled,
+        comments_enabled, downloads_enabled, downloads_anonymous_enabled,
+        downloads_users_enabled, contact_form_enabled,
         instance_is_sensitive, age_gate_enabled (default false; a batch that
         would leave it on while registration_minimum_age is 0 — switching it
         on without an age, or clearing the age while it is on — is a 422 on the
@@ -20805,6 +20818,8 @@ components:
             - live
             - comments
             - downloads
+            - downloads_anonymous
+            - downloads_staff
             - messaging
             - messaging_e2ee
             - import_http
@@ -20854,8 +20869,21 @@ components:
             downloads:
               type: boolean
               description: >-
-                Whether regular users may download video media. Moderators and
-                admins retain download access when this operator toggle is off.
+                Whether a signed-in regular user may download video media: the
+                `downloads_enabled` master switch AND `downloads_users_enabled`.
+            downloads_anonymous:
+              type: boolean
+              description: >-
+                Whether a logged-out visitor may download video media: the
+                `downloads_enabled` master switch AND
+                `downloads_anonymous_enabled`.
+            downloads_staff:
+              type: boolean
+              description: >-
+                Whether a moderator or admin may download video media: the
+                `downloads_enabled` master switch alone. Staff are not subject
+                to the two audience switches or the per-video flag, but the
+                master switch off stops them too.
             messaging:
               type: boolean
               description: >-

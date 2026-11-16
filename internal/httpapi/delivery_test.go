@@ -471,9 +471,10 @@ func TestDeliveryNeverPresignsGatedMedia(t *testing.T) {
 	}
 }
 
-// TestDeliveryNeverPresignsWhenDownloadsAreOff: a moderator may still download
-// while the instance gate is shut, but that authorization is theirs alone — a
-// signed URL is transferable, so the gate closes the redirect too.
+// TestDeliveryNeverPresignsWhenDownloadsAreOff: a signed-in caller may still
+// download while logged-out downloads are shut, but that authorization is
+// theirs alone — a signed URL is transferable, so the gate closes the redirect
+// too.
 func TestDeliveryNeverPresignsWhenDownloadsAreOff(t *testing.T) {
 	p := &deliveryFakePresigner{}
 	srv, blobs, tcRepo := deliveryServer(t, p, true)
@@ -484,9 +485,9 @@ func TestDeliveryNeverPresignsWhenDownloadsAreOff(t *testing.T) {
 	assertSignedRedirect(t, getWith(srv, "/api/v1/videos/"+id+"/download/original", "", ""), "web-videos/"+id+".mp4")
 
 	if err := srv.settingssvc.Apply(context.Background(), map[string]instancesettings.Update{
-		instancesettings.KeyDownloadsEnabled: {Value: "false"},
+		instancesettings.KeyDownloadsAnonymousEnabled: {Value: "false"},
 	}, uuid.Nil); err != nil {
-		t.Fatalf("disable downloads: %v", err)
+		t.Fatalf("disable logged-out downloads: %v", err)
 	}
 	// The anonymous download is now refused outright, and nothing was signed.
 	p.reset()
@@ -497,12 +498,12 @@ func TestDeliveryNeverPresignsWhenDownloadsAreOff(t *testing.T) {
 		t.Fatalf("presigner called for a refused download: %+v", p.calls)
 	}
 
-	// A privileged caller (the harness's first account is the instance owner)
-	// still gets the BYTES — their gate bypass is intact — but never a
+	// A signed-in caller (the harness's first account is the instance owner)
+	// still gets the BYTES — downloads are open to them — but never a
 	// transferable signed URL. Two independent fences agree here: the request
-	// carries an Authorization header, and publicDownload sees the instance gate
-	// shut. The second is the one that matters, because it is what keeps a
-	// cookie-authenticated moderator from being handed a shareable URL either.
+	// carries an Authorization header, and publicDownload sees the logged-out
+	// gate shut. The second is the one that matters, because it is what keeps a
+	// cookie-authenticated caller from being handed a shareable URL either.
 	p.reset()
 	rec := getWith(srv, "/api/v1/videos/"+id+"/download/original", tok, "")
 	if rec.Code != http.StatusOK {

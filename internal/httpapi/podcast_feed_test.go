@@ -80,6 +80,15 @@ func TestPodcastFeed(t *testing.T) {
 		t.Errorf("downloads_enabled=false: items = %d (err %v), want 0", len(offDoc.Channel.Items), err)
 	}
 	setToggle(t, srv, tok, "downloads_enabled", true)
+	// A podcast app fetches enclosures logged out, so that audience's switch
+	// alone empties the feed too.
+	setToggle(t, srv, tok, "downloads_anonymous_enabled", false)
+	anonOff := get(t, srv, "/feeds/podcast/videos.xml?channel=ada")
+	var anonOffDoc podcastDocument
+	if err := xml.Unmarshal(anonOff.Body.Bytes(), &anonOffDoc); err != nil || len(anonOffDoc.Channel.Items) != 0 {
+		t.Errorf("downloads_anonymous_enabled=false: items = %d (err %v), want 0", len(anonOffDoc.Channel.Items), err)
+	}
+	setToggle(t, srv, tok, "downloads_anonymous_enabled", true)
 	// Stable guid across renders.
 	rec2 := get(t, srv, "/feeds/podcast/videos.xml?videoChannelName=ada")
 	var doc2 podcastDocument

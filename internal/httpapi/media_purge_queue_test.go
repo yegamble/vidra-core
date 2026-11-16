@@ -246,6 +246,37 @@ func TestInstanceDownloadRevocationQueuesTheWalk(t *testing.T) {
 	}
 }
 
+// Logged-out downloads are what a shared edge copy stands for, so closing THAT
+// audience queues the same walk; closing the signed-in audience revokes nothing
+// an edge could be holding and queues none.
+func TestClosingAnAudienceQueuesTheWalkOnlyForLoggedOut(t *testing.T) {
+	srv, _, _, _, queue := queuedPurgeServer(t)
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	if r := doJSON(srv, http.MethodPatch, "/api/v1/admin/instance-settings", admin,
+		`{"downloads_users_enabled":false}`); r.Code != http.StatusOK {
+		t.Fatalf("patch users = %d; body=%s", r.Code, r.Body.String())
+	}
+	if got := queue.walkCount(); got != 0 {
+		t.Fatalf("closing signed-in downloads queued %d walks, want 0", got)
+	}
+	if r := doJSON(srv, http.MethodPatch, "/api/v1/admin/instance-settings", admin,
+		`{"downloads_anonymous_enabled":false}`); r.Code != http.StatusOK {
+		t.Fatalf("patch anonymous = %d; body=%s", r.Code, r.Body.String())
+	}
+	if got := queue.walkCount(); got != 1 {
+		t.Fatalf("closing logged-out downloads queued %d walks, want 1", got)
+	}
+	// Already shut for visitors: the master switch closing revokes nothing more.
+	if r := doJSON(srv, http.MethodPatch, "/api/v1/admin/instance-settings", admin,
+		`{"downloads_enabled":false}`); r.Code != http.StatusOK {
+		t.Fatalf("patch master = %d; body=%s", r.Code, r.Body.String())
+	}
+	if got := queue.walkCount(); got != 1 {
+		t.Fatalf("queued %d walks after the master switch followed, want still 1", got)
+	}
+}
+
 // Re-stating downloads_enabled:false revokes nothing — the gate was already
 // shut — so it must not start a second walk over the whole catalogue. Same
 // idempotence the per-video snapshot has when downloads were already off.

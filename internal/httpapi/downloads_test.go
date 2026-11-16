@@ -149,9 +149,11 @@ func TestVideoDownloadsShape(t *testing.T) {
 	}
 }
 
-// TestVideoDownloadsToggleAndPrivilegedBypass proves the operator toggle gates
-// anonymous/regular access while moderator/admin tooling stays available.
-func TestVideoDownloadsToggleAndPrivilegedBypass(t *testing.T) {
+// TestVideoDownloadsMasterSwitchAndAudiences proves the layering: the master
+// switch off stops every caller, staff included; with it on, each audience
+// switch closes its own audience only, and moderator/admin tooling — any local
+// video, whatever its privacy — stays available.
+func TestVideoDownloadsMasterSwitchAndAudiences(t *testing.T) {
 	srv := videoServer(t)
 	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	owner := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
@@ -166,17 +168,95 @@ func TestVideoDownloadsToggleAndPrivilegedBypass(t *testing.T) {
 	private := createPublishedVideo(t, srv, owner, "bob", `{"title":"Private","privacy":"private"}`)
 	public := createPublishedVideo(t, srv, owner, "bob", `{"title":"Public","privacy":"public"}`)
 
+	callers := []struct{ name, token string }{
+		{"anonymous", ""}, {"regular owner", owner}, {"moderator", auth.Token}, {"admin", admin},
+	}
+	cases := []struct {
+		name                    string
+		master, anonymous, user bool
+		want                    map[string]bool
+	}{
+		{"everything on", true, true, true,
+			map[string]bool{"anonymous": true, "regular owner": true, "moderator": true, "admin": true}},
+		{"logged-out off", true, false, true,
+			map[string]bool{"anonymous": false, "regular owner": true, "moderator": true, "admin": true}},
+		{"signed-in off", true, true, false,
+			map[string]bool{"anonymous": true, "regular owner": false, "moderator": true, "admin": true}},
+		{"both audiences off", true, false, false,
+			map[string]bool{"anonymous": false, "regular owner": false, "moderator": true, "admin": true}},
+		// The audience switches are still ON here: the master switch alone
+		// stops everyone, staff included.
+		{"master off", false, true, true,
+			map[string]bool{"anonymous": false, "regular owner": false, "moderator": false, "admin": false}},
+	}
+	for _, tc := range cases {
+		// The admin sets the switches, so the master goes on first and off last:
+		// nothing else about the PATCH depends on downloads.
+		setToggle(t, srv, admin, "downloads_enabled", true)
+		setToggle(t, srv, admin, "downloads_anonymous_enabled", tc.anonymous)
+		setToggle(t, srv, admin, "downloads_users_enabled", tc.user)
+		setToggle(t, srv, admin, "downloads_enabled", tc.master)
+		for _, caller := range callers {
+			rec := getDownloads(srv, public, caller.token)
+			if tc.want[caller.name] {
+				if rec.Code != http.StatusOK {
+					t.Errorf("%s: %s = %d, want 200; body=%s", tc.name, caller.name, rec.Code, rec.Body.String())
+				}
+				continue
+			}
+			if rec.Code != http.StatusForbidden || errorCode(t, rec) != "feature_disabled" {
+				t.Errorf("%s: %s = %d/%s, want 403/feature_disabled", tc.name, caller.name, rec.Code, errorCode(t, rec))
+			}
+		}
+		// Staff reach a video they could not otherwise see exactly when the
+		// master switch lets them download at all.
+		for _, caller := range callers[2:] {
+			want := http.StatusOK
+			if !tc.master {
+				want = http.StatusForbidden
+			}
+			if rec := getDownloads(srv, private, caller.token); rec.Code != want {
+				t.Errorf("%s: %s private download = %d, want %d", tc.name, caller.name, rec.Code, want)
+			}
+		}
+	}
+}
+
+// TestInstanceReportsDownloadAvailabilityPerAudience: /instance carries the
+// EFFECTIVE answer for each audience, so a client never shows a download
+// control that would answer 403.
+func TestInstanceReportsDownloadAvailabilityPerAudience(t *testing.T) {
+	srv := videoServer(t)
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	read := func() instanceFeatures {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/instance", nil))
+		var doc struct {
+			Features instanceFeatures `json:"features"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+			t.Fatalf("decode /instance: %v; body=%s", err, rec.Body.String())
+		}
+		return doc.Features
+	}
+	check := func(when string, users, anonymous, staff bool) {
+		t.Helper()
+		f := read()
+		if f.Downloads != users || f.DownloadsAnonymous != anonymous || f.DownloadsStaff != staff {
+			t.Errorf("%s: users/anonymous/staff = %v/%v/%v, want %v/%v/%v",
+				when, f.Downloads, f.DownloadsAnonymous, f.DownloadsStaff, users, anonymous, staff)
+		}
+	}
+	check("defaults", true, true, true)
+	setToggle(t, srv, admin, "downloads_anonymous_enabled", false)
+	check("logged-out off", true, false, true)
+	setToggle(t, srv, admin, "downloads_users_enabled", false)
+	check("both audiences off", false, false, true)
+	setToggle(t, srv, admin, "downloads_anonymous_enabled", true)
+	setToggle(t, srv, admin, "downloads_users_enabled", true)
 	setToggle(t, srv, admin, "downloads_enabled", false)
-	for name, token := range map[string]string{"anonymous": "", "regular owner": owner} {
-		if rec := getDownloads(srv, public, token); rec.Code != http.StatusForbidden || errorCode(t, rec) != "feature_disabled" {
-			t.Errorf("%s disabled download = %d/%s, want 403/feature_disabled", name, rec.Code, errorCode(t, rec))
-		}
-	}
-	for name, token := range map[string]string{"admin": admin, "moderator": auth.Token} {
-		if rec := getDownloads(srv, private, token); rec.Code != http.StatusOK {
-			t.Errorf("%s private download with toggle off = %d; body=%s", name, rec.Code, rec.Body.String())
-		}
-	}
+	check("master off", false, false, false)
 }
 
 // TestVideoDownloadsVisibility proves the guard mirrors the detail endpoint:

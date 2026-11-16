@@ -65,6 +65,10 @@ const (
 	KeyLiveEnabled                 = "live_enabled"
 	KeyCommentsEnabled             = "comments_enabled"
 	KeyDownloadsEnabled            = "downloads_enabled"
+	// The two audience switches under downloads_enabled. Both default ON so an
+	// instance upgrading past this change keeps serving exactly who it served.
+	KeyDownloadsAnonymousEnabled = "downloads_anonymous_enabled"
+	KeyDownloadsUsersEnabled     = "downloads_users_enabled"
 
 	// Direct messaging (1:1 DMs) and its end-to-end-encrypted variant. Both
 	// default ON — the shipped behaviour — so an instance upgrading past this
@@ -825,6 +829,13 @@ var specs = []spec{
 	// Downloads are enabled by default and intentionally have no env/config
 	// backing: the runtime admin setting is the single operator control.
 	{key: KeyDownloadsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageVOD, section: "downloads"},
+	// Who may download while downloads_enabled is on: logged-out visitors and
+	// signed-in regular users are switched separately; moderators and admins
+	// are not switched at all. downloads_enabled off stops everyone.
+	{key: KeyDownloadsAnonymousEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageVOD, section: "downloads"},
+	{key: KeyDownloadsUsersEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
 		page: PageVOD, section: "downloads"},
 
 	// Direct messaging. Like downloads these have no env/config backing — the
