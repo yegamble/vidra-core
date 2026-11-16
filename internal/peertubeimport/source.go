@@ -589,6 +589,17 @@ func (s *Source) HasVideoBlacklist(ctx context.Context) (bool, error) {
 
 // VideoFiles prefers the latest upload's kept original, otherwise web files in
 // descending resolution. HLS-only instances can retain originals independently.
+//
+// The web-file fallback leaves out resolution = 0. PeerTube files the AUDIO-ONLY
+// rendition that accompanies split-audio HLS as a videoFile row of resolution 0
+// bound to the video; it is not a playable video and not the uploader's file.
+// Read here with no filter it was files[0] for any video whose only web file
+// was that one, so it was copied and recorded as the video's "original": the
+// download dialog then offered a few MB of audio as "Original file", /original
+// streamed audio only, and a re-transcode from it rebuilt the ladder audio-only.
+// The kept original above is NOT filtered — a videoSource row is the uploader's
+// real file even when it is a genuine audio upload (see HasAudioOnlyWebFile for
+// the caller that has to say why a video ended up with none).
 func (s *Source) VideoFiles(ctx context.Context, videoID int64) ([]SourceVideoFile, error) {
 	if original, ok, err := s.keptOriginal(ctx, videoID); err != nil {
 		return nil, err
@@ -598,7 +609,7 @@ func (s *Source) VideoFiles(ctx context.Context, videoID int64) ([]SourceVideoFi
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, resolution, size, COALESCE(extname, ''), COALESCE(filename, '')
 		FROM "videoFile"
-		WHERE "videoId" = $1
+		WHERE "videoId" = $1 AND resolution > 0
 		ORDER BY resolution DESC, id`, videoID)
 	if err != nil {
 		return nil, fmt.Errorf("peertubeimport: read video files: %w", err)
@@ -613,6 +624,19 @@ func (s *Source) VideoFiles(ctx context.Context, videoID int64) ([]SourceVideoFi
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// HasAudioOnlyWebFile reports whether the video carries a resolution-0 web file,
+// which VideoFiles deliberately leaves out. It exists so the backfill can record
+// WHY a video has no original ("its only web file is audio-only") instead of
+// the misleading "the source has no web-video file".
+func (s *Source) HasAudioOnlyWebFile(ctx context.Context, videoID int64) (bool, error) {
+	var n int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM "videoFile" WHERE "videoId" = $1 AND resolution = 0`, videoID).Scan(&n); err != nil {
+		return false, fmt.Errorf("peertubeimport: read audio-only web file: %w", err)
+	}
+	return n > 0, nil
 }
 
 // videoSource is optional on older sources. Select the latest upload BEFORE

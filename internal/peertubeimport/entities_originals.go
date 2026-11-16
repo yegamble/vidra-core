@@ -129,6 +129,16 @@ func (im *Importer) backfillOneOriginal(ctx context.Context, v SourceVideo, vide
 		return err
 	}
 	if len(files) == 0 {
+		// VideoFiles leaves out the resolution-0 audio-only rendition, so an empty
+		// set can mean "nothing" or "only audio". Both are done (a later run would
+		// find the same), but the note must not call audio-only "no file".
+		audioOnly, err := im.src.HasAudioOnlyWebFile(ctx, v.ID)
+		if err != nil {
+			return err
+		}
+		if audioOnly {
+			return im.recordStandalone(ctx, KindVideoFile, v.UUID, videoID, "done", "the source's only web file is audio-only")
+		}
 		return im.recordStandalone(ctx, KindVideoFile, v.UUID, videoID, "done", "the source has no web-video file")
 	}
 	if !playableFile(files) {
