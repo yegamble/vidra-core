@@ -537,3 +537,17 @@ func TestS3ReadRefusesToSpliceAReplacedObject(t *testing.T) {
 		t.Errorf("read %d bytes, want only the %d the first version delivered", len(got), len(body)/3)
 	}
 }
+
+// TestS3StatReportsTheSizeInOneHEAD: a listing needs real sizes without a GET
+// per object, and Exists already pays for the same StatObject.
+func TestS3StatReportsTheSizeInOneHEAD(t *testing.T) {
+	b := fakeS3Object(t, []byte("0123456789"))
+	var st ObjectStatter = b
+	size, exists, err := st.Stat(context.Background(), "x/y.mp4")
+	if err != nil || !exists || size != 10 {
+		t.Fatalf("Stat = %d %v %v, want 10 true nil", size, exists, err)
+	}
+	if _, _, err := st.Stat(context.Background(), "../bad"); err == nil {
+		t.Errorf("Stat must validate keys")
+	}
+}

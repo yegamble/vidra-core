@@ -126,6 +126,8 @@ func (s *Server) httpErrorHandler(c *echo.Context, err error) {
 	var pr *PasswordRequiredError
 	var sir *SignInRequiredError
 	var tma *TooManyActiveUploadsError
+	var dbe *DownloadBusyError
+	var dua *DownloadUnavailableError
 	var cfd *ContactFormDisabledError
 	var rc *ReplaceConflictError
 	var su *SearchUnavailableError
@@ -302,6 +304,14 @@ func (s *Server) httpErrorHandler(c *echo.Context, err error) {
 		status = http.StatusForbidden
 		message = "this feature is disabled on this instance"
 		code = "feature_disabled"
+	case errors.As(err, &dua):
+		status = http.StatusServiceUnavailable
+		message = "this download cannot be prepared on this instance right now"
+		code = "download_unavailable"
+	case errors.As(err, &dbe):
+		status = http.StatusServiceUnavailable
+		message = "too many downloads are being prepared right now; try again shortly"
+		code = "download_busy"
 	case errors.As(err, &tma):
 		status = http.StatusTooManyRequests
 		message = "you have too many uploads in progress; finish or cancel one and try again"
@@ -441,6 +451,22 @@ func (s *Server) httpErrorHandler(c *echo.Context, err error) {
 		s.logger.Error("failed to write error response", "error", writeErr, "request_id", reqID)
 	}
 }
+
+// DownloadBusyError renders as 503 with the stable code "download_busy": every
+// slot for building a video+audio download on request is taken. Backpressure,
+// not a failure — the handler sets Retry-After, and the client retries (or takes
+// the video-only file, which needs no process).
+type DownloadBusyError struct{}
+
+func (e *DownloadBusyError) Error() string { return "download busy" }
+
+// DownloadUnavailableError renders as 503 with the stable code
+// "download_unavailable": the video+audio file cannot be built because the
+// serving storage can supply neither a local path nor a presigned URL (for
+// example during a storage migration). Retrying later may work.
+type DownloadUnavailableError struct{}
+
+func (e *DownloadUnavailableError) Error() string { return "download unavailable" }
 
 // QuotaExceededError renders as 422 with the stable code "quota_exceeded":
 // storing the incoming file would push the caller past their effective storage

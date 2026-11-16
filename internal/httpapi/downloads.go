@@ -133,17 +133,30 @@ func (s *Server) handleGetVideoDownloads(c *echo.Context) error {
 
 	if s.transcodesvc != nil && s.media != nil {
 		if sp, ok := s.transcodesvc.Playlist(ctx, id); ok && sp.State == "ready" && sp.MasterKey != "" {
-			for _, rendition := range s.transcodesvc.Renditions(ctx, id) {
+			// Manifests are read lazily and only for IMPORTED-layout renditions that
+			// have no stored remux (see importedSources): a Vidra-transcoded video
+			// never reads one.
+			renditions := s.transcodesvc.Renditions(ctx, id)
+			probe := &downloadProbe{s: s, ctx: ctx}
+			imported := newImportedSources(s, ctx, sp.MasterKey, renditions)
+			for _, rendition := range renditions {
 				muxedKey := media.HLSDownloadKey(rendition.KeyPrefix, true)
-				muxedSize, exists, sizeErr := s.downloadObjectSize(ctx, muxedKey)
+				muxedSize, exists, sizeErr := probe.size(muxedKey)
 				if sizeErr != nil {
 					return sizeErr
 				}
 				if !exists {
+					entry, ok, ierr := s.importedRenditionEntry(probe, imported, id, base, rendition)
+					if ierr != nil {
+						return ierr
+					}
+					if ok {
+						files = append(files, entry)
+					}
 					continue
 				}
 				videoOnlyURL := ""
-				if _, videoOnlyExists, verr := s.downloadObjectSize(ctx, media.HLSDownloadKey(rendition.KeyPrefix, false)); verr != nil {
+				if _, videoOnlyExists, verr := probe.size(media.HLSDownloadKey(rendition.KeyPrefix, false)); verr != nil {
 					return verr
 				} else if videoOnlyExists {
 					videoOnlyURL = base + "/hls/" + strconv.Itoa(int(rendition.Height)) + "?audio=false"
@@ -159,9 +172,20 @@ func (s *Server) handleGetVideoDownloads(c *echo.Context) error {
 					Width:        rendition.Width,
 				})
 			}
-			if audioSize, exists, aerr := s.downloadObjectSize(ctx, media.HLSAudioDownloadKey(sp.MasterKey)); aerr != nil {
+			audioSize, exists, aerr := probe.size(media.HLSAudioDownloadKey(sp.MasterKey))
+			if aerr != nil {
 				return aerr
-			} else if exists {
+			}
+			if !exists {
+				// Imported split-audio HLS: the audio group's own MP4.
+				if key := imported.audioKey(); key != "" {
+					audioSize, exists, aerr = probe.size(key)
+					if aerr != nil {
+						return aerr
+					}
+				}
+			}
+			if exists {
 				files = append(files, videoDownloadFileView{
 					Kind:        "audio",
 					URL:         base + "/audio",
@@ -262,16 +286,19 @@ func (s *Server) handleDownloadHLSRendition(c *echo.Context) error {
 		return err
 	}
 	includeAudio := !strings.EqualFold(c.QueryParam("audio"), "false")
-	rendition, key, err := s.resolveHLSDownload(c.Request().Context(), id, height, includeAudio)
+	dl, err := s.resolveHLSDownload(c.Request().Context(), id, height, includeAudio)
 	if err != nil {
 		return err
 	}
-	filename := fmt.Sprintf("video-%s-%dp.mp4", id, rendition.Height)
+	filename := fmt.Sprintf("video-%s-%dp.mp4", id, dl.rendition.Height)
 	if !includeAudio {
-		filename = fmt.Sprintf("video-%s-%dp-video-only.mp4", id, rendition.Height)
+		filename = fmt.Sprintf("video-%s-%dp-video-only.mp4", id, dl.rendition.Height)
+	}
+	if dl.muxVideo != "" {
+		return s.serveHLSMux(c, v, filename, dl.muxVideo, dl.muxAudio)
 	}
 	return s.serveMediaAsset(c, mediaAsset{
-		key:         key,
+		key:         dl.key,
 		contentType: media.HLSMP4ContentType,
 		class:       delivery.ClassDownload,
 		filename:    filename,
@@ -289,18 +316,9 @@ func (s *Server) handleDownloadHLSAudio(c *echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if s.transcodesvc == nil {
-		return echo.NewHTTPError(http.StatusNotFound, "download not found")
-	}
-	sp, ok := s.transcodesvc.Playlist(c.Request().Context(), id)
-	if !ok || sp.State != "ready" || sp.MasterKey == "" {
-		return echo.NewHTTPError(http.StatusNotFound, "download not found")
-	}
-	key := media.HLSAudioDownloadKey(sp.MasterKey)
-	if _, exists, err := s.downloadObjectSize(c.Request().Context(), key); err != nil {
+	key, err := s.resolveHLSAudioDownload(c.Request().Context(), id)
+	if err != nil {
 		return err
-	} else if !exists {
-		return echo.NewHTTPError(http.StatusNotFound, "download not found")
 	}
 	return s.serveMediaAsset(c, mediaAsset{
 		key:         key,
@@ -310,33 +328,6 @@ func (s *Server) handleDownloadHLSAudio(c *echo.Context) error {
 		eligible:    s.publicDownload(v),
 		notFound:    "video not found",
 	})
-}
-
-// resolveHLSDownload accepts only assets from a ready playlist and proves the
-// selected object exists before the handler attaches download headers. Failed
-// retranscodes may leave rendition rows behind; those must not expose stale or
-// partial files through a guessed URL.
-func (s *Server) resolveHLSDownload(ctx context.Context, id uuid.UUID, height int, includeAudio bool) (sqlcgen.VideoRendition, string, error) {
-	if s.transcodesvc == nil {
-		return sqlcgen.VideoRendition{}, "", echo.NewHTTPError(http.StatusNotFound, "download not found")
-	}
-	sp, ok := s.transcodesvc.Playlist(ctx, id)
-	if !ok || sp.State != "ready" || sp.MasterKey == "" {
-		return sqlcgen.VideoRendition{}, "", echo.NewHTTPError(http.StatusNotFound, "download not found")
-	}
-	for _, rendition := range s.transcodesvc.Renditions(ctx, id) {
-		if int(rendition.Height) != height {
-			continue
-		}
-		key := media.HLSDownloadKey(rendition.KeyPrefix, includeAudio)
-		if _, exists, err := s.downloadObjectSize(ctx, key); err != nil {
-			return sqlcgen.VideoRendition{}, "", err
-		} else if !exists {
-			return sqlcgen.VideoRendition{}, "", echo.NewHTTPError(http.StatusNotFound, "download not found")
-		}
-		return rendition, key, nil
-	}
-	return sqlcgen.VideoRendition{}, "", echo.NewHTTPError(http.StatusNotFound, "download not found")
 }
 
 func (s *Server) handleDownloadVideoSubtitle(c *echo.Context) error {
@@ -394,9 +385,9 @@ func (s *Server) handleStreamVideoWebM(c *echo.Context) error {
 }
 
 // downloadObjectSize returns (size, exists) without opening every remote object.
-// Local storage exposes a path for an exact stat; remote backends use their
-// cheap existence/HEAD operation and omit size rather than issuing a GET per
-// rendition.
+// Local storage exposes a path for an exact stat; a remote backend that can
+// stat (S3's HEAD) reports the real size from that one call, and one that can
+// only say "exists" omits the size rather than issuing a GET per rendition.
 func (s *Server) downloadObjectSize(ctx context.Context, key string) (int64, bool, error) {
 	if s.media == nil {
 		return 0, false, nil
@@ -417,6 +408,9 @@ func (s *Server) downloadObjectSize(ctx context.Context, key string) (int64, boo
 			return 0, false, nil
 		}
 		return info.Size(), true, nil
+	}
+	if st, ok := s.media.(storage.ObjectStatter); ok {
+		return st.Stat(ctx, key)
 	}
 	exists, err := s.media.Exists(ctx, key)
 	return 0, exists, err

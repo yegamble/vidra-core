@@ -156,6 +156,12 @@ var httpSourceOpts = []string{
 // time-limited, which is an acceptable trade for not staging every original on
 // local disk — but it is a trade, not a free win.
 func openSource(ctx context.Context, blobs storage.Backend, key string) (source, func(), error) {
+	return openSourceTTL(ctx, blobs, key, remoteSourceTTL)
+}
+
+// openSourceTTL is openSource with the presigned URL's lifetime chosen by the
+// caller: a transcode needs hours, a bounded on-request job needs minutes.
+func openSourceTTL(ctx context.Context, blobs storage.Backend, key string, ttl time.Duration) (source, func(), error) {
 	if pp, ok := blobs.(storage.PathProvider); ok {
 		p, err := pp.Path(key)
 		if err != nil {
@@ -167,7 +173,7 @@ func openSource(ctx context.Context, blobs storage.Backend, key string) (source,
 	if pr, ok := blobs.(storage.Presigner); ok {
 		// A presign failure is not fatal: fall through to the download path so a
 		// misconfigured or unsupported store still transcodes, just less leanly.
-		if u, err := pr.PresignGet(ctx, key, remoteSourceTTL); err == nil {
+		if u, err := pr.PresignGet(ctx, key, ttl); err == nil {
 			return source{arg: u, opts: httpSourceOpts, remote: true}, func() {}, nil
 		}
 	}
