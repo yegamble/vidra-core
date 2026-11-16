@@ -30,11 +30,17 @@ type instanceSoftware struct {
 // instance-settings overlay over static config) so the frontend can disable the
 // matching affordances — e.g. hide the studio upload form when uploads are off.
 type instanceFeatures struct {
-	Uploads   bool `json:"uploads"`
-	Imports   bool `json:"imports"`
-	Live      bool `json:"live"`
-	Comments  bool `json:"comments"`
-	Downloads bool `json:"downloads"`
+	Uploads  bool `json:"uploads"`
+	Imports  bool `json:"imports"`
+	Live     bool `json:"live"`
+	Comments bool `json:"comments"`
+	// Downloads is what a signed-in REGULAR user may do; DownloadsAnonymous a
+	// logged-out visitor; DownloadsStaff a moderator or admin (the master
+	// switch alone). Each is the effective answer for its audience, so a client
+	// shows its download control off one flag without re-deriving the layering.
+	Downloads          bool `json:"downloads"`
+	DownloadsAnonymous bool `json:"downloads_anonymous"`
+	DownloadsStaff     bool `json:"downloads_staff"`
 
 	// Messaging and MessagingE2EE report the EFFECTIVE direct-messaging
 	// availability: the runtime setting AND the wiring (a deployment that never
@@ -464,9 +470,11 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 			// Setting AND boot capability, like every neighbour below: an
 			// instance with live_enabled on and no RTMP ingest has no live
 			// streaming to advertise (see liveAvailable).
-			Live:      s.liveAvailable(),
-			Comments:  s.commentsEnabled(),
-			Downloads: s.downloadsEnabled(),
+			Live:               s.liveAvailable(),
+			Comments:           s.commentsEnabled(),
+			Downloads:          s.userDownloadsEnabled(),
+			DownloadsAnonymous: s.anonymousDownloadsEnabled(),
+			DownloadsStaff:     s.downloadsEnabled(),
 			// Setting AND wiring, so the UI hides the DM affordances in
 			// lock-step with the 403 feature_disabled route gates instead of
 			// offering controls that fail.

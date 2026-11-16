@@ -45,18 +45,30 @@ type videoDownloadResponse struct {
 
 // videoForDownload is the single authorization boundary for official download
 // metadata and bytes — EVERY /videos/{id}/download route resolves through it.
-// Moderator/admin callers bypass the download gates and may download any local
-// video for moderation. Everyone else needs the LAYERED download policy
-// (config-parity W9): the instance-wide downloads_enabled setting AND the
-// video's own download_enabled flag — instance gate off means no downloads
-// regardless of the per-video flag — plus the ordinary detail visibility policy
-// (privacy, scheduled/quarantine/block, and password gate). It also returns the
-// identity FileForView should use; privileged callers impersonate the real
-// owner only for that storage lookup.
+// The policy is LAYERED:
+//
+//   - downloads_enabled off: nobody downloads, moderators and admins included.
+//   - Moderator/admin callers otherwise pass every remaining gate and may
+//     download any local video for moderation.
+//   - Everyone else needs their audience switch (downloads_anonymous_enabled
+//     for a logged-out visitor, downloads_users_enabled for a signed-in user)
+//     AND the video's own download_enabled flag (config-parity W9), plus the
+//     ordinary detail visibility policy (privacy, scheduled/quarantine/block,
+//     and password gate).
+//
+// It also returns the identity FileForView should use; privileged callers
+// impersonate the real owner only for that storage lookup.
 func (s *Server) videoForDownload(c *echo.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, uuid.UUID, bool, error) {
 	viewerID, role, authed := principalFromContext(c)
 	privileged := authed && isStaff(role)
-	if !privileged && !s.downloadsEnabled() {
+	allowed := s.anonymousDownloadsEnabled()
+	switch {
+	case privileged:
+		allowed = s.downloadsEnabled()
+	case authed:
+		allowed = s.userDownloadsEnabled()
+	}
+	if !allowed {
 		return sqlcgen.GetVideoByIDRow{}, uuid.Nil, false, &FeatureDisabledError{Feature: "downloads"}
 	}
 	if privileged {
@@ -73,9 +85,24 @@ func (s *Server) videoForDownload(c *echo.Context, id uuid.UUID) (sqlcgen.GetVid
 	if err != nil {
 		return sqlcgen.GetVideoByIDRow{}, uuid.Nil, false, err
 	}
+	// The visibility check can sign a browser in from the video-access cookie
+	// (a request with no Authorization header), which happens after the audience
+	// was chosen above. Judge that caller as who they turned out to be, or a
+	// member could reach a members-only video through the logged-out switch
+	// while the signed-in switch is off.
+	if !authed {
+		if viewerID, role, authed = principalFromContext(c); authed {
+			if isStaff(role) {
+				return v, v.OwnerID, true, nil
+			}
+			if !s.userDownloadsEnabled() {
+				return sqlcgen.GetVideoByIDRow{}, uuid.Nil, false, &FeatureDisabledError{Feature: "downloads"}
+			}
+		}
+	}
 	// Per-video download policy (config-parity W9), checked AFTER visibility so
-	// a hidden video keeps answering 404, and only once the instance gate above
-	// passed (the layering contract).
+	// a hidden video keeps answering 404, and only once the instance gates
+	// above passed (the layering contract).
 	if !v.DownloadEnabled {
 		return sqlcgen.GetVideoByIDRow{}, uuid.Nil, false, &FeatureDisabledError{Feature: "downloads"}
 	}
@@ -252,14 +279,15 @@ func (s *Server) downloadStoredVideoFile(c *echo.Context, kind, fallbackName str
 }
 
 // publicDownload reports whether this download is the one an anonymous visitor
-// could take: a public, published video with BOTH download gates open.
+// could take: a public, published video with the logged-out download gates
+// (master and audience) and the video's own flag all open.
 //
-// It re-states videoForDownload's non-privileged path deliberately. A
-// moderator's download of the same object is authorised — they bypass the
-// gates — but it is authorised for THEM, and a signed URL is a transferable
-// credential. Downloads being switched off instance-wide has to mean no
-// download URL leaves the building, not "no download URL except the one the
-// moderator's browser can be talked into fetching".
+// It re-states videoForDownload's logged-out path deliberately. A signed-in
+// user's or moderator's download of the same object can be authorised while a
+// visitor's is not, but it is authorised for THEM, and a signed URL is a
+// transferable credential. Downloads being switched off for visitors has to
+// mean no shareable download URL leaves the building, not "none except the one
+// a signed-in browser can be talked into fetching".
 func (s *Server) publicDownload(v sqlcgen.GetVideoByIDRow) bool {
 	return s.publicDownloadOf(v.Privacy, v.State, v.IsSensitive, v.DownloadEnabled)
 }
@@ -269,7 +297,7 @@ func (s *Server) publicDownload(v sqlcgen.GetVideoByIDRow) bool {
 // re-reads a sqlcgen.Video). Same three-way AND, one definition — the fence and
 // the purge trigger that enforces it must never be able to disagree.
 func (s *Server) publicDownloadOf(privacy, state string, isSensitive, downloadEnabled bool) bool {
-	return s.videoEdgeEligible(privacy, state, isSensitive) && s.downloadsEnabled() && downloadEnabled
+	return s.videoEdgeEligible(privacy, state, isSensitive) && s.anonymousDownloadsEnabled() && downloadEnabled
 }
 
 func (s *Server) handleDownloadHLSRendition(c *echo.Context) error {

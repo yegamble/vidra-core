@@ -202,7 +202,8 @@ func TestVideoDetailEffectiveCommentsEnabled(t *testing.T) {
 
 // TestDownloadPolicyLayeringMatrix drives the full instance × per-video gate
 // matrix over the download surface: downloads are served only when BOTH gates
-// are on; a moderator/admin bypasses both.
+// are on; a moderator/admin bypasses the per-video flag, never the instance
+// master switch.
 func TestDownloadPolicyLayeringMatrix(t *testing.T) {
 	srv := videoServer(t)
 	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
@@ -228,9 +229,14 @@ func TestDownloadPolicyLayeringMatrix(t *testing.T) {
 		} else if tc.wantAnonymous == http.StatusForbidden && errorCode(t, rec) != "feature_disabled" {
 			t.Errorf("%s: error code = %s, want feature_disabled", tc.name, errorCode(t, rec))
 		}
-		// The admin (privileged) bypasses BOTH gates for moderation.
-		if rec := getDownloads(srv, id, admin); rec.Code != http.StatusOK {
-			t.Errorf("%s: admin list = %d, want 200 (bypass)", tc.name, rec.Code)
+		// The admin (privileged) bypasses the per-video flag for moderation,
+		// but the instance master switch stops them like everyone else.
+		wantAdmin := http.StatusOK
+		if !tc.instance {
+			wantAdmin = http.StatusForbidden
+		}
+		if rec := getDownloads(srv, id, admin); rec.Code != wantAdmin {
+			t.Errorf("%s: admin list = %d, want %d", tc.name, rec.Code, wantAdmin)
 		}
 	}
 }

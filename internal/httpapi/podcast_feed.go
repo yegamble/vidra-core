@@ -22,7 +22,8 @@ import (
 // /videos/{id}/download advertises): the audio-only M4A when transcoding made
 // one, else the highest progressive HLS-remux MP4. It is gated by the SAME
 // predicate the download route's anonymous path uses (publicDownloadOf: public
-// + published + instance downloads_enabled + the video's download_enabled), so
+// + published + the instance's logged-out download gates + the video's
+// download_enabled), so
 // a video whose owner switched downloads off simply drops out of the podcast
 // rather than leaking a file. Items with no enclosure are omitted — an item a
 // podcast app cannot play is a broken episode, not a partial one.

@@ -196,10 +196,24 @@ func (s *Server) commentsEnabled() bool {
 	return s.settingBool(instancesettings.KeyCommentsEnabled, s.cfg.CommentsEnabled)
 }
 
-// downloadsEnabled reports the runtime download-policy toggle. Downloads have
-// no env/config backing and default on when the settings service is not wired.
+// downloadsEnabled reports the runtime download-policy master switch. Off
+// stops EVERY caller, moderators and admins included. Downloads have no
+// env/config backing and default on when the settings service is not wired.
 func (s *Server) downloadsEnabled() bool {
 	return s.settingBool(instancesettings.KeyDownloadsEnabled, true)
+}
+
+// anonymousDownloadsEnabled reports whether a logged-out visitor may download:
+// the master switch AND the logged-out audience switch. It is also what makes
+// a download shareable at the edge (see publicDownloadOf).
+func (s *Server) anonymousDownloadsEnabled() bool {
+	return s.downloadsEnabled() && s.settingBool(instancesettings.KeyDownloadsAnonymousEnabled, true)
+}
+
+// userDownloadsEnabled reports whether a signed-in regular user may download:
+// the master switch AND the signed-in audience switch.
+func (s *Server) userDownloadsEnabled() bool {
+	return s.downloadsEnabled() && s.settingBool(instancesettings.KeyDownloadsUsersEnabled, true)
 }
 
 // messagingEnabled is the instance-wide direct-messaging switch
@@ -421,7 +435,7 @@ func (s *Server) handleUpdateInstanceSettings(c *echo.Context) error {
 	// Read BEFORE the write: the downloads-revocation purge below needs to know
 	// whether this PATCH is what closed the gate, and a restated
 	// downloads_enabled:false must not re-run a walk over the whole catalogue.
-	downloadsWereOpen := s.downloadsEnabled()
+	downloadsWereOpen := s.anonymousDownloadsEnabled()
 	// The EFFECTIVE values before the write (overlay if set, else default), so a
 	// first override reads default -> new and a clear reads old -> default.
 	effectiveBefore := s.settingssvc.Snapshot()
@@ -749,11 +763,14 @@ func isJSONNull(raw json.RawMessage) bool {
 // downloads_enabled:false revokes nothing, exactly as the per-video snapshot
 // returns empty for a video whose downloads were already off.
 func (s *Server) purgeEdgeDownloadsIfRevoked(ctx context.Context, changed []string, wereOpen bool) {
-	if s.cdnpurgesvc == nil || !wereOpen || s.downloadsEnabled() {
+	if s.cdnpurgesvc == nil || !wereOpen || s.anonymousDownloadsEnabled() {
 		return
 	}
 	for _, key := range changed {
-		if key == instancesettings.KeyDownloadsEnabled {
+		// Either key can be the one that shut logged-out downloads, and a shared
+		// edge copy only ever exists for those. The signed-in switch is absent
+		// on purpose: a signed-in download is never edge-eligible.
+		if key == instancesettings.KeyDownloadsEnabled || key == instancesettings.KeyDownloadsAnonymousEnabled {
 			s.cdnpurgesvc.EnqueueDownloadsRevoked(ctx)
 			return
 		}
