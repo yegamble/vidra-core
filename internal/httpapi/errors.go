@@ -126,6 +126,7 @@ func (s *Server) httpErrorHandler(c *echo.Context, err error) {
 	var pr *PasswordRequiredError
 	var sir *SignInRequiredError
 	var tma *TooManyActiveUploadsError
+	var dbe *DownloadBusyError
 	var cfd *ContactFormDisabledError
 	var rc *ReplaceConflictError
 	var su *SearchUnavailableError
@@ -302,6 +303,10 @@ func (s *Server) httpErrorHandler(c *echo.Context, err error) {
 		status = http.StatusForbidden
 		message = "this feature is disabled on this instance"
 		code = "feature_disabled"
+	case errors.As(err, &dbe):
+		status = http.StatusServiceUnavailable
+		message = "too many downloads are being prepared right now; try again shortly"
+		code = "download_busy"
 	case errors.As(err, &tma):
 		status = http.StatusTooManyRequests
 		message = "you have too many uploads in progress; finish or cancel one and try again"
@@ -441,6 +446,14 @@ func (s *Server) httpErrorHandler(c *echo.Context, err error) {
 		s.logger.Error("failed to write error response", "error", writeErr, "request_id", reqID)
 	}
 }
+
+// DownloadBusyError renders as 503 with the stable code "download_busy": every
+// slot for building a video+audio download on request is taken. Backpressure,
+// not a failure — the handler sets Retry-After, and the client retries (or takes
+// the video-only file, which needs no process).
+type DownloadBusyError struct{}
+
+func (e *DownloadBusyError) Error() string { return "download busy" }
 
 // QuotaExceededError renders as 422 with the stable code "quota_exceeded":
 // storing the incoming file would push the caller past their effective storage

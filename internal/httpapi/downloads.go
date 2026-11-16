@@ -133,6 +133,10 @@ func (s *Server) handleGetVideoDownloads(c *echo.Context) error {
 
 	if s.transcodesvc != nil && s.media != nil {
 		if sp, ok := s.transcodesvc.Playlist(ctx, id); ok && sp.State == "ready" && sp.MasterKey != "" {
+			// The master and variant manifests are read at most once, and only if a
+			// rung (or the audio entry) has no stored remux — a Vidra-transcoded
+			// video whose remuxes all exist never touches them.
+			imported := &importedSources{s: s, ctx: ctx, masterKey: sp.MasterKey}
 			for _, rendition := range s.transcodesvc.Renditions(ctx, id) {
 				muxedKey := media.HLSDownloadKey(rendition.KeyPrefix, true)
 				muxedSize, exists, sizeErr := s.downloadObjectSize(ctx, muxedKey)
@@ -140,6 +144,13 @@ func (s *Server) handleGetVideoDownloads(c *echo.Context) error {
 					return sizeErr
 				}
 				if !exists {
+					entry, ok, ierr := s.importedRenditionEntry(ctx, imported, id, base, rendition)
+					if ierr != nil {
+						return ierr
+					}
+					if ok {
+						files = append(files, entry)
+					}
 					continue
 				}
 				videoOnlyURL := ""
@@ -159,9 +170,21 @@ func (s *Server) handleGetVideoDownloads(c *echo.Context) error {
 					Width:        rendition.Width,
 				})
 			}
-			if audioSize, exists, aerr := s.downloadObjectSize(ctx, media.HLSAudioDownloadKey(sp.MasterKey)); aerr != nil {
+			audioKey := media.HLSAudioDownloadKey(sp.MasterKey)
+			audioSize, exists, aerr := s.downloadObjectSize(ctx, audioKey)
+			if aerr != nil {
 				return aerr
-			} else if exists {
+			}
+			if !exists {
+				// Imported split-audio HLS: the audio group's own MP4.
+				if key := imported.get().AudioKey; key != "" {
+					audioSize, exists, aerr = s.downloadObjectSize(ctx, key)
+					if aerr != nil {
+						return aerr
+					}
+				}
+			}
+			if exists {
 				files = append(files, videoDownloadFileView{
 					Kind:        "audio",
 					URL:         base + "/audio",
@@ -262,16 +285,19 @@ func (s *Server) handleDownloadHLSRendition(c *echo.Context) error {
 		return err
 	}
 	includeAudio := !strings.EqualFold(c.QueryParam("audio"), "false")
-	rendition, key, err := s.resolveHLSDownload(c.Request().Context(), id, height, includeAudio)
+	dl, err := s.resolveHLSDownload(c.Request().Context(), id, height, includeAudio)
 	if err != nil {
 		return err
 	}
-	filename := fmt.Sprintf("video-%s-%dp.mp4", id, rendition.Height)
+	filename := fmt.Sprintf("video-%s-%dp.mp4", id, dl.rendition.Height)
 	if !includeAudio {
-		filename = fmt.Sprintf("video-%s-%dp-video-only.mp4", id, rendition.Height)
+		filename = fmt.Sprintf("video-%s-%dp-video-only.mp4", id, dl.rendition.Height)
+	}
+	if dl.muxVideo != "" {
+		return s.serveHLSMux(c, v, filename, dl.muxVideo, dl.muxAudio)
 	}
 	return s.serveMediaAsset(c, mediaAsset{
-		key:         key,
+		key:         dl.key,
 		contentType: media.HLSMP4ContentType,
 		class:       delivery.ClassDownload,
 		filename:    filename,
@@ -289,18 +315,9 @@ func (s *Server) handleDownloadHLSAudio(c *echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if s.transcodesvc == nil {
-		return echo.NewHTTPError(http.StatusNotFound, "download not found")
-	}
-	sp, ok := s.transcodesvc.Playlist(c.Request().Context(), id)
-	if !ok || sp.State != "ready" || sp.MasterKey == "" {
-		return echo.NewHTTPError(http.StatusNotFound, "download not found")
-	}
-	key := media.HLSAudioDownloadKey(sp.MasterKey)
-	if _, exists, err := s.downloadObjectSize(c.Request().Context(), key); err != nil {
+	key, err := s.resolveHLSAudioDownload(c.Request().Context(), id)
+	if err != nil {
 		return err
-	} else if !exists {
-		return echo.NewHTTPError(http.StatusNotFound, "download not found")
 	}
 	return s.serveMediaAsset(c, mediaAsset{
 		key:         key,
@@ -310,33 +327,6 @@ func (s *Server) handleDownloadHLSAudio(c *echo.Context) error {
 		eligible:    s.publicDownload(v),
 		notFound:    "video not found",
 	})
-}
-
-// resolveHLSDownload accepts only assets from a ready playlist and proves the
-// selected object exists before the handler attaches download headers. Failed
-// retranscodes may leave rendition rows behind; those must not expose stale or
-// partial files through a guessed URL.
-func (s *Server) resolveHLSDownload(ctx context.Context, id uuid.UUID, height int, includeAudio bool) (sqlcgen.VideoRendition, string, error) {
-	if s.transcodesvc == nil {
-		return sqlcgen.VideoRendition{}, "", echo.NewHTTPError(http.StatusNotFound, "download not found")
-	}
-	sp, ok := s.transcodesvc.Playlist(ctx, id)
-	if !ok || sp.State != "ready" || sp.MasterKey == "" {
-		return sqlcgen.VideoRendition{}, "", echo.NewHTTPError(http.StatusNotFound, "download not found")
-	}
-	for _, rendition := range s.transcodesvc.Renditions(ctx, id) {
-		if int(rendition.Height) != height {
-			continue
-		}
-		key := media.HLSDownloadKey(rendition.KeyPrefix, includeAudio)
-		if _, exists, err := s.downloadObjectSize(ctx, key); err != nil {
-			return sqlcgen.VideoRendition{}, "", err
-		} else if !exists {
-			return sqlcgen.VideoRendition{}, "", echo.NewHTTPError(http.StatusNotFound, "download not found")
-		}
-		return rendition, key, nil
-	}
-	return sqlcgen.VideoRendition{}, "", echo.NewHTTPError(http.StatusNotFound, "download not found")
 }
 
 func (s *Server) handleDownloadVideoSubtitle(c *echo.Context) error {

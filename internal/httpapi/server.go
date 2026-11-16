@@ -111,6 +111,11 @@ type Server struct {
 	peertubeImportLimit *ratelimit.Limiter
 	// ptSpool admits PeerTube archive uploads to local disk (process-wide).
 	ptSpool *peertubeSpool
+	// hlsMuxer builds video+audio downloads for split-audio imported HLS on
+	// request (WithHLSMuxer); nil when the host has no ffmpeg. muxSlots bounds
+	// how many run at once (maxConcurrentHLSMuxes).
+	hlsMuxer HLSMuxer
+	muxSlots chan struct{}
 	// playbackStats + playbackLimit back the watch-time beacon and its owner
 	// report (playback_stats.go). Nil playbackStats leaves both routes unmounted.
 	playbackStats playbackStatsService
@@ -1269,6 +1274,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	s.remoteViewLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultRemoteViewRateLimit, defaultRemoteViewRateWindow)
 	s.peertubeImportLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultPeerTubeImportRateLimit, defaultPeerTubeImportRateWindow)
 	s.ptSpool = newPeerTubeSpool()
+	s.muxSlots = make(chan struct{}, maxConcurrentHLSMuxes)
 	if s.peertubeArchive != nil {
 		// A process killed mid-import leaves its spool file behind; reclaim it.
 		sweepStalePeerTubeSpools(s.peertubeSpoolDir(), 2*time.Hour, time.Now(), s.logger)
