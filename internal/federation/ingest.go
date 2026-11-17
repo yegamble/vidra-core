@@ -172,15 +172,14 @@ func (s *Service) handleAnnounce(ctx context.Context, act inboxActivity, signerA
 
 // videoOwner names the actor a remote video is filed under — the CHANNEL it is
 // attributed to, else fallback — and makes sure that actor is cached: it is
-// the remote_videos FK target, and its own document is what names the account
-// that owns it (remote_actors.attributed_to, the edge a block of that account
-// travels down). The owner must live on the video's origin.
+// the remote_videos FK target, and its own document names the account that
+// owns it (remote_actors.attributed_to, the edge an account block travels
+// down). The owner must live on the video's origin.
 //
 // PeerTube attributes a video to [Person, Group] and sends its Create and
 // Update as the Person, so "the first attributed actor" and "the signer" are
-// both the uploader's ACCOUNT. The interop lab measured what followed: every
-// PeerTube video was shown under the account, never its channel (meta
-// docs/evidence/peertube-interop-2026-11-16.md, S5).
+// both the uploader's ACCOUNT: the interop lab found every PeerTube video
+// shown under the account, never its channel.
 func (s *Service) videoOwner(ctx context.Context, obj apVideoObject, fallback, signerActorURL string) (string, error) {
 	owner := attributedChannel(obj.AttributedTo, obj.ID)
 	if owner == "" {

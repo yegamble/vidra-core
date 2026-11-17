@@ -222,11 +222,10 @@ func (d originDocs) RoundTrip(r *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(doc)), Header: http.Header{}, Request: r}, nil
 }
 
-// TestRemoteVideoIsFiledUnderItsChannel: a PeerTube instance announces a video
-// attributed to [Person, Group]. On a real database the channel actor has to
-// be cached BEFORE the video row that references it (the FK), and the read
-// model then names the channel and the account behind it — the account a
-// block is taken against.
+// A PeerTube instance announces a video attributed to [Person, Group]. On a
+// real database the channel actor must be cached BEFORE the video row that
+// references it (the FK); the read model then names the channel and the
+// account behind it, which is what a block is taken against.
 func TestRemoteVideoIsFiledUnderItsChannel(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {

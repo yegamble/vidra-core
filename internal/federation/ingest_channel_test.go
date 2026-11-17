@@ -1,12 +1,10 @@
 package federation
 
-// A PeerTube video is attributed to [Person, Group]: the account that uploaded
-// it and the channel it belongs to. It is filed under the CHANNEL, and the
-// channel's own actor document names the account that owns it — the edge a
-// block of that account travels down (remote_actor_block_reach, 0142). The
-// interop lab measured the opposite: every PeerTube video landed under the
-// uploader's account, so `root_channel`'s videos were shown as `root`'s
-// (meta docs/evidence/peertube-interop-2026-11-16.md, S5).
+// A PeerTube video is attributed to [Person, Group]: its uploader's account and
+// its channel. It is filed under the CHANNEL, whose own actor document names
+// the account that owns it — the edge a block of that account travels down
+// (remote_actor_block_reach, 0142). The interop lab measured the opposite:
+// `root_channel`'s videos were stored and shown as `root`'s.
 
 import (
 	"bytes"
@@ -23,10 +21,9 @@ import (
 // Announce an instance follower receives.
 const ctPTInstance = "https://peertube.example/accounts/peertube"
 
-// asSentBy re-addresses a corpus activity to the actor that really sends it.
-// The corpus signs every video activity as the channel. PeerTube signs a
-// video's Create and Update as the ACCOUNT (send-create.ts, send-update.ts:
-// byActor = video.VideoChannel.Account.Actor) and shares it as the instance.
+// asSentBy re-addresses a corpus activity, which the corpus signs as the
+// channel, to the actor that really sends it: PeerTube signs a video's Create
+// and Update as the ACCOUNT (send-create.ts) and shares it as the instance.
 func asSentBy(t *testing.T, fixture, actor string) []byte {
 	t.Helper()
 	body := readFixture(t, fixture)
@@ -123,8 +120,7 @@ func TestPeerTubeUpdateKeepsTheVideoUnderItsChannel(t *testing.T) {
 }
 
 // A Group on another host is not this video's channel, whatever the object
-// says: the video stays under the actor that vouched for it, and nothing is
-// fetched from the host it named.
+// says: it stays under its signer and nothing is fetched from that host.
 func TestForeignGroupIsNotTheVideosChannel(t *testing.T) {
 	repo := newIngestRepo()
 	svc := NewService(repo, WithBaseURL("https://videos.example"), WithFollowEdgeChecker(edgesFor(remoteChan)))
