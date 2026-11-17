@@ -64,7 +64,6 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID uuid.UUID, wasFederat
 	if !ch.ActivitypubEnabled {
 		return nil // channel opted out of ActivityPub (migration 0096)
 	}
-	var payload []byte
 	switch {
 	case v.Blocked:
 		// The Delete went out when the block landed; an edit or a transcode
@@ -72,16 +71,16 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID uuid.UUID, wasFederat
 		// existence nor repeat the retraction (T13).
 		return nil
 	case v.Privacy == "public" && v.State == "published":
-		payload, err = s.buildVideoActivity(ctx, "Update", ch.Handle, v)
+		payload, err := s.buildVideoActivity(ctx, "Update", ch.Handle, v)
+		if err != nil {
+			return err
+		}
+		return s.fanOutToVideoAudience(ctx, ch.ID, ch.Handle, payload)
 	case wasFederated:
-		payload, err = s.buildDeleteVideo(ch.Handle, v.ID)
+		return s.retractVideo(ctx, ch, v.ID)
 	default:
 		return nil // never federated: nothing out there to retract
 	}
-	if err != nil {
-		return err
-	}
-	return s.fanOutToVideoAudience(ctx, ch.ID, ch.Handle, payload)
 }
 
 // RetractMovedVideo tells the OLD channel's remote followers that a video moved
@@ -124,19 +123,13 @@ func (s *Service) RetractMovedVideo(ctx context.Context, videoID, oldChannelID u
 	if err != nil {
 		return err
 	}
-	payload, err := s.buildDeleteVideo(oldCh.Handle, videoID)
-	if err != nil {
-		return err
-	}
+	var uncovered []string
 	for _, inbox := range oldInboxes {
-		if inbox == "" || covered[inbox] {
-			continue
-		}
-		if err := s.enqueueChannelDelivery(ctx, oldCh.ID, oldCh.Handle, inbox, payload); err != nil {
-			return err
+		if !covered[inbox] {
+			uncovered = append(uncovered, inbox)
 		}
 	}
-	return nil
+	return s.enqueueVideoDeletes(ctx, oldCh, videoID, uncovered)
 }
 
 // DeleteVideo propagates a deletion to remote followers as a Delete. The video row
@@ -165,11 +158,7 @@ func (s *Service) DeleteVideo(ctx context.Context, videoID, channelID uuid.UUID,
 	if !ch.ActivitypubEnabled {
 		return nil // channel opted out of ActivityPub (migration 0096)
 	}
-	payload, err := s.buildDeleteVideo(ch.Handle, videoID)
-	if err != nil {
-		return err
-	}
-	return s.fanOutToVideoAudience(ctx, channelID, ch.Handle, payload)
+	return s.retractVideo(ctx, ch, videoID)
 }
 
 // UnfederateBlockedVideo retracts a video a moderator just blocked: a Delete to
@@ -236,6 +225,58 @@ func (s *Service) fanOutToVideoAudience(ctx context.Context, channelID uuid.UUID
 	return s.enqueueChannelDeliveries(ctx, channelID, channelHandle, inboxes, payload)
 }
 
+// retractVideo sends a video's Delete to its whole audience (videoAudience).
+func (s *Service) retractVideo(ctx context.Context, ch sqlcgen.Channel, videoID uuid.UUID) error {
+	inboxes, err := s.videoAudience(ctx, ch.ID)
+	if err != nil {
+		return err
+	}
+	return s.enqueueVideoDeletes(ctx, ch, videoID, inboxes)
+}
+
+// enqueueVideoDeletes queues a video's Delete to each inbox TWICE: from the
+// account that owns the channel, then from the channel.
+//
+// The owner's is the one PeerTube acts on. It files a remote video under its
+// channel and the channel under its owner account, and processDeleteVideo
+// (v8.3.2 process-delete.ts) refuses any other actor — "Account … does not own
+// video channel …" — AFTER answering the POST 204. The interop lab measured
+// what that cost (meta docs/evidence/peertube-interop-2026-11-16.md): a vidra
+// video that was deleted, made private or blocked stayed up on PeerTube, with
+// every delivery recorded as delivered here.
+//
+// The channel's Delete stays for peers that attribute the video to the channel.
+// It goes second because PeerTube works through its inbox in arrival order: a
+// receiver that already dropped the video ignores it, where the same Delete
+// arriving first is logged there as a failure.
+func (s *Service) enqueueVideoDeletes(ctx context.Context, ch sqlcgen.Channel, videoID uuid.UUID, inboxes []string) error {
+	owner, err := s.repo.GetUserActorByID(ctx, ch.OwnerID)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// No account to speak as: the channel's Delete is all there is.
+	case err != nil:
+		return err
+	default:
+		payload, err := s.buildDeleteVideo(s.baseURL+"/accounts/"+owner.Username, videoID)
+		if err != nil {
+			return err
+		}
+		for _, inbox := range inboxes {
+			if inbox == "" {
+				continue
+			}
+			if err := s.enqueueAccountDelivery(ctx, owner.ID, owner.Username, inbox, payload); err != nil {
+				return err
+			}
+		}
+	}
+	payload, err := s.buildDeleteVideo(s.baseURL+"/video-channels/"+ch.Handle, videoID)
+	if err != nil {
+		return err
+	}
+	return s.enqueueChannelDeliveries(ctx, ch.ID, ch.Handle, inboxes, payload)
+}
+
 // enqueueChannelDeliveries queues payload, signed as the channel, to each inbox.
 func (s *Service) enqueueChannelDeliveries(ctx context.Context, channelID uuid.UUID, channelHandle string, inboxes []string, payload []byte) error {
 	for _, inbox := range inboxes {
@@ -268,14 +309,13 @@ func (s *Service) buildVideoActivity(ctx context.Context, activityType, channelH
 	return json.Marshal(activity)
 }
 
-// buildDeleteVideo renders a Delete activity for a video (object = its AP id).
-func (s *Service) buildDeleteVideo(channelHandle string, videoID uuid.UUID) ([]byte, error) {
-	channelActor := s.baseURL + "/video-channels/" + channelHandle
+// buildDeleteVideo renders actor's Delete of a video (object = its AP id).
+func (s *Service) buildDeleteVideo(actor string, videoID uuid.UUID) ([]byte, error) {
 	del := map[string]any{
 		"@context": "https://www.w3.org/ns/activitystreams",
-		"id":       channelActor + "/activities/delete/" + uuid.NewString(),
+		"id":       actor + "/activities/delete/" + uuid.NewString(),
 		"type":     "Delete",
-		"actor":    channelActor,
+		"actor":    actor,
 		"to":       []string{publicAudience},
 		"object":   s.baseURL + "/videos/" + videoID.String(),
 	}
