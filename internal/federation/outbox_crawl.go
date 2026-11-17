@@ -15,38 +15,31 @@ import (
 
 // Reading a followed actor's outbox.
 //
-// A remote server pushes only what it publishes AFTER a follow is accepted.
-// What it published before reaches a follower only if the follower reads the
-// followed actor's outbox. PeerTube does, straight after the Accept
-// (process-accept.ts); vidra did not, so a channel or an instance it followed
-// showed nothing until its next upload. The interop lab staged a public video
-// on PeerTube before each kind of follow and neither arrived (meta
-// docs/evidence/peertube-interop-2026-11-17-gaps.md).
+// A remote server pushes only what it publishes AFTER a follow is accepted;
+// what it published before reaches a follower only by reading the followed
+// actor's outbox. PeerTube does that straight after the Accept
+// (process-accept.ts). vidra did not: the interop lab staged a public video on
+// PeerTube before a channel follow and before an instance follow, and neither
+// arrived (meta docs/evidence/peertube-interop-2026-11-17-gaps.md).
 //
-// CrawlOutbox is that read. It has NO ingest rules of its own: each activity
-// it finds goes to the handler an inbox delivery of it reaches
-// (handleAnnounce, handleCreateVideo), with the crawled actor standing where
-// the signer stands. An activity listed in an actor's outbox, fetched from
-// that actor's own host, is that host speaking for that actor — the authority
-// a signed delivery carries. So the same rules hold, unchanged: the object
-// lives on the actor's host, somebody here follows the actor or its instance,
-// and the video is filed under its channel (videoOwner). What it adds is what
-// a delivery never needed: bounds on how much it reads.
+// CrawlOutbox has NO ingest rules of its own. Each activity it finds goes to
+// the handler an inbox delivery of it reaches (handleAnnounce,
+// handleCreateVideo), with the crawled actor where the signer stands: an
+// activity in an actor's outbox, fetched from that actor's host, is that host
+// speaking for that actor. So the object must live on the actor's host,
+// somebody here must follow the actor or its instance, and the video is filed
+// under its channel, all unchanged. What the crawl adds is bounds.
 
 const (
-	// outboxCrawlMaxPages bounds how many pages one crawl reads after the
-	// outbox document itself. PeerTube's pages hold 10 activities and vidra's
-	// 20, newest first, so this is the newest hundred or two — the rest is
-	// history a follower did not ask to mirror.
+	// outboxCrawlMaxPages bounds the pages read after the outbox document
+	// itself. PeerTube's hold 10 activities and vidra's 20, newest first.
 	outboxCrawlMaxPages = 10
-	// maxOutboxPageBytes bounds one outbox document. A page of 20 inline
-	// Video objects is a few hundred KiB.
+	// maxOutboxPageBytes bounds one outbox document.
 	maxOutboxPageBytes = 2 << 20
 )
 
-// outboxPage is what the crawl reads of an OrderedCollection or one of its
-// pages: the activities, and the link to follow next (`first` on the outbox
-// itself, `next` on a page).
+// outboxPage is an OrderedCollection or one of its pages: the activities, and
+// the link to read next (`first` on the outbox itself, `next` on a page).
 type outboxPage struct {
 	First        json.RawMessage   `json:"first"`
 	Next         json.RawMessage   `json:"next"`
@@ -54,15 +47,13 @@ type outboxPage struct {
 }
 
 // CrawlOutbox reads the outbox of a remote actor this instance follows and
-// ingests the videos it lists that are not held yet. It returns how many it
-// stored.
-//
-// It is idempotent: a held video is neither fetched nor written again. An
-// actor nobody follows, or one on a blocked instance, is not read at all.
-// Every request goes through the SSRF guard and stays on the actor's host. A
-// page that cannot be read ends the crawl with its error; an activity that
+// ingests the videos it lists that are not held yet, returning how many it
+// stored. It is idempotent: a held video is neither fetched nor written again.
+// An actor nobody follows, or one on a blocked instance, is not read at all;
+// every request goes through the SSRF guard and stays on the actor's host. A
+// page that cannot be read ends the crawl with its error. An activity that
 // cannot be ingested is skipped, and the first such error is returned with
-// the count once every page has been read, so a caller may retry.
+// the count after the last page, so a caller may retry.
 func (s *Service) CrawlOutbox(ctx context.Context, actorURL string) (int, error) {
 	if blocked, err := s.signerDomainBlocked(ctx, actorURL); err != nil || blocked {
 		return 0, err
@@ -71,13 +62,13 @@ func (s *Service) CrawlOutbox(ctx context.Context, actorURL string) (int, error)
 		return 0, err
 	}
 	// The outbox URL is read from the actor's own document, not derived. The
-	// document is cached as well: a delivery's handler may take its signer for
+	// document is cached too: a delivery's handler may take its signer for
 	// cached (videoOwner), and here the crawled actor is in the signer's place.
 	actor, err := s.fetchActor(ctx, actorURL)
-	if err != nil {
-		return 0, err
+	if err == nil {
+		_, err = s.cacheFetchedActor(ctx, actorURL, actor)
 	}
-	if _, err := s.cacheFetchedActor(ctx, actorURL, actor); err != nil {
+	if err != nil {
 		return 0, err
 	}
 	stored, seen := 0, map[string]bool{}
@@ -106,9 +97,8 @@ func (s *Service) CrawlOutbox(ctx context.Context, actorURL string) (int, error)
 }
 
 // ingestOutboxItem hands one outbox activity to the handler a delivery of it
-// reaches, and reports whether a video was stored. Only what the crawled actor
-// itself did is taken, only a video, and only one on the actor's host that is
-// not held yet.
+// reaches and reports whether a video was stored. Only what the crawled actor
+// itself did is taken, only a video, on the actor's host, that is not held.
 func (s *Service) ingestOutboxItem(ctx context.Context, actorURL string, raw json.RawMessage) (bool, error) {
 	var act inboxActivity
 	if json.Unmarshal(raw, &act) != nil || act.Actor != actorURL {
@@ -148,31 +138,28 @@ func (s *Service) remoteVideoHeld(ctx context.Context, objectURL string) (bool, 
 // fetchOutboxPage GETs an outbox document through the SSRF guard, bounded to
 // maxOutboxPageBytes. A redirect may not leave the host.
 func (s *Service) fetchOutboxPage(ctx context.Context, pageURL string) (outboxPage, error) {
+	var page outboxPage
 	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
 	target, err := guard.ValidateURL(pageURL)
 	if err != nil {
-		return outboxPage{}, fmt.Errorf("federation: unsafe outbox URL: %w", err)
+		return page, fmt.Errorf("federation: unsafe outbox URL: %w", err)
 	}
 	req, err := http.NewRequestWithContext(withSameHostRedirects(ctx), http.MethodGet, target.String(), nil)
 	if err != nil {
-		return outboxPage{}, err
+		return page, err
 	}
 	req.Header.Set("Accept", "application/activity+json")
 	resp, err := s.remoteClient(guard).Do(req)
 	if err != nil {
-		return outboxPage{}, fmt.Errorf("federation: fetch outbox: %w", err)
+		return page, fmt.Errorf("federation: fetch outbox: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return outboxPage{}, fmt.Errorf("federation: outbox fetch returned status %d", resp.StatusCode)
+		return page, fmt.Errorf("federation: outbox fetch returned status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxOutboxPageBytes))
-	if err != nil {
-		return outboxPage{}, err
+	if err == nil {
+		err = json.Unmarshal(body, &page)
 	}
-	var page outboxPage
-	if err := json.Unmarshal(body, &page); err != nil {
-		return outboxPage{}, fmt.Errorf("federation: parse outbox: %w", err)
-	}
-	return page, nil
+	return page, err
 }
