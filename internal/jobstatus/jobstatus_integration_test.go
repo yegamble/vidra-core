@@ -18,7 +18,75 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/store"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
+
+// The followed-outbox read queue (0190) is counted from its own states: a
+// due read and one waiting out its backoff are both pending, a given-up read
+// is failed, and a read that holds its lease stays pending (there is no
+// running state to move it to). Measured as a delta inside a transaction, so
+// rows other tests leave behind do not matter.
+func TestOutboxCrawlQueueDepthIntegration(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	tx, err := st.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	svc := NewService(sqlcgen.New(tx))
+	crawlRow := func() QueueStatus {
+		t.Helper()
+		ov, err := svc.Overview(ctx)
+		if err != nil {
+			t.Fatalf("Overview: %v", err)
+		}
+		for _, q := range ov.Queues {
+			if q.Queue == QueueOutboxCrawls {
+				return q
+			}
+		}
+		t.Fatalf("no %s row in %+v", QueueOutboxCrawls, ov.Queues)
+		return QueueStatus{}
+	}
+	before := crawlRow()
+
+	actor := "https://peertube.example.test/video-channels/c-" + uuid.NewString()[:8]
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO federation_outbox_crawls (actor_url, state, attempts, next_attempt_at, last_error) VALUES
+		($1 || '/due',     'pending', 0, now() - interval '5 minutes', ''),
+		($1 || '/backoff', 'pending', 1, now() + interval '5 minutes', 'outbox fetch returned status 503'),
+		($1 || '/given',   'failed',  3, now(), 'outbox fetch returned status 503'),
+		($1 || '/read',    'done',    1, now(), '')`, actor); err != nil {
+		t.Fatalf("seed crawls: %v", err)
+	}
+	after := crawlRow()
+	if d := after.Pending - before.Pending; d != 2 {
+		t.Errorf("pending grew by %d, want 2", d)
+	}
+	if d := after.Failed - before.Failed; d != 1 {
+		t.Errorf("failed grew by %d, want 1", d)
+	}
+	if d := after.Done - before.Done; d != 1 {
+		t.Errorf("done grew by %d, want 1", d)
+	}
+	if after.Running != 0 {
+		t.Errorf("running = %d, want 0: the table has no running state", after.Running)
+	}
+	if after.OldestPendingAgeSeconds < 5*60-5 {
+		t.Errorf("oldest pending age = %ds, want the overdue read's ~300s", after.OldestPendingAgeSeconds)
+	}
+}
 
 func TestJobStatusOverviewIntegration(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
@@ -39,8 +107,8 @@ func TestJobStatusOverviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Overview against live schema: %v", err)
 	}
-	if len(ov.Queues) != 9 {
-		t.Fatalf("want 9 queues, got %d", len(ov.Queues))
+	if len(ov.Queues) != 10 {
+		t.Fatalf("want 10 queues, got %d", len(ov.Queues))
 	}
 	// Every queue reports non-negative counts; on an empty DB oldest age is 0.
 	for _, q := range ov.Queues {
@@ -52,8 +120,8 @@ func TestJobStatusOverviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Depths: %v", err)
 	}
-	if len(depths) != 36 {
-		t.Errorf("want 36 depth samples, got %d", len(depths))
+	if len(depths) != 40 {
+		t.Errorf("want 40 depth samples, got %d", len(depths))
 	}
 }
 

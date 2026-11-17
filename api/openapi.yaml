@@ -16839,7 +16839,7 @@ paths:
         Returns an operations snapshot of every durable background-work queue
         (transcode_jobs, federation_deliveries, import_jobs, caption_jobs,
         account_exports, upload_sessions, storage_migrations,
-        cdn_purge_jobs): per-queue depth
+        cdn_purge_jobs, media_ipfs_pins, federation_outbox_crawls): per-queue depth
         counts by state
         (pending/running/done/failed) plus the age of the oldest still-pending
         item (a stuck-worker signal), and a merged recent-failures list. This is
@@ -28921,7 +28921,10 @@ components:
         pending=active, done=completed, failed=cancelled, running=0. For
         storage_migrations the unit is the OBJECT being moved, not the campaign:
         pending=not yet copied, running=copying, done=verified or
-        source-deleted, failed=dead-lettered.
+        source-deleted, failed=dead-lettered. media_ipfs_pins and
+        federation_outbox_crawls have no running state (a claimed row stays
+        pending under its lease), so running=0, and they contribute no
+        recent_failures: their failed count is the dead-letter signal.
       required: [queue, pending, running, done, failed, oldest_pending_age_seconds]
       properties:
         queue:

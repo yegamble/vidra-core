@@ -26,6 +26,7 @@ type fakeQuerier struct {
 	storagemi sqlcgen.StorageMigrationStatsRow
 	cdnpurge  sqlcgen.CDNPurgeJobStatsRow
 	ipfspins  sqlcgen.IPFSPinJobStatsRow
+	crawls    sqlcgen.OutboxCrawlJobStatsRow
 
 	transcodeFails []sqlcgen.TranscodeRecentFailuresRow
 	fedFails       []sqlcgen.FederationRecentFailuresRow
@@ -169,6 +170,37 @@ func (f *fakeQuerier) CDNPurgeRecentFailures(context.Context, int32) ([]sqlcgen.
 func (f *fakeQuerier) IPFSPinJobStats(context.Context) (sqlcgen.IPFSPinJobStatsRow, error) {
 	return f.ipfspins, nil
 }
+func (f *fakeQuerier) OutboxCrawlJobStats(context.Context) (sqlcgen.OutboxCrawlJobStatsRow, error) {
+	return f.crawls, nil
+}
+
+// The followed-outbox read queue (0190) is a depth row like the pin ledger: a
+// stuck read shows as pending with an age, a given-up one as failed — and on
+// the vidra_queue_depth gauge, which reads Depths.
+func TestOverviewReportsTheOutboxCrawlQueue(t *testing.T) {
+	q := &fakeQuerier{crawls: sqlcgen.OutboxCrawlJobStatsRow{Pending: 3, Done: 7, Failed: 2, OldestPendingAgeSeconds: 90}}
+	ov, err := NewService(q).Overview(context.Background())
+	if err != nil {
+		t.Fatalf("Overview: %v", err)
+	}
+	want := QueueStatus{Queue: "federation_outbox_crawls", Pending: 3, Done: 7, Failed: 2, OldestPendingAgeSeconds: 90}
+	if got := ov.Queues[len(ov.Queues)-1]; got != want {
+		t.Errorf("last queue = %+v, want %+v", got, want)
+	}
+	depths, err := NewService(q).Depths(context.Background())
+	if err != nil {
+		t.Fatalf("Depths: %v", err)
+	}
+	seen := map[string]int64{}
+	for _, d := range depths {
+		if d.Queue == QueueOutboxCrawls {
+			seen[d.State] = d.Count
+		}
+	}
+	if seen["pending"] != 3 || seen["failed"] != 2 || seen["done"] != 7 || seen["running"] != 0 {
+		t.Errorf("outbox crawl depths = %+v", seen)
+	}
+}
 
 func TestOverviewNormalisesAndMergesFailures(t *testing.T) {
 	now := time.Now()
@@ -197,8 +229,8 @@ func TestOverviewNormalisesAndMergesFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Overview: %v", err)
 	}
-	if len(ov.Queues) != 9 {
-		t.Fatalf("want 9 queues, got %d", len(ov.Queues))
+	if len(ov.Queues) != 10 {
+		t.Fatalf("want 10 queues, got %d", len(ov.Queues))
 	}
 	if ov.Queues[0].Queue != QueueTranscode || ov.Queues[0].Pending != 2 || ov.Queues[0].OldestPendingAgeSeconds != 42 {
 		t.Errorf("transcode queue = %+v", ov.Queues[0])
@@ -250,9 +282,9 @@ func TestDepthsFlattensAllStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Depths: %v", err)
 	}
-	// 9 queues x 4 states.
-	if len(depths) != 36 {
-		t.Fatalf("want 36 depth samples, got %d", len(depths))
+	// 10 queues x 4 states.
+	if len(depths) != 40 {
+		t.Fatalf("want 40 depth samples, got %d", len(depths))
 	}
 	seen := map[string]int64{}
 	for _, d := range depths {
