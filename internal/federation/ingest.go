@@ -115,7 +115,11 @@ func (s *Service) handleCreateVideo(ctx context.Context, act inboxActivity, sign
 	if !ok {
 		return nil // nobody here follows this actor → accept-and-ignore
 	}
-	_, err = s.storeRemoteVideo(ctx, signerActorURL, obj)
+	owner, err := s.videoOwner(ctx, obj, signerActorURL, signerActorURL)
+	if err != nil {
+		return nil // unresolvable attribution → accept-and-ignore
+	}
+	_, err = s.storeRemoteVideo(ctx, owner, obj)
 	return err
 }
 
@@ -154,22 +158,45 @@ func (s *Service) handleAnnounce(ctx context.Context, act inboxActivity, signerA
 	}
 	// Attribution authority: the video's owner actor must share the announcing
 	// origin; announces of foreign-attributed objects are ignored.
-	owner := firstAttributedTo(obj.AttributedTo)
-	if owner == "" {
-		owner = signerActorURL
+	fallback := firstAttributedTo(obj.AttributedTo)
+	if fallback == "" {
+		fallback = signerActorURL
 	}
-	if !sameHost(owner, signerActorURL) {
-		return nil
-	}
-	if owner != signerActorURL {
-		// Make sure the owner actor is resolvable + cached (FK target); the signer
-		// itself was cached during signature verification.
-		if _, err := s.resolveRemoteActor(ctx, owner); err != nil {
-			return nil // unresolvable attribution → accept-and-ignore
-		}
+	owner, err := s.videoOwner(ctx, obj, fallback, signerActorURL)
+	if err != nil {
+		return nil // foreign or unresolvable attribution → accept-and-ignore
 	}
 	_, err = s.storeRemoteVideo(ctx, owner, obj)
 	return err
+}
+
+// videoOwner names the actor a remote video is filed under — the CHANNEL it is
+// attributed to, else fallback — and makes sure that actor is cached: it is
+// the remote_videos FK target, and its own document is what names the account
+// that owns it (remote_actors.attributed_to, the edge a block of that account
+// travels down). The owner must live on the video's origin.
+//
+// PeerTube attributes a video to [Person, Group] and sends its Create and
+// Update as the Person, so "the first attributed actor" and "the signer" are
+// both the uploader's ACCOUNT. The interop lab measured what followed: every
+// PeerTube video was shown under the account, never its channel (meta
+// docs/evidence/peertube-interop-2026-11-16.md, S5).
+func (s *Service) videoOwner(ctx context.Context, obj apVideoObject, fallback, signerActorURL string) (string, error) {
+	owner := attributedChannel(obj.AttributedTo, obj.ID)
+	if owner == "" {
+		owner = fallback
+	}
+	if !sameHost(owner, obj.ID) {
+		return "", fmt.Errorf("federation: video %s is not attributed to an actor on its origin", obj.ID)
+	}
+	if owner != signerActorURL {
+		// The signer was cached when its signature was verified; any other
+		// actor has to be resolved.
+		if _, err := s.resolveRemoteActor(ctx, owner); err != nil {
+			return "", err
+		}
+	}
+	return owner, nil
 }
 
 // hasAcceptedFollowEdge consults the ingestion gate (remote-content §2): by
@@ -368,6 +395,27 @@ func attributedToIncludes(raw json.RawMessage, actorURL string) bool {
 func firstAttributedTo(raw json.RawMessage) string {
 	if actors := attributedActors(raw); len(actors) > 0 {
 		return actors[0]
+	}
+	return ""
+}
+
+// attributedChannel returns the Group an AS attributedTo value names on the
+// object's own host, or "". Only typed entries can say so — PeerTube's
+// [Person, Group], vidra's [Group, Person] — and a Group on any other host is
+// not this object's channel, whatever the object claims.
+func attributedChannel(raw json.RawMessage, objectID string) string {
+	var entries []json.RawMessage
+	if json.Unmarshal(raw, &entries) != nil {
+		entries = []json.RawMessage{raw}
+	}
+	for _, entry := range entries {
+		var actor struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		}
+		if json.Unmarshal(entry, &actor) == nil && actor.Type == "Group" && sameHost(actor.ID, objectID) {
+			return actor.ID
+		}
 	}
 	return ""
 }

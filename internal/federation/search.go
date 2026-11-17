@@ -155,12 +155,10 @@ func (s *Service) ResolveSearchTarget(ctx context.Context, query string) (Search
 			if obj.ID == "" || !sameHost(obj.ID, query) {
 				return SearchResolution{}, ErrRemoteUnresolvable
 			}
-			owner := firstAttributedTo(obj.AttributedTo)
-			if owner == "" || !sameHost(owner, obj.ID) {
-				return SearchResolution{}, ErrRemoteUnresolvable
-			}
-			// Resolve + cache the owner first (the remote_videos FK target).
-			if _, err := s.resolveRemoteActor(ctx, owner); err != nil {
+			// Resolve + cache the owner first (the remote_videos FK target):
+			// the video's channel when it names one (videoOwner).
+			owner, err := s.videoOwner(ctx, obj, firstAttributedTo(obj.AttributedTo), "")
+			if err != nil {
 				return SearchResolution{}, fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 			}
 			row, err := s.storeRemoteVideo(ctx, owner, obj)

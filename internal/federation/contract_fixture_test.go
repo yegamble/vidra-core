@@ -635,8 +635,8 @@ func TestContractWebFingerResolution(t *testing.T) {
 
 // TestContractAnnounceFetchesFixtureObject drives the URL-only PeerTube
 // Announce through the object-fetch path: the "origin" serves the standalone
-// Video document (attributed Person-first), whose owner actor is then resolved
-// from its own fixture document and cached for the FK.
+// Video document (attributed Person-first), which is filed under the Group it
+// names — its channel — not under the first attributed actor.
 func TestContractAnnounceFetchesFixtureObject(t *testing.T) {
 	repo := newContractRepo()
 	client := &http.Client{Transport: fixtureTransport{t: t, routes: map[string]string{
@@ -657,16 +657,13 @@ func TestContractAnnounceFetchesFixtureObject(t *testing.T) {
 	if !ok {
 		t.Fatalf("announced video not stored: %+v", repo.remoteVideos)
 	}
-	if rv.params.RemoteActorUrl != ctPTAccount {
-		t.Errorf("owner = %q, want the first attributed actor %q", rv.params.RemoteActorUrl, ctPTAccount)
+	if rv.params.RemoteActorUrl != ctPTChannel {
+		t.Errorf("owner = %q, want the attributed channel %q", rv.params.RemoteActorUrl, ctPTChannel)
 	}
 	if rv.params.Title != "Dawn crossing at Whitegull Sound" {
 		t.Errorf("title = %q", rv.params.Title)
 	}
 	if rv.params.StreamUrl == nil || *rv.params.StreamUrl != ctPTHLSLink {
 		t.Errorf("stream_url = %v, want the HLS playlist", rv.params.StreamUrl)
-	}
-	if ra, ok := repo.remoteActors[ctPTAccount]; !ok || ra.PreferredUsername != "marta" {
-		t.Errorf("owner actor not resolved+cached from its fixture: %+v", repo.remoteActors)
 	}
 }
