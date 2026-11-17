@@ -519,6 +519,7 @@ var (
 	ptSensitiveID = uuid.MustParse("ad4f2b75-8e6f-4c1b-9a3f-2f1e0d9c8b71")
 	ptCaptionedID = uuid.MustParse("be503c86-9f70-4d2c-8b40-3a2f1e0d9c82")
 	ptShortNameID = uuid.MustParse("cf614d97-a081-4e3d-9c51-4b3a2f1e0d93")
+	ptUnsizedID   = uuid.MustParse("d0725ea8-b192-4f4e-8d62-5c4b3a2f1e04")
 )
 
 // ptWorld is the contract world plus one video per conformance case.
@@ -544,6 +545,14 @@ func ptWorld(t *testing.T) (*Service, fakeRepo) {
 	sensitive.SensitiveReason, sensitive.CommentsPolicy = "Graphic medical footage.", "disabled"
 	repo.videosByID[ptSensitiveID] = sensitive
 	ptPoster(t, blobs, media.VideoThumbnailKey(ptSensitiveID), 640, 480)
+
+	// A poster row whose bytes are not an image this instance can size.
+	unsized := finished
+	unsized.ID, unsized.Title = ptUnsizedID, "Poster that cannot be sized"
+	repo.videosByID[ptUnsizedID] = unsized
+	if _, err := blobs.Put(t.Context(), media.VideoThumbnailKey(ptUnsizedID), strings.NewReader("not an image")); err != nil {
+		t.Fatalf("put unsized poster: %v", err)
+	}
 
 	shortName := finished
 	shortName.ID, shortName.Title = ptShortNameID, "ab"
@@ -598,10 +607,15 @@ func TestVideoObjectPassesPeerTubeValidator(t *testing.T) {
 				t.Errorf("category = %v", c)
 			}
 		}},
-		// PeerTube requires at least one icon (videos.ts:58) and vidra has no
-		// image to offer for a video whose poster was never generated: no
-		// fabricated placeholder, so this video is honestly NOT ingestible.
-		{name: "video with no thumbnail", id: ptNoThumbID, wantReject: "icons"},
+		// PeerTube requires at least one icon with an integer width and height
+		// (videos.ts "icons", misc.ts setValidRemoteIcon) and refuses the whole
+		// video without one. The interop lab measured it both ways: an
+		// audio-only upload, which has no poster, and a video whose poster this
+		// instance could not size, were each refused with "Video field is not
+		// valid to PeerTube: icons" and never stored. Such a video names the
+		// instance's fallback poster instead, a real image of that real size.
+		{name: "video with no thumbnail", id: ptNoThumbID, check: ptAssertFallbackIcon},
+		{name: "video whose poster cannot be sized", id: ptUnsizedID, check: ptAssertFallbackIcon},
 		// PeerTube's name floor is 3 characters (constants.ts VIDEOS.NAME), and
 		// vidra allows 1: the interop lab's video titled "ab" was refused with
 		// "Video field is not valid to PeerTube: name". The object pads it, and
@@ -752,6 +766,19 @@ func ptAssertIcon(t *testing.T, v ptVerdict, w, h int) {
 	if ic["width"] != float64(w) || ic["height"] != float64(h) {
 		t.Errorf("icon size = %vx%v, want %dx%d (read from the stored poster)", ic["width"], ic["height"], w, h)
 	}
+}
+
+// ptAssertFallbackIcon: the one icon is the instance's fallback poster, with
+// the size and type the route serving it really has (httpapi
+// TestFederationFallbackPosterIsTheImageTheObjectNames decodes it).
+func ptAssertFallbackIcon(t *testing.T, v ptVerdict) {
+	t.Helper()
+	icons := v.Object["icon"].([]any)
+	ic := icons[0].(map[string]any)
+	if len(icons) != 1 || ic["url"] != contractBase+"/api/v1/federation/poster.png" || ic["mediaType"] != "image/png" {
+		t.Errorf("icon = %v, want the fallback poster alone", icons)
+	}
+	ptAssertIcon(t, v, 640, 360)
 }
 
 // TestPeerTubeCheckBites proves the port is not vacuous: each mutation of an

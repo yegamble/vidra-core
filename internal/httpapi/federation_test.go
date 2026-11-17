@@ -8,6 +8,8 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"image"
+	_ "image/png" // register the PNG decoder for image.DecodeConfig
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -650,6 +652,20 @@ func signerKeyPEM(t *testing.T) (*rsa.PrivateKey, string) {
 }
 
 const bobActor = "https://remote.example/accounts/bob"
+
+// The fallback poster a video object names is a real image of the size the
+// object states (federation.FallbackPoster*): PeerTube refuses an icon with no
+// width and height, and a stated size has to be the image's own.
+func TestFederationFallbackPosterIsTheImageTheObjectNames(t *testing.T) {
+	rec := get(t, fedServer(fedTestConfig()), "/api/v1/federation/poster.png")
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("status = %d, Content-Type = %q, want 200 image/png", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	cfg, format, err := image.DecodeConfig(rec.Body)
+	if err != nil || format != "png" || cfg.Width != 640 || cfg.Height != 360 {
+		t.Errorf("decoded %s %dx%d (err %v), want png 640x360", format, cfg.Width, cfg.Height, err)
+	}
+}
 
 func TestInboxAcceptsSignedFollow(t *testing.T) {
 	key, pubPEM := signerKeyPEM(t)

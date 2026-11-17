@@ -42,7 +42,9 @@ import (
 //     `height`: PeerTube drops an icon without integer width/height
 //     (misc.ts:48-72) and then rejects a video with no icon (videos.ts:58).
 //     vidra records no poster dimensions, so they are read from the stored
-//     poster's own header — never invented; unreadable means omitted.
+//     poster's own header — never invented. A video with no poster, or with
+//     one whose size cannot be read, also names the instance's fallback
+//     poster (fallback_poster.go), which PeerTube takes in its place.
 //   - `duration` is xsd:duration in the whole-seconds form PeerTube emits
 //     ("PT123S"), which is what parseISODurationSeconds on the other side reads.
 //   - `published` is when the video became public, preferring the creator's
@@ -58,9 +60,10 @@ import (
 // peertube_conformance_test.go — by test, not against a live PeerTube.
 //
 // A field is OMITTED rather than emitted empty whenever its underlying fact is
-// absent: no ready ladder means no HLS link, no poster means no icon, no probe
-// means no duration. An empty `icon` or a `duration` of "PT0S" would be a claim
-// the origin cannot back.
+// absent: no ready ladder means no HLS link, no probe means no duration. A
+// `duration` of "PT0S" would be a claim the origin cannot back. The icon is
+// the exception, because PeerTube refuses a video without one it can size: a
+// fallback is added, an image the origin CAN back.
 
 // videoObjectInput is everything the AS Video needs, gathered from ONE row.
 type videoObjectInput struct {
@@ -434,6 +437,17 @@ func (s *Service) videoObjectFromOutbox(ctx context.Context, channelActor string
 		in.IconWidth, in.IconHeight = s.posterSize(ctx, r.ThumbnailFileID, r.ThumbnailStorageKey)
 	}
 	obj := videoObject(in)
+	// No poster, or one whose size could not be read: PeerTube would refuse
+	// the whole video, so the fallback poster is added (fallback_poster.go).
+	// AFTER the poster, which stays: a reader that needs no size — vidra's own
+	// ingest, Mastodon — takes the first icon and still gets the real image.
+	if in.IconWidth <= 0 || in.IconHeight <= 0 {
+		icons, _ := obj["icon"].([]map[string]any)
+		obj["icon"] = append(icons, map[string]any{
+			"type": "Image", "url": s.baseURL + FallbackPosterPath, "mediaType": fallbackPosterType,
+			"width": fallbackPosterWidth, "height": fallbackPosterHeight,
+		})
+	}
 	s.peertubeFields(obj, r)
 	return obj
 }

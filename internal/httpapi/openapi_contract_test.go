@@ -323,6 +323,10 @@ var knownNonContractRoutes = map[string]string{
 	// JSON only (406 otherwise), on a frontend-owned path reached here only via the
 	// proxy's content negotiation — the same reasoning as /comments/{id}.
 	"GET /remote-comments/{id}": "ActivityPub object id",
+	// The image a video object names as its icon when the video has no poster
+	// of its own. Part of the ActivityPub object, not of the REST contract; it
+	// sits under /api only because that is the prefix the proxy routes here.
+	"GET /api/v1/federation/poster.png": "ActivityPub object icon",
 
 	// PUBLIC_BASE_URL (+ wired video/channel services). Syndication formats
 	// answering XML/oEmbed JSON to feed readers, crawlers and embed resolvers,
