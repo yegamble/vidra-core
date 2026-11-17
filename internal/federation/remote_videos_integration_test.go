@@ -8,6 +8,8 @@ package federation_test
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -205,5 +207,73 @@ func TestRemoteVideoSensitivePersists(t *testing.T) {
 	}
 	if read() {
 		t.Error("is_sensitive = true after the origin's Update cleared it")
+	}
+}
+
+// originDocs serves ActivityPub documents by exact URL, as a remote origin would.
+type originDocs map[string]string
+
+func (d originDocs) RoundTrip(r *http.Request) (*http.Response, error) {
+	doc, ok := d[r.URL.String()]
+	status := http.StatusOK
+	if !ok {
+		status = http.StatusNotFound
+	}
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(doc)), Header: http.Header{}, Request: r}, nil
+}
+
+// A PeerTube instance announces a video attributed to [Person, Group]. On a
+// real database the channel actor must be cached BEFORE the video row that
+// references it (the FK); the read model then names the channel and the
+// account behind it, which is what a block is taken against.
+func TestRemoteVideoIsFiledUnderItsChannel(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	base := "https://pt-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12] + ".example"
+	instance, channel, account, object := base+"/accounts/peertube", base+"/video-channels/films", base+"/accounts/marta", base+"/videos/watch/9"
+	const key = `"publicKey":{"publicKeyPem":"-----BEGIN PUBLIC KEY-----\nMA==\n-----END PUBLIC KEY-----"}`
+	// The signer, cached as signature verification leaves it.
+	if err := q.UpsertRemoteActor(ctx, sqlcgen.UpsertRemoteActorParams{
+		ActorUrl: instance, ActorType: "Application", PreferredUsername: "peertube",
+		Domain: strings.TrimPrefix(base, "https://"), InboxUrl: base + "/inbox", PublicKeyPem: "k",
+	}); err != nil {
+		t.Fatalf("UpsertRemoteActor: %v", err)
+	}
+	svc := federation.NewService(q,
+		federation.WithBaseURL("https://videos.example"),
+		federation.WithFollowEdgeChecker(allowAllEdges{}),
+		federation.WithFetchClient(&http.Client{Transport: originDocs{
+			object: `{"id":"` + object + `","type":"Video","name":"Channel clip","attributedTo":[` +
+				`{"type":"Person","id":"` + account + `"},{"type":"Group","id":"` + channel + `"}]}`,
+			channel: `{"id":"` + channel + `","type":"Group","preferredUsername":"films","inbox":"` + channel + `/inbox",` +
+				key + `,"attributedTo":[{"type":"Person","id":"` + account + `"}]}`,
+		}}),
+	)
+	announce := `{"id":"` + base + `/act/9","type":"Announce","actor":"` + instance + `","object":"` + object + `"}`
+	if err := svc.HandleInbox(ctx, instance, []byte(announce)); err != nil {
+		t.Fatalf("HandleInbox Announce: %v", err)
+	}
+	row, err := q.GetRemoteVideoByObjectURL(ctx, object)
+	if err != nil {
+		t.Fatalf("announced video not stored: %v", err)
+	}
+	got, err := q.GetRemoteVideoByID(ctx, row.ID)
+	if err != nil {
+		t.Fatalf("GetRemoteVideoByID: %v", err)
+	}
+	if got.RemoteActorUrl != channel || got.PreferredUsername != "films" || got.AttributedTo != account {
+		t.Errorf("read model = actor %q (%q), owner %q; want the channel films owned by %q",
+			got.RemoteActorUrl, got.PreferredUsername, got.AttributedTo, account)
 	}
 }
