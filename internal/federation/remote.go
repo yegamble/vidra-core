@@ -33,7 +33,9 @@ type fetchedActor struct {
 	Type              string `json:"type"`
 	PreferredUsername string `json:"preferredUsername"`
 	Inbox             string `json:"inbox"`
-	Followers         string `json:"followers"`
+	// Outbox is read only by CrawlOutbox, and is not cached with the actor.
+	Outbox    string `json:"outbox"`
+	Followers string `json:"followers"`
 	// AttributedTo names the ACCOUNT that owns a Group actor. PeerTube requires
 	// it on every channel actor and vidra emits it, so on the fediverse vidra
 	// actually federates with, a channel's owner is stated in its own document.
