@@ -59,6 +59,27 @@ func (s *Service) HandleInbox(ctx context.Context, signerActorURL string, body [
 	if act.ID == "" || act.Type == "" {
 		return ErrBadResource
 	}
+	// A FORWARDED activity: one that is, by its own actor and id, another
+	// server's, passed on by the signer. PeerTube forwards a third party's
+	// comment, view or share to a video's audience this way — signed over HTTP
+	// by the forwarding instance, with the third party's LD signature inside,
+	// which this instance does not verify. So it is not applied, and it is not
+	// marked processed: the id is the third party's, whose own delivery of it
+	// must still go through. It is answered 202 because it is not malformed,
+	// and because a refusal is charged to us: PeerTube records a failed
+	// delivery against the follow whose inbox it was sent to, and a follow
+	// that collects only failures is eventually deleted (v8.3.2
+	// actor-follow-scheduler). The interop lab measured five 400s for five
+	// forwarded comments, each one recorded. An activity whose id is the
+	// signer's while its actor is not, or the reverse, is no forward and is
+	// still refused below.
+	if !sameHost(act.Actor, signerActorURL) && sameHost(act.Actor, act.ID) {
+		if s.logger != nil {
+			s.logger.Debug("federation: forwarded activity accepted and ignored",
+				"activity_type", act.Type, "activity_host", hostOf(act.Actor), "forwarded_by", hostOf(signerActorURL))
+		}
+		return nil
+	}
 	// The id is the dedupe key below, and processed_activities is one table
 	// for every peer. An id on a host other than the signer's would let one
 	// server mark another server's activity as already seen: a peer that
