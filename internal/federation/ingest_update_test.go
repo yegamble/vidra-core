@@ -88,11 +88,9 @@ func TestUpdateOfAHeldVideo(t *testing.T) {
 
 // PeerTube tells its followers a video stopped being public with a Delete —
 // and, when one of its own federation jobs was still running, with an Update
-// of the same video straight after. An Update that could CREATE a row from the
-// object it carries put the deleted video back: the interop lab found 4 of 5
-// videos made private on PeerTube still listed here, and 0 of 5 on a stock
-// PeerTube, which re-reads an unknown video from its origin (process-update.ts,
-// getOrCreateAPVideo) and is refused.
+// of the same video straight after. An Update that could CREATE a row put the
+// deleted video back: the interop lab found 4 of 5 videos made private on
+// PeerTube still listed here, and 0 of 5 on a stock PeerTube.
 func TestUpdateNeverCreatesAVideo(t *testing.T) {
 	ctx := context.Background()
 	const originTitle = "Dawn crossing at Whitegull Sound"

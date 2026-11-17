@@ -312,6 +312,62 @@ func (q *Queries) SetRemoteVideoThumbnail(ctx context.Context, arg SetRemoteVide
 	return err
 }
 
+const updateRemoteVideo = `-- name: UpdateRemoteVideo :one
+UPDATE remote_videos SET
+    remote_actor_url = $1,
+    title            = $2,
+    description      = $3,
+    duration_seconds = $4,
+    published_at     = $5,
+    watch_url        = $6,
+    stream_url       = $7,
+    is_sensitive     = $8,
+    sensitive_flags  = COALESCE($9::text[], '{}'),
+    updated_at       = now()
+WHERE object_url = $10
+RETURNING id, thumbnail_key
+`
+
+type UpdateRemoteVideoParams struct {
+	RemoteActorUrl  string             `json:"remote_actor_url"`
+	Title           string             `json:"title"`
+	Description     string             `json:"description"`
+	DurationSeconds *int32             `json:"duration_seconds"`
+	PublishedAt     pgtype.Timestamptz `json:"published_at"`
+	WatchUrl        string             `json:"watch_url"`
+	StreamUrl       *string            `json:"stream_url"`
+	IsSensitive     bool               `json:"is_sensitive"`
+	SensitiveFlags  []string           `json:"sensitive_flags"`
+	ObjectUrl       string             `json:"object_url"`
+}
+
+type UpdateRemoteVideoRow struct {
+	ID           uuid.UUID `json:"id"`
+	ThumbnailKey *string   `json:"thumbnail_key"`
+}
+
+// An inbound Update of a video ALREADY held: the metadata UpsertRemoteVideo
+// writes, and never an insert. If the origin's Delete lands between the
+// caller's lookup and this statement there is no row to match, so the edit
+// returns nothing instead of putting the video back (an upsert would).
+func (q *Queries) UpdateRemoteVideo(ctx context.Context, arg UpdateRemoteVideoParams) (UpdateRemoteVideoRow, error) {
+	row := q.db.QueryRow(ctx, updateRemoteVideo,
+		arg.RemoteActorUrl,
+		arg.Title,
+		arg.Description,
+		arg.DurationSeconds,
+		arg.PublishedAt,
+		arg.WatchUrl,
+		arg.StreamUrl,
+		arg.IsSensitive,
+		arg.SensitiveFlags,
+		arg.ObjectUrl,
+	)
+	var i UpdateRemoteVideoRow
+	err := row.Scan(&i.ID, &i.ThumbnailKey)
+	return i, err
+}
+
 const upsertRemoteVideo = `-- name: UpsertRemoteVideo :one
 
 INSERT INTO remote_videos (

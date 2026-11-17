@@ -67,6 +67,7 @@ type Repository interface {
 	RequeueCancelledDelivery(ctx context.Context, id uuid.UUID) (int64, error)
 	// Remote-video ingestion (remote-content Slice 1).
 	UpsertRemoteVideo(ctx context.Context, arg sqlcgen.UpsertRemoteVideoParams) (sqlcgen.UpsertRemoteVideoRow, error)
+	UpdateRemoteVideo(ctx context.Context, arg sqlcgen.UpdateRemoteVideoParams) (sqlcgen.UpdateRemoteVideoRow, error)
 	SetRemoteVideoThumbnail(ctx context.Context, arg sqlcgen.SetRemoteVideoThumbnailParams) error
 	// Instance-level moderation (remote-content §8): the inbox drops activities
 	// from blocked domains and the drain cancels deliveries to them.

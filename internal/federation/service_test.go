@@ -719,6 +719,20 @@ func (f fakeRepo) UpsertRemoteVideo(_ context.Context, arg sqlcgen.UpsertRemoteV
 	return sqlcgen.UpsertRemoteVideoRow{ID: rv.id}, nil
 }
 
+// UpdateRemoteVideo mirrors the real UPDATE: an absent row is not created.
+func (f fakeRepo) UpdateRemoteVideo(_ context.Context, arg sqlcgen.UpdateRemoteVideoParams) (sqlcgen.UpdateRemoteVideoRow, error) {
+	rv, ok := f.remoteVideos[arg.ObjectUrl]
+	if !ok {
+		return sqlcgen.UpdateRemoteVideoRow{}, pgx.ErrNoRows
+	}
+	rv.params = sqlcgen.UpsertRemoteVideoParams{
+		ObjectUrl: arg.ObjectUrl, RemoteActorUrl: arg.RemoteActorUrl, Title: arg.Title, Description: arg.Description,
+		DurationSeconds: arg.DurationSeconds, PublishedAt: arg.PublishedAt, WatchUrl: arg.WatchUrl, StreamUrl: arg.StreamUrl,
+		IsSensitive: arg.IsSensitive, SensitiveFlags: arg.SensitiveFlags,
+	}
+	return sqlcgen.UpdateRemoteVideoRow{ID: rv.id, ThumbnailKey: rv.thumbnailKey}, nil
+}
+
 func (f fakeRepo) SetRemoteVideoThumbnail(_ context.Context, arg sqlcgen.SetRemoteVideoThumbnailParams) error {
 	for _, rv := range f.remoteVideos {
 		if rv.id == arg.ID {
