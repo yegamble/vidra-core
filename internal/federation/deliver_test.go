@@ -304,7 +304,7 @@ func TestRedeliverAfterUnblock(t *testing.T) {
 		}
 		return payload
 	}
-	deletePayload, err := svc.buildDeleteVideo("films", deletedVideoID)
+	deletePayload, err := svc.buildDeleteVideo("https://videos.example/video-channels/films", deletedVideoID)
 	if err != nil {
 		t.Fatalf("buildDeleteVideo: %v", err)
 	}

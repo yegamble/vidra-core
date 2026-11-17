@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -338,4 +340,98 @@ func TestVideoStillPublishableRefusesInternal(t *testing.T) {
 	if ok, err := svc.videoStillPublishable(context.Background(), videoID); err != nil || ok {
 		t.Fatalf("internal video videoStillPublishable = %v, %v; want false", ok, err)
 	}
+}
+
+// PeerTube files a remote video under its channel and the channel under the
+// ACCOUNT that owns it, and acts on a video Delete only from that account
+// (v8.3.2 process-delete.ts: "Account … does not own video channel …"). So
+// every retraction — delete, privacy flip, moderator block, move — also goes
+// out from the owner's account actor, and goes FIRST: PeerTube works through
+// its inbox in arrival order, and the channel's Delete arriving while the
+// video still exists is logged there as a failure.
+func TestVideoRetractionsAreAlsoSignedByTheOwnerAccount(t *testing.T) {
+	const inbox = "https://peertube.example/inbox"
+	channelID, oldChannelID, videoID, ownerID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	owned := func(privacy string, blocked bool) fakeRepo {
+		repo := newOutboxRepo(channelID, videoID, privacy, "published", []string{inbox})
+		repo.channelsByID[channelID] = sqlcgen.Channel{ID: channelID, OwnerID: ownerID, Handle: "films"}
+		repo.channelsByID[oldChannelID] = sqlcgen.Channel{ID: oldChannelID, OwnerID: ownerID, Handle: "old"}
+		repo.usersByID = map[uuid.UUID]sqlcgen.GetUserActorByIDRow{ownerID: {ID: ownerID, Username: "ada"}}
+		repo.tombstones = map[uuid.UUID]time.Time{}
+		v := repo.videosByID[videoID]
+		v.Blocked = blocked
+		repo.videosByID[videoID] = v
+		return repo
+	}
+	for _, tc := range []struct {
+		name    string
+		repo    fakeRepo
+		channel string
+		retract func(*Service) error
+	}{
+		{"delete", owned("public", false), "films", func(s *Service) error {
+			return s.DeleteVideo(context.Background(), videoID, channelID, true)
+		}},
+		{"privacy flip", owned("private", false), "films", func(s *Service) error {
+			return s.UpdateVideo(context.Background(), videoID, true)
+		}},
+		{"moderator block", owned("public", true), "films", func(s *Service) error {
+			return s.UnfederateBlockedVideo(context.Background(), videoID)
+		}},
+		{"move retract", func() fakeRepo {
+			repo := owned("public", false)
+			repo.followerInboxes[channelID] = nil
+			repo.followerInboxes[oldChannelID] = []string{inbox}
+			return repo
+		}(), "old", func(s *Service) error {
+			return s.RetractMovedVideo(context.Background(), videoID, oldChannelID)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.retract(NewService(tc.repo, WithBaseURL("https://videos.example"))); err != nil {
+				t.Fatal(err)
+			}
+			const ownerActor = "https://videos.example/accounts/ada"
+			bySigner := map[string]*fakeDelivery{}
+			for _, d := range tc.repo.deliveries {
+				var a struct{ ID, Type, Actor, Object string }
+				if err := json.Unmarshal(d.row.Payload, &a); err != nil {
+					t.Fatal(err)
+				}
+				if a.Type != "Delete" || a.Object != "https://videos.example/videos/"+videoID.String() || d.row.InboxUrl != inbox {
+					t.Errorf("queued %+v to %s, want a Delete of the video to %s", a, d.row.InboxUrl, inbox)
+				}
+				if !strings.HasPrefix(a.ID, a.Actor+"/activities/delete/") {
+					t.Errorf("activity id %q is not minted under its actor %q", a.ID, a.Actor)
+				}
+				switch {
+				case d.row.SigningUserID.Valid:
+					if uuid.UUID(d.row.SigningUserID.Bytes) != ownerID || d.row.SigningUsername != "ada" {
+						t.Errorf("account-signed Delete is signed by %+v/%q, want the channel owner", d.row.SigningUserID, d.row.SigningUsername)
+					}
+				case !d.row.SigningChannelID.Valid:
+					t.Errorf("Delete from %q has no signer", a.Actor)
+				}
+				bySigner[a.Actor] = d
+			}
+			owner, channel := bySigner[ownerActor], bySigner["https://videos.example/video-channels/"+tc.channel]
+			if len(tc.repo.deliveries) != 2 || owner == nil || channel == nil {
+				t.Fatalf("Deletes from %v, want one from the owner account and one from the channel", keysOf(bySigner))
+			}
+			if !owner.row.SigningUserID.Valid || !channel.row.SigningChannelID.Valid {
+				t.Error("each Delete must be signed by the actor it names")
+			}
+			if owner.seq > channel.seq {
+				t.Error("the owner's Delete must be queued before the channel's")
+			}
+		})
+	}
+}
+
+func keysOf(m map[string]*fakeDelivery) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
