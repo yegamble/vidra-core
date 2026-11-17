@@ -97,7 +97,10 @@ New table `remote_videos`:
 
 ## 7. Inbound Update/Delete of remote videos
 
-- `Update{Video}`: upsert the `remote_videos` row (signer must be the attributed actor).
+- `Update{Video}` of a video already held: update the row when the signer is on the
+  video's origin host — no follow edge and no attribution to the signer required
+  (PeerTube sends it as the uploader's account). The row keeps its actor. An Update
+  of an unknown video passes the same gates as a `Create` (§2).
 - `Delete` (object = a known remote video / actor): delete the row(s); an actor Delete
   removes the actor's videos + comments (cascade via remote_actor_url). Authority:
   signer == the object's attributed actor, or the signer's actor shares the object's

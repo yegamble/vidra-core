@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -88,11 +90,13 @@ func apSensitive(raw json.RawMessage) bool {
 	return false
 }
 
-// handleCreateVideo ingests an inbound Create{Video} (remote-content §2).
-// Authority: the activity actor must be the request signer, and the object must
-// be attributed to the signer. The signer must also have at least one accepted
-// local follow edge (we only ingest content we asked for by following) —
-// otherwise the activity is accepted-and-ignored.
+// handleCreateVideo ingests an inbound Create{Video} or Update{Video}
+// (remote-content §2, §7). Authority: the activity actor must be the request
+// signer, and the object must live on the signer's origin. A video this
+// instance does not hold must also be attributed to the signer, and the signer
+// must have at least one accepted local follow edge (we only ingest content we
+// asked for by following) — otherwise the activity is accepted-and-ignored.
+// An Update of a video already held needs neither (heldVideoActor).
 func (s *Service) handleCreateVideo(ctx context.Context, act inboxActivity, signerActorURL string) error {
 	if act.Actor != signerActorURL {
 		return ErrActorMismatch
@@ -101,26 +105,56 @@ func (s *Service) handleCreateVideo(ctx context.Context, act inboxActivity, sign
 	if err := json.Unmarshal(act.Object, &obj); err != nil || obj.Type != "Video" {
 		return nil // not a Video object → accept-and-ignore
 	}
-	// The object must live on the signer's origin and be attributed to the signer.
 	if obj.ID == "" || !sameHost(obj.ID, signerActorURL) {
 		return nil
 	}
-	if !attributedToIncludes(obj.AttributedTo, signerActorURL) {
-		return nil
-	}
-	ok, err := s.hasAcceptedFollowEdge(ctx, signerActorURL)
+	fallback, err := s.heldVideoActor(ctx, act.Type, obj.ID)
 	if err != nil {
 		return err
 	}
-	if !ok {
-		return nil // nobody here follows this actor → accept-and-ignore
+	if fallback == "" {
+		if !attributedToIncludes(obj.AttributedTo, signerActorURL) {
+			return nil
+		}
+		ok, err := s.hasAcceptedFollowEdge(ctx, signerActorURL)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil // nobody here follows this actor → accept-and-ignore
+		}
+		fallback = signerActorURL
 	}
-	owner, err := s.videoOwner(ctx, obj, signerActorURL, signerActorURL)
+	// Its channel when the object names one; else the actor a held video is
+	// already stored under, or — for a video new here — the signer.
+	owner, err := s.videoOwner(ctx, obj, fallback, signerActorURL)
 	if err != nil {
 		return nil // unresolvable attribution → accept-and-ignore
 	}
 	_, err = s.storeRemoteVideo(ctx, owner, obj)
 	return err
+}
+
+// heldVideoActor returns the actor an Update's video is stored under, or ""
+// when the activity is not an Update or this instance does not hold the video.
+//
+// An edit of a video already held here is its origin editing its own content:
+// the authority a Delete has always carried (handleDelete), and the rule
+// PeerTube applies to an Update (process-update.ts: the signer and the video
+// share a host). It needs no follow edge for the signer. PeerTube sends a
+// video's Update as the uploader's ACCOUNT, which nobody follows when the
+// follow is of the CHANNEL, so the interop lab saw every such edit answered
+// 202 and dropped. The signer of an edit is not its owner: unless the object
+// names its channel (videoOwner), the video stays under the actor returned here.
+func (s *Service) heldVideoActor(ctx context.Context, activityType, objectURL string) (string, error) {
+	if activityType != "Update" {
+		return "", nil
+	}
+	rv, err := s.repo.GetRemoteVideoByObjectURL(ctx, objectURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return rv.RemoteActorUrl, err
 }
 
 // handleAnnounce ingests an inbound Announce{Video|url} (remote-content §2): a
