@@ -46,7 +46,8 @@ import (
 //     one whose size cannot be read, also names the instance's fallback
 //     poster (fallback_poster.go), which PeerTube takes in its place.
 //   - `duration` is xsd:duration in the whole-seconds form PeerTube emits
-//     ("PT123S"), which is what parseISODurationSeconds on the other side reads.
+//     ("PT123S"), which is what parseISODurationSeconds on the other side
+//     reads. It is always present: an unknown duration is "PT0S".
 //   - `published` is when the video became public, preferring the creator's
 //     declared original date, then the scheduled publication, then the row's
 //     creation. `updated` is the row's last edit, which is what lets a follower
@@ -60,10 +61,12 @@ import (
 // peertube_conformance_test.go — by test, not against a live PeerTube.
 //
 // A field is OMITTED rather than emitted empty whenever its underlying fact is
-// absent: no ready ladder means no HLS link, no probe means no duration. A
-// `duration` of "PT0S" would be a claim the origin cannot back. The icon is
-// the exception, because PeerTube refuses a video without one it can size: a
-// fallback is added, an image the origin CAN back.
+// absent: no ready ladder means no HLS link. The icon and the duration are the
+// exceptions, because PeerTube refuses a whole video that lacks either. A
+// fallback icon is added, an image the origin CAN back; and an unknown
+// duration is "PT0S", which claims nothing — it is what PeerTube sends for a
+// video whose length it does not know, and what this instance's own ingest
+// reads back as unknown.
 
 // videoObjectInput is everything the AS Video needs, gathered from ONE row.
 type videoObjectInput struct {
@@ -106,9 +109,7 @@ func videoObject(in videoObjectInput) map[string]any {
 	if utf8.RuneCountInString(in.Description) >= 3 {
 		obj["content"], obj["mediaType"] = in.Description, "text/markdown"
 	}
-	if d := isoDuration(in.DurationSeconds); d != "" {
-		obj["duration"] = d
-	}
+	obj["duration"] = isoDuration(in.DurationSeconds)
 	if in.IconURL != "" {
 		icon := map[string]any{"type": "Image", "url": in.IconURL}
 		if in.IconMediaTyp != "" {
@@ -307,12 +308,17 @@ func videoURLLinks(hlsURL, watchURL string) []map[string]any {
 	return links
 }
 
-// isoDuration renders whole seconds as xsd:duration, or "" for unknown/zero.
-// The whole-seconds form ("PT123S") is what PeerTube emits and what vidra's own
-// parseISODurationSeconds reads, so the two halves of the loop agree.
+// isoDuration renders whole seconds as xsd:duration; unknown or zero is
+// "PT0S". The whole-seconds form ("PT123S") is what PeerTube emits and what
+// vidra's own parseISODurationSeconds reads, so the two halves of the loop
+// agree — on unknown too, which that reader takes "PT0S" to mean.
+//
+// It used to be "" and the field was left out. PeerTube refuses the whole
+// video then ("Video field is not valid to PeerTube: duration format"), which
+// the interop lab measured with a WebM that states no duration.
 func isoDuration(seconds *int32) string {
 	if seconds == nil || *seconds <= 0 {
-		return ""
+		return "PT0S"
 	}
 	return "PT" + strconv.FormatInt(int64(*seconds), 10) + "S"
 }
