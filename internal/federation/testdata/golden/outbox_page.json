@@ -18,6 +18,7 @@
         ],
         "content": "Part two.",
         "downloadEnabled": false,
+        "duration": "PT0S",
         "icon": [
           {
             "height": 360,
