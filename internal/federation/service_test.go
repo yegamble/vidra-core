@@ -93,6 +93,9 @@ type fakeRepo struct {
 	// userRemoteRatings are local users' votes on remote videos (0179), keyed
 	// userID|remoteVideoID.
 	userRemoteRatings map[string]string
+	// afterRemoteVideoLookup runs once a held remote video has been read: a
+	// test uses it to land a concurrent Delete between a lookup and the write.
+	afterRemoteVideoLookup func()
 }
 
 func (f fakeRepo) ListChannelBackfillVideoIDs(_ context.Context, arg sqlcgen.ListChannelBackfillVideoIDsParams) ([]uuid.UUID, error) {
@@ -994,7 +997,11 @@ func (f fakeRepo) DeleteComment(_ context.Context, id uuid.UUID) error {
 
 func (f fakeRepo) GetRemoteVideoByObjectURL(_ context.Context, objectURL string) (sqlcgen.GetRemoteVideoByObjectURLRow, error) {
 	if rv, ok := f.remoteVideos[objectURL]; ok {
-		return sqlcgen.GetRemoteVideoByObjectURLRow{ID: rv.id, ObjectUrl: objectURL, RemoteActorUrl: rv.params.RemoteActorUrl}, nil
+		row := sqlcgen.GetRemoteVideoByObjectURLRow{ID: rv.id, ObjectUrl: objectURL, RemoteActorUrl: rv.params.RemoteActorUrl}
+		if f.afterRemoteVideoLookup != nil {
+			f.afterRemoteVideoLookup()
+		}
+		return row, nil
 	}
 	return sqlcgen.GetRemoteVideoByObjectURLRow{}, pgx.ErrNoRows
 }
