@@ -429,13 +429,16 @@ func ptIdentifierIsInt(x any) bool {
 	return ptIsInt(m["identifier"], 0)
 }
 
-// ptIsLength is exists(x) && validator.isLength(x, {min,max}) (code points).
+// ptIsLength is exists(x) && validator.isLength(x, {min,max}): code points,
+// less the variation selectors U+FE0E and U+FE0F. Run against the validator
+// PeerTube v8.3.2 ships (meta docs/evidence/peertube-interop-2026-11-17-gaps.md):
+// "ab" followed by U+FE0F has length 2, and two emoji have length 2.
 func ptIsLength(x any, min, max int) bool {
 	s, ok := x.(string)
 	if !ok {
 		return false
 	}
-	n := utf8.RuneCountInString(s)
+	n := utf8.RuneCountInString(s) - strings.Count(s, string(rune(0xFE0E))) - strings.Count(s, string(rune(0xFE0F)))
 	return n >= min && n <= max
 }
 
@@ -515,6 +518,7 @@ var (
 	ptNoThumbID   = uuid.MustParse("9c3f1a64-7d5e-4b0a-8f2e-1e0d9c8b7a60")
 	ptSensitiveID = uuid.MustParse("ad4f2b75-8e6f-4c1b-9a3f-2f1e0d9c8b71")
 	ptCaptionedID = uuid.MustParse("be503c86-9f70-4d2c-8b40-3a2f1e0d9c82")
+	ptShortNameID = uuid.MustParse("cf614d97-a081-4e3d-9c51-4b3a2f1e0d93")
 )
 
 // ptWorld is the contract world plus one video per conformance case.
@@ -540,6 +544,11 @@ func ptWorld(t *testing.T) (*Service, fakeRepo) {
 	sensitive.SensitiveReason, sensitive.CommentsPolicy = "Graphic medical footage.", "disabled"
 	repo.videosByID[ptSensitiveID] = sensitive
 	ptPoster(t, blobs, media.VideoThumbnailKey(ptSensitiveID), 640, 480)
+
+	shortName := finished
+	shortName.ID, shortName.Title = ptShortNameID, "ab"
+	repo.videosByID[ptShortNameID] = shortName
+	ptPoster(t, blobs, media.VideoThumbnailKey(ptShortNameID), 640, 360)
 
 	captioned := finished
 	// 130 characters, multi-byte: vidra allows 200 bytes, PeerTube 120 chars.
@@ -593,6 +602,15 @@ func TestVideoObjectPassesPeerTubeValidator(t *testing.T) {
 		// image to offer for a video whose poster was never generated: no
 		// fabricated placeholder, so this video is honestly NOT ingestible.
 		{name: "video with no thumbnail", id: ptNoThumbID, wantReject: "icons"},
+		// PeerTube's name floor is 3 characters (constants.ts VIDEOS.NAME), and
+		// vidra allows 1: the interop lab's video titled "ab" was refused with
+		// "Video field is not valid to PeerTube: name". The object pads it, and
+		// the padding is nothing a trim does not remove.
+		{name: "video with a 2-character title", id: ptShortNameID, check: func(t *testing.T, v ptVerdict) {
+			if name := v.Object["name"].(string); strings.TrimRight(name, " ") != "ab" {
+				t.Errorf("name = %q, want the title ab with nothing but trailing spaces added", name)
+			}
+		}},
 		{name: "sensitive video", id: ptSensitiveID, check: func(t *testing.T, v ptVerdict) {
 			if v.Object["sensitive"] != true {
 				t.Errorf("sensitive = %v, want true", v.Object["sensitive"])
