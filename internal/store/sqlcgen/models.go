@@ -396,6 +396,16 @@ type FederationInboxActivity struct {
 	ReceivedAt time.Time `json:"received_at"`
 }
 
+type FederationOutboxCrawl struct {
+	ActorUrl      string    `json:"actor_url"`
+	State         string    `json:"state"`
+	Attempts      int32     `json:"attempts"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	LastError     string    `json:"last_error"`
+	QueuedAt      time.Time `json:"queued_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type ImportJob struct {
 	ID            uuid.UUID `json:"id"`
 	VideoID       uuid.UUID `json:"video_id"`

@@ -203,6 +203,9 @@ type Service struct {
 	// reservation of its name is the instance actor's.
 	inst          InstanceRepository
 	instAvailable atomic.Bool
+	// crawls queues the read of a newly followed actor's outbox
+	// (outbox_crawl_queue.go), picked up from repo when it provides it.
+	crawls OutboxCrawlQueue
 
 	// edges gates remote-video ingestion on an accepted local follow edge
 	// (see FollowEdgeChecker). Nil = consult the repository's
@@ -372,6 +375,9 @@ func NewService(repo Repository, opts ...Option) *Service {
 	s := &Service{repo: repo}
 	if ir, ok := repo.(InstanceRepository); ok {
 		s.inst = ir
+	}
+	if q, ok := repo.(OutboxCrawlQueue); ok {
+		s.crawls = q
 	}
 	for _, o := range opts {
 		o(s)

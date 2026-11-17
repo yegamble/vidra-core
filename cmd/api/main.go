@@ -2675,6 +2675,18 @@ func run() error {
 				Run:     func(ctx context.Context, _ time.Time) (int, error) { return ptFollows.Prune(ctx) },
 			}},
 		}.Run(workerCtx, logger)
+		// Reads of the outbox of a newly followed channel or instance, queued by
+		// its Accept (0190): what it published before the follow. Its own loop,
+		// so a slow remote server cannot hold up the delivery drain.
+		go jobloop.Loop{
+			Interval: 10 * time.Second,
+			Jitter:   true,
+			Passes: []jobloop.Pass{{
+				FailMsg: "federation outbox read drain failed",
+				DoneMsg: "followed outboxes read",
+				Run:     func(ctx context.Context, _ time.Time) (int, error) { return fedsvc.DrainOutboxCrawls(ctx, 2) },
+			}},
+		}.Run(workerCtx, logger)
 		logger.Info("federation delivery worker started")
 	}
 
