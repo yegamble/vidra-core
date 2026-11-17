@@ -94,7 +94,7 @@ func videoObject(in videoObjectInput) map[string]any {
 	obj := map[string]any{
 		"id":           in.ObjectID,
 		"type":         "Video",
-		"name":         truncate(in.Title, peertubeMaxNameLen),
+		"name":         peertubeName(in.Title),
 		"attributedTo": attributedTo,
 		"url":          videoURLLinks(in.HLSURL, in.WatchURL),
 		"to":           []string{publicAudience},
@@ -125,9 +125,43 @@ func videoObject(in videoObjectInput) map[string]any {
 	return obj
 }
 
-// peertubeMaxNameLen is PeerTube's title limit (videos.ts:81, constants.ts:519);
-// vidra allows 200 bytes, and a longer name is rejected outright.
-const peertubeMaxNameLen = 120
+// peertubeMaxNameLen and peertubeMinNameLen are PeerTube's title limits
+// (videos.ts:81, constants.ts VIDEOS.NAME). vidra allows 1 to 200 bytes, and a
+// name outside PeerTube's limits is rejected outright, the whole video with it.
+const (
+	peertubeMaxNameLen = 120
+	peertubeMinNameLen = 3
+)
+
+// peertubeName is a title as PeerTube will take it: cut to its maximum and,
+// below its minimum, padded with trailing spaces. Only the wire name changes;
+// the stored title is not touched.
+//
+// The interop lab published a video titled "ab" and PeerTube stored nothing:
+// "Video field is not valid to PeerTube: name". Spaces, because they are the
+// one padding that is not content: PeerTube keeps the name as sent, its pages
+// show it as the title alone, and any trim gives the title back. (PeerTube's
+// own upload form trims before it validates, so no PeerTube sends such a name;
+// its inbox does not trim.)
+func peertubeName(title string) string {
+	name := truncate(title, peertubeMaxNameLen)
+	if short := peertubeMinNameLen - peertubeLen(name); short > 0 {
+		name += strings.Repeat(" ", short)
+	}
+	return name
+}
+
+// peertubeLen counts a string as PeerTube's validator does (validator.js
+// isLength): code points, less the variation selectors U+FE0E and U+FE0F.
+func peertubeLen(s string) int {
+	n := 0
+	for _, r := range s {
+		if r != 0xFE0E && r != 0xFE0F {
+			n++
+		}
+	}
+	return n
+}
 
 // peertubeCommentsPolicy maps vidra's per-video policy to PeerTube's
 // VideoCommentPolicy (1 enabled, 2 disabled, 3 requires approval — 0161).
