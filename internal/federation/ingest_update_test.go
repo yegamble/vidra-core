@@ -56,6 +56,8 @@ func TestUpdateOfAHeldVideo(t *testing.T) {
 			// What the lab had: the CHANNEL is followed, the account is not.
 			svc := NewService(repo, WithBaseURL(contractBase), WithFollowEdgeChecker(edgesFor(ctPTChannel)))
 			if tc.held {
+				// A held video's actor is always cached: it is the row's FK target.
+				cacheContractActor(repo, ctPTChannel, "Group", "kayak_diaries", "peertube.example")
 				repo.remoteVideos[ctPTVideo] = &fakeRemoteVideo{id: uuid.New(), params: sqlcgen.UpsertRemoteVideoParams{
 					ObjectUrl: ctPTVideo, RemoteActorUrl: ctPTChannel, Title: oldTitle,
 				}}
