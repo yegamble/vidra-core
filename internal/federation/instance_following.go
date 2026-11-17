@@ -178,7 +178,12 @@ func (s *Service) answerInstanceFollowing(ctx context.Context, accept bool, foll
 	arg := sqlcgen.AcceptInstanceFollowingByActivityParams{FollowActivityUrl: followURL, RemoteActorUrl: signer}
 	var err error
 	if accept {
-		_, err = s.inst.AcceptInstanceFollowingByActivity(ctx, arg)
+		var accepted int64
+		// As for a channel: what the instance already published is read from
+		// its outbox, once (outbox_crawl_queue.go).
+		if accepted, err = s.inst.AcceptInstanceFollowingByActivity(ctx, arg); err == nil && accepted > 0 {
+			s.queueOutboxCrawl(ctx, signer)
+		}
 	} else {
 		_, err = s.inst.RejectInstanceFollowingByActivity(ctx, sqlcgen.RejectInstanceFollowingByActivityParams(arg))
 	}

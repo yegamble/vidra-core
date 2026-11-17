@@ -49,6 +49,13 @@ New table `remote_videos`:
   Inbound `Accept{Follow}` (matched by `follow_activity_url`, signer == followed actor)
   flips state → accepted. Inbound `Reject` deletes the row. Unfollow = enqueue
   `Undo{Follow}` + delete the row immediately (local intent wins).
+- A remote server pushes only what it publishes after the follow. When the `Accept`
+  is recorded — for a channel follow or for an instance follow — one read of the
+  followed actor's outbox is queued (`federation_outbox_crawls`, 0190) and the
+  federation worker runs it (`CrawlOutbox`): the outbox and at most 10 pages, on
+  the actor's host only, each activity through the same handler as an inbox
+  delivery of it. A video already held is neither fetched nor written. One row per
+  followed actor; a re-queue inside an hour of the last read is a no-op.
 - The follower's subscriptions feed (`GET /me/subscriptions/videos`) becomes a UNION of
   local followed-channel videos and `remote_videos` of accepted remote follows, newest
   first, with `remote: true` + origin `domain` on remote cards.
