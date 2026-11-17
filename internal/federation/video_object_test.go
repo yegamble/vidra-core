@@ -68,9 +68,11 @@ func TestEmittedVideoIsReadableByOurOwnIngest(t *testing.T) {
 }
 
 // TestEmittedVideoOmitsWhatTheOriginCannotBack: a video mid-transcode has no
-// ladder and no poster. The object must carry the html link and nothing else —
-// an empty icon or a PT0S duration would be a claim the origin cannot honour,
-// and the reader would faithfully store it.
+// ladder and no poster. The object must carry the html link, no stream link
+// and no duration — a PT0S duration would be a claim the origin cannot honour,
+// and the reader would faithfully store it. It does carry an icon: PeerTube
+// refuses a video with none, so it names the instance's fallback poster, which
+// is a claim the origin CAN honour.
 func TestEmittedVideoOmitsWhatTheOriginCannotBack(t *testing.T) {
 	repo := newContractRepo()
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
@@ -93,10 +95,12 @@ func TestEmittedVideoOmitsWhatTheOriginCannotBack(t *testing.T) {
 	if !ok {
 		t.Fatalf("object is not a JSON object: %T", raw["object"])
 	}
-	for _, key := range []string{"icon", "duration"} {
-		if _, present := obj[key]; present {
-			t.Errorf("%q is present on a video with no poster and no ladder: %v", key, obj[key])
-		}
+	if _, present := obj["duration"]; present {
+		t.Errorf("duration is present on a video with no probe: %v", obj["duration"])
+	}
+	icons, _ := obj["icon"].([]any)
+	if len(icons) != 1 || icons[0].(map[string]any)["url"] != "https://videos.example/api/v1/federation/poster.png" {
+		t.Errorf("icon = %v, want the fallback poster: the video has none of its own", obj["icon"])
 	}
 	parsed := parseEmittedVideo(t, payload)
 	if _, streamURL := videoLinks(parsed.URL); streamURL != nil {
