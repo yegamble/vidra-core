@@ -148,12 +148,19 @@ func (v Verifier) Verify(ctx context.Context, req *http.Request, body []byte) (s
 		return "", errors.New("httpsig: no key resolver configured")
 	}
 	pub, err := v.ResolveKey(ctx, keyID)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrKeyPolicy) {
 		return "", err
 	}
+	// A key outside policy gets no RSA work; it is treated as a key that did
+	// not verify, so the rotation retry below still runs — a peer that had an
+	// out-of-policy key cached here can recover by publishing a sane one.
+	// Resolvers are expected to refuse such a key themselves; the check here
+	// is the backstop for one that does not.
 	hashed := sha256.Sum256([]byte(signingString))
-	if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, hashed[:], sig); err == nil {
-		return keyID, nil
+	if err == nil && CheckKeyPolicy(pub) == nil {
+		if verifyPKCS1v15(pub, crypto.SHA256, hashed[:], sig) == nil {
+			return keyID, nil
+		}
 	}
 	// The cached key did not verify. Before refusing, try ONCE against a freshly
 	// fetched one: the overwhelmingly common cause of this in production is a
@@ -164,10 +171,10 @@ func (v Verifier) Verify(ctx context.Context, req *http.Request, body []byte) (s
 		return "", errSignatureFailed
 	}
 	fresh, ferr := v.RefreshKey(ctx, keyID)
-	if ferr != nil || fresh == nil {
+	if ferr != nil || CheckKeyPolicy(fresh) != nil {
 		return "", errSignatureFailed
 	}
-	if err := rsa.VerifyPKCS1v15(fresh, crypto.SHA256, hashed[:], sig); err != nil {
+	if err := verifyPKCS1v15(fresh, crypto.SHA256, hashed[:], sig); err != nil {
 		return "", fmt.Errorf("%w: %w", errSignatureFailed, err)
 	}
 	return keyID, nil
@@ -257,4 +264,39 @@ func parseSignatureHeader(h string) (map[string]string, error) {
 		return nil, errors.New("httpsig: malformed Signature header")
 	}
 	return out, nil
+}
+
+// verifyPKCS1v15 is rsa.VerifyPKCS1v15, behind a seam so a test can prove the
+// RSA operation never runs on a key the policy refuses.
+var verifyPKCS1v15 = rsa.VerifyPKCS1v15
+
+// The RSA public keys this instance will verify a signature against. The key
+// is chosen by whoever publishes the actor document, so its size is the
+// sender's choice; the bounds keep it to what the fediverse actually issues
+// (2048 and 4096 bits, e=65537) with headroom, and refuse the rest.
+const (
+	MinRSABits = 2048
+	MaxRSABits = 8192
+	// maxRSAExponent keeps e within 31 bits.
+	maxRSAExponent = 1<<31 - 1
+)
+
+// ErrKeyPolicy reports a public key outside the bounds above. Callers surface
+// it as an ordinary signature failure; it never reaches the wire.
+var ErrKeyPolicy = errors.New("httpsig: public key outside policy")
+
+// CheckKeyPolicy reports whether pub is a key this instance will verify
+// against: modulus within [MinRSABits, MaxRSABits], exponent odd, >= 3 and
+// within 31 bits.
+func CheckKeyPolicy(pub *rsa.PublicKey) error {
+	if pub == nil || pub.N == nil {
+		return ErrKeyPolicy
+	}
+	if bits := pub.N.BitLen(); bits < MinRSABits || bits > MaxRSABits {
+		return fmt.Errorf("%w: %d-bit modulus", ErrKeyPolicy, bits)
+	}
+	if pub.E < 3 || pub.E > maxRSAExponent || pub.E%2 == 0 {
+		return fmt.Errorf("%w: exponent", ErrKeyPolicy)
+	}
+	return nil
 }

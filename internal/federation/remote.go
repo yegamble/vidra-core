@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/vidra/vidra-core/internal/httpsig"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 )
@@ -247,10 +248,16 @@ func (s *Service) fetchActor(ctx context.Context, actorURL string) (fetchedActor
 	if strings.TrimSpace(fa.PublicKey.PublicKeyPem) == "" {
 		return fetchedActor{}, errors.New("federation: remote actor has no public key")
 	}
+	// A key outside policy is refused here, before the document is cached, so
+	// it never becomes an actor key anything else trusts.
+	if _, err := parseRSAPublicKey(fa.PublicKey.PublicKeyPem); errors.Is(err, httpsig.ErrKeyPolicy) {
+		return fetchedActor{}, err
+	}
 	return fa, nil
 }
 
-// parseRSAPublicKey parses a PEM SPKI public key and asserts it is RSA.
+// parseRSAPublicKey parses a PEM SPKI public key and asserts it is RSA and
+// within httpsig's key policy — checked at parse, before any verification.
 func parseRSAPublicKey(pemStr string) (*rsa.PublicKey, error) {
 	block, _ := pem.Decode([]byte(pemStr))
 	if block == nil {
@@ -263,6 +270,9 @@ func parseRSAPublicKey(pemStr string) (*rsa.PublicKey, error) {
 	rp, ok := pub.(*rsa.PublicKey)
 	if !ok {
 		return nil, errors.New("federation: public key is not RSA")
+	}
+	if err := httpsig.CheckKeyPolicy(rp); err != nil {
+		return nil, fmt.Errorf("federation: %w", err)
 	}
 	return rp, nil
 }
