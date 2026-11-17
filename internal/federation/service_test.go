@@ -93,6 +93,9 @@ type fakeRepo struct {
 	// userRemoteRatings are local users' votes on remote videos (0179), keyed
 	// userID|remoteVideoID.
 	userRemoteRatings map[string]string
+	// afterRemoteVideoLookup runs once a held remote video has been read: a
+	// test uses it to land a concurrent Delete between a lookup and the write.
+	afterRemoteVideoLookup func()
 }
 
 func (f fakeRepo) ListChannelBackfillVideoIDs(_ context.Context, arg sqlcgen.ListChannelBackfillVideoIDsParams) ([]uuid.UUID, error) {
@@ -720,6 +723,20 @@ func (f fakeRepo) UpsertRemoteVideo(_ context.Context, arg sqlcgen.UpsertRemoteV
 	return sqlcgen.UpsertRemoteVideoRow{ID: rv.id}, nil
 }
 
+// UpdateRemoteVideo mirrors the real UPDATE: an absent row is not created.
+func (f fakeRepo) UpdateRemoteVideo(_ context.Context, arg sqlcgen.UpdateRemoteVideoParams) (sqlcgen.UpdateRemoteVideoRow, error) {
+	rv, ok := f.remoteVideos[arg.ObjectUrl]
+	if !ok {
+		return sqlcgen.UpdateRemoteVideoRow{}, pgx.ErrNoRows
+	}
+	rv.params = sqlcgen.UpsertRemoteVideoParams{
+		ObjectUrl: arg.ObjectUrl, RemoteActorUrl: arg.RemoteActorUrl, Title: arg.Title, Description: arg.Description,
+		DurationSeconds: arg.DurationSeconds, PublishedAt: arg.PublishedAt, WatchUrl: arg.WatchUrl, StreamUrl: arg.StreamUrl,
+		IsSensitive: arg.IsSensitive, SensitiveFlags: arg.SensitiveFlags,
+	}
+	return sqlcgen.UpdateRemoteVideoRow{ID: rv.id, ThumbnailKey: rv.thumbnailKey}, nil
+}
+
 func (f fakeRepo) SetRemoteVideoThumbnail(_ context.Context, arg sqlcgen.SetRemoteVideoThumbnailParams) error {
 	for _, rv := range f.remoteVideos {
 		if rv.id == arg.ID {
@@ -998,7 +1015,11 @@ func (f fakeRepo) DeleteComment(_ context.Context, id uuid.UUID) error {
 
 func (f fakeRepo) GetRemoteVideoByObjectURL(_ context.Context, objectURL string) (sqlcgen.GetRemoteVideoByObjectURLRow, error) {
 	if rv, ok := f.remoteVideos[objectURL]; ok {
-		return sqlcgen.GetRemoteVideoByObjectURLRow{ID: rv.id, ObjectUrl: objectURL, RemoteActorUrl: rv.params.RemoteActorUrl}, nil
+		row := sqlcgen.GetRemoteVideoByObjectURLRow{ID: rv.id, ObjectUrl: objectURL, RemoteActorUrl: rv.params.RemoteActorUrl}
+		if f.afterRemoteVideoLookup != nil {
+			f.afterRemoteVideoLookup()
+		}
+		return row, nil
 	}
 	return sqlcgen.GetRemoteVideoByObjectURLRow{}, pgx.ErrNoRows
 }

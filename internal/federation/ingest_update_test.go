@@ -10,6 +10,7 @@ package federation
 import (
 	"bytes"
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
@@ -83,4 +84,68 @@ func TestUpdateOfAHeldVideo(t *testing.T) {
 			}
 		})
 	}
+}
+
+// PeerTube tells its followers a video stopped being public with a Delete —
+// and, when one of its own federation jobs was still running, with an Update
+// of the same video straight after. An Update that could CREATE a row put the
+// deleted video back: the interop lab found 4 of 5 videos made private on
+// PeerTube still listed here, and 0 of 5 on a stock PeerTube.
+func TestUpdateNeverCreatesAVideo(t *testing.T) {
+	ctx := context.Background()
+	const originTitle = "Dawn crossing at Whitegull Sound"
+	update := func(t *testing.T) []byte { return asSentBy(t, "inbound/peertube_update_video.json", ctPTAccount) }
+	// The channel AND the account are followed: no gate hides what is tested.
+	serve := func(t *testing.T, repo fakeRepo, originServesVideo bool) *Service {
+		routes := map[string]string{ctPTChannel: "inbound/peertube_actor_group.json"}
+		if originServesVideo {
+			routes[ctPTVideo] = "inbound/peertube_video_object.json"
+		}
+		cacheContractActor(repo, ctPTChannel, "Group", "kayak_diaries", "peertube.example")
+		return NewService(repo, WithBaseURL(contractBase), WithFollowEdgeChecker(edgesFor(ctPTChannel, ctPTAccount)),
+			WithFetchClient(&http.Client{Transport: fixtureTransport{t: t, routes: routes}}))
+	}
+	hold := func(repo fakeRepo) {
+		repo.remoteVideos[ctPTVideo] = &fakeRemoteVideo{id: uuid.New(), params: sqlcgen.UpsertRemoteVideoParams{
+			ObjectUrl: ctPTVideo, RemoteActorUrl: ctPTChannel, Title: originTitle,
+		}}
+	}
+
+	t.Run("a Delete, then a stale Update: the video stays gone", func(t *testing.T) {
+		repo := newContractRepo()
+		svc := serve(t, repo, false) // private now: its origin no longer serves it
+		hold(repo)
+		for _, body := range [][]byte{asSentBy(t, "inbound/peertube_delete_video.json", ctPTAccount), update(t)} {
+			if err := svc.HandleInbox(ctx, ctPTAccount, body); err != nil {
+				t.Fatalf("HandleInbox: %v", err)
+			}
+		}
+		if rv, ok := repo.remoteVideos[ctPTVideo]; ok {
+			t.Errorf("the Update that followed the Delete put the video back: %+v", rv.params)
+		}
+	})
+	t.Run("an unknown video is stored as its origin serves it, not as the Update says", func(t *testing.T) {
+		repo := newContractRepo()
+		if err := serve(t, repo, true).HandleInbox(ctx, ctPTAccount, update(t)); err != nil {
+			t.Fatalf("HandleInbox: %v", err)
+		}
+		rv, ok := repo.remoteVideos[ctPTVideo]
+		if !ok {
+			t.Fatal("a video its origin serves was not stored")
+		}
+		if rv.params.Title != originTitle {
+			t.Errorf("title = %q, want the origin's %q", rv.params.Title, originTitle)
+		}
+	})
+	t.Run("a held video deleted while its Update is in flight is not re-created", func(t *testing.T) {
+		repo := newContractRepo()
+		hold(repo)
+		repo.afterRemoteVideoLookup = func() { delete(repo.remoteVideos, ctPTVideo) }
+		if err := serve(t, repo, true).HandleInbox(ctx, ctPTAccount, update(t)); err != nil {
+			t.Fatalf("HandleInbox: %v", err)
+		}
+		if rv, ok := repo.remoteVideos[ctPTVideo]; ok {
+			t.Errorf("an edit re-inserted a video deleted under it: %+v", rv.params)
+		}
+	})
 }

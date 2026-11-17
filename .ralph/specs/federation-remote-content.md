@@ -101,6 +101,10 @@ New table `remote_videos`:
   video's origin host — no follow edge and no attribution to the signer required
   (PeerTube sends it as the uploader's account). The row keeps its actor. An Update
   of an unknown video passes the same gates as a `Create` (§2).
+- An `Update` never creates a row from the object it carries. A held row is edited
+  with a plain UPDATE, so one the origin deleted meanwhile stays deleted; an unknown
+  video is re-fetched from its origin and stored only if the origin still serves it
+  (PeerTube sends a stale Update after the Delete of a video that went private).
 - `Delete` (object = a known remote video / actor): delete the row(s); an actor Delete
   removes the actor's videos + comments (cascade via remote_actor_url). Authority:
   signer == the object's attributed actor, or the signer's actor shares the object's

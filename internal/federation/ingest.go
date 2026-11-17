@@ -112,7 +112,8 @@ func (s *Service) handleCreateVideo(ctx context.Context, act inboxActivity, sign
 	if err != nil {
 		return err
 	}
-	if fallback == "" {
+	held := fallback != ""
+	if !held {
 		if !attributedToIncludes(obj.AttributedTo, signerActorURL) {
 			return nil
 		}
@@ -124,6 +125,11 @@ func (s *Service) handleCreateVideo(ctx context.Context, act inboxActivity, sign
 			return nil // nobody here follows this actor → accept-and-ignore
 		}
 		fallback = signerActorURL
+		if act.Type == "Update" {
+			if obj, ok = s.originVideo(ctx, obj, signerActorURL); !ok {
+				return nil // its origin does not serve it (any more) → accept-and-ignore
+			}
+		}
 	}
 	// Its channel when the object names one; else the actor a held video is
 	// already stored under, or — for a video new here — the signer.
@@ -131,8 +137,30 @@ func (s *Service) handleCreateVideo(ctx context.Context, act inboxActivity, sign
 	if err != nil {
 		return nil // unresolvable attribution → accept-and-ignore
 	}
+	if held {
+		return s.updateHeldRemoteVideo(ctx, owner, obj)
+	}
 	_, err = s.storeRemoteVideo(ctx, owner, obj)
 	return err
+}
+
+// originVideo re-reads the video an Update names from its origin, for a video
+// this instance does not hold: an Update never creates a row from the object
+// it carries.
+//
+// When a video stops being public PeerTube sends a Delete and — if one of its
+// own federation jobs was still running — an Update of the same video straight
+// after, built from the copy that job loaded while the video was public. Taken
+// at its word, that Update put the video back: the interop lab found 4 of 5
+// videos made private on PeerTube still listed here. A stock PeerTube kept
+// none, because it re-reads an unknown video from its origin (process-update.ts,
+// getOrCreateAPVideo) and the origin no longer serves it.
+func (s *Service) originVideo(ctx context.Context, inline apVideoObject, signerActorURL string) (apVideoObject, bool) {
+	obj, err := s.fetchVideoObject(ctx, inline.ID)
+	if err != nil || obj.Type != "Video" || obj.ID != inline.ID || !attributedToIncludes(obj.AttributedTo, signerActorURL) {
+		return apVideoObject{}, false
+	}
+	return obj, true
 }
 
 // heldVideoActor returns the actor an Update's video is stored under, or ""
@@ -263,6 +291,39 @@ func (s *Service) hasAcceptedFollowEdge(ctx context.Context, remoteActorURL stri
 // row so search-initiated resolution (config-parity W13) can surface the video
 // by id; the inbox callers ignore it.
 func (s *Service) storeRemoteVideo(ctx context.Context, ownerActorURL string, obj apVideoObject) (sqlcgen.UpsertRemoteVideoRow, error) {
+	row, err := s.repo.UpsertRemoteVideo(ctx, remoteVideoParams(ownerActorURL, obj))
+	if err != nil {
+		return sqlcgen.UpsertRemoteVideoRow{}, err
+	}
+	// Best-effort poster cache (§5): failure must never fail ingestion, and an
+	// already-cached thumbnail is kept.
+	if row.ThumbnailKey == nil {
+		s.cacheRemoteThumbnail(ctx, row.ID, iconURL(obj.Icon))
+	}
+	return row, nil
+}
+
+// updateHeldRemoteVideo is storeRemoteVideo for an edit of a held video: the
+// same fields, UPDATE only. A row the origin's Delete removed since the caller
+// looked it up stays deleted.
+func (s *Service) updateHeldRemoteVideo(ctx context.Context, ownerActorURL string, obj apVideoObject) error {
+	p := remoteVideoParams(ownerActorURL, obj)
+	row, err := s.repo.UpdateRemoteVideo(ctx, sqlcgen.UpdateRemoteVideoParams{
+		ObjectUrl: p.ObjectUrl, RemoteActorUrl: p.RemoteActorUrl, Title: p.Title, Description: p.Description,
+		DurationSeconds: p.DurationSeconds, PublishedAt: p.PublishedAt, WatchUrl: p.WatchUrl, StreamUrl: p.StreamUrl,
+		IsSensitive: p.IsSensitive, SensitiveFlags: p.SensitiveFlags,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err == nil && row.ThumbnailKey == nil {
+		s.cacheRemoteThumbnail(ctx, row.ID, iconURL(obj.Icon))
+	}
+	return err
+}
+
+// remoteVideoParams bounds a video object's fields into its stored row.
+func remoteVideoParams(ownerActorURL string, obj apVideoObject) sqlcgen.UpsertRemoteVideoParams {
 	watchURL, streamURL := videoLinks(obj.URL)
 	if watchURL == "" {
 		watchURL = obj.ID
@@ -271,7 +332,7 @@ func (s *Service) storeRemoteVideo(ctx context.Context, ownerActorURL string, ob
 	if t, err := time.Parse(time.RFC3339, obj.Published); err == nil {
 		published = pgtype.Timestamptz{Time: t, Valid: true}
 	}
-	row, err := s.repo.UpsertRemoteVideo(ctx, sqlcgen.UpsertRemoteVideoParams{
+	return sqlcgen.UpsertRemoteVideoParams{
 		ObjectUrl:       obj.ID,
 		RemoteActorUrl:  ownerActorURL,
 		Title:           truncate(obj.Name, maxRemoteTitleLen),
@@ -282,16 +343,7 @@ func (s *Service) storeRemoteVideo(ctx context.Context, ownerActorURL string, ob
 		StreamUrl:       streamURL,
 		IsSensitive:     apSensitive(obj.Sensitive),
 		SensitiveFlags:  apSensitiveFlags(obj.Tag, apSensitive(obj.Sensitive)),
-	})
-	if err != nil {
-		return sqlcgen.UpsertRemoteVideoRow{}, err
 	}
-	// Best-effort poster cache (§5): failure must never fail ingestion, and an
-	// already-cached thumbnail is kept.
-	if row.ThumbnailKey == nil {
-		s.cacheRemoteThumbnail(ctx, row.ID, iconURL(obj.Icon))
-	}
-	return row, nil
 }
 
 // fetchVideoObject GETs and parses an announced object document through the

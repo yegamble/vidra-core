@@ -231,6 +231,9 @@ func (fakeFedRepo) RequeueCancelledDelivery(context.Context, uuid.UUID) (int64, 
 func (fakeFedRepo) UpsertRemoteVideo(context.Context, sqlcgen.UpsertRemoteVideoParams) (sqlcgen.UpsertRemoteVideoRow, error) {
 	return sqlcgen.UpsertRemoteVideoRow{ID: uuid.New()}, nil
 }
+func (fakeFedRepo) UpdateRemoteVideo(context.Context, sqlcgen.UpdateRemoteVideoParams) (sqlcgen.UpdateRemoteVideoRow, error) {
+	return sqlcgen.UpdateRemoteVideoRow{}, pgx.ErrNoRows
+}
 func (fakeFedRepo) SetRemoteVideoThumbnail(context.Context, sqlcgen.SetRemoteVideoThumbnailParams) error {
 	return nil
 }

@@ -23,6 +23,25 @@ ON CONFLICT (object_url) DO UPDATE SET
     updated_at       = now()
 RETURNING id, thumbnail_key;
 
+-- name: UpdateRemoteVideo :one
+-- An inbound Update of a video ALREADY held: the metadata UpsertRemoteVideo
+-- writes, and never an insert. If the origin's Delete lands between the
+-- caller's lookup and this statement there is no row to match, so the edit
+-- returns nothing instead of putting the video back (an upsert would).
+UPDATE remote_videos SET
+    remote_actor_url = sqlc.arg('remote_actor_url'),
+    title            = sqlc.arg('title'),
+    description      = sqlc.arg('description'),
+    duration_seconds = sqlc.arg('duration_seconds'),
+    published_at     = sqlc.arg('published_at'),
+    watch_url        = sqlc.arg('watch_url'),
+    stream_url       = sqlc.arg('stream_url'),
+    is_sensitive     = sqlc.arg('is_sensitive'),
+    sensitive_flags  = COALESCE(sqlc.arg('sensitive_flags')::text[], '{}'),
+    updated_at       = now()
+WHERE object_url = sqlc.arg('object_url')
+RETURNING id, thumbnail_key;
+
 -- name: SetRemoteVideoThumbnail :exec
 -- Records the locally cached poster key (remote-thumbnails/<id>.jpg) after a
 -- successful best-effort fetch.
