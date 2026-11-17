@@ -124,8 +124,9 @@ func (s *Service) dispatchActivity(ctx context.Context, act inboxActivity, signe
 			}
 			return s.handleUpdateNote(ctx, act, signerActorURL)
 		}
-		// Update{Video} upserts under the same authority + follow-edge gate as
-		// Create (remote-content §7).
+		// Update{Video}: a video already held is edited on its origin's
+		// authority; an unknown one passes the same gates as a Create
+		// (remote-content §7).
 		return s.handleCreateVideo(ctx, act, signerActorURL)
 	case "Delete":
 		return s.handleDelete(ctx, act, signerActorURL)
