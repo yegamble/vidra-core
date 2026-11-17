@@ -695,6 +695,30 @@ func TestInboxAcceptsSignedFollow(t *testing.T) {
 	}
 }
 
+// A forwarded activity — another server's, by its actor and id, passed on and
+// signed by a peer — is answered 202 and not applied. A 400 here is what the
+// interop lab saw PeerTube count against the inbox it delivered to.
+func TestInboxAnswers202ToAForwardedActivity(t *testing.T) {
+	key, pubPEM := signerKeyPEM(t)
+	srv, repo := fedServerRepo(fedTestConfig())
+	repo.remoteActors[bobActor] = sqlcgen.RemoteActor{ActorUrl: bobActor, PublicKeyPem: pubPEM}
+
+	body := []byte(`{"id":"https://third.example/act/1","type":"Follow","actor":"https://third.example/accounts/carol",` +
+		`"object":"https://videos.example/video-channels/films"}`)
+	req := httptest.NewRequest(http.MethodPost, "https://videos.example/inbox", bytes.NewReader(body))
+	if err := (httpsig.Signer{KeyID: bobActor + "#main-key", Priv: key}).Sign(req, body); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(repo.remoteFollows) != 0 {
+		t.Errorf("a forwarded Follow was applied: %+v", repo.remoteFollows)
+	}
+}
+
 func TestInboxRejectsBadSignature(t *testing.T) {
 	key, pubPEM := signerKeyPEM(t)
 	srv, repo := fedServerRepo(fedTestConfig())

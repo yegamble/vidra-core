@@ -505,11 +505,17 @@ func (s *Service) handleAccept(ctx context.Context, act inboxActivity, signerAct
 	if !ok {
 		return nil
 	}
-	if _, err := s.repo.AcceptRemoteChannelFollowByActivity(ctx, sqlcgen.AcceptRemoteChannelFollowByActivityParams{
+	accepted, err := s.repo.AcceptRemoteChannelFollowByActivity(ctx, sqlcgen.AcceptRemoteChannelFollowByActivityParams{
 		FollowActivityUrl: followURL,
 		RemoteActorUrl:    signerActorURL,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
+	}
+	if accepted > 0 {
+		// The channel pushes only what it publishes from now on; what it
+		// already published is read from its outbox (outbox_crawl_queue.go).
+		s.queueOutboxCrawl(ctx, signerActorURL)
 	}
 	// The Accept may also answer one of our channel follow-backs
 	// (federation_auto_follow_back, config-parity W12): same signer-is-the-
