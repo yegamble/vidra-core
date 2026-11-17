@@ -11,6 +11,31 @@ import (
 	"github.com/google/uuid"
 )
 
+const fillVideoDurationIfUnknown = `-- name: FillVideoDurationIfUnknown :execrows
+INSERT INTO video_metadata (video_id, duration_seconds, updated_at)
+VALUES ($1, $2, now())
+ON CONFLICT (video_id) DO UPDATE
+SET duration_seconds = EXCLUDED.duration_seconds,
+    updated_at       = now()
+WHERE video_metadata.duration_seconds IS NULL
+`
+
+type FillVideoDurationIfUnknownParams struct {
+	VideoID         uuid.UUID `json:"video_id"`
+	DurationSeconds *int32    `json:"duration_seconds"`
+}
+
+// The transcode's measurement of a duration the probe could not read (a WebM
+// written to a pipe states none). FILL-ONLY: never overwrites a probed or
+// imported value, so a rerun is a no-op. Width/height are left alone.
+func (q *Queries) FillVideoDurationIfUnknown(ctx context.Context, arg FillVideoDurationIfUnknownParams) (int64, error) {
+	result, err := q.db.Exec(ctx, fillVideoDurationIfUnknown, arg.VideoID, arg.DurationSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getVideoMetadata = `-- name: GetVideoMetadata :one
 SELECT video_id, duration_seconds, width, height, updated_at
 FROM video_metadata

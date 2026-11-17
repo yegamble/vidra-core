@@ -312,6 +312,9 @@ type packageResult struct {
 	masterKey string
 	format    string
 	rungSizes map[int]int64
+	// seconds is the tree's measured duration (HLSResult.DurationSeconds); zero
+	// from a packager that does not measure.
+	seconds float64
 }
 
 // PackagerTS and PackagerCMAF are the selectable packaging formats: the
