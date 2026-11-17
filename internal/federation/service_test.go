@@ -333,6 +333,9 @@ type fakeDelivery struct {
 	// updatedAt is what the redelivery window is measured against; the real
 	// column moves on every state change.
 	updatedAt time.Time
+	// seq is the enqueue order, which is the order the drain sends in (the
+	// claim is oldest first).
+	seq int
 }
 
 func (f fakeRepo) CountUsers(context.Context) (int64, error)        { return f.users, f.err }
@@ -618,6 +621,7 @@ func (f fakeRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDelivery
 		},
 		state:    "pending",
 		enqueued: arg,
+		seq:      len(f.deliveries),
 	}
 	return nil
 }
