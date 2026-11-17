@@ -18,6 +18,15 @@
         ],
         "content": "Part two.",
         "downloadEnabled": false,
+        "icon": [
+          {
+            "height": 360,
+            "mediaType": "image/png",
+            "type": "Image",
+            "url": "https://videos.example/api/v1/federation/poster.png",
+            "width": 640
+          }
+        ],
         "id": "https://videos.example/videos/8b2e0f53-6c4d-4a9f-b7e1-0d9c8b7a6f5e",
         "mediaType": "text/markdown",
         "name": "Night paddle",
@@ -72,6 +81,13 @@
             "mediaType": "image/jpeg",
             "type": "Image",
             "url": "https://videos.example/api/v1/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d/thumbnail"
+          },
+          {
+            "height": 360,
+            "mediaType": "image/png",
+            "type": "Image",
+            "url": "https://videos.example/api/v1/federation/poster.png",
+            "width": 640
           }
         ],
         "id": "https://videos.example/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d",

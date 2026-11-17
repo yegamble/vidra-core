@@ -273,6 +273,14 @@ func (s *Server) accountCollection(kind string) echo.HandlerFunc {
 	}
 }
 
+// handleFallbackPoster serves the image a video object names as its icon when
+// the video has no poster of its own (federation.FallbackPosterPNG). Public
+// and the same for every video, so a remote server may cache it for a day.
+func (s *Server) handleFallbackPoster(c *echo.Context) error {
+	c.Response().Header().Set(echo.HeaderCacheControl, "public, max-age=86400")
+	return c.Blob(http.StatusOK, "image/png", federation.FallbackPosterPNG())
+}
+
 // handleInbox verifies an inbound activity's HTTP signature (resolving the
 // signer's key via the remote-actor cache), then dispatches it. Used for the
 // shared /inbox and per-actor inbox routes; the target is read from the activity,

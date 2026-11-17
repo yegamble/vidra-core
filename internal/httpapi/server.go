@@ -1600,6 +1600,9 @@ func (s *Server) routes() {
 		// shipped Caddy config now does. A non-AP Accept is 406, like every
 		// other document in this block.
 		s.echo.GET("/videos/:id", s.handleVideoObject)
+		// The icon a video object names when the video has no poster this
+		// instance can size. Under /api so the proxy sends it here.
+		s.echo.GET(federation.FallbackPosterPath, s.handleFallbackPoster)
 		// The id a video carried before /videos/{uuid}: this instance's own older
 		// form, or a PeerTube-imported video's id at the source. Redirects.
 		s.echo.GET("/videos/watch/:id", s.handleLegacyVideoObject)
