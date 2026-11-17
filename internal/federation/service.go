@@ -244,6 +244,9 @@ type Service struct {
 	// fetchClient, when set, overrides the SSRF-guarded client used for remote
 	// fetches (tests inject one; production leaves it nil to build the guard).
 	fetchClient *http.Client
+	// actorFetches bounds the outbound actor fetches an inbound request can
+	// cause (actor_fetch_gate.go).
+	actorFetches *actorFetchGate
 
 	// Federation policy gates (config-parity W12): provider funcs over the
 	// instance-settings overlay, read per inbound activity so an admin change
@@ -372,7 +375,7 @@ func (s *Service) autoFollowBackEnabled() bool {
 
 // NewService builds a federation Service over the given repository.
 func NewService(repo Repository, opts ...Option) *Service {
-	s := &Service{repo: repo}
+	s := &Service{repo: repo, actorFetches: newActorFetchGate()}
 	if ir, ok := repo.(InstanceRepository); ok {
 		s.inst = ir
 	}

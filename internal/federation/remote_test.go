@@ -9,8 +9,11 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/vidra/vidra-core/internal/httpsig"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -170,5 +173,147 @@ func TestCacheFetchedActorDropsCrossHostInboxes(t *testing.T) {
 				t.Errorf("shared inbox cached = %v, want %v", got, tc.wantShared)
 			}
 		})
+	}
+}
+
+// fetchBoundsClock is a settable clock for the actor-fetch gate.
+type fetchBoundsClock struct{ t time.Time }
+
+func (c *fetchBoundsClock) now() time.Time { return c.t }
+
+// rotatingActorServer serves an actor document whose key the test can swap,
+// and counts every fetch.
+func rotatingActorServer(t *testing.T, pem *string) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/activity+json")
+		_, _ = w.Write([]byte(`{"id":"http://` + r.Host + `/accounts/bob","type":"Person",` +
+			`"inbox":"http://` + r.Host + `/accounts/bob/inbox","publicKey":{"publicKeyPem":` + quote(*pem) + `}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+func signedInboxRequest(t *testing.T, keyID string, priv *rsa.PrivateKey) (*http.Request, []byte) {
+	t.Helper()
+	body := []byte(`{"type":"Create"}`)
+	req := httptest.NewRequest(http.MethodPost, "https://local.example.test/inbox", nil)
+	if err := (httpsig.Signer{KeyID: keyID, Priv: priv}).Sign(req, body); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	return req, body
+}
+
+// newFetchBoundsService returns a service over repo with a settable clock and
+// the same verifier wiring the inbox handler uses.
+func newFetchBoundsService(repo fakeRepo) (*Service, *fetchBoundsClock, httpsig.Verifier) {
+	svc := NewService(repo, WithAllowPrivateFetch(true))
+	clk := &fetchBoundsClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	svc.actorFetches.now = clk.now
+	return svc, clk, httpsig.Verifier{ResolveKey: svc.ResolveKey, RefreshKey: svc.ResolveKeyFresh}
+}
+
+// Fifty forged signatures naming one cached actor buy one key re-fetch, not
+// fifty: the rotation retry runs at most once per actor per cooldown.
+func TestForgedSignaturesAgainstCachedActorBuyOneRefetch(t *testing.T) {
+	realPEM, _ := testActorPEM(t)
+	_, forger := testActorPEM(t)
+	srv, hits := rotatingActorServer(t, &realPEM)
+	repo := newRemoteRepo()
+	actorURL := srv.URL + "/accounts/bob"
+	repo.remoteActors[actorURL] = sqlcgen.RemoteActor{ActorUrl: actorURL, PublicKeyPem: realPEM}
+	_, _, v := newFetchBoundsService(repo)
+
+	for i := 0; i < 50; i++ {
+		req, body := signedInboxRequest(t, actorURL+"#main-key", forger)
+		if _, err := v.Verify(context.Background(), req, body); err == nil {
+			t.Fatal("a forged signature verified")
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("50 forged requests caused %d outbound fetches, want 1", got)
+	}
+}
+
+// Fifty requests naming a keyId that does not resolve cause one fetch: the
+// failure is remembered for the cooldown, then tried again.
+func TestUnresolvableKeyIDIsNegativeCached(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	svc, clk, _ := newFetchBoundsService(newRemoteRepo())
+
+	for i := 0; i < 50; i++ {
+		if _, err := svc.ResolveKey(context.Background(), srv.URL+"/accounts/ghost#main-key"); err == nil {
+			t.Fatal("an unresolvable keyId resolved")
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("50 unresolvable keyIds caused %d outbound fetches, want 1", got)
+	}
+	clk.t = clk.t.Add(actorFetchCooldown + time.Second)
+	_, _ = svc.ResolveKey(context.Background(), srv.URL+"/accounts/ghost#main-key")
+	if got := hits.Load(); got != 2 {
+		t.Fatalf("after the cooldown: %d fetches, want 2", got)
+	}
+}
+
+// A blocked host is never fetched — not to resolve a new actor, and not to
+// refresh a cached one.
+func TestBlockedHostIsNeverFetched(t *testing.T) {
+	pemStr, _ := testActorPEM(t)
+	srv, hits := rotatingActorServer(t, &pemStr)
+	repo := newRemoteRepo()
+	repo.blockedDomains = map[string]bool{"127.0.0.1": true}
+	cached := srv.URL + "/accounts/cached"
+	repo.remoteActors[cached] = sqlcgen.RemoteActor{ActorUrl: cached, PublicKeyPem: pemStr}
+	svc, _, _ := newFetchBoundsService(repo)
+
+	if _, err := svc.ResolveKey(context.Background(), srv.URL+"/accounts/bob#main-key"); err == nil {
+		t.Error("an actor on a blocked host resolved")
+	}
+	if _, err := svc.ResolveKeyFresh(context.Background(), cached+"#main-key"); err == nil {
+		t.Error("a cached actor on a blocked host was refreshed")
+	}
+	if got := hits.Load(); got != 0 {
+		t.Fatalf("a blocked host was fetched %d times", got)
+	}
+}
+
+// A peer that rotates its key is picked up on the first failure, and a second
+// rotation inside the cooldown is picked up once the cooldown has passed.
+func TestRotatedKeyPickedUpOnFirstFailureAndAfterCooldown(t *testing.T) {
+	oldPEM, _ := testActorPEM(t)
+	newPEM, newKey := testActorPEM(t)
+	servedPEM := newPEM
+	srv, hits := rotatingActorServer(t, &servedPEM)
+	repo := newRemoteRepo()
+	actorURL := srv.URL + "/accounts/bob"
+	repo.remoteActors[actorURL] = sqlcgen.RemoteActor{ActorUrl: actorURL, PublicKeyPem: oldPEM}
+	_, clk, v := newFetchBoundsService(repo)
+
+	req, body := signedInboxRequest(t, actorURL+"#main-key", newKey)
+	if _, err := v.Verify(context.Background(), req, body); err != nil {
+		t.Fatalf("first request after a rotation: %v", err)
+	}
+
+	thirdPEM, thirdKey := testActorPEM(t)
+	servedPEM = thirdPEM
+	req, body = signedInboxRequest(t, actorURL+"#main-key", thirdKey)
+	if _, err := v.Verify(context.Background(), req, body); err == nil {
+		t.Fatal("a second rotation inside the cooldown was fetched")
+	}
+	clk.t = clk.t.Add(actorFetchCooldown + time.Second)
+	req, body = signedInboxRequest(t, actorURL+"#main-key", thirdKey)
+	if _, err := v.Verify(context.Background(), req, body); err != nil {
+		t.Fatalf("rotation after the cooldown: %v", err)
+	}
+	if got := hits.Load(); got != 2 {
+		t.Fatalf("fetches = %d, want 2", got)
 	}
 }
