@@ -311,7 +311,18 @@ func TestContractGoldenVideoActivities(t *testing.T) {
 	if err := svc.DeleteVideo(ctx, ctVideoID, ctChannelID, true); err != nil {
 		t.Fatalf("DeleteVideo: %v", err)
 	}
-	assertGolden(t, "delete_video.json", takeSingleDelivery(t, repo))
+	// A retraction is two Deletes per inbox: the owner account's, which is the
+	// one PeerTube acts on, and the channel's (enqueueVideoDeletes).
+	if len(repo.deliveries) != 2 {
+		t.Fatalf("deliveries = %d, want the owner's Delete and the channel's", len(repo.deliveries))
+	}
+	for _, d := range repo.deliveries {
+		name := "delete_video.json"
+		if d.row.SigningUserID.Valid {
+			name = "delete_video_owner.json"
+		}
+		assertGolden(t, name, d.row.Payload)
+	}
 }
 
 func TestContractGoldenNoteActivities(t *testing.T) {
