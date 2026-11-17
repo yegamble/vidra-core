@@ -414,6 +414,7 @@ func (f fakeRepo) UpsertRemoteActor(_ context.Context, arg sqlcgen.UpsertRemoteA
 		SharedInboxUrl:    arg.SharedInboxUrl,
 		PublicKeyPem:      arg.PublicKeyPem,
 		FollowersUrl:      arg.FollowersUrl,
+		AttributedTo:      arg.AttributedTo,
 	}
 	return nil
 }
