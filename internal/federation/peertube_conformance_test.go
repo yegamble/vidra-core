@@ -520,6 +520,7 @@ var (
 	ptCaptionedID = uuid.MustParse("be503c86-9f70-4d2c-8b40-3a2f1e0d9c82")
 	ptShortNameID = uuid.MustParse("cf614d97-a081-4e3d-9c51-4b3a2f1e0d93")
 	ptUnsizedID   = uuid.MustParse("d0725ea8-b192-4f4e-8d62-5c4b3a2f1e04")
+	ptNoProbeID   = uuid.MustParse("e1836fb9-c2a3-4a5f-9e73-6d5c4b3a2f15")
 )
 
 // ptWorld is the contract world plus one video per conformance case.
@@ -553,6 +554,13 @@ func ptWorld(t *testing.T) (*Service, fakeRepo) {
 	if _, err := blobs.Put(t.Context(), media.VideoThumbnailKey(ptUnsizedID), strings.NewReader("not an image")); err != nil {
 		t.Fatalf("put unsized poster: %v", err)
 	}
+
+	// A source whose container states no duration: a WebM written to a pipe,
+	// as a browser recording is. The probe reads none.
+	noProbe := finished
+	noProbe.ID, noProbe.Title, noProbe.MetadataDurationSeconds = ptNoProbeID, "Recorded in a browser", nil
+	repo.videosByID[ptNoProbeID] = noProbe
+	ptPoster(t, blobs, media.VideoThumbnailKey(ptNoProbeID), 640, 360)
 
 	shortName := finished
 	shortName.ID, shortName.Title = ptShortNameID, "ab"
@@ -616,6 +624,16 @@ func TestVideoObjectPassesPeerTubeValidator(t *testing.T) {
 		// instance's fallback poster instead, a real image of that real size.
 		{name: "video with no thumbnail", id: ptNoThumbID, check: ptAssertFallbackIcon},
 		{name: "video whose poster cannot be sized", id: ptUnsizedID, check: ptAssertFallbackIcon},
+		// PeerTube requires a duration (videos.ts "duration format") and refuses
+		// the whole video without one: the interop lab uploaded a WebM that
+		// states none, and PeerTube logged "Video field is not valid to
+		// PeerTube: duration format" and stored nothing. An unknown duration is
+		// PT0S, which is what PeerTube itself sends when it does not know one.
+		{name: "video with no probed duration", id: ptNoProbeID, check: func(t *testing.T, v ptVerdict) {
+			if v.Object["duration"] != "PT0S" {
+				t.Errorf("duration = %v, want PT0S", v.Object["duration"])
+			}
+		}},
 		// PeerTube's name floor is 3 characters (constants.ts VIDEOS.NAME), and
 		// vidra allows 1: the interop lab's video titled "ab" was refused with
 		// "Video field is not valid to PeerTube: name". The object pads it, and

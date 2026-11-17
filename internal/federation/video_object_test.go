@@ -68,11 +68,11 @@ func TestEmittedVideoIsReadableByOurOwnIngest(t *testing.T) {
 }
 
 // TestEmittedVideoOmitsWhatTheOriginCannotBack: a video mid-transcode has no
-// ladder and no poster. The object must carry the html link, no stream link
-// and no duration — a PT0S duration would be a claim the origin cannot honour,
-// and the reader would faithfully store it. It does carry an icon: PeerTube
-// refuses a video with none, so it names the instance's fallback poster, which
-// is a claim the origin CAN honour.
+// ladder, no poster and no probed duration. The object must carry the html
+// link and no stream link. PeerTube refuses a video with no icon or no
+// duration, so those two are stated in the form that claims nothing: the
+// instance's fallback poster, and "PT0S", which PeerTube sends for a video
+// whose length it does not know and which this instance reads back as unknown.
 func TestEmittedVideoOmitsWhatTheOriginCannotBack(t *testing.T) {
 	repo := newContractRepo()
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
@@ -95,8 +95,11 @@ func TestEmittedVideoOmitsWhatTheOriginCannotBack(t *testing.T) {
 	if !ok {
 		t.Fatalf("object is not a JSON object: %T", raw["object"])
 	}
-	if _, present := obj["duration"]; present {
-		t.Errorf("duration is present on a video with no probe: %v", obj["duration"])
+	if obj["duration"] != "PT0S" {
+		t.Errorf("duration = %v on a video with no probe, want PT0S", obj["duration"])
+	}
+	if d := parseISODurationSeconds("PT0S"); d != nil {
+		t.Errorf("PT0S read back as %d seconds, want unknown", *d)
 	}
 	icons, _ := obj["icon"].([]any)
 	if len(icons) != 1 || icons[0].(map[string]any)["url"] != "https://videos.example/api/v1/federation/poster.png" {
@@ -191,11 +194,11 @@ func TestISODurationRoundTrip(t *testing.T) {
 			t.Errorf("isoDuration(%d) = %q, parsed back as %v", seconds, encoded, back)
 		}
 	}
-	if got := isoDuration(nil); got != "" {
-		t.Errorf("isoDuration(nil) = %q, want empty", got)
-	}
+	// Unknown is PT0S, and PT0S is read back as unknown.
 	zero := int32(0)
-	if got := isoDuration(&zero); got != "" {
-		t.Errorf("isoDuration(0) = %q, want empty", got)
+	for _, unknown := range []*int32{nil, &zero} {
+		if got := isoDuration(unknown); got != "PT0S" || parseISODurationSeconds(got) != nil {
+			t.Errorf("isoDuration(unknown) = %q, parsed back as %v; want PT0S and unknown", got, parseISODurationSeconds(got))
+		}
 	}
 }
