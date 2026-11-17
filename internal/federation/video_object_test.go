@@ -104,6 +104,29 @@ func TestEmittedVideoOmitsWhatTheOriginCannotBack(t *testing.T) {
 	}
 }
 
+// TestEmittedVideoNameMeetsPeerTubeMinimum: PeerTube refuses a whole video
+// whose name is shorter than 3 characters, counted the way its validator
+// counts (code points, less the variation selectors U+FE0E and U+FE0F). The
+// name on the wire is padded up to that, with spaces only, and a name already
+// long enough is not touched.
+func TestEmittedVideoNameMeetsPeerTubeMinimum(t *testing.T) {
+	emoji, sun, vs16 := string(rune(0x1F600)), string(rune(0x2600)), string(rune(0xFE0F))
+	for _, tc := range []struct{ title, want string }{
+		{"ab", "ab "},
+		{"a", "a  "},
+		{"abc", "abc"},
+		{"ab ", "ab "},
+		{emoji + emoji, emoji + emoji + " "}, // 2 code points, 8 bytes
+		{sun + vs16 + sun + vs16, sun + vs16 + sun + vs16 + " "}, // 4 code points, 2 to PeerTube
+		{"ok" + vs16, "ok" + vs16 + " "},
+		{sun + vs16 + "ab", sun + vs16 + "ab"},
+	} {
+		if got := videoObject(videoObjectInput{Title: tc.title})["name"]; got != tc.want {
+			t.Errorf("name for %q = %q, want %q", tc.title, got, tc.want)
+		}
+	}
+}
+
 // TestEmittedOutboxVideoMatchesTheDeliveredOne: discovery by walking the outbox
 // and receiving the push must yield the same object, or a peer that does both
 // sees a video change shape for no reason.

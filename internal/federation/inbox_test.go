@@ -155,6 +155,47 @@ func TestHandleInboxRejectsMalformed(t *testing.T) {
 	}
 }
 
+// PeerTube forwards a third party's activity to a video's audience: a comment,
+// a view or a share made on another server, POSTed and signed by the
+// forwarding instance while the activity inside — actor and id — is the third
+// party's. It cannot be attributed here (its proof is an LD signature this
+// instance does not verify), so it is not applied. It is not malformed either,
+// and the interop lab measured what refusing it costs: PeerTube recorded a
+// failed delivery against the vidra inbox for every one of five forwarded
+// comments (meta docs/evidence/peertube-interop-2026-11-17-gaps.md).
+func TestHandleInboxAcceptsAndIgnoresForwardedActivity(t *testing.T) {
+	const relay = "https://relay.example/accounts/peertube"
+	comment := `{"id":"https://remote.example/videos/watch/7/comments/1/activity","type":"Create","actor":"` + remoteBob +
+		`","object":{"type":"Note","id":"https://remote.example/videos/watch/7/comments/1","content":"hello","inReplyTo":"https://relay.example/videos/watch/7"}}`
+	for name, body := range map[string]string{"comment": comment, "follow": filmsFollow} {
+		t.Run(name, func(t *testing.T) {
+			repo := newInboxRepo()
+			svc := NewService(repo, WithBaseURL("https://videos.example"))
+			if err := svc.HandleInbox(context.Background(), relay, []byte(body)); err != nil {
+				t.Fatalf("err = %v, want nil: a forwarded activity is accepted and ignored", err)
+			}
+			// Not applied, and not marked: the id belongs to the third party,
+			// whose own delivery of it must still be processed.
+			if len(repo.processed) != 0 || len(repo.remoteFollows) != 0 {
+				t.Errorf("forwarded activity left state: processed=%v follows=%d", repo.processed, len(repo.remoteFollows))
+			}
+		})
+	}
+
+	// The same Follow, delivered by its own actor after a relay passed it on.
+	repo := newInboxRepo()
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.HandleInbox(context.Background(), relay, []byte(filmsFollow)); err != nil {
+		t.Fatalf("forwarded Follow: %v", err)
+	}
+	if err := svc.HandleInbox(context.Background(), remoteBob, []byte(filmsFollow)); err != nil {
+		t.Fatalf("HandleInbox: %v", err)
+	}
+	if _, ok := repo.remoteFollows[repo.channels["films"].ID.String()+"|"+remoteBob]; !ok {
+		t.Error("the real Follow was dropped after a relay forwarded it first")
+	}
+}
+
 // An activity id is the processed_activities dedupe key for every peer, so it
 // must be on the signer's host: otherwise one server can mark another's
 // activity as seen before it arrives, and the real one is dropped.
