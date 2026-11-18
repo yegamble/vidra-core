@@ -123,13 +123,42 @@ func (s *Service) resolveActor(ctx context.Context, actorURL string, inbound boo
 	if inbound && s.actorFetches.recentlyFailed(actorURL) {
 		return sqlcgen.RemoteActor{}, errActorRecentlyFailed
 	}
-	ra, err := s.fetchMissingActor(ctx, actorURL)
-	// A request the caller abandoned is not the actor failing, and a blocked
-	// host is refused before any fetch; neither is remembered.
-	if err != nil && inbound && ctx.Err() == nil && !errors.Is(err, ErrActorHostBlocked) && !errors.Is(err, errBlocklistLookup) {
+	ra, err := s.fetchMissingActor(ctx, actorURL, inbound)
+	// A request the caller abandoned is not the actor failing, a blocked host
+	// or a failed blocklist read fetched nothing, and neither did a spent
+	// budget; none of them is remembered.
+	if err != nil && inbound && ctx.Err() == nil && !errors.Is(err, ErrActorHostBlocked) &&
+		!errors.Is(err, errBlocklistLookup) && !errors.Is(err, errInboundFetchBudget) {
 		s.actorFetches.recordFailure(actorURL)
 	}
 	return ra, err
+}
+
+// admitInboundFetch admits one inbound-signature-path actor fetch against the
+// per-host budget and the global in-flight cap (actorFetchGate.admitInbound).
+// Whether the actor is followed is asked only when a limit would refuse it,
+// and the lookup is bounded: a slow answer counts as "not followed".
+func (s *Service) admitInboundFetch(ctx context.Context, actorURL string) (func(), error) {
+	u, err := url.Parse(actorURL)
+	if err != nil {
+		return nil, err
+	}
+	host, ok := NormalizeFollowHost(u.Host)
+	if !ok {
+		return nil, errInboundFetchBudget
+	}
+	return s.actorFetches.admitInbound(host, s.followedLookup(ctx, actorURL))
+}
+
+// followedLookup is the bounded "is this actor followed?" question the fetch
+// limits ask before refusing; a slow or failed answer counts as not followed.
+func (s *Service) followedLookup(ctx context.Context, actorURL string) func() bool {
+	return func() bool {
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), followedLookupTimeout)
+		defer cancel()
+		ok, err := s.hasAcceptedFollowEdge(fctx, actorURL)
+		return err == nil && ok
+	}
 }
 
 // fetchMissingActor fetches and caches an actor that is not cached, sharing
@@ -137,11 +166,19 @@ func (s *Service) resolveActor(ctx context.Context, actorURL string, inbound boo
 // detached from any one caller's request (bounded by remoteFetchTimeout), so
 // the first caller hanging up does not fail the rest; a caller that hangs up
 // stops waiting.
-func (s *Service) fetchMissingActor(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
+//
+// An inbound-path fetch is also admitted against the per-host budget
+// (admitInbound). It shares its flight only with other inbound callers, so a
+// spent budget never fails a local user's resolution of the same actor.
+func (s *Service) fetchMissingActor(ctx context.Context, actorURL string, inbound bool) (sqlcgen.RemoteActor, error) {
 	if s.actorFetches == nil {
 		return s.refetchRemoteActor(ctx, actorURL)
 	}
-	ch := s.actorFetches.misses.DoChan(actorURL, func() (v any, err error) {
+	key := actorURL
+	if inbound {
+		key = "inbound " + actorURL
+	}
+	ch := s.actorFetches.misses.DoChan(key, func() (v any, err error) {
 		// DoChan re-raises a panic on a goroutine of its own, out of reach of
 		// any request handler's recover; turn it into this fetch's error.
 		defer func() {
@@ -149,6 +186,13 @@ func (s *Service) fetchMissingActor(ctx context.Context, actorURL string) (sqlcg
 				v, err = sqlcgen.RemoteActor{}, fmt.Errorf("federation: actor fetch panicked: %v", r)
 			}
 		}()
+		if inbound {
+			release, err := s.admitInboundFetch(ctx, actorURL)
+			if err != nil {
+				return sqlcgen.RemoteActor{}, err
+			}
+			defer release()
+		}
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), remoteFetchTimeout)
 		defer cancel()
 		return s.refetchRemoteActor(fctx, actorURL)
@@ -218,6 +262,16 @@ func (s *Service) refreshRemoteActorKey(ctx context.Context, actorURL string) (s
 		// Nothing cached: this is not a rotation, it is a first resolution, and
 		// the ordinary path already handles it.
 		return sqlcgen.RemoteActor{}, err
+	}
+	// A refresh runs within the same global in-flight cap as inbound misses
+	// (a followed actor's is admitted past it). It is taken BEFORE the
+	// cooldown is consulted, so a refusal here leaves the cooldown unspent.
+	if s.actorFetches != nil {
+		release, err := s.actorFetches.admitInflight(s.followedLookup(ctx, actorURL))
+		if err != nil {
+			return sqlcgen.RemoteActor{}, err
+		}
+		defer release()
 	}
 	// One re-fetch per actor per cooldown, however many failed signatures
 	// name it. The first failure after a quiet period still re-fetches, which
