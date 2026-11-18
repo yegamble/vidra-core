@@ -341,3 +341,22 @@ func TestInboundFetchRefusalsAreCountedByReason(t *testing.T) {
 		}
 	}
 }
+
+// TestIsInboundFetchRefusedNamesEveryLimitAndNothingElse: the inbox answers
+// "later" for exactly the gate's limits. A blocked host, a fetch that failed,
+// a refresh inside its cooldown and an unsafe URL are other answers.
+func TestIsInboundFetchRefusedNamesEveryLimitAndNothingElse(t *testing.T) {
+	for _, err := range []error{errInboundHostBudget, errInboundGlobalCap, errInboundBypassCeiling,
+		errInboundDomainBudget, errInboundDomainCap, errInboundGlobalRate,
+		fmt.Errorf("wrapped: %w", errInboundHostBudget)} {
+		if !IsInboundFetchRefused(err) {
+			t.Errorf("IsInboundFetchRefused(%v) = false, want true", err)
+		}
+	}
+	for _, err := range []error{nil, ErrActorHostBlocked, errActorRecentlyFailed, errActorRefreshCooldown,
+		errInsecureFetchScheme, errors.New("dial tcp: connection refused")} {
+		if IsInboundFetchRefused(err) {
+			t.Errorf("IsInboundFetchRefused(%v) = true, want false", err)
+		}
+	}
+}
