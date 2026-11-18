@@ -75,9 +75,10 @@ func (s *Service) ResolveKey(ctx context.Context, keyID string) (*rsa.PublicKey,
 // is retried once against a freshly fetched one, which is what lets a peer
 // rotate its keypair without becoming permanently unverifiable here (A29-F12).
 //
-// It is bounded by construction: only a request that already failed against a
-// CACHED key reaches it, so an actor this instance has never seen cannot trigger
-// a fetch through this path, and one failed signature buys exactly one re-fetch.
+// It is bounded twice: only a request that already failed against a CACHED key
+// reaches it, so an actor this instance has never seen cannot trigger a fetch
+// through this path; and a cached actor is re-fetched at most once per
+// actorFetchCooldown, however many failed signatures name it (G13).
 func (s *Service) ResolveKeyFresh(ctx context.Context, keyID string) (*rsa.PublicKey, error) {
 	actorURL, _, _ := strings.Cut(keyID, "#")
 	ra, err := s.refreshRemoteActorKey(ctx, actorURL)
@@ -108,8 +109,25 @@ func (s *Service) resolveRemoteActor(ctx context.Context, actorURL string) (sqlc
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return sqlcgen.RemoteActor{}, err
 	}
+	// A URL that failed to resolve is not fetched again until the cooldown
+	// passes: an unseen keyId otherwise costs one outbound GET per request.
+	if s.actorFetches.recentlyFailed(actorURL) {
+		return sqlcgen.RemoteActor{}, errActorRecentlyFailed
+	}
 	return s.refetchRemoteActor(ctx, actorURL)
 }
+
+// errActorRecentlyFailed: the actor URL failed to resolve within the cooldown.
+var errActorRecentlyFailed = errors.New("federation: actor recently failed to resolve")
+
+// errActorRefreshCooldown: the cached actor's key was re-fetched within the
+// cooldown, so it is not fetched again yet.
+var errActorRefreshCooldown = errors.New("federation: actor key refreshed recently")
+
+// ErrActorHostBlocked: the actor lives on an admin-blocked instance, and was
+// not fetched. The inbox answers it with the same 202 any activity from a
+// blocked instance gets, and nothing else.
+var ErrActorHostBlocked = errors.New("federation: actor host is blocked")
 
 // ResolveRemoteActor is resolveRemoteActor for callers outside federation: the
 // cached actor, or one fetched now through the SSRF guard and cached. It is how
@@ -151,13 +169,42 @@ func (s *Service) refreshRemoteActorKey(ctx context.Context, actorURL string) (s
 		// the ordinary path already handles it.
 		return sqlcgen.RemoteActor{}, err
 	}
-	return s.refetchRemoteActor(ctx, actorURL)
+	// One re-fetch per actor per cooldown, however many failed signatures
+	// name it. The first failure after a quiet period still re-fetches, which
+	// is the rotation case this path exists for.
+	if !s.actorFetches.allowRefresh(actorURL) {
+		return sqlcgen.RemoteActor{}, errActorRefreshCooldown
+	}
+	// The slot is spent once allowRefresh says yes, so the fetch it pays for
+	// must run to completion whether or not the requester is still there. It
+	// is detached from the request and bounded by the fetch timeout instead.
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), remoteFetchTimeout)
+	defer cancel()
+	return s.refetchRemoteActor(fctx, actorURL)
 }
 
 // refetchRemoteActor fetches an actor document and upserts the cache row.
+//
+// The instance blocklist is consulted HERE, before the fetch, not only after
+// signature verification: verification is what fetches, so a check after it
+// still let a blocked host be contacted on every inbound request naming it.
 func (s *Service) refetchRemoteActor(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
+	u, err := url.Parse(actorURL)
+	if err != nil {
+		return sqlcgen.RemoteActor{}, fmt.Errorf("federation: parse actor URL: %w", err)
+	}
+	if blocked, err := s.hostBlocked(ctx, u); err != nil {
+		return sqlcgen.RemoteActor{}, err
+	} else if blocked {
+		return sqlcgen.RemoteActor{}, ErrActorHostBlocked
+	}
 	fa, err := s.fetchActor(ctx, actorURL)
 	if err != nil {
+		// A request the caller abandoned is not the actor failing; recording
+		// it would let a client poison resolution of an actor it names.
+		if ctx.Err() == nil {
+			s.actorFetches.recordFailure(actorURL)
+		}
 		return sqlcgen.RemoteActor{}, err
 	}
 	return s.cacheFetchedActor(ctx, actorURL, fa)

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -371,3 +373,50 @@ func TestLegacyVideoObjectIDRedirectsToTheCanonicalID(t *testing.T) {
 		t.Errorf("non-AP Accept: status = %d, want 406", rec.Code)
 	}
 }
+
+// An inbox POST signed as an actor this instance has never cached, on a blocked
+// instance, is told nothing: 202, as for any activity from a blocked instance.
+// The actor is not fetched, and — since nothing about the request verified —
+// it leaves no audit row and gets no Reject.
+func TestUncachedSignerOnBlockedInstanceIsToldNothing(t *testing.T) {
+	var buf bytes.Buffer
+	var fetches atomic.Int64
+	key, _ := signerKeyPEM(t)
+	cfg := fedTestConfig()
+	repo := newFedRepoFor(cfg)
+	repo.blockedDomains["remote.example"] = true
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		fetches.Add(1)
+		return nil, errors.New("no network in this test")
+	})}
+	srv := New(cfg, nil, nil,
+		WithFederationService(federation.NewService(repo, federation.WithBaseURL(cfg.PublicBaseURL), federation.WithFetchClient(client))),
+		WithLogger(slog.New(slog.NewJSONHandler(&buf, nil))),
+	)
+
+	body := []byte(`{"id":"https://remote.example/act/10","type":"Follow","actor":"` + bobActor +
+		`","object":"https://videos.example/video-channels/films"}`)
+	req := httptest.NewRequest(http.MethodPost, "https://videos.example/inbox", bytes.NewReader(body))
+	if err := (httpsig.Signer{KeyID: bobActor + "#main-key", Priv: key}).Sign(req, body); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if n := fetches.Load(); n != 0 {
+		t.Errorf("the blocked signer was fetched %d times", n)
+	}
+	if ev := findAudit(auditEvents(t, &buf), observability.ActionFederationInboxRejected, observability.ResultSuccess); ev != nil {
+		t.Error("an unverified request left an audit row")
+	}
+	if len(repo.deliveries) != 0 || len(repo.remoteFollows) != 0 {
+		t.Error("an unverified request from a blocked instance was acted on")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
