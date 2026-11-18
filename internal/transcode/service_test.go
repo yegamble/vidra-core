@@ -1752,3 +1752,84 @@ func TestARetryOfTheSameJobKeepsItsGeneration(t *testing.T) {
 		}
 	}
 }
+
+// --- duration learned from the transcode (G6) ---------------------------------
+
+// durationFakeRepo adds the fill-only duration write to fakeRepo, mirroring the
+// SQL: a missing row or a NULL duration is filled, a stored one is kept.
+type durationFakeRepo struct {
+	*fakeRepo
+	durMu     sync.Mutex
+	durations map[uuid.UUID]*int32
+}
+
+func (f *durationFakeRepo) FillVideoDurationIfUnknown(_ context.Context, a sqlcgen.FillVideoDurationIfUnknownParams) (int64, error) {
+	f.durMu.Lock()
+	defer f.durMu.Unlock()
+	if cur, ok := f.durations[a.VideoID]; ok && cur != nil {
+		return 0, nil
+	}
+	f.durations[a.VideoID] = a.DurationSeconds
+	return 1, nil
+}
+
+func (f *durationFakeRepo) duration(id uuid.UUID) *int32 {
+	f.durMu.Lock()
+	defer f.durMu.Unlock()
+	return f.durations[id]
+}
+
+// TestTranscodeFillsAnUnknownDurationBeforeTheCompletionHook: a source whose
+// container states no duration (a WebM written to a pipe) is published with an
+// unknown one, and federation then says PT0S forever. The packager measured the
+// tree it wrote, so the transcode records that — before the completion hook, so
+// the federation Update the hook sends already carries it.
+func TestTranscodeFillsAnUnknownDurationBeforeTheCompletionHook(t *testing.T) {
+	repo := &durationFakeRepo{fakeRepo: newFakeRepo(), durations: map[uuid.UUID]*int32{}}
+	videoID := uuid.New()
+	tc := &fakeTranscoder{res: media.HLSResult{
+		MasterKey:       "streaming-playlists/" + videoID.String() + "/master.m3u8",
+		Format:          media.HLSFormatCMAF,
+		DurationSeconds: 4.04,
+		Renditions:      []media.HLSRendition{{Height: 240, Width: 320, KeyPrefix: "streaming-playlists/" + videoID.String() + "/240p"}},
+	}}
+	var atHook *int32
+	svc := NewService(repo, tc, WithCompletionHook(func(_ context.Context, id uuid.UUID) {
+		atHook = repo.duration(id)
+	}))
+	if err := svc.Enqueue(context.Background(), videoID, "web-videos/x.webm"); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := svc.DrainJobs(context.Background(), 10); err != nil {
+		t.Fatalf("DrainJobs: %v", err)
+	}
+	if atHook == nil || *atHook != 4 {
+		t.Fatalf("duration seen by the completion hook = %v, want 4 (filled before the hook runs)", atHook)
+	}
+}
+
+// TestTranscodeNeverOverwritesAKnownDuration: the probe's answer is
+// authoritative; the transcode only fills a gap. A rerun is a no-op too.
+func TestTranscodeNeverOverwritesAKnownDuration(t *testing.T) {
+	ctx := context.Background()
+	repo := &durationFakeRepo{fakeRepo: newFakeRepo(), durations: map[uuid.UUID]*int32{}}
+	svc := NewService(repo, &fakeTranscoder{})
+	probed := uuid.New()
+	seven := int32(7)
+	repo.durations[probed] = &seven
+	if err := svc.storeResult(ctx, probed, media.HLSResult{MasterKey: "k", DurationSeconds: 4}); err != nil {
+		t.Fatalf("storeResult: %v", err)
+	}
+	if got := repo.duration(probed); got == nil || *got != 7 {
+		t.Errorf("probed duration = %v after a transcode measured 4, want 7 kept", got)
+	}
+
+	// Nothing measured (the legacy MPEG-TS packager) writes nothing.
+	unmeasured := uuid.New()
+	if err := svc.storeResult(ctx, unmeasured, media.HLSResult{MasterKey: "k"}); err != nil {
+		t.Fatalf("storeResult: %v", err)
+	}
+	if _, wrote := repo.durations[unmeasured]; wrote {
+		t.Errorf("an unmeasured transcode wrote duration %v, want no write", repo.duration(unmeasured))
+	}
+}

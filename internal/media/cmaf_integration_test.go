@@ -2764,3 +2764,19 @@ func TestHardwareAudioOnlySourceStillTranscodes(t *testing.T) {
 	}
 	assertStoredStreamTypes(t, f.blobs, HLSAudioDownloadKey(f.res.MasterKey), "audio")
 }
+
+// TestCMAFMeasuresTheDurationTheSourceDoesNotState (G6): a WebM written as a
+// live stream — what a browser recording is — carries no duration in its
+// container, so the probe reads none. The CMAF tree's playlists add up to the
+// real length, and the result carries it out for the transcode to record.
+func TestCMAFMeasuresTheDurationTheSourceDoesNotState(t *testing.T) {
+	f := newCMAFFixture(t, []string{
+		"-f", "lavfi", "-i", "testsrc2=duration=4:size=320x240:rate=25",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+		"-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "8", "-b:v", "200k",
+		"-c:a", "libopus", "-shortest", "-f", "webm", "-live", "1",
+	}, false)
+	if d := f.res.DurationSeconds; d < 3.5 || d > 4.5 {
+		t.Errorf("HLSResult.DurationSeconds = %v for a 4 s source with no stated duration, want ≈4", d)
+	}
+}

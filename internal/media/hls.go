@@ -882,12 +882,16 @@ type HLSResult struct {
 	// HLSFormatCMAF), recorded per video so serving can tell a CMAF tree from a
 	// legacy MPEG-TS one. Empty from a caller that predates the record; the
 	// store reads that as HLSFormatTS.
-	Format     string
-	Renditions []HLSRendition
-	WebMKey    string
-	WebMHeight int
-	WebMWidth  int
-	WebMBytes  int64
+	Format string
+	// DurationSeconds is the tree's own length (the largest per-representation
+	// EXTINF sum), so a source whose container states none still gets one.
+	// Zero means not measured: the legacy MPEG-TS packager does not measure.
+	DurationSeconds float64
+	Renditions      []HLSRendition
+	WebMKey         string
+	WebMHeight      int
+	WebMWidth       int
+	WebMBytes       int64
 	// WebMSHA256 is the lowercase hex digest of the stored VP9/WebM object,
 	// taken from its upload stream (phase-2 storage, work item 2). The HLS
 	// segments and playlists under MasterKey deliberately carry no digest: they
@@ -1575,7 +1579,7 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// the playlist row rather than on rendition rows, so the video is servable
 	// with none — see the master playlist, which advertises a single audio-only
 	// variant.
-	res := HLSResult{MasterKey: packaged.masterKey, Format: packaged.format}
+	res := HLSResult{MasterKey: packaged.masterKey, Format: packaged.format, DurationSeconds: packaged.seconds}
 	if deriver != nil {
 		res.WebVideos = deriver.results
 	}
