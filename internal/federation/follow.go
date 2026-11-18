@@ -17,7 +17,6 @@ import (
 
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
-	"github.com/vidra/vidra-core/internal/urlsafety"
 )
 
 // Outbound remote-channel follows (.ralph/specs/federation-remote-content.md §3):
@@ -406,8 +405,8 @@ func webFingerTry[T any](ctx context.Context, s *Service, name, domain string, e
 
 // fetchJRD GETs and parses one WebFinger JRD document through the SSRF guard.
 func (s *Service) fetchJRD(ctx context.Context, jrdURL string) (*JRD, error) {
-	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
-	target, err := guard.ValidateURL(jrdURL)
+	guard := s.fetchGuard()
+	target, err := s.validateFetchURL(jrdURL)
 	if err != nil {
 		return nil, fmt.Errorf("federation: unsafe webfinger URL: %w", err)
 	}

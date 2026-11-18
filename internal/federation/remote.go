@@ -18,7 +18,6 @@ import (
 
 	"github.com/vidra/vidra-core/internal/httpsig"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
-	"github.com/vidra/vidra-core/internal/urlsafety"
 )
 
 const (
@@ -109,8 +108,7 @@ func (s *Service) resolveRemoteActor(ctx context.Context, actorURL string) (sqlc
 // not stop a local follow, search, delivery or instance follow from fetching
 // the same actor a moment later.
 func (s *Service) resolveActor(ctx context.Context, actorURL string, inbound bool) (sqlcgen.RemoteActor, error) {
-	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
-	if _, err := guard.ValidateURL(actorURL); err != nil {
+	if _, err := s.validateFetchURL(actorURL); err != nil {
 		return sqlcgen.RemoteActor{}, fmt.Errorf("federation: unsafe actor URL: %w", err)
 	}
 	if ra, err := s.repo.GetRemoteActor(ctx, actorURL); err == nil {
@@ -210,8 +208,7 @@ func InboxesOnActorHost(ra sqlcgen.RemoteActor) bool {
 // forged request cannot use it to make this instance fetch anything it would not
 // have fetched anyway.
 func (s *Service) refreshRemoteActorKey(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
-	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
-	if _, err := guard.ValidateURL(actorURL); err != nil {
+	if _, err := s.validateFetchURL(actorURL); err != nil {
 		return sqlcgen.RemoteActor{}, fmt.Errorf("federation: unsafe actor URL: %w", err)
 	}
 	if _, err := s.repo.GetRemoteActor(ctx, actorURL); err != nil {
@@ -304,8 +301,8 @@ func (s *Service) cacheFetchedActor(ctx context.Context, actorURL string, fa fet
 
 // fetchActor GETs and parses a remote actor document through the SSRF guard.
 func (s *Service) fetchActor(ctx context.Context, actorURL string) (fetchedActor, error) {
-	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
-	target, err := guard.ValidateURL(actorURL)
+	guard := s.fetchGuard()
+	target, err := s.validateFetchURL(actorURL)
 	if err != nil {
 		return fetchedActor{}, fmt.Errorf("federation: unsafe actor URL: %w", err)
 	}
