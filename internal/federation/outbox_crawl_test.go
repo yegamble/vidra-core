@@ -10,7 +10,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -185,4 +187,88 @@ func TestCrawlOutboxIsBounded(t *testing.T) {
 	if got := requestsTo(*seen, outbox); got != 1+outboxCrawlMaxPages {
 		t.Errorf("read the outbox and %d pages, want the outbox and %d", got-1, outboxCrawlMaxPages)
 	}
+}
+
+// createsOf is n Create activities by the fixture channel, each of a distinct
+// video on its host. They are as small as a Video can be, so a thousand fit
+// in one page under maxOutboxPageBytes: the page bound alone does not bound
+// how many a page lists.
+func createsOf(t *testing.T, n, from int) []json.RawMessage {
+	t.Helper()
+	out := make([]json.RawMessage, n)
+	for i := range out {
+		id := fmt.Sprintf("https://peertube.example/videos/watch/00000000-0000-4000-8000-%012d", from+i)
+		out[i] = mustJSON(t, map[string]any{"type": "Create", "actor": ctPTChannel, "object": map[string]any{
+			"type": "Video", "id": id, "name": "v", "attributedTo": []string{ctPTChannel},
+		}})
+	}
+	return out
+}
+
+// outboxOfPages is the fixture origin with its outbox replaced by pages, each
+// naming the next.
+func outboxOfPages(t *testing.T, pages ...[]json.RawMessage) map[string][]byte {
+	t.Helper()
+	const outbox = ctPTChannel + "/outbox"
+	docs := peertubeOrigin(t, ctPTChannel)
+	for i, items := range pages {
+		p := map[string]any{"type": "OrderedCollectionPage", "orderedItems": items}
+		if i+1 < len(pages) {
+			p["next"] = outbox + "?page=" + strconv.Itoa(i+2)
+		}
+		docs[outbox+"?page="+strconv.Itoa(i+1)] = mustJSON(t, p)
+	}
+	return docs
+}
+
+// A page may list any number of activities, and each stored video may cost a
+// thumbnail fetch, so the crawl examines a fixed number of activities in all.
+// It stops there, as a read that succeeded, and says it stopped.
+func TestCrawlOutboxExaminesABoundedNumberOfActivities(t *testing.T) {
+	t.Run("one page of a thousand Creates", func(t *testing.T) {
+		svc, repo, _ := newOutboxCrawl(outboxOfPages(t, createsOf(t, 1000, 0)), ctPTChannel)
+		var log bytes.Buffer
+		svc.logger = slog.New(slog.NewTextHandler(&log, nil))
+		stored, err := svc.CrawlOutbox(context.Background(), ctPTChannel)
+		if err != nil || stored != outboxCrawlMaxItems || len(repo.remoteVideos) != outboxCrawlMaxItems {
+			t.Fatalf("CrawlOutbox = %d, %v with %d rows; want %d stored", stored, err, len(repo.remoteVideos), outboxCrawlMaxItems)
+		}
+		if !strings.Contains(log.String(), "truncated") {
+			t.Errorf("the crawl stopped short and logged nothing about it: %q", log.String())
+		}
+	})
+	t.Run("junk counts too", func(t *testing.T) {
+		// Ten thousand activities by somebody else, then one real video: it is
+		// past the bound, so the crawl never reaches it.
+		junk := make([]json.RawMessage, 10000)
+		for i := range junk {
+			junk[i] = json.RawMessage(`{"type":"Create","actor":"` + ctPTAccount + `"}`)
+		}
+		svc, repo, _ := newOutboxCrawl(outboxOfPages(t, append(junk, createsOf(t, 1, 0)...)), ctPTChannel)
+		if stored, err := svc.CrawlOutbox(context.Background(), ctPTChannel); err != nil || stored != 0 || len(repo.remoteVideos) != 0 {
+			t.Fatalf("CrawlOutbox = %d, %v with %d rows; want nothing past the bound", stored, err, len(repo.remoteVideos))
+		}
+	})
+	t.Run("the bound spans pages", func(t *testing.T) {
+		docs := outboxOfPages(t, createsOf(t, 150, 0), createsOf(t, 150, 150), createsOf(t, 1, 300))
+		svc, _, seen := newOutboxCrawl(docs, ctPTChannel)
+		if stored, err := svc.CrawlOutbox(context.Background(), ctPTChannel); err != nil || stored != outboxCrawlMaxItems {
+			t.Fatalf("CrawlOutbox = %d, %v; want %d stored", stored, err, outboxCrawlMaxItems)
+		}
+		if n := requestsTo(*seen, ctPTChannel+"/outbox?page=3"); n != 0 {
+			t.Errorf("read page 3 %d time(s) after the bound was reached", n)
+		}
+	})
+	t.Run("a normal outbox is read whole", func(t *testing.T) {
+		docs := outboxOfPages(t, createsOf(t, 10, 0), createsOf(t, 10, 10), createsOf(t, 10, 20))
+		svc, _, _ := newOutboxCrawl(docs, ctPTChannel)
+		var log bytes.Buffer
+		svc.logger = slog.New(slog.NewTextHandler(&log, nil))
+		if stored, err := svc.CrawlOutbox(context.Background(), ctPTChannel); err != nil || stored != 30 {
+			t.Fatalf("CrawlOutbox = %d, %v; want all 30 stored", stored, err)
+		}
+		if strings.Contains(log.String(), "truncated") {
+			t.Errorf("a whole read logged a truncation: %q", log.String())
+		}
+	})
 }
