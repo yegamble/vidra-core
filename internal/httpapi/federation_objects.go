@@ -33,9 +33,19 @@ import (
 // crawler quickly and long enough that a busy peer is not re-fetching per view.
 const apObjectCacheControl = "public, max-age=300"
 
+// varyOnAccept marks an object-id response as negotiated on Accept. These ids
+// are frontend paths too (the proxy sends an AP Accept here, everything else to
+// the HTML page) and the cacheable answers are public, so without it a shared
+// cache could hand a browser the JSON or a peer the page. It is set before any
+// outcome is chosen so the 406, 404, 304 and 410 answers carry it as well.
+func varyOnAccept(c *echo.Context) {
+	c.Response().Header().Add(echo.HeaderVary, echo.HeaderAccept)
+}
+
 // serveAPObject renders one ActivityPub document with the negotiation, cache and
 // validator rules every object id shares.
 func (s *Server) serveAPObject(c *echo.Context, load func(uuid.UUID) (map[string]any, error), tombstone func(uuid.UUID) (map[string]any, error)) error {
+	varyOnAccept(c)
 	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
 		return echo.NewHTTPError(http.StatusNotAcceptable, "objects are served as application/activity+json")
 	}
@@ -124,6 +134,7 @@ func (s *Server) handleVideoObject(c *echo.Context) error {
 // and take the id the document states. Only a video that is served at all is
 // redirected to — anything else is the 404 the canonical id would answer.
 func (s *Server) handleLegacyVideoObject(c *echo.Context) error {
+	varyOnAccept(c)
 	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
 		return echo.NewHTTPError(http.StatusNotAcceptable, "objects are served as application/activity+json")
 	}

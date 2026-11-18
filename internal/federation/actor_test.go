@@ -136,9 +136,13 @@ func TestChannelActorAttributedToOwnerAccount(t *testing.T) {
 	}
 }
 
-// TestActorURLAndEndpoints asserts both actor types now carry url + the
-// endpoints.sharedInbox block (PeerTube parity), and that the Group-only
-// attributedTo never appears on a Person actor.
+// TestActorURLAndEndpoints asserts both actor types carry url + the
+// endpoints.sharedInbox block, and that the Group-only attributedTo never
+// appears on a Person actor.
+//
+// sharedInbox is the INSTANCE's /inbox, never the actor's own inbox: a peer
+// delivers one POST per distinct sharedInbox, so a per-actor value made a
+// PeerTube fan one activity out into one POST per local follower actor.
 func TestActorURLAndEndpoints(t *testing.T) {
 	svc := NewService(newActorRepo(), WithBaseURL("https://videos.example"))
 
@@ -149,8 +153,9 @@ func TestActorURLAndEndpoints(t *testing.T) {
 	if person.URL != "https://videos.example/users/ada" {
 		t.Errorf("person url = %q, want the frontend profile page", person.URL)
 	}
-	if person.Endpoints == nil || person.Endpoints.SharedInbox != person.ID+"/inbox" {
-		t.Errorf("person endpoints = %+v, want sharedInbox %q", person.Endpoints, person.ID+"/inbox")
+	const shared = "https://videos.example/inbox"
+	if person.Endpoints == nil || person.Endpoints.SharedInbox != shared {
+		t.Errorf("person endpoints = %+v, want sharedInbox %q", person.Endpoints, shared)
 	}
 	if person.AttributedTo != nil {
 		t.Errorf("person attributedTo = %+v, want nil (attributedTo is Group-only)", person.AttributedTo)
@@ -163,8 +168,8 @@ func TestActorURLAndEndpoints(t *testing.T) {
 	if group.URL != "https://videos.example/channels/films" {
 		t.Errorf("group url = %q, want the frontend channel page", group.URL)
 	}
-	if group.Endpoints == nil || group.Endpoints.SharedInbox != group.ID+"/inbox" {
-		t.Errorf("group endpoints = %+v, want sharedInbox %q", group.Endpoints, group.ID+"/inbox")
+	if group.Endpoints == nil || group.Endpoints.SharedInbox != shared {
+		t.Errorf("group endpoints = %+v, want sharedInbox %q", group.Endpoints, shared)
 	}
 }
 

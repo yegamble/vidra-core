@@ -570,6 +570,9 @@ func (f fakeRepo) GetVideoFederationFacts(_ context.Context, id uuid.UUID) (sqlc
 	if v.HasThumbnail && row.ThumbnailStorageKey == "" {
 		row.ThumbnailStorageKey = media.VideoThumbnailKey(id) // the usual poster row's key
 	}
+	if row.ThumbnailStorageKey != "" && row.ThumbnailFileID == "" {
+		row.ThumbnailFileID = "thumb-" + id.String() // the SQL reads both off the same row
+	}
 	return row, nil
 }
 

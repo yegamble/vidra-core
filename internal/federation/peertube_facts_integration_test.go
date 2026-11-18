@@ -113,4 +113,18 @@ func TestVideoObjectPeerTubeFactsFromSQL(t *testing.T) {
 	if string(outbox) != string(want) {
 		t.Errorf("outbox object differs from the dereferenced one\n outbox: %s\n object: %s", outbox, want)
 	}
+
+	// G6: no probe stated a duration, so the object says PT0S (PeerTube lists
+	// 0:00). Once the transcode fills the gap, the object the completion hook's
+	// Update carries states the measured one.
+	if obj["duration"] != "PT0S" {
+		t.Fatalf("duration before the transcode = %v, want PT0S", obj["duration"])
+	}
+	four := int32(4)
+	if _, err := q.FillVideoDurationIfUnknown(ctx, sqlcgen.FillVideoDurationIfUnknownParams{VideoID: v.ID, DurationSeconds: &four}); err != nil {
+		t.Fatalf("FillVideoDurationIfUnknown: %v", err)
+	}
+	if filled, err := svc.VideoObject(ctx, v.ID); err != nil || filled["duration"] != "PT4S" {
+		t.Errorf("duration after the transcode filled it = %v (%v), want PT4S", filled["duration"], err)
+	}
 }

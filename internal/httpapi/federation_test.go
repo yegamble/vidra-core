@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -596,6 +597,46 @@ func TestActorResponsesVaryOnAccept(t *testing.T) {
 	}
 }
 
+// TestAPObjectResponsesVaryOnAccept: the object ids (/videos/{uuid},
+// /comments/{uuid}, /videos/watch/{uuid}) are FRONTEND paths too — the proxy
+// sends an AP Accept here and everything else to the HTML page — and the
+// cacheable answers are public, max-age=300. Without Vary: Accept a shared
+// cache could hand a browser the JSON, or a peer the page.
+func TestAPObjectResponsesVaryOnAccept(t *testing.T) {
+	srv, videoID, commentID, deletedID := apObjectServer(t)
+	video := "/videos/" + videoID.String()
+	etag := getAccept(t, srv, video, apAccept).Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("video object carried no ETag to revalidate with")
+	}
+	notModified := httptest.NewRequest(http.MethodGet, video, nil)
+	notModified.Header.Set("Accept", apAccept)
+	notModified.Header.Set("If-None-Match", etag)
+	cases := map[string]*http.Request{
+		"video":       acceptReq(video, apAccept),
+		"video 304":   notModified,
+		"video 406":   acceptReq(video, "text/html"),
+		"tombstone":   acceptReq("/videos/"+deletedID.String(), apAccept),
+		"note":        acceptReq("/comments/"+commentID.String(), apAccept),
+		"legacy id":   acceptReq("/videos/watch/"+videoID.String(), apAccept),
+		"legacy 406":  acceptReq("/videos/watch/"+videoID.String(), "text/html"),
+		"unknown 404": acceptReq("/videos/"+uuid.NewString(), apAccept),
+	}
+	for name, req := range cases {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if got := strings.Join(rec.Header().Values("Vary"), ", "); !strings.Contains(got, "Accept") {
+			t.Errorf("%s (%d): Vary = %q, want it to include Accept", name, rec.Code, got)
+		}
+	}
+}
+
+func acceptReq(path, accept string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Accept", accept)
+	return req
+}
+
 func TestActorRequiresActivityJSONAccept(t *testing.T) {
 	// Neither AP nor HTML (e.g. a JSON API client) is 406.
 	rec := getAccept(t, fedServer(fedTestConfig()), "/accounts/ada", "application/json")
@@ -692,6 +733,42 @@ func TestInboxAcceptsSignedFollow(t *testing.T) {
 	// An Accept was durably enqueued to the follower's inbox.
 	if _, ok := repo.deliveries[bobInbox]; !ok {
 		t.Errorf("Accept not enqueued for delivery: %+v", repo.deliveries)
+	}
+}
+
+// TestSharedInboxRecordsAChannelFollowLikeTheChannelInbox: every actor now
+// advertises <origin>/inbox as its sharedInbox, so a peer delivers a Follow of
+// a channel there instead of to the channel's own inbox. The follow it records
+// must be the same row either way.
+func TestSharedInboxRecordsAChannelFollowLikeTheChannelInbox(t *testing.T) {
+	key, pubPEM := signerKeyPEM(t)
+	srv, repo := fedServerRepo(fedTestConfig())
+	repo.remoteActors[bobActor] = sqlcgen.RemoteActor{ActorUrl: bobActor, PublicKeyPem: pubPEM,
+		InboxUrl: "https://remote.example/accounts/bob/inbox"}
+	recorded := map[string]sqlcgen.InsertRemoteFollowParams{}
+	for i, path := range []string{"/inbox", "/video-channels/films/inbox"} {
+		delete(repo.remoteFollows, bobActor)
+		// A distinct activity id each time: a repeated id is a replay and is dropped.
+		body := []byte(`{"id":"https://remote.example/act/` + strconv.Itoa(i) + `","type":"Follow","actor":"` + bobActor +
+			`","object":"https://videos.example/video-channels/films"}`)
+		req := httptest.NewRequest(http.MethodPost, "https://videos.example"+path, bytes.NewReader(body))
+		if err := (httpsig.Signer{KeyID: bobActor + "#main-key", Priv: key}).Sign(req, body); err != nil {
+			t.Fatalf("Sign: %v", err)
+		}
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("%s: status = %d, want 202; body=%s", path, rec.Code, rec.Body.String())
+		}
+		f, ok := repo.remoteFollows[bobActor]
+		if !ok {
+			t.Fatalf("%s: remote follow not recorded", path)
+		}
+		recorded[path] = f
+	}
+	shared, own := recorded["/inbox"], recorded["/video-channels/films/inbox"]
+	if shared.ChannelID != own.ChannelID || shared.RemoteActorUrl != own.RemoteActorUrl {
+		t.Errorf("shared inbox recorded %+v, channel inbox recorded %+v", shared, own)
 	}
 }
 

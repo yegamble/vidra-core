@@ -431,6 +431,10 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 		measured = layout.audioRep + 1
 	}
 	layout.measured = make([]cmafRepMeasure, measured)
+	// longest is the tree's own duration: the largest representation total,
+	// because an audio track that ends a frame later than the video (or the
+	// reverse) is still part of what plays.
+	var longest float64
 	for _, rep := range layout.representations() {
 		name := cmafMediaPlaylistName(rep)
 		body, rerr := tree.read(ctx, name)
@@ -450,8 +454,10 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 		// Best effort: a measurement that cannot be taken omits one advisory
 		// attribute from the master. It must not fail a transcode whose media is
 		// perfectly good.
+		seconds := playlistDurationSeconds(fixed)
+		longest = max(longest, seconds)
 		if bytesN, berr := tree.bytesNamed(cmafRepFilePrefixes(rep)...); berr == nil {
-			layout.measured[rep] = cmafRepMeasure{bytes: bytesN, seconds: playlistDurationSeconds(fixed)}
+			layout.measured[rep] = cmafRepMeasure{bytes: bytesN, seconds: seconds}
 		}
 	}
 
@@ -611,6 +617,7 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 		masterKey: req.prefix + "/" + hlsMasterPlaylistFilename,
 		format:    HLSFormatCMAF,
 		rungSizes: rungSizes,
+		seconds:   longest,
 	}, nil
 }
 

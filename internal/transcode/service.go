@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -175,6 +176,16 @@ type stepRepository interface {
 type sizeRepository interface {
 	GetVideoFileSizeByStorageKey(ctx context.Context, storageKey string) (int64, error)
 }
+
+// durationRepository is the fill-only duration write (G6). *sqlcgen.Queries
+// satisfies it; a fake that does not simply records no duration.
+type durationRepository interface {
+	FillVideoDurationIfUnknown(ctx context.Context, arg sqlcgen.FillVideoDurationIfUnknownParams) (int64, error)
+}
+
+// The production repository must keep satisfying the optional interface: a
+// type assertion that quietly fails would switch the feature off unseen.
+var _ durationRepository = (*sqlcgen.Queries)(nil)
 
 type targetRunError struct {
 	target string
@@ -823,6 +834,12 @@ func (s *Service) storeResult(ctx context.Context, videoID uuid.UUID, res media.
 			return err
 		}
 	}
+	// A duration the probe could not read (a WebM written to a pipe states
+	// none) is learned from the tree just written. Fill-only: a probed value is
+	// never overwritten and a rerun is a no-op. It runs here, before the
+	// promotion and so before the completion hook, because that hook sends the
+	// federation Update — which then states the real duration, not PT0S.
+	s.fillDuration(ctx, videoID, res.DurationSeconds)
 	// The promotion. Format records the packaging shape of the tree MasterKey now
 	// points at (migration 0108), so serving can tell a CMAF tree from a legacy
 	// MPEG-TS one without probing storage — and so a TRANSCODING_PACKAGER change
@@ -835,6 +852,23 @@ func (s *Service) storeResult(ctx context.Context, videoID uuid.UUID, res media.
 		Format:    res.Format,
 	})
 	return err
+}
+
+// fillDuration records a measured duration when none is stored. Under half a
+// second rounds to nothing and stays unknown, like the probe's own rounding.
+// Best-effort: the duration is a description of media that is already good, so
+// a failed write is logged rather than costing the whole encode a retry.
+func (s *Service) fillDuration(ctx context.Context, videoID uuid.UUID, seconds float64) {
+	dr, ok := s.repo.(durationRepository)
+	rounded := math.Round(seconds)
+	if !ok || rounded < 1 || rounded > math.MaxInt32 {
+		return
+	}
+	d := int32(rounded)
+	if _, err := dr.FillVideoDurationIfUnknown(ctx, sqlcgen.FillVideoDurationIfUnknownParams{VideoID: videoID, DurationSeconds: &d}); err != nil {
+		slog.WarnContext(ctx, "transcode: could not record the measured duration; the video keeps an unknown one",
+			"video_id", videoID, "error", err.Error())
+	}
 }
 
 func (s *Service) storeWebVideos(ctx context.Context, videoID uuid.UUID, files []media.WebVideoResult) error {

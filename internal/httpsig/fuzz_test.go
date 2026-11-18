@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"errors"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -50,5 +51,27 @@ func FuzzVerify(f *testing.F) {
 		req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
 		// Must not panic; result is irrelevant.
 		_, _ = v.Verify(context.Background(), req, body)
+	})
+}
+
+// FuzzCheckKeyPolicy asserts the key-policy gate never panics on an arbitrary
+// modulus/exponent pair and never accepts one outside its stated bounds. The
+// seeds are the shapes it exists to refuse.
+func FuzzCheckKeyPolicy(f *testing.F) {
+	f.Add(bytes.Repeat([]byte{0xff}, 256), 65537)  // 2048-bit, in policy
+	f.Add(bytes.Repeat([]byte{0xff}, 1025), 65537) // 8200-bit, oversize
+	f.Add(bytes.Repeat([]byte{0xff}, 128), 65537)  // 1024-bit, undersize
+	f.Add(bytes.Repeat([]byte{0xff}, 256), 1<<40+1)
+	f.Add(bytes.Repeat([]byte{0xff}, 256), 1)
+	f.Add([]byte{}, 0)
+
+	f.Fuzz(func(t *testing.T, n []byte, e int) {
+		pub := &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: e}
+		if CheckKeyPolicy(pub) != nil {
+			return
+		}
+		if b := pub.N.BitLen(); b < MinRSABits || b > MaxRSABits || e < 3 || e%2 == 0 || e > maxRSAExponent {
+			t.Fatalf("accepted %d-bit modulus with e=%d", b, e)
+		}
 	})
 }

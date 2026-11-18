@@ -108,7 +108,7 @@ func (s *Service) InstanceActor(ctx context.Context) (*Actor, error) {
 	if err != nil {
 		return nil, err
 	}
-	actor := buildActor(id, actorTypeApplication, InstanceActorName, s.domain(), "", pub)
+	actor := s.buildActor(id, actorTypeApplication, InstanceActorName, s.domain(), "", pub)
 	actor.URL = s.baseURL + "/about/instance" // the human page, not the AP id
 	return actor, nil
 }

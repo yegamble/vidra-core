@@ -223,6 +223,9 @@ func TestInstanceActorIsPeerTubesApplicationActor(t *testing.T) {
 	if actor.URL != "https://videos.example/about/instance" {
 		t.Errorf("url = %q, want the human about page", actor.URL)
 	}
+	if actor.Endpoints == nil || actor.Endpoints.SharedInbox != "https://videos.example/inbox" {
+		t.Errorf("endpoints = %+v, want sharedInbox at the instance origin's /inbox", actor.Endpoints)
+	}
 	raw, err := json.Marshal(actor)
 	if err != nil {
 		t.Fatal(err)

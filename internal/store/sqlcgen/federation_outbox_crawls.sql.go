@@ -86,6 +86,45 @@ func (q *Queries) EnqueueOutboxCrawl(ctx context.Context, arg EnqueueOutboxCrawl
 	return err
 }
 
+const outboxCrawlJobStats = `-- name: OutboxCrawlJobStats :one
+SELECT
+    count(*) FILTER (WHERE state = 'pending')::bigint AS pending,
+    0::bigint                                         AS running,
+    count(*) FILTER (WHERE state = 'done')::bigint    AS done,
+    count(*) FILTER (WHERE state = 'failed')::bigint  AS failed,
+    GREATEST(COALESCE(EXTRACT(EPOCH FROM (now() - min(next_attempt_at) FILTER (WHERE state = 'pending')))::bigint, 0), 0)::bigint AS oldest_pending_age_seconds
+FROM federation_outbox_crawls
+`
+
+type OutboxCrawlJobStatsRow struct {
+	Pending                 int64 `json:"pending"`
+	Running                 int64 `json:"running"`
+	Done                    int64 `json:"done"`
+	Failed                  int64 `json:"failed"`
+	OldestPendingAgeSeconds int64 `json:"oldest_pending_age_seconds"`
+}
+
+// The queue's depth row on /admin/jobs and the vidra_queue_depth gauge, with
+// the table's own states: 'pending' (due, waiting out a backoff, or held
+// under a lease), 'done', and 'failed' (given up after the attempt cap).
+// There is no running state — a claimed row stays 'pending' and moves
+// next_attempt_at out by the lease — so running is structurally 0, as for
+// media_ipfs_pins. The age is how overdue the oldest due read is, measured
+// from next_attempt_at so a read waiting out its backoff or its lease
+// contributes nothing: a stopped drain grows it, a busy one does not.
+func (q *Queries) OutboxCrawlJobStats(ctx context.Context) (OutboxCrawlJobStatsRow, error) {
+	row := q.db.QueryRow(ctx, outboxCrawlJobStats)
+	var i OutboxCrawlJobStatsRow
+	err := row.Scan(
+		&i.Pending,
+		&i.Running,
+		&i.Done,
+		&i.Failed,
+		&i.OldestPendingAgeSeconds,
+	)
+	return i, err
+}
+
 const settleOutboxCrawl = `-- name: SettleOutboxCrawl :exec
 UPDATE federation_outbox_crawls
 SET state = $1, attempts = attempts + 1,

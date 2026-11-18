@@ -34,6 +34,10 @@ const (
 	// outboxCrawlMaxPages bounds the pages read after the outbox document
 	// itself. PeerTube's hold 10 activities and vidra's 20, newest first.
 	outboxCrawlMaxPages = 10
+	// outboxCrawlMaxItems bounds the activities examined across all pages,
+	// whatever each is: a page may list any number, and every video stored
+	// may cost a thumbnail fetch, which only the read's timeout bounded.
+	outboxCrawlMaxItems = 200
 	// maxOutboxPageBytes bounds one outbox document.
 	maxOutboxPageBytes = 2 << 20
 )
@@ -71,16 +75,21 @@ func (s *Service) CrawlOutbox(ctx context.Context, actorURL string) (int, error)
 	if err != nil {
 		return 0, err
 	}
-	stored, seen := 0, map[string]bool{}
+	stored, examined, seen := 0, 0, map[string]bool{}
 	var skipped error
-	next := actor.Outbox
-	for read := 0; read <= outboxCrawlMaxPages && sameHost(next, actorURL) && !seen[next]; read++ {
+	next, truncated := actor.Outbox, false
+	for read := 0; read <= outboxCrawlMaxPages && sameHost(next, actorURL) && !seen[next] && !truncated; read++ {
 		seen[next] = true
 		page, err := s.fetchOutboxPage(ctx, next)
 		if err != nil {
 			return stored, err
 		}
 		for _, item := range page.OrderedItems {
+			if examined == outboxCrawlMaxItems {
+				truncated = true
+				break
+			}
+			examined++
 			ok, err := s.ingestOutboxItem(ctx, actorURL, item)
 			if ok {
 				stored++
@@ -92,6 +101,13 @@ func (s *Service) CrawlOutbox(ctx context.Context, actorURL string) (int, error)
 		if next = objectID(page.Next); next == "" {
 			next = objectID(page.First)
 		}
+		// A full budget with a page still to read is a stop short as well.
+		truncated = truncated || (examined == outboxCrawlMaxItems && next != "")
+	}
+	// Stopping short is a read that succeeded, not a failure to retry: the
+	// newest activities come first, and only the oldest are left unread.
+	if truncated && s.logger != nil {
+		s.logger.Info("federation: outbox read truncated at the activity bound", "actor", actorURL, "examined", examined, "stored", stored)
 	}
 	return stored, skipped
 }

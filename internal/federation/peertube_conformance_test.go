@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 	"unicode/utf8"
 
@@ -521,7 +522,41 @@ var (
 	ptShortNameID = uuid.MustParse("cf614d97-a081-4e3d-9c51-4b3a2f1e0d93")
 	ptUnsizedID   = uuid.MustParse("d0725ea8-b192-4f4e-8d62-5c4b3a2f1e04")
 	ptNoProbeID   = uuid.MustParse("e1836fb9-c2a3-4a5f-9e73-6d5c4b3a2f15")
+	ptOctetID     = uuid.MustParse("f2947aca-d3b4-4b60-8f84-7e6d5c4b3a26")
+	ptGIFID       = uuid.MustParse("03a58bdb-e4c5-4c71-9095-8f7e6d5c4b37")
+	ptFatJPEGID   = uuid.MustParse("14b69cec-f5d6-4d82-a1a6-908f7e6d5c48")
+	ptAVIFID      = uuid.MustParse("25c7adfd-06e7-4e93-b2b7-a1908f7e6d59")
+	ptAnimWebPID  = uuid.MustParse("36d8be0e-17f8-4fa4-83c8-b2a1908f7e6a")
 )
+
+// ptPosterBytes stores raw poster bytes for a copy of base under id, with the
+// content type the row claims.
+func ptPosterBytes(t *testing.T, repo fakeRepo, blobs storage.Backend, base sqlcgen.GetVideoByIDRow, id uuid.UUID, contentType string, b []byte) {
+	t.Helper()
+	v := base
+	v.ID, v.Title, v.ThumbnailContentType = id, "Poster "+id.String()[:8], contentType
+	repo.videosByID[id] = v
+	if _, err := blobs.Put(t.Context(), media.VideoThumbnailKey(id), bytes.NewReader(b)); err != nil {
+		t.Fatalf("put poster: %v", err)
+	}
+}
+
+// ptJPEGBytes is a w×h JPEG with pad bytes of COM segments before its frame
+// header, as a camera's EXIF/ICC block puts APP data there.
+func ptJPEGBytes(t *testing.T, w, h, pad int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h)), nil); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	out := []byte{0xFF, 0xD8}
+	for ; pad > 0; pad -= 65533 {
+		n := min(pad, 65533)
+		out = append(out, 0xFF, 0xFE, byte((n+2)>>8), byte(n+2))
+		out = append(out, bytes.Repeat([]byte{'x'}, n)...)
+	}
+	return append(out, buf.Bytes()[2:]...)
+}
 
 // ptWorld is the contract world plus one video per conformance case.
 func ptWorld(t *testing.T) (*Service, fakeRepo) {
@@ -561,6 +596,22 @@ func ptWorld(t *testing.T) (*Service, fakeRepo) {
 	noProbe.ID, noProbe.Title, noProbe.MetadataDurationSeconds = ptNoProbeID, "Recorded in a browser", nil
 	repo.videosByID[ptNoProbeID] = noProbe
 	ptPoster(t, blobs, media.VideoThumbnailKey(ptNoProbeID), 640, 360)
+
+	// G4: posters PeerTube refused although vidra could size them, or could not
+	// size although they are ordinary images. An imported poster with an
+	// unknown extension is stored as application/octet-stream.
+	ptPosterBytes(t, repo, blobs, finished, ptOctetID, "application/octet-stream", ptJPEGBytes(t, 640, 360, 0))
+	// A 480×270 GIF header, hand-written: importing image/gif here would
+	// register the decoder for the test binary and hide a missing registration.
+	ptPosterBytes(t, repo, blobs, finished, ptGIFID, "image/gif", []byte("GIF89a\xe0\x01\x0e\x01\x00\x00\x00;"))
+	ptPosterBytes(t, repo, blobs, finished, ptFatJPEGID, "image/jpeg", ptJPEGBytes(t, 1280, 720, 300<<10))
+	// An ANIMATED WebP (VP8X with the animation bit, then ANIM/ANMF): the
+	// decoder reads the canvas size from VP8X without looking at the frames.
+	anim := []byte("RIFF\x00\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00\x02\x00\x00\x00\x8f\x01\x00\x2b\x01\x00ANIM\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00")
+	anim[4] = byte(len(anim) - 8)
+	ptPosterBytes(t, repo, blobs, finished, ptAnimWebPID, "image/webp", anim)
+	// An AVIF saved as .jpg: SetThumbnail trusts the extension, nothing decodes it.
+	ptPosterBytes(t, repo, blobs, finished, ptAVIFID, "image/jpeg", append([]byte("\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf"), make([]byte, 64)...))
 
 	shortName := finished
 	shortName.ID, shortName.Title = ptShortNameID, "ab"
@@ -624,6 +675,20 @@ func TestVideoObjectPassesPeerTubeValidator(t *testing.T) {
 		// instance's fallback poster instead, a real image of that real size.
 		{name: "video with no thumbnail", id: ptNoThumbID, check: ptAssertFallbackIcon},
 		{name: "video whose poster cannot be sized", id: ptUnsizedID, check: ptAssertFallbackIcon},
+		{name: "AVIF poster saved as .jpg", id: ptAVIFID, check: ptAssertFallbackIcon},
+		// The icon's mediaType is what the bytes ARE: PeerTube keeps only
+		// png/jpeg/webp/gif icons, and an octet-stream-typed JPEG was refused
+		// ("icons") although its size was read.
+		{name: "JPEG poster stored as application/octet-stream", id: ptOctetID, check: func(t *testing.T, v ptVerdict) {
+			ptAssertIconType(t, v, 640, 360, "image/jpeg")
+		}},
+		// PeerTube keeps an image/webp icon; whether it can render the
+		// animation is its business, and the size is the real canvas.
+		{name: "animated WebP poster", id: ptAnimWebPID, check: func(t *testing.T, v ptVerdict) { ptAssertIconType(t, v, 400, 300, "image/webp") }},
+		{name: "GIF poster", id: ptGIFID, check: func(t *testing.T, v ptVerdict) { ptAssertIconType(t, v, 480, 270, "image/gif") }},
+		{name: "JPEG with 300 KiB of metadata before its frame header", id: ptFatJPEGID, check: func(t *testing.T, v ptVerdict) {
+			ptAssertIconType(t, v, 1280, 720, "image/jpeg")
+		}},
 		// PeerTube requires a duration (videos.ts "duration format") and refuses
 		// the whole video without one: the interop lab uploaded a WebM that
 		// states none, and PeerTube logged "Video field is not valid to
@@ -786,6 +851,17 @@ func ptAssertIcon(t *testing.T, v ptVerdict, w, h int) {
 	}
 }
 
+// ptAssertIconType: the one icon PeerTube kept is the real poster, at its real
+// size and with the type its bytes decode as.
+func ptAssertIconType(t *testing.T, v ptVerdict, w, h int, mediaType string) {
+	t.Helper()
+	icons := v.Object["icon"].([]any)
+	if ic := icons[0].(map[string]any); len(icons) != 1 || ic["mediaType"] != mediaType || !strings.HasSuffix(ic["url"].(string), "/thumbnail") {
+		t.Errorf("icon = %v, want the real poster alone as %s", icons, mediaType)
+	}
+	ptAssertIcon(t, v, w, h)
+}
+
 // ptAssertFallbackIcon: the one icon is the instance's fallback poster, with
 // the size and type the route serving it really has (httpapi
 // TestFederationFallbackPosterIsTheImageTheObjectNames decodes it).
@@ -919,5 +995,73 @@ func TestPosterSizeIsReadOncePerThumbnailRow(t *testing.T) {
 	}
 	if icon := obj["icon"].([]map[string]any)[0]; icon["width"] != 320 || opens != 2 {
 		t.Errorf("after replacement: icon = %v, opens = %d; want 320 wide from a second read", icon, opens)
+	}
+	// No row id means nothing could be cached, so nothing is read: up to 2 MiB
+	// per emission is not spent on a poster the next emission reads again.
+	if f := svc.posterFactsOf(t.Context(), "", media.VideoThumbnailKey(ctVideoID)); f != (posterFacts{}) || opens != 2 {
+		t.Errorf("a poster with no row id: facts %+v after %d opens, want none and no read", f, opens)
+	}
+}
+
+// failingOpenBackend fails every Open, as a storage outage does.
+type failingOpenBackend struct {
+	storage.Backend
+	opens *int
+}
+
+func (f failingOpenBackend) Open(context.Context, string) (io.ReadCloser, error) {
+	*f.opens++
+	return nil, io.ErrUnexpectedEOF
+}
+
+// failingReadBackend opens, hands over the first bytes of a real JPEG, then
+// fails the read, as a connection dropped mid-object does.
+type failingReadBackend struct {
+	storage.Backend
+	opens *int
+}
+
+func (f failingReadBackend) Open(context.Context, string) (io.ReadCloser, error) {
+	*f.opens++
+	return io.NopCloser(io.MultiReader(bytes.NewReader([]byte{0xFF, 0xD8, 0xFF}), iotest.ErrReader(io.ErrUnexpectedEOF))), nil
+}
+
+// TestUndecodablePosterIsReadOnceButAnOutageIsRetried: with a 2 MiB header
+// bound, re-reading a poster that will never decode on every outbox page would
+// be a cost an anonymous caller can multiply, so that verdict is cached per
+// thumbnail row. A storage failure is not a verdict on the bytes: it is retried.
+func TestUndecodablePosterIsReadOnceButAnOutageIsRetried(t *testing.T) {
+	repo := newContractRepo()
+	local, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("local storage: %v", err)
+	}
+	if _, err := local.Put(t.Context(), media.VideoThumbnailKey(ctVideoID), strings.NewReader("not an image")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	repo.videoFacts = map[uuid.UUID]sqlcgen.GetVideoFederationFactsRow{ctVideoID: {ThumbnailFileID: "row-1"}}
+	for _, tc := range []struct {
+		name    string
+		backend func(opens *int) storage.Backend
+		want    int
+	}{
+		{"undecodable bytes", func(o *int) storage.Backend { return countingBackend{local, o} }, 1},
+		{"storage outage", func(o *int) storage.Backend { return failingOpenBackend{local, o} }, 3},
+		{"read failing mid-object", func(o *int) storage.Backend { return failingReadBackend{local, o} }, 3},
+	} {
+		opens := 0
+		svc := NewService(repo, WithBaseURL(contractBase), WithMediaStorage(tc.backend(&opens)))
+		for i := 0; i < 3; i++ {
+			obj, err := svc.VideoObject(t.Context(), ctVideoID)
+			if err != nil {
+				t.Fatalf("%s: VideoObject: %v", tc.name, err)
+			}
+			if icons := obj["icon"].([]map[string]any); icons[len(icons)-1]["url"] != contractBase+FallbackPosterPath {
+				t.Fatalf("%s: icons = %v, want the fallback poster last", tc.name, icons)
+			}
+		}
+		if opens != tc.want {
+			t.Errorf("%s: poster opened %d times for 3 emissions, want %d", tc.name, opens, tc.want)
+		}
 	}
 }
