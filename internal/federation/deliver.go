@@ -22,7 +22,6 @@ import (
 	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
-	"github.com/vidra/vidra-core/internal/urlsafety"
 )
 
 // deliveryLeaseSeconds is how long a claimed row stops being due. Delivering an activity is one outbound HTTP POST, so
@@ -360,7 +359,7 @@ func (s *Service) unlockPrivateKey(stored string) (*rsa.PrivateKey, error) {
 // deliverActivity signs and POSTs an activity payload to a remote inbox through
 // the SSRF guard.
 func (s *Service) deliverActivity(ctx context.Context, signer httpsig.Signer, inboxURL string, payload []byte) error {
-	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
+	guard := s.fetchGuard()
 	target, err := guard.ValidateURL(inboxURL)
 	if err != nil {
 		return fmt.Errorf("federation: unsafe inbox URL: %w", err)

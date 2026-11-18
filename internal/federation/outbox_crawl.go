@@ -9,8 +9,6 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/vidra/vidra-core/internal/urlsafety"
 )
 
 // Reading a followed actor's outbox.
@@ -155,8 +153,8 @@ func (s *Service) remoteVideoHeld(ctx context.Context, objectURL string) (bool, 
 // maxOutboxPageBytes. A redirect may not leave the host.
 func (s *Service) fetchOutboxPage(ctx context.Context, pageURL string) (outboxPage, error) {
 	var page outboxPage
-	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
-	target, err := guard.ValidateURL(pageURL)
+	guard := s.fetchGuard()
+	target, err := s.validateFetchURL(pageURL)
 	if err != nil {
 		return page, fmt.Errorf("federation: unsafe outbox URL: %w", err)
 	}

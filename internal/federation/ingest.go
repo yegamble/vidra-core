@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
-	"github.com/vidra/vidra-core/internal/urlsafety"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -349,8 +348,8 @@ func remoteVideoParams(ownerActorURL string, obj apVideoObject) sqlcgen.UpsertRe
 // fetchVideoObject GETs and parses an announced object document through the
 // SSRF guard, bounded to maxObjectBytes.
 func (s *Service) fetchVideoObject(ctx context.Context, objectURL string) (apVideoObject, error) {
-	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
-	target, err := guard.ValidateURL(objectURL)
+	guard := s.fetchGuard()
+	target, err := s.validateFetchURL(objectURL)
 	if err != nil {
 		return apVideoObject{}, fmt.Errorf("federation: unsafe object URL: %w", err)
 	}
@@ -387,7 +386,7 @@ func (s *Service) cacheRemoteThumbnail(ctx context.Context, videoID uuid.UUID, t
 	if s.media == nil || thumbURL == "" {
 		return
 	}
-	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
+	guard := s.fetchGuard()
 	target, err := guard.ValidateURL(thumbURL)
 	if err != nil {
 		return

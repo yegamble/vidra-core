@@ -56,7 +56,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
-	"github.com/vidra/vidra-core/internal/urlsafety"
 )
 
 // ErrRemoteActorRequired means the supplied identity was neither an actor URL
@@ -99,7 +98,7 @@ func (s *Service) ResolveRemoteActorIdentity(ctx context.Context, identity strin
 		if strings.EqualFold(hostOf(identity), s.domain()) {
 			return "", ErrLocalFollowTarget
 		}
-		guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
+		guard := s.fetchGuard()
 		if _, err := guard.ValidateURL(identity); err != nil {
 			return "", fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 		}
