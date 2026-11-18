@@ -284,7 +284,7 @@ func (s *Server) handleFallbackPoster(c *echo.Context) error {
 // inboxFetchBudgetRetryAfter is the Retry-After (seconds) on an inbox POST
 // refused because the signer's actor could not be fetched within the inbound
 // fetch limits. Fixed and conservative: the per-host budget refills a token
-// every 30 s, so a minute always buys the next attempt at least one.
+// every 30 s, so a sender that does come back after a minute finds at least one.
 const inboxFetchBudgetRetryAfter = "60"
 
 // handleInbox verifies an inbound activity's HTTP signature (resolving the
@@ -313,8 +313,10 @@ func (s *Server) handleInbox(c *echo.Context) error {
 	if federation.IsInboundFetchRefused(err) {
 		// The signer's actor was not fetched because an inbound fetch limit
 		// was spent, so the signature was never judged. 401 would read as
-		// "rejected", and PeerTube charges every non-2xx against the follow;
-		// 429 + Retry-After says "later". no-store: the answer is about now.
+		// "rejected"; 429 + Retry-After says "later". PeerTube still counts
+		// it as a failed delivery (it charges every non-2xx against the
+		// follow) and is not shown to honour Retry-After. no-store: the
+		// answer is about now.
 		c.Response().Header().Set("Cache-Control", "no-store")
 		c.Response().Header().Set("Retry-After", inboxFetchBudgetRetryAfter)
 		return c.JSON(http.StatusTooManyRequests, ErrorResponse{Error: ErrorBody{

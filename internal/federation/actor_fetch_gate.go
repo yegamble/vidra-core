@@ -189,7 +189,9 @@ const (
 )
 
 // errInboundFetchBudget: one of the inbound-signature path's fetch limits is
-// spent. Nothing is fetched; the inbox answers "later" and the sender retries.
+// spent. Nothing is fetched; the inbox answers "later" (429 + Retry-After). Whether
+// the sender retries is not established: PeerTube counts any non-2xx as a
+// failed delivery and is not shown to honour Retry-After.
 var errInboundFetchBudget = errors.New("federation: inbound actor fetch budget spent")
 
 // IsInboundFetchRefused reports whether err is an inbound-path actor fetch
