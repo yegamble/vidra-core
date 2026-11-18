@@ -1,6 +1,8 @@
 package federation
 
 import (
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -40,7 +42,19 @@ type actorFetchGate struct {
 	// actor URL.
 	misses singleflight.Group
 
+	// maxInflight caps inbound-path actor fetches in flight at once, across
+	// all hosts (inboundMaxInflight; a field so a test can lower it).
+	maxInflight int
+
 	mu sync.Mutex
+	// hosts is the per-host fetch budget of the inbound-signature path.
+	hosts    map[string]*hostBudget
+	inflight int
+	// bypass and bypassInflight are the followed actors' own ceiling;
+	// lookups is the non-blocking semaphore on followed lookups.
+	bypass         *hostBudget
+	bypassInflight int
+	lookups        chan struct{}
 	// refreshed is when each cached actor's key was last re-fetched.
 	refreshed map[string]time.Time
 	// failed is when each actor URL last failed to resolve.
@@ -49,9 +63,12 @@ type actorFetchGate struct {
 
 func newActorFetchGate() *actorFetchGate {
 	return &actorFetchGate{
-		now:       time.Now,
-		refreshed: map[string]time.Time{},
-		failed:    map[string]time.Time{},
+		now:         time.Now,
+		maxInflight: inboundMaxInflight,
+		hosts:       map[string]*hostBudget{},
+		lookups:     make(chan struct{}, maxFollowedLookups),
+		refreshed:   map[string]time.Time{},
+		failed:      map[string]time.Time{},
 	}
 }
 
@@ -109,4 +126,164 @@ func (g *actorFetchGate) put(m map[string]time.Time, key string, at time.Time) {
 		}
 	}
 	m[key] = at
+}
+
+// The inbound-signature path's per-host budget. The per-URL bounds above are
+// sidestepped by naming a fresh URL each time, so actor fetches that verifying
+// an inbox POST causes are also budgeted per HOST (NormalizeFollowHost: case,
+// trailing dot and port variants are one host): a token bucket of
+// inboundHostBurst refilled one token per inboundHostRefill. Over any window W
+// one host buys at most inboundHostBurst + W/inboundHostRefill fetches through
+// this path — 10 + 2 per minute. On top, at most inboundMaxInflight such
+// fetches run at once across all hosts, except for an actor this instance
+// follows (or whose host it instance-follows), which a flood elsewhere must
+// not starve. Key refreshes of cached actors are bounded per actor already and
+// take a slot from the global cap but no token (they are limited per actor);
+// no fetch a local user's action causes is counted.
+//
+// Like the rest of the gate this is per process: N replicas, N budgets.
+const (
+	inboundHostBurst   = 10
+	inboundHostRefill  = 30 * time.Second
+	inboundMaxInflight = 32
+	// followedLookupTimeout bounds the "is it followed?" lookup an exhausted
+	// limit asks; a slower answer counts as not followed.
+	followedLookupTimeout = 2 * time.Second
+	// maxFollowedLookups caps concurrent "is it followed?" lookups; with none
+	// free, the answer is "not followed".
+	maxFollowedLookups = 8
+	// A followed actor admitted past the limits above is still held to a
+	// ceiling of its own: inboundBypassBurst refilled one per
+	// inboundBypassRefill (2/s), and inboundBypassMaxInflight at once.
+	inboundBypassBurst       = 120
+	inboundBypassRefill      = 500 * time.Millisecond
+	inboundBypassMaxInflight = 16
+)
+
+// errInboundFetchBudget: the inbound-signature path's fetch budget for this
+// host, or its global in-flight cap, is spent. The request fails like any
+// unverifiable signature; the sender retries.
+var errInboundFetchBudget = errors.New("federation: inbound actor fetch budget spent")
+
+// errInboundBypassCeiling: a followed actor's fetch is past the bypass ceiling.
+var errInboundBypassCeiling = fmt.Errorf("%w: followed ceiling", errInboundFetchBudget)
+
+type hostBudget struct {
+	tokens float64
+	at     time.Time
+}
+
+// admitInbound admits one inbound-path actor fetch: a token from host's
+// bucket and an in-flight slot. When either limit would refuse, followed is
+// asked (outside the lock); an actor this instance follows is admitted past
+// both, spending a token only if one is there. Everything is re-read after
+// the lock is retaken — the bucket may have been spent or trimmed meanwhile.
+func (g *actorFetchGate) admitInbound(host string, followed func() bool) (release func(), err error) {
+	return g.admit(host, followed)
+}
+
+// admitInflight admits one key refresh against the global in-flight cap
+// only, with the same followed-actor bypass. A refresh is already limited per
+// actor; what it must not do is run past the cap the misses are held to.
+func (g *actorFetchGate) admitInflight(followed func() bool) (release func(), err error) {
+	return g.admit("", followed)
+}
+
+// admit is admitInbound (host != "") or admitInflight (host == "").
+func (g *actorFetchGate) admit(host string, followed func() bool) (func(), error) {
+	g.mu.Lock()
+	bypassed := false
+	if !g.withinLimitsLocked(host) {
+		g.mu.Unlock()
+		if !g.lookup(followed) {
+			return nil, errInboundFetchBudget
+		}
+		g.mu.Lock()
+		// Past the ordinary limits, a followed actor is held to the bypass
+		// ceiling, read now that the lock is held again.
+		now := g.now()
+		if g.bypass == nil {
+			g.bypass = &hostBudget{tokens: inboundBypassBurst, at: now}
+		}
+		g.bypass.tokens = min(inboundBypassBurst, g.bypass.tokens+float64(now.Sub(g.bypass.at))/float64(inboundBypassRefill))
+		g.bypass.at = now
+		if g.bypass.tokens < 1 || g.bypassInflight >= inboundBypassMaxInflight {
+			g.mu.Unlock()
+			return nil, errInboundBypassCeiling
+		}
+		g.bypass.tokens--
+		g.bypassInflight++
+		bypassed = true
+	}
+	if b := g.bucketLocked(host); b != nil && b.tokens >= 1 {
+		b.tokens--
+	}
+	g.inflight++
+	g.mu.Unlock()
+	return func() {
+		g.mu.Lock()
+		g.inflight--
+		if bypassed {
+			g.bypassInflight--
+		}
+		g.mu.Unlock()
+	}, nil
+}
+
+// lookup runs followed under the lookup semaphore; with no slot free the
+// answer is "not followed", so refused requests cannot queue on the database.
+func (g *actorFetchGate) lookup(followed func() bool) bool {
+	select {
+	case g.lookups <- struct{}{}:
+		defer func() { <-g.lookups }()
+		return followed()
+	default:
+		return false
+	}
+}
+
+// withinLimitsLocked reports whether one more fetch for host fits both its
+// bucket (when host != "") and the global in-flight cap. Callers hold mu.
+func (g *actorFetchGate) withinLimitsLocked(host string) bool {
+	if b := g.bucketLocked(host); b != nil && b.tokens < 1 {
+		return false
+	}
+	return g.inflight < g.maxInflight
+}
+
+// bucketLocked returns host's bucket, refilled to now, creating it on first
+// use; nil for host == "". Callers hold mu.
+func (g *actorFetchGate) bucketLocked(host string) *hostBudget {
+	if host == "" {
+		return nil
+	}
+	now := g.now()
+	b, ok := g.hosts[host]
+	if !ok {
+		if len(g.hosts) >= maxActorFetchEntries {
+			g.trimHosts(now)
+		}
+		b = &hostBudget{tokens: inboundHostBurst, at: now}
+		g.hosts[host] = b
+	}
+	b.tokens = min(inboundHostBurst, b.tokens+float64(now.Sub(b.at))/float64(inboundHostRefill))
+	b.at = now
+	return b
+}
+
+// trimHosts drops, in one batch, hosts whose bucket has refilled (forgetting
+// them changes nothing), then arbitrary ones down to evictActorFetchTo.
+// Callers hold mu.
+func (g *actorFetchGate) trimHosts(now time.Time) {
+	for h, b := range g.hosts {
+		if now.Sub(b.at) >= inboundHostBurst*inboundHostRefill {
+			delete(g.hosts, h)
+		}
+	}
+	for h := range g.hosts {
+		if len(g.hosts) <= evictActorFetchTo {
+			break
+		}
+		delete(g.hosts, h)
+	}
 }
