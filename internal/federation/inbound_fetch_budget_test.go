@@ -307,3 +307,37 @@ func TestBlockedHostSpendsNoInboundBudget(t *testing.T) {
 		t.Fatalf("a blocked host spent %v tokens", inboundHostBurst-b.tokens)
 	}
 }
+
+// Every inbound-path refusal is counted by reason, with a fixed label set.
+func TestInboundFetchRefusalsAreCountedByReason(t *testing.T) {
+	o := newPerHostOrigin()
+	var mu sync.Mutex
+	got := map[string]int{}
+	count := func(reason string) { mu.Lock(); got[reason]++; mu.Unlock() }
+	repo := newRemoteRepo()
+	repo.blockedDomains = map[string]bool{"blocked.example.test": true}
+	svc := NewService(repo, WithFetchClient(&http.Client{Transport: o}), WithInboundFetchRefusedCounter(count))
+	frozen := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	svc.actorFetches.now = func() time.Time { return frozen }
+	ctx := context.Background()
+
+	for i := 0; i < inboundHostBurst+3; i++ {
+		_, _ = svc.ResolveKey(ctx, fmt.Sprintf("https://flood.example.test/accounts/a%d#main-key", i))
+	}
+	// A blocked host is counted as blocked however often it is named, never
+	// as a spent budget.
+	for i := 0; i < inboundHostBurst+5; i++ {
+		_, _ = svc.ResolveKey(ctx, fmt.Sprintf("https://blocked.example.test/accounts/b%d#main-key", i))
+	}
+	svc.actorFetches.maxInflight = 0
+	_, _ = svc.ResolveKey(ctx, "https://quiet.example.test/accounts/bob#main-key")
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := map[string]int{"host_budget": 3, "blocked_host": inboundHostBurst + 5, "global_cap": 1}
+	for reason, n := range want {
+		if got[reason] != n {
+			t.Errorf("%s refusals = %d, want %d (all: %v)", reason, got[reason], n, got)
+		}
+	}
+}

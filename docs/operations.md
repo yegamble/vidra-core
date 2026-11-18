@@ -1732,7 +1732,14 @@ All opt-in and zero-cost when disabled.
   URLs) plus a `vidra_queue_depth{queue,state}` gauge and the connection-pool
   series `vidra_db_pool_total_conns` / `_idle_conns` / `_acquired_conns` /
   `_max_conns` with `vidra_db_pool_empty_acquires_total` and
-  `vidra_db_pool_acquire_wait_seconds_total`. The endpoint is
+  `vidra_db_pool_acquire_wait_seconds_total`, and
+  `vidra_federation_inbound_actor_fetch_refused_total{reason}`: federation
+  inbox requests whose actor fetch was refused before the network. It counts
+  REQUESTS, not distinct fetches: concurrent requests naming one actor share a
+  fetch, and each refused one counts. `reason` is one of `host_budget`,
+  `global_cap`, `followed_ceiling` or `blocked_host`. A steady `host_budget` or
+  `global_cap` rate is expected under abuse. A rise while a peer you follow
+  reports delivery failures is worth a look. The endpoint is
   unauthenticated and lives at the root like the health probes — **network-scope
   it** (internal Prometheus scrape only), do not expose it publicly. It is
   intentionally omitted from the public OpenAPI contract (an ops surface).

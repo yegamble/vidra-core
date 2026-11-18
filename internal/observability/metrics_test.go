@@ -152,3 +152,13 @@ func TestIPFSCapacityGaugesSwallowSourceError(t *testing.T) {
 		t.Errorf("no samples expected on source error\n%s", out)
 	}
 }
+
+func TestInboundActorFetchRefusedCounter(t *testing.T) {
+	m := NewMetrics()
+	m.IncInboundActorFetchRefused("host_budget")
+	m.IncInboundActorFetchRefused("host_budget")
+	out := scrape(t, m)
+	if !strings.Contains(out, `vidra_federation_inbound_actor_fetch_refused_total{reason="host_budget"} 2`) {
+		t.Errorf("expected the refusal counter = 2\n%s", out)
+	}
+}

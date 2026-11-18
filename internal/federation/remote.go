@@ -63,6 +63,7 @@ func (s *Service) ResolveKey(ctx context.Context, keyID string) (*rsa.PublicKey,
 	actorURL, _, _ := strings.Cut(keyID, "#")
 	ra, err := s.resolveActor(ctx, actorURL, true)
 	if err != nil {
+		s.countInboundRefusal(err)
 		return nil, err
 	}
 	return parseRSAPublicKey(ra.PublicKeyPem)
@@ -82,6 +83,7 @@ func (s *Service) ResolveKeyFresh(ctx context.Context, keyID string) (*rsa.Publi
 	actorURL, _, _ := strings.Cut(keyID, "#")
 	ra, err := s.refreshRemoteActorKey(ctx, actorURL)
 	if err != nil {
+		s.countInboundRefusal(err)
 		return nil, err
 	}
 	return parseRSAPublicKey(ra.PublicKeyPem)
@@ -143,7 +145,7 @@ func (s *Service) admitInboundFetch(ctx context.Context, actorURL string) (func(
 	}
 	host, ok := NormalizeFollowHost(u.Host)
 	if !ok {
-		return nil, errInboundFetchBudget
+		return nil, errInboundHostBudget
 	}
 	return s.actorFetches.admitInbound(host, s.followedLookup(ctx, actorURL))
 }
