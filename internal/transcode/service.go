@@ -183,6 +183,10 @@ type durationRepository interface {
 	FillVideoDurationIfUnknown(ctx context.Context, arg sqlcgen.FillVideoDurationIfUnknownParams) (int64, error)
 }
 
+// The production repository must keep satisfying the optional interface: a
+// type assertion that quietly fails would switch the feature off unseen.
+var _ durationRepository = (*sqlcgen.Queries)(nil)
+
 type targetRunError struct {
 	target string
 	err    error
