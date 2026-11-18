@@ -1903,6 +1903,38 @@ Tell the affected creators. Their old links keep working for a year and their
 federated identity is untouched, but the handle they publish to their audience
 has changed.
 
+### Inbound-path actor fetch limits
+
+Verifying an inbox POST's signature may fetch the signer's actor document.
+Those fetches are bounded by the limits below. They are **compile-time
+constants** in `internal/federation/actor_fetch_gate.go`: fixed per release,
+held in memory **per process** (N API replicas means N independent sets), and
+**not tunable** by env var or admin setting. Fetches a local user's action
+causes (a follow, a search, a delivery) are not counted against them.
+
+| Limit | Value | Constant |
+|---|---|---|
+| Per host: token bucket (host normalised for case, trailing dot, port) | burst 10, refill 1 per 30 s | `inboundHostBurst`, `inboundHostRefill` |
+| Per registrable domain (eTLD+1; IPv4 /24, IPv6 /48 for an IP literal) | burst 20, refill 1 per 15 s | `inboundDomainBurst`, `inboundDomainRefill` |
+| Per registrable domain: fetches in flight | 4 | `inboundDomainMaxInflight` |
+| Global rate, uncached actors only | burst 64, refill 1 per 200 ms (5/s) | `inboundGlobalBurst`, `inboundGlobalRefill` |
+| Global: fetches in flight | 32 | `inboundMaxInflight` |
+| Key re-fetch of a cached actor, and retry of an actor that failed to resolve | once per actor URL per 5 min | `actorFetchCooldown` |
+| Followed actor (accepted follow of that exact actor) admitted past the limits above: its own ceiling | burst 120, refill 1 per 500 ms (2/s); 16 in flight | `inboundBypassBurst`, `inboundBypassRefill`, `inboundBypassMaxInflight` |
+| "Is it followed?" lookup when a limit would refuse | 2 s timeout, 8 concurrent; slower or none free counts as not followed | `followedLookupTimeout`, `maxFollowedLookups` |
+| Entries held per tracking map | 10,000 (trimmed to 9,000) | `maxActorFetchEntries`, `evictActorFetchTo` |
+
+A key refresh of a cached actor spends the host and domain buckets and both
+in-flight caps, but not the global rate bucket. A refusal is counted on
+`vidra_federation_inbound_actor_fetch_refused_total{reason}` (see
+Observability above).
+
+Peer signing keys are also held to a policy
+(`internal/httpsig.CheckKeyPolicy`): an RSA key under **2048 bits**
+(`MinRSABits`) or over **8192 bits** (`MaxRSABits`), or whose exponent is even,
+below 3 or wider than 31 bits, is refused, and a signature from it does not
+verify.
+
 ## Production deployment notes
 
 The reference deployment is one host per environment behind a TLS proxy — see
