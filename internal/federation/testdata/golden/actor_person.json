@@ -4,7 +4,7 @@
     "https://w3id.org/security/v1"
   ],
   "endpoints": {
-    "sharedInbox": "https://videos.example/accounts/ada/inbox"
+    "sharedInbox": "https://videos.example/inbox"
   },
   "followers": "https://videos.example/accounts/ada/followers",
   "following": "https://videos.example/accounts/ada/following",

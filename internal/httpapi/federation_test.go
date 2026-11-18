@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -692,6 +693,42 @@ func TestInboxAcceptsSignedFollow(t *testing.T) {
 	// An Accept was durably enqueued to the follower's inbox.
 	if _, ok := repo.deliveries[bobInbox]; !ok {
 		t.Errorf("Accept not enqueued for delivery: %+v", repo.deliveries)
+	}
+}
+
+// TestSharedInboxRecordsAChannelFollowLikeTheChannelInbox: every actor now
+// advertises <origin>/inbox as its sharedInbox, so a peer delivers a Follow of
+// a channel there instead of to the channel's own inbox. The follow it records
+// must be the same row either way.
+func TestSharedInboxRecordsAChannelFollowLikeTheChannelInbox(t *testing.T) {
+	key, pubPEM := signerKeyPEM(t)
+	srv, repo := fedServerRepo(fedTestConfig())
+	repo.remoteActors[bobActor] = sqlcgen.RemoteActor{ActorUrl: bobActor, PublicKeyPem: pubPEM,
+		InboxUrl: "https://remote.example/accounts/bob/inbox"}
+	recorded := map[string]sqlcgen.InsertRemoteFollowParams{}
+	for i, path := range []string{"/inbox", "/video-channels/films/inbox"} {
+		delete(repo.remoteFollows, bobActor)
+		// A distinct activity id each time: a repeated id is a replay and is dropped.
+		body := []byte(`{"id":"https://remote.example/act/` + strconv.Itoa(i) + `","type":"Follow","actor":"` + bobActor +
+			`","object":"https://videos.example/video-channels/films"}`)
+		req := httptest.NewRequest(http.MethodPost, "https://videos.example"+path, bytes.NewReader(body))
+		if err := (httpsig.Signer{KeyID: bobActor + "#main-key", Priv: key}).Sign(req, body); err != nil {
+			t.Fatalf("Sign: %v", err)
+		}
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("%s: status = %d, want 202; body=%s", path, rec.Code, rec.Body.String())
+		}
+		f, ok := repo.remoteFollows[bobActor]
+		if !ok {
+			t.Fatalf("%s: remote follow not recorded", path)
+		}
+		recorded[path] = f
+	}
+	shared, own := recorded["/inbox"], recorded["/video-channels/films/inbox"]
+	if shared.ChannelID != own.ChannelID || shared.RemoteActorUrl != own.RemoteActorUrl {
+		t.Errorf("shared inbox recorded %+v, channel inbox recorded %+v", shared, own)
 	}
 }
 

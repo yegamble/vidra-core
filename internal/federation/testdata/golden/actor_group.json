@@ -10,7 +10,7 @@
     }
   ],
   "endpoints": {
-    "sharedInbox": "https://videos.example/video-channels/films/inbox"
+    "sharedInbox": "https://videos.example/inbox"
   },
   "followers": "https://videos.example/video-channels/films/followers",
   "following": "https://videos.example/video-channels/films/following",

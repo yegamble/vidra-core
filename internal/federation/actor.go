@@ -72,7 +72,9 @@ type PublicKey struct {
 }
 
 // Endpoints is the actor's shared-inbox endpoint block. PeerTube reads
-// endpoints.sharedInbox for fan-out delivery; we mirror it for parity.
+// endpoints.sharedInbox for fan-out delivery: it sends one POST per DISTINCT
+// sharedInbox, so the value must be the instance-wide <origin>/inbox. A
+// per-actor value turned one activity into one POST per local follower actor.
 type Endpoints struct {
 	SharedInbox string `json:"sharedInbox,omitempty"`
 }
@@ -124,7 +126,7 @@ func (s *Service) AccountActor(ctx context.Context, username string) (*Actor, er
 		return nil, err
 	}
 	base := s.baseURL + "/accounts/" + u.Username
-	actor := buildActor(base, "Person", u.Username, u.DisplayName, u.Bio, pub)
+	actor := s.buildActor(base, "Person", u.Username, u.DisplayName, u.Bio, pub)
 	// url is the HUMAN profile page on the frontend, distinct from the AP id: a
 	// browser following it must land on HTML, not the 406 the id answers.
 	actor.URL = s.baseURL + "/users/" + url.PathEscape(u.Username)
@@ -173,7 +175,7 @@ func (s *Service) ChannelActor(ctx context.Context, handle string) (*Actor, erro
 		return nil, err
 	}
 	base := s.baseURL + "/video-channels/" + s.channelActorHandle(ctx, ch)
-	actor := buildActor(base, "Group", ch.Handle, ch.DisplayName, ch.Description, pub)
+	actor := s.buildActor(base, "Group", ch.Handle, ch.DisplayName, ch.Description, pub)
 	actor.Support = federatedSupport(ch.Support)
 	actor.AttributedTo = []AttributedItem{{
 		Type: "Person",
@@ -242,9 +244,10 @@ func (s *Service) channelActorHandle(ctx context.Context, ch sqlcgen.Channel) st
 }
 
 // buildActor assembles an Actor from its base URL and public fields. url and the
-// endpoints.sharedInbox block are emitted for both Person and Group actors,
-// mirroring PeerTube's actor shape.
-func buildActor(base, typ, preferredUsername, name, summary, publicKeyPEM string) *Actor {
+// endpoints.sharedInbox block are emitted for every actor type, mirroring
+// PeerTube's actor shape; sharedInbox is the instance's POST /inbox, which takes
+// the same signature-verifying handler as the per-actor inboxes.
+func (s *Service) buildActor(base, typ, preferredUsername, name, summary, publicKeyPEM string) *Actor {
 	return &Actor{
 		Context:           apContext,
 		ID:                base,
@@ -257,7 +260,7 @@ func buildActor(base, typ, preferredUsername, name, summary, publicKeyPEM string
 		Outbox:            base + "/outbox",
 		Followers:         base + "/followers",
 		Following:         base + "/following",
-		Endpoints:         &Endpoints{SharedInbox: base + "/inbox"},
+		Endpoints:         &Endpoints{SharedInbox: s.baseURL + "/inbox"},
 		PublicKey: PublicKey{
 			ID:           base + "#main-key",
 			Owner:        base,
