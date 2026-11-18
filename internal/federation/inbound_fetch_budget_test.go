@@ -2,6 +2,7 @@ package federation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -176,39 +177,45 @@ func TestFollowedActorIsNotRefusedByAnEmptyHostBucket(t *testing.T) {
 	}
 }
 
-// Concurrent admissions never overspend a bucket, including across the
-// unlocked "is it followed?" lookup.
-func TestAdmitInboundNeverOverspendsUnderConcurrency(t *testing.T) {
+// An admission waiting on the "is it followed?" lookup re-reads the bucket
+// once it has an answer: a token spent meanwhile is not spent twice.
+func TestAdmitInboundRereadsTheBucketAfterTheLookup(t *testing.T) {
 	g := newActorFetchGate()
+	frozen := time.Now()
+	g.now = func() time.Time { return frozen }
 	g.maxInflight = 1
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	unfollowedAdmitted := 0
-	for i := 0; i < 200; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			isFollowed := i%2 == 0
-			release, err := g.admitInbound("h.example.test", func() bool { return isFollowed })
-			if err != nil {
-				return
-			}
-			if !isFollowed {
-				mu.Lock()
-				unfollowedAdmitted++
-				mu.Unlock()
-			}
-			release()
-		}()
+	const host = "h.example.test"
+	g.mu.Lock()
+	g.bucketLocked(host).tokens = 1
+	g.mu.Unlock()
+	hold, err := g.admitInflight(func() bool { return false }) // fills the cap
+	if err != nil {
+		t.Fatal(err)
 	}
-	wg.Wait()
+	asked, answer := make(chan struct{}), make(chan bool)
+	done := make(chan error)
+	go func() {
+		release, err := g.admitInbound(host, func() bool { close(asked); return <-answer })
+		if release != nil {
+			release()
+		}
+		done <- err
+	}()
+	<-asked
+	hold()
+	release, err := g.admitInbound(host, func() bool { return false }) // takes the last token
+	if err != nil {
+		t.Fatalf("the unfollowed admission was refused: %v", err)
+	}
+	release()
+	answer <- true
+	if err := <-done; err != nil {
+		t.Fatalf("the followed admission was refused: %v", err)
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if b := g.hosts["h.example.test"]; b.tokens < 0 {
-		t.Fatalf("bucket overspent: tokens = %v", b.tokens)
-	}
-	if unfollowedAdmitted > inboundHostBurst {
-		t.Fatalf("%d unfollowed admissions, want <= %d", unfollowedAdmitted, inboundHostBurst)
+	if tok := g.hosts[host].tokens; tok < 0 {
+		t.Fatalf("bucket overspent: tokens = %v", tok)
 	}
 }
 
@@ -226,11 +233,77 @@ func TestFollowedLookupIsBounded(t *testing.T) {
 	svc := newBudgetService(o, WithFollowEdgeChecker(slowEdges{}))
 	svc.actorFetches.maxInflight = 0
 	start := time.Now()
-	_, _ = svc.ResolveKey(context.Background(), "https://peer.example.test/accounts/bob#main-key")
-	if d := time.Since(start); d > followedLookupTimeout+2*time.Second {
-		t.Fatalf("the lookup took %v, want about %v", d, followedLookupTimeout)
+	done := make(chan struct{})
+	go func() {
+		_, _ = svc.ResolveKey(context.Background(), "https://peer.example.test/accounts/bob#main-key")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(followedLookupTimeout + 3*time.Second):
+		t.Fatalf("the lookup was still running after %v, want about %v", time.Since(start), followedLookupTimeout)
 	}
 	if got := o.count("peer.example.test"); got != 0 {
 		t.Fatalf("a timed-out lookup counted as followed: %d fetches", got)
+	}
+}
+
+// hostFollowRepo reports every host as instance-followed.
+type hostFollowRepo struct{ fakeRepo }
+
+func (hostFollowRepo) HasAcceptedInstanceFollowingForHost(context.Context, string) (bool, error) {
+	return true, nil
+}
+
+// A follow broader than the exact actor (an instance follow of its host) does
+// not lift the inbound limits on a miss.
+func TestHostLevelFollowDoesNotLiftInboundLimits(t *testing.T) {
+	o := newPerHostOrigin()
+	svc := NewService(hostFollowRepo{newRemoteRepo()}, WithFetchClient(&http.Client{Transport: o}))
+	frozen := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	svc.actorFetches.now = func() time.Time { return frozen }
+	for i := 0; i < 500; i++ {
+		_, _ = svc.ResolveKey(context.Background(), fmt.Sprintf("https://followed-host.example.test/accounts/a%d#main-key", i))
+	}
+	if got := o.count("followed-host.example.test"); got != inboundHostBurst {
+		t.Fatalf("500 new keyIds on an instance-followed host caused %d fetches, want %d", got, inboundHostBurst)
+	}
+}
+
+// Followed actors get past the ordinary limits, but under a ceiling of their own.
+func TestFollowedBypassHasItsOwnCeiling(t *testing.T) {
+	o := newPerHostOrigin()
+	urls := make([]string, 500)
+	for i := range urls {
+		urls[i] = fmt.Sprintf("https://many.example.test/accounts/a%d", i)
+	}
+	svc := newBudgetService(o, WithFollowEdgeChecker(edgesFor(urls...)))
+	for _, u := range urls {
+		_, _ = svc.ResolveKey(context.Background(), u+"#main-key")
+	}
+	if got := o.count("many.example.test"); got != inboundHostBurst+inboundBypassBurst {
+		t.Fatalf("500 followed actors caused %d fetches, want %d (host burst + bypass ceiling)", got, inboundHostBurst+inboundBypassBurst)
+	}
+}
+
+// A blocked host is refused before admission: it spends no token, and keeps
+// getting the blocked-host answer however often it is named.
+func TestBlockedHostSpendsNoInboundBudget(t *testing.T) {
+	o := newPerHostOrigin()
+	repo := newRemoteRepo()
+	repo.blockedDomains = map[string]bool{"blocked.example.test": true}
+	svc := NewService(repo, WithFetchClient(&http.Client{Transport: o}))
+	frozen := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	svc.actorFetches.now = func() time.Time { return frozen }
+	for i := 0; i < 3*inboundHostBurst; i++ {
+		_, err := svc.ResolveKey(context.Background(), fmt.Sprintf("https://blocked.example.test/accounts/a%d#main-key", i))
+		if !errors.Is(err, ErrActorHostBlocked) {
+			t.Fatalf("request %d: %v, want ErrActorHostBlocked", i, err)
+		}
+	}
+	svc.actorFetches.mu.Lock()
+	defer svc.actorFetches.mu.Unlock()
+	if b, ok := svc.actorFetches.hosts["blocked.example.test"]; ok && b.tokens < inboundHostBurst {
+		t.Fatalf("a blocked host spent %v tokens", inboundHostBurst-b.tokens)
 	}
 }

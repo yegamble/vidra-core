@@ -152,11 +152,19 @@ func (s *Service) admitInboundFetch(ctx context.Context, actorURL string) (func(
 
 // followedLookup is the bounded "is this actor followed?" question the fetch
 // limits ask before refusing; a slow or failed answer counts as not followed.
+// Only an accepted follow of this exact actor counts — not an instance follow
+// of its host, which would cover every actor that host names.
 func (s *Service) followedLookup(ctx context.Context, actorURL string) func() bool {
 	return func() bool {
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), followedLookupTimeout)
 		defer cancel()
-		ok, err := s.hasAcceptedFollowEdge(fctx, actorURL)
+		var ok bool
+		var err error
+		if s.edges != nil {
+			ok, err = s.edges.HasAcceptedFollow(fctx, actorURL)
+		} else {
+			ok, err = s.repo.HasAcceptedRemoteChannelFollow(fctx, actorURL)
+		}
 		return err == nil && ok
 	}
 }
@@ -187,6 +195,11 @@ func (s *Service) fetchMissingActor(ctx context.Context, actorURL string, inboun
 			}
 		}()
 		if inbound {
+			// The blocklist comes before admission: a blocked host is refused
+			// as blocked, and spends no budget.
+			if err := s.refuseBlockedActorHost(ctx, actorURL); err != nil {
+				return sqlcgen.RemoteActor{}, err
+			}
 			release, err := s.admitInboundFetch(ctx, actorURL)
 			if err != nil {
 				return sqlcgen.RemoteActor{}, err
@@ -293,14 +306,8 @@ func (s *Service) refreshRemoteActorKey(ctx context.Context, actorURL string) (s
 // signature verification: verification is what fetches, so a check after it
 // still let a blocked host be contacted on every inbound request naming it.
 func (s *Service) refetchRemoteActor(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
-	u, err := url.Parse(actorURL)
-	if err != nil {
-		return sqlcgen.RemoteActor{}, fmt.Errorf("federation: parse actor URL: %w", err)
-	}
-	if blocked, err := s.hostBlocked(ctx, u); err != nil {
-		return sqlcgen.RemoteActor{}, fmt.Errorf("%w: %w", errBlocklistLookup, err)
-	} else if blocked {
-		return sqlcgen.RemoteActor{}, ErrActorHostBlocked
+	if err := s.refuseBlockedActorHost(ctx, actorURL); err != nil {
+		return sqlcgen.RemoteActor{}, err
 	}
 	fa, err := s.fetchActor(ctx, actorURL)
 	if err != nil {
@@ -421,4 +428,19 @@ func parseRSAPublicKey(pemStr string) (*rsa.PublicKey, error) {
 		return nil, fmt.Errorf("federation: %w", err)
 	}
 	return rp, nil
+}
+
+// refuseBlockedActorHost returns ErrActorHostBlocked for an actor on a blocked
+// instance, errBlocklistLookup when the blocklist cannot be read, else nil.
+func (s *Service) refuseBlockedActorHost(ctx context.Context, actorURL string) error {
+	u, err := url.Parse(actorURL)
+	if err != nil {
+		return fmt.Errorf("federation: parse actor URL: %w", err)
+	}
+	if blocked, err := s.hostBlocked(ctx, u); err != nil {
+		return fmt.Errorf("%w: %w", errBlocklistLookup, err)
+	} else if blocked {
+		return ErrActorHostBlocked
+	}
+	return nil
 }

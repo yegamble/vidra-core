@@ -2,6 +2,7 @@ package federation
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -49,6 +50,11 @@ type actorFetchGate struct {
 	// hosts is the per-host fetch budget of the inbound-signature path.
 	hosts    map[string]*hostBudget
 	inflight int
+	// bypass and bypassInflight are the followed actors' own ceiling;
+	// lookups is the non-blocking semaphore on followed lookups.
+	bypass         *hostBudget
+	bypassInflight int
+	lookups        chan struct{}
 	// refreshed is when each cached actor's key was last re-fetched.
 	refreshed map[string]time.Time
 	// failed is when each actor URL last failed to resolve.
@@ -60,6 +66,7 @@ func newActorFetchGate() *actorFetchGate {
 		now:         time.Now,
 		maxInflight: inboundMaxInflight,
 		hosts:       map[string]*hostBudget{},
+		lookups:     make(chan struct{}, maxFollowedLookups),
 		refreshed:   map[string]time.Time{},
 		failed:      map[string]time.Time{},
 	}
@@ -142,12 +149,24 @@ const (
 	// followedLookupTimeout bounds the "is it followed?" lookup an exhausted
 	// limit asks; a slower answer counts as not followed.
 	followedLookupTimeout = 2 * time.Second
+	// maxFollowedLookups caps concurrent "is it followed?" lookups; with none
+	// free, the answer is "not followed".
+	maxFollowedLookups = 8
+	// A followed actor admitted past the limits above is still held to a
+	// ceiling of its own: inboundBypassBurst refilled one per
+	// inboundBypassRefill (2/s), and inboundBypassMaxInflight at once.
+	inboundBypassBurst       = 120
+	inboundBypassRefill      = 500 * time.Millisecond
+	inboundBypassMaxInflight = 16
 )
 
 // errInboundFetchBudget: the inbound-signature path's fetch budget for this
 // host, or its global in-flight cap, is spent. The request fails like any
 // unverifiable signature; the sender retries.
 var errInboundFetchBudget = errors.New("federation: inbound actor fetch budget spent")
+
+// errInboundBypassCeiling: a followed actor's fetch is past the bypass ceiling.
+var errInboundBypassCeiling = fmt.Errorf("%w: followed ceiling", errInboundFetchBudget)
 
 type hostBudget struct {
 	tokens float64
@@ -173,12 +192,28 @@ func (g *actorFetchGate) admitInflight(followed func() bool) (release func(), er
 // admit is admitInbound (host != "") or admitInflight (host == "").
 func (g *actorFetchGate) admit(host string, followed func() bool) (func(), error) {
 	g.mu.Lock()
+	bypassed := false
 	if !g.withinLimitsLocked(host) {
 		g.mu.Unlock()
-		if !followed() {
+		if !g.lookup(followed) {
 			return nil, errInboundFetchBudget
 		}
 		g.mu.Lock()
+		// Past the ordinary limits, a followed actor is held to the bypass
+		// ceiling, read now that the lock is held again.
+		now := g.now()
+		if g.bypass == nil {
+			g.bypass = &hostBudget{tokens: inboundBypassBurst, at: now}
+		}
+		g.bypass.tokens = min(inboundBypassBurst, g.bypass.tokens+float64(now.Sub(g.bypass.at))/float64(inboundBypassRefill))
+		g.bypass.at = now
+		if g.bypass.tokens < 1 || g.bypassInflight >= inboundBypassMaxInflight {
+			g.mu.Unlock()
+			return nil, errInboundBypassCeiling
+		}
+		g.bypass.tokens--
+		g.bypassInflight++
+		bypassed = true
 	}
 	if b := g.bucketLocked(host); b != nil && b.tokens >= 1 {
 		b.tokens--
@@ -188,8 +223,23 @@ func (g *actorFetchGate) admit(host string, followed func() bool) (func(), error
 	return func() {
 		g.mu.Lock()
 		g.inflight--
+		if bypassed {
+			g.bypassInflight--
+		}
 		g.mu.Unlock()
 	}, nil
+}
+
+// lookup runs followed under the lookup semaphore; with no slot free the
+// answer is "not followed", so refused requests cannot queue on the database.
+func (g *actorFetchGate) lookup(followed func() bool) bool {
+	select {
+	case g.lookups <- struct{}{}:
+		defer func() { <-g.lookups }()
+		return followed()
+	default:
+		return false
+	}
 }
 
 // withinLimitsLocked reports whether one more fetch for host fits both its
