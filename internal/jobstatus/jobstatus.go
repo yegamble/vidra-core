@@ -79,6 +79,15 @@ const (
 	// what RedactDetail exists to prevent, so the dead-letter COUNT rides on this
 	// row and on the `ipfs` component's detail instead.
 	QueueIPFSPins = "media_ipfs_pins"
+	// QueueOutboxCrawls is the queue of followed actors' outboxes to read
+	// (migration 0190). Before it was listed here a stuck or given-up read
+	// showed only as a log line. It is a depth row like media_ipfs_pins, for
+	// the same two type facts: no running state (a claimed row stays pending
+	// under its lease), and no RECENT FAILURES, because the queue is keyed by
+	// the remote actor's URL rather than a uuid and its last_error is a fetch
+	// error that may quote remote URLs — what Failure exists to keep out. A
+	// given-up read is counted in failed; last_error stays in the table.
+	QueueOutboxCrawls = "federation_outbox_crawls"
 )
 
 // QueueStatus is one queue's normalised depth snapshot. For upload_sessions —
@@ -120,6 +129,7 @@ type Querier interface {
 	StorageMigrationStats(ctx context.Context) (sqlcgen.StorageMigrationStatsRow, error)
 	CDNPurgeJobStats(ctx context.Context) (sqlcgen.CDNPurgeJobStatsRow, error)
 	IPFSPinJobStats(ctx context.Context) (sqlcgen.IPFSPinJobStatsRow, error)
+	OutboxCrawlJobStats(ctx context.Context) (sqlcgen.OutboxCrawlJobStatsRow, error)
 	TranscodeRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.TranscodeRecentFailuresRow, error)
 	FederationRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.FederationRecentFailuresRow, error)
 	ImportRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.ImportRecentFailuresRow, error)
@@ -184,6 +194,10 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return ov, err
 	}
+	oc, err := s.q.OutboxCrawlJobStats(ctx)
+	if err != nil {
+		return ov, err
+	}
 	ov.Queues = []QueueStatus{
 		{QueueTranscode, tj.Pending, tj.Running, tj.Done, tj.Failed, tj.OldestPendingAgeSeconds},
 		{QueueFederation, fd.Pending, fd.Running, fd.Done, fd.Failed, fd.OldestPendingAgeSeconds},
@@ -194,6 +208,7 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 		{QueueStorageMigration, sm.Pending, sm.Running, sm.Done, sm.Failed, sm.OldestPendingAgeSeconds},
 		{QueueCDNPurge, cp.Pending, cp.Running, cp.Done, cp.Failed, cp.OldestPendingAgeSeconds},
 		{QueueIPFSPins, ip.Pending, ip.Running, ip.Done, ip.Failed, ip.OldestPendingAgeSeconds},
+		{QueueOutboxCrawls, oc.Pending, oc.Running, oc.Done, oc.Failed, oc.OldestPendingAgeSeconds},
 	}
 
 	failures := make([]Failure, 0, maxRecentFailures)
