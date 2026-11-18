@@ -168,6 +168,12 @@ var errInboundFetchBudget = errors.New("federation: inbound actor fetch budget s
 // errInboundBypassCeiling: a followed actor's fetch is past the bypass ceiling.
 var errInboundBypassCeiling = fmt.Errorf("%w: followed ceiling", errInboundFetchBudget)
 
+// The two limits behind errInboundFetchBudget, told apart for the counter.
+var (
+	errInboundHostBudget = fmt.Errorf("%w: host budget", errInboundFetchBudget)
+	errInboundGlobalCap  = fmt.Errorf("%w: in-flight cap", errInboundFetchBudget)
+)
+
 type hostBudget struct {
 	tokens float64
 	at     time.Time
@@ -193,10 +199,10 @@ func (g *actorFetchGate) admitInflight(followed func() bool) (release func(), er
 func (g *actorFetchGate) admit(host string, followed func() bool) (func(), error) {
 	g.mu.Lock()
 	bypassed := false
-	if !g.withinLimitsLocked(host) {
+	if refusal := g.limitLocked(host); refusal != nil {
 		g.mu.Unlock()
 		if !g.lookup(followed) {
-			return nil, errInboundFetchBudget
+			return nil, refusal
 		}
 		g.mu.Lock()
 		// Past the ordinary limits, a followed actor is held to the bypass
@@ -242,13 +248,17 @@ func (g *actorFetchGate) lookup(followed func() bool) bool {
 	}
 }
 
-// withinLimitsLocked reports whether one more fetch for host fits both its
-// bucket (when host != "") and the global in-flight cap. Callers hold mu.
-func (g *actorFetchGate) withinLimitsLocked(host string) bool {
+// limitLocked names the limit one more fetch for host would exceed — its
+// bucket (when host != "") or the global in-flight cap — or nil when it fits.
+// Callers hold mu.
+func (g *actorFetchGate) limitLocked(host string) error {
 	if b := g.bucketLocked(host); b != nil && b.tokens < 1 {
-		return false
+		return errInboundHostBudget
 	}
-	return g.inflight < g.maxInflight
+	if g.inflight >= g.maxInflight {
+		return errInboundGlobalCap
+	}
+	return nil
 }
 
 // bucketLocked returns host's bucket, refilled to now, creating it on first
@@ -285,5 +295,31 @@ func (g *actorFetchGate) trimHosts(now time.Time) {
 			break
 		}
 		delete(g.hosts, h)
+	}
+}
+
+// WithInboundFetchRefusedCounter installs a counter of inbound-signature-path
+// requests whose actor fetch was refused before the network, called with a
+// fixed reason: host_budget, global_cap, followed_ceiling or blocked_host.
+// Nil = not counted.
+func WithInboundFetchRefusedCounter(f func(reason string)) Option {
+	return func(s *Service) { s.onInboundFetchRefused = f }
+}
+
+// countInboundRefusal reports err to the refusal counter when it is one of the
+// refusals the counter names.
+func (s *Service) countInboundRefusal(err error) {
+	if err == nil || s.onInboundFetchRefused == nil {
+		return
+	}
+	switch {
+	case errors.Is(err, errInboundHostBudget):
+		s.onInboundFetchRefused("host_budget")
+	case errors.Is(err, errInboundGlobalCap):
+		s.onInboundFetchRefused("global_cap")
+	case errors.Is(err, errInboundBypassCeiling):
+		s.onInboundFetchRefused("followed_ceiling")
+	case errors.Is(err, ErrActorHostBlocked):
+		s.onInboundFetchRefused("blocked_host")
 	}
 }

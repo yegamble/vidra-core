@@ -2343,6 +2343,9 @@ func run() error {
 	// stored raw. See .ralph/specs/federation.md.
 	fedOpts := []federation.Option{
 		federation.WithBaseURL(cfg.PublicBaseURL),
+		// Counts inbox signature-path actor fetches refused before the network
+		// (nil metrics: not counted).
+		federation.WithInboundFetchRefusedCounter(inboundFetchRefusedCounter(metrics)),
 		// Reuse the outbound-fetch dev knob: when set, remote-actor fetches may reach
 		// loopback/private origins (dev/e2e only; never in production).
 		federation.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs),
@@ -4776,4 +4779,13 @@ func lockUserImport(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID) (
 		}
 		conn.Release()
 	}, nil
+}
+
+// inboundFetchRefusedCounter adapts the metrics registry to federation's
+// refusal counter; nil when metrics are off.
+func inboundFetchRefusedCounter(m *observability.Metrics) func(string) {
+	if m == nil {
+		return nil
+	}
+	return m.IncInboundActorFetchRefused
 }

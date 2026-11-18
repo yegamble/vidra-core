@@ -247,6 +247,8 @@ type Service struct {
 	// actorFetches bounds the outbound actor fetches an inbound request can
 	// cause (actor_fetch_gate.go).
 	actorFetches *actorFetchGate
+	// onInboundFetchRefused: see WithInboundFetchRefusedCounter (nil = none).
+	onInboundFetchRefused func(reason string)
 
 	// Federation policy gates (config-parity W12): provider funcs over the
 	// instance-settings overlay, read per inbound activity so an admin change

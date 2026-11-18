@@ -44,6 +44,10 @@ type Metrics struct {
 	// Prometheus labels, so the only thing metered here is the health of the
 	// pipeline, not the content of a measurement.
 	qoeDrops *prometheus.CounterVec
+	// inboundActorFetchRefused counts federation inbox signature-path requests
+	// whose actor fetch was refused before the network. The label is a fixed
+	// four-member reason; no host or actor ever becomes a label.
+	inboundActorFetchRefused *prometheus.CounterVec
 }
 
 // NewMetrics builds the RED instruments on a fresh private registry, together
@@ -75,8 +79,12 @@ func NewMetrics() *Metrics {
 			Name: "vidra_qoe_events_dropped_total",
 			Help: "Playback QoE measurements dropped before storage (best-effort), by event type.",
 		}, []string{"event_type"}),
+		inboundActorFetchRefused: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "vidra_federation_inbound_actor_fetch_refused_total",
+			Help: "Federation inbox signature-path requests whose actor fetch was refused before the network, by reason.",
+		}, []string{"reason"}),
 	}
-	reg.MustRegister(m.requests, m.duration, m.searchEnqueueFailures, m.searchDeadLetters, m.qoeDrops)
+	reg.MustRegister(m.requests, m.duration, m.searchEnqueueFailures, m.searchDeadLetters, m.qoeDrops, m.inboundActorFetchRefused)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -439,4 +447,11 @@ func statusClass(code int) string {
 	default:
 		return "other"
 	}
+}
+
+// IncInboundActorFetchRefused counts one inbound-signature-path request whose
+// actor fetch was refused before the network, by reason (host_budget |
+// global_cap | followed_ceiling | blocked_host — a fixed set).
+func (m *Metrics) IncInboundActorFetchRefused(reason string) {
+	m.inboundActorFetchRefused.WithLabelValues(reason).Inc()
 }
