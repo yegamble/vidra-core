@@ -123,8 +123,10 @@ var errActorRecentlyFailed = errors.New("federation: actor recently failed to re
 // cooldown, so it is not fetched again yet.
 var errActorRefreshCooldown = errors.New("federation: actor key refreshed recently")
 
-// errActorHostBlocked: the actor lives on an admin-blocked instance.
-var errActorHostBlocked = errors.New("federation: actor host is blocked")
+// ErrActorHostBlocked: the actor lives on an admin-blocked instance, and was
+// not fetched. The inbox answers it with the same 202 any activity from a
+// blocked instance gets, and nothing else.
+var ErrActorHostBlocked = errors.New("federation: actor host is blocked")
 
 // ResolveRemoteActor is resolveRemoteActor for callers outside federation: the
 // cached actor, or one fetched now through the SSRF guard and cached. It is how
@@ -172,7 +174,12 @@ func (s *Service) refreshRemoteActorKey(ctx context.Context, actorURL string) (s
 	if !s.actorFetches.allowRefresh(actorURL) {
 		return sqlcgen.RemoteActor{}, errActorRefreshCooldown
 	}
-	return s.refetchRemoteActor(ctx, actorURL)
+	// The slot is spent once allowRefresh says yes, so the fetch it pays for
+	// must run to completion whether or not the requester is still there. It
+	// is detached from the request and bounded by the fetch timeout instead.
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), remoteFetchTimeout)
+	defer cancel()
+	return s.refetchRemoteActor(fctx, actorURL)
 }
 
 // refetchRemoteActor fetches an actor document and upserts the cache row.
@@ -188,7 +195,7 @@ func (s *Service) refetchRemoteActor(ctx context.Context, actorURL string) (sqlc
 	if blocked, err := s.hostBlocked(ctx, u); err != nil {
 		return sqlcgen.RemoteActor{}, err
 	} else if blocked {
-		return sqlcgen.RemoteActor{}, errActorHostBlocked
+		return sqlcgen.RemoteActor{}, ErrActorHostBlocked
 	}
 	fa, err := s.fetchActor(ctx, actorURL)
 	if err != nil {

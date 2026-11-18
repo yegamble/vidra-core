@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -315,5 +316,43 @@ func TestRotatedKeyPickedUpOnFirstFailureAndAfterCooldown(t *testing.T) {
 	}
 	if got := hits.Load(); got != 2 {
 		t.Fatalf("fetches = %d, want 2", got)
+	}
+}
+
+// A caller that hangs up mid-refresh must not spend the actor's refresh slot
+// for nothing: the gated re-fetch completes regardless, so the next genuine
+// request from the rotated peer verifies.
+func TestCancelledRefreshStillPicksUpTheRotatedKey(t *testing.T) {
+	oldPEM, _ := testActorPEM(t)
+	newPEM, newKey := testActorPEM(t)
+	srv, _ := rotatingActorServer(t, &newPEM)
+	repo := newRemoteRepo()
+	actorURL := srv.URL + "/accounts/bob"
+	repo.remoteActors[actorURL] = sqlcgen.RemoteActor{ActorUrl: actorURL, PublicKeyPem: oldPEM}
+	svc, _, v := newFetchBoundsService(repo)
+
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = svc.ResolveKeyFresh(gone, actorURL+"#main-key")
+
+	req, body := signedInboxRequest(t, actorURL+"#main-key", newKey)
+	if _, err := v.Verify(context.Background(), req, body); err != nil {
+		t.Fatalf("the rotated peer is unverifiable after a cancelled refresh: %v", err)
+	}
+}
+
+// An uncached signer on a blocked instance is refused with the typed error the
+// inbox maps to its "told nothing" 202, without any fetch.
+func TestResolveKeyOnBlockedHostIsTyped(t *testing.T) {
+	pemStr, _ := testActorPEM(t)
+	srv, hits := rotatingActorServer(t, &pemStr)
+	repo := newRemoteRepo()
+	repo.blockedDomains = map[string]bool{"127.0.0.1": true}
+	svc, _, _ := newFetchBoundsService(repo)
+	if _, err := svc.ResolveKey(context.Background(), srv.URL+"/accounts/bob#main-key"); !errors.Is(err, ErrActorHostBlocked) {
+		t.Fatalf("ResolveKey = %v, want ErrActorHostBlocked", err)
+	}
+	if hits.Load() != 0 {
+		t.Fatal("a blocked host was fetched")
 	}
 }

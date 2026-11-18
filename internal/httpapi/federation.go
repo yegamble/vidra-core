@@ -298,6 +298,12 @@ func (s *Server) handleInbox(c *echo.Context) error {
 		RefreshKey: s.fedsvc.ResolveKeyFresh,
 	}
 	keyID, err := verifier.Verify(c.Request().Context(), c.Request(), body)
+	if errors.Is(err, federation.ErrActorHostBlocked) {
+		// The signer is on a blocked instance and was not fetched, so the
+		// signature could not be checked. It is told nothing, as below: the
+		// same 202. No audit row — nothing about this request was verified.
+		return c.NoContent(http.StatusAccepted)
+	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "signature verification failed")
 	}
