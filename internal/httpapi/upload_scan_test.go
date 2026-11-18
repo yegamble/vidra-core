@@ -86,9 +86,17 @@ func TestUploadVideoFileScanOutcomes(t *testing.T) {
 				if errResp.Error.Message != video.SafetyScanRejectedMessage {
 					t.Errorf("message = %q, want the neutral sentence %q", errResp.Error.Message, video.SafetyScanRejectedMessage)
 				}
+				// request_id is a random server-generated token: a hex/base64 id
+				// can contain "clam" or "3310" by chance, which made this check
+				// flake. Cut only the id out of the RAW body, so a field the
+				// error struct does not declare is still scanned.
+				body := rec.Body.String()
+				if id := errResp.Error.RequestID; id != "" {
+					body = strings.ReplaceAll(body, id, "")
+				}
 				for _, leak := range []string{"malware", "virus", "clam", "ClamAV", "Eicar", "3310"} {
-					if strings.Contains(strings.ToLower(rec.Body.String()), strings.ToLower(leak)) {
-						t.Errorf("refusal body leaks %q: %s", leak, rec.Body.String())
+					if strings.Contains(strings.ToLower(body), strings.ToLower(leak)) {
+						t.Errorf("refusal body leaks %q: %s", leak, body)
 					}
 				}
 				return
