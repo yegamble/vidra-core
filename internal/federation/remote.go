@@ -62,7 +62,7 @@ type fetchedActor struct {
 // uses for inbound requests (wired in the inbox slice).
 func (s *Service) ResolveKey(ctx context.Context, keyID string) (*rsa.PublicKey, error) {
 	actorURL, _, _ := strings.Cut(keyID, "#")
-	ra, err := s.resolveRemoteActor(ctx, actorURL)
+	ra, err := s.resolveActor(ctx, actorURL, true)
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +100,15 @@ func (s *Service) ResolveKeyFresh(ctx context.Context, keyID string) (*rsa.Publi
 // become safe by having been seen before. Validating first costs one parse and
 // one DNS resolution on a path that is about to do a database read anyway.
 func (s *Service) resolveRemoteActor(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
+	return s.resolveActor(ctx, actorURL, false)
+}
+
+// resolveActor is resolveRemoteActor with the caller named. inbound marks the
+// inbound-signature path (ResolveKey), the only one an unauthenticated request
+// drives, and the only one the negative cache applies to: a failure there must
+// not stop a local follow, search, delivery or instance follow from fetching
+// the same actor a moment later.
+func (s *Service) resolveActor(ctx context.Context, actorURL string, inbound bool) (sqlcgen.RemoteActor, error) {
 	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
 	if _, err := guard.ValidateURL(actorURL); err != nil {
 		return sqlcgen.RemoteActor{}, fmt.Errorf("federation: unsafe actor URL: %w", err)
@@ -111,10 +120,39 @@ func (s *Service) resolveRemoteActor(ctx context.Context, actorURL string) (sqlc
 	}
 	// A URL that failed to resolve is not fetched again until the cooldown
 	// passes: an unseen keyId otherwise costs one outbound GET per request.
-	if s.actorFetches.recentlyFailed(actorURL) {
+	if inbound && s.actorFetches.recentlyFailed(actorURL) {
 		return sqlcgen.RemoteActor{}, errActorRecentlyFailed
 	}
-	return s.refetchRemoteActor(ctx, actorURL)
+	ra, err := s.fetchMissingActor(ctx, actorURL)
+	// A request the caller abandoned is not the actor failing, and a blocked
+	// host is refused before any fetch; neither is remembered.
+	if err != nil && inbound && ctx.Err() == nil && !errors.Is(err, ErrActorHostBlocked) {
+		s.actorFetches.recordFailure(actorURL)
+	}
+	return ra, err
+}
+
+// fetchMissingActor fetches and caches an actor that is not cached, sharing
+// one fetch among concurrent callers for the same URL. The shared fetch is
+// detached from any one caller's request (bounded by remoteFetchTimeout), so
+// the first caller hanging up does not fail the rest; a caller that hangs up
+// stops waiting.
+func (s *Service) fetchMissingActor(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
+	if s.actorFetches == nil {
+		return s.refetchRemoteActor(ctx, actorURL)
+	}
+	ch := s.actorFetches.misses.DoChan(actorURL, func() (any, error) {
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), remoteFetchTimeout)
+		defer cancel()
+		return s.refetchRemoteActor(fctx, actorURL)
+	})
+	select {
+	case <-ctx.Done():
+		return sqlcgen.RemoteActor{}, ctx.Err()
+	case r := <-ch:
+		ra, _ := r.Val.(sqlcgen.RemoteActor)
+		return ra, r.Err
+	}
 }
 
 // errActorRecentlyFailed: the actor URL failed to resolve within the cooldown.
@@ -200,11 +238,6 @@ func (s *Service) refetchRemoteActor(ctx context.Context, actorURL string) (sqlc
 	}
 	fa, err := s.fetchActor(ctx, actorURL)
 	if err != nil {
-		// A request the caller abandoned is not the actor failing; recording
-		// it would let a client poison resolution of an actor it names.
-		if ctx.Err() == nil {
-			s.actorFetches.recordFailure(actorURL)
-		}
 		return sqlcgen.RemoteActor{}, err
 	}
 	return s.cacheFetchedActor(ctx, actorURL, fa)

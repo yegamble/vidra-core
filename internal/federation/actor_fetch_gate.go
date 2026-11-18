@@ -3,17 +3,23 @@ package federation
 import (
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // actorFetchCooldown is how long a refreshed actor key, or a failed actor
 // resolution, stands before the same actor URL may be fetched again.
 const actorFetchCooldown = 5 * time.Minute
 
-// maxActorFetchEntries caps each map of the gate. Past it, expired entries are
-// swept and then an arbitrary one is dropped: an attacker cycling through
-// fresh actor URLs gains nothing by filling it, since each fresh URL costs it
-// a fetch either way, and the cap keeps memory bounded.
-const maxActorFetchEntries = 10000
+// maxActorFetchEntries caps each map of the gate. A full map is trimmed in one
+// batch to evictActorFetchTo — expired entries first, then arbitrary ones — so
+// the scan runs once per batch of inserts, not on every insert. An attacker
+// cycling through fresh actor URLs gains nothing by filling it, since each
+// fresh URL costs it a fetch either way, and the cap keeps memory bounded.
+const (
+	maxActorFetchEntries = 10000
+	evictActorFetchTo    = maxActorFetchEntries * 9 / 10
+)
 
 // actorFetchGate bounds the outbound actor fetches an inbound inbox request can
 // cause. An inbox POST is unauthenticated until its signature verifies, and
@@ -29,6 +35,10 @@ const maxActorFetchEntries = 10000
 // time, not by the number of requests.
 type actorFetchGate struct {
 	now func() time.Time
+
+	// misses shares one fetch among concurrent resolutions of one uncached
+	// actor URL.
+	misses singleflight.Group
 
 	mu sync.Mutex
 	// refreshed is when each cached actor's key was last re-fetched.
@@ -92,7 +102,7 @@ func (g *actorFetchGate) put(m map[string]time.Time, key string, at time.Time) {
 			}
 		}
 		for k := range m {
-			if len(m) < maxActorFetchEntries {
+			if len(m) <= evictActorFetchTo {
 				break
 			}
 			delete(m, k)
