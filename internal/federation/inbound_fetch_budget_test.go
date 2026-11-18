@@ -188,14 +188,14 @@ func TestAdmitInboundRereadsTheBucketAfterTheLookup(t *testing.T) {
 	g.mu.Lock()
 	g.bucketLocked(host).tokens = 1
 	g.mu.Unlock()
-	hold, err := g.admitInflight(func() bool { return false }) // fills the cap
+	hold, err := g.admitRefresh("", "", func() bool { return false }) // fills the cap
 	if err != nil {
 		t.Fatal(err)
 	}
 	asked, answer := make(chan struct{}), make(chan bool)
 	done := make(chan error)
 	go func() {
-		release, err := g.admitInbound(host, func() bool { close(asked); return <-answer })
+		release, err := g.admitInbound(host, "", func() bool { close(asked); return <-answer })
 		if release != nil {
 			release()
 		}
@@ -203,7 +203,7 @@ func TestAdmitInboundRereadsTheBucketAfterTheLookup(t *testing.T) {
 	}()
 	<-asked
 	hold()
-	release, err := g.admitInbound(host, func() bool { return false }) // takes the last token
+	release, err := g.admitInbound(host, "", func() bool { return false }) // takes the last token
 	if err != nil {
 		t.Fatalf("the unfollowed admission was refused: %v", err)
 	}

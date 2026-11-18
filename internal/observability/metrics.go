@@ -46,7 +46,7 @@ type Metrics struct {
 	qoeDrops *prometheus.CounterVec
 	// inboundActorFetchRefused counts federation inbox signature-path requests
 	// whose actor fetch was refused before the network. The label is a fixed
-	// four-member reason; no host or actor ever becomes a label.
+	// seven-member reason; no host or actor ever becomes a label.
 	inboundActorFetchRefused *prometheus.CounterVec
 }
 
@@ -451,7 +451,8 @@ func statusClass(code int) string {
 
 // IncInboundActorFetchRefused counts one inbound-signature-path request whose
 // actor fetch was refused before the network, by reason (host_budget |
-// global_cap | followed_ceiling | blocked_host — a fixed set).
+// domain_budget | global_rate | domain_cap | global_cap | followed_ceiling |
+// blocked_host — a fixed set).
 func (m *Metrics) IncInboundActorFetchRefused(reason string) {
 	m.inboundActorFetchRefused.WithLabelValues(reason).Inc()
 }

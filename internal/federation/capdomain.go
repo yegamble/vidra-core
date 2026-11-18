@@ -2,6 +2,7 @@ package federation
 
 import (
 	"net"
+	"strings"
 
 	"golang.org/x/net/publicsuffix"
 )
@@ -23,4 +24,20 @@ func capDomain(rawURL string) string {
 		return d
 	}
 	return host
+}
+
+// inboundDomainKey is the registrable-domain key of the inbound actor-fetch
+// limits: capDomain, except that an IP literal is grouped by its IPv4 /24 or
+// IPv6 /48, since one party holding a range is the IP-literal analogue of one
+// registrable domain.
+func inboundDomainKey(rawURL string) string {
+	d := capDomain(rawURL)
+	ip := net.ParseIP(strings.Trim(d, "[]"))
+	if ip == nil {
+		return d
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4.Mask(net.CIDRMask(24, 32)).String() + "/24"
+	}
+	return ip.Mask(net.CIDRMask(48, 128)).String() + "/48"
 }

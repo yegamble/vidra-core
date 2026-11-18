@@ -147,7 +147,7 @@ func (s *Service) admitInboundFetch(ctx context.Context, actorURL string) (func(
 	if !ok {
 		return nil, errInboundHostBudget
 	}
-	return s.actorFetches.admitInbound(host, s.followedLookup(ctx, actorURL))
+	return s.actorFetches.admitInbound(host, inboundDomainKey(actorURL), s.followedLookup(ctx, actorURL))
 }
 
 // followedLookup is the bounded "is this actor followed?" question the fetch
@@ -275,11 +275,20 @@ func (s *Service) refreshRemoteActorKey(ctx context.Context, actorURL string) (s
 		// the ordinary path already handles it.
 		return sqlcgen.RemoteActor{}, err
 	}
-	// A refresh runs within the same global in-flight cap as inbound misses
-	// (a followed actor's is admitted past it). It is taken BEFORE the
-	// cooldown is consulted, so a refusal here leaves the cooldown unspent.
+	// A refresh inside its cooldown is refused before it can spend anything.
+	// Otherwise it is admitted against its host's and registrable domain's
+	// buckets and both in-flight caps (a followed actor's is admitted past
+	// them, under the bypass ceiling), and only then is the cooldown spent:
+	// a refusal here leaves it unspent.
 	if s.actorFetches != nil {
-		release, err := s.actorFetches.admitInflight(s.followedLookup(ctx, actorURL))
+		if !s.actorFetches.refreshDue(actorURL) {
+			return sqlcgen.RemoteActor{}, errActorRefreshCooldown
+		}
+		host, ok := NormalizeFollowHost(hostOf(actorURL))
+		if !ok {
+			return sqlcgen.RemoteActor{}, errInboundHostBudget
+		}
+		release, err := s.actorFetches.admitRefresh(host, inboundDomainKey(actorURL), s.followedLookup(ctx, actorURL))
 		if err != nil {
 			return sqlcgen.RemoteActor{}, err
 		}

@@ -55,6 +55,10 @@ type actorFetchGate struct {
 	bypass         *hostBudget
 	bypassInflight int
 	lookups        chan struct{}
+	// domains, domainInflight and global are the across-host limits.
+	domains        map[string]*hostBudget
+	domainInflight map[string]int
+	global         *hostBudget
 	// refreshed is when each cached actor's key was last re-fetched.
 	refreshed map[string]time.Time
 	// failed is when each actor URL last failed to resolve.
@@ -63,13 +67,24 @@ type actorFetchGate struct {
 
 func newActorFetchGate() *actorFetchGate {
 	return &actorFetchGate{
-		now:         time.Now,
-		maxInflight: inboundMaxInflight,
-		hosts:       map[string]*hostBudget{},
-		lookups:     make(chan struct{}, maxFollowedLookups),
-		refreshed:   map[string]time.Time{},
-		failed:      map[string]time.Time{},
+		now:            time.Now,
+		maxInflight:    inboundMaxInflight,
+		hosts:          map[string]*hostBudget{},
+		lookups:        make(chan struct{}, maxFollowedLookups),
+		domains:        map[string]*hostBudget{},
+		domainInflight: map[string]int{},
+		refreshed:      map[string]time.Time{},
+		failed:         map[string]time.Time{},
 	}
+}
+
+// refreshDue reports, without recording anything, whether a cached actor's
+// key is outside its refresh cooldown.
+func (g *actorFetchGate) refreshDue(actorURL string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	at, ok := g.refreshed[actorURL]
+	return !ok || g.now().Sub(at) >= actorFetchCooldown
 }
 
 // allowRefresh reports whether a cached actor's key may be re-fetched now, and
@@ -146,6 +161,16 @@ const (
 	inboundHostBurst   = 10
 	inboundHostRefill  = 30 * time.Second
 	inboundMaxInflight = 32
+	// Across hosts: a bucket per registrable domain (eTLD+1; an IPv4 /24 or
+	// IPv6 /48 for an IP literal) of inboundDomainBurst refilled one token per
+	// inboundDomainRefill, at most inboundDomainMaxInflight fetches in flight
+	// per registrable domain, and one global bucket of inboundGlobalBurst
+	// refilled one token per inboundGlobalRefill (5/s) for misses.
+	inboundDomainBurst       = 20
+	inboundDomainRefill      = 15 * time.Second
+	inboundDomainMaxInflight = 4
+	inboundGlobalBurst       = 64
+	inboundGlobalRefill      = 200 * time.Millisecond
 	// followedLookupTimeout bounds the "is it followed?" lookup an exhausted
 	// limit asks; a slower answer counts as not followed.
 	followedLookupTimeout = 2 * time.Second
@@ -168,6 +193,13 @@ var errInboundFetchBudget = errors.New("federation: inbound actor fetch budget s
 // errInboundBypassCeiling: a followed actor's fetch is past the bypass ceiling.
 var errInboundBypassCeiling = fmt.Errorf("%w: followed ceiling", errInboundFetchBudget)
 
+// The across-host limits.
+var (
+	errInboundDomainBudget = fmt.Errorf("%w: domain budget", errInboundFetchBudget)
+	errInboundDomainCap    = fmt.Errorf("%w: domain in-flight cap", errInboundFetchBudget)
+	errInboundGlobalRate   = fmt.Errorf("%w: global rate", errInboundFetchBudget)
+)
+
 // The two limits behind errInboundFetchBudget, told apart for the counter.
 var (
 	errInboundHostBudget = fmt.Errorf("%w: host budget", errInboundFetchBudget)
@@ -179,41 +211,40 @@ type hostBudget struct {
 	at     time.Time
 }
 
-// admitInbound admits one inbound-path actor fetch: a token from host's
-// bucket and an in-flight slot. When either limit would refuse, followed is
-// asked (outside the lock); an actor this instance follows is admitted past
-// both, spending a token only if one is there. Everything is re-read after
-// the lock is retaken — the bucket may have been spent or trimmed meanwhile.
-func (g *actorFetchGate) admitInbound(host string, followed func() bool) (release func(), err error) {
-	return g.admit(host, followed)
+// admitInbound admits one inbound-path miss for host (domain is its
+// registrable-domain key): a token from each of the host, domain and global
+// buckets, and a slot under the domain and global in-flight caps. When a limit
+// would refuse, followed is asked (outside the lock, under the lookup
+// semaphore); a followed actor is admitted past the limits but held to the
+// bypass ceiling. Everything is re-read once the lock is retaken.
+func (g *actorFetchGate) admitInbound(host, domain string, followed func() bool) (release func(), err error) {
+	return g.admit(host, domain, true, followed)
 }
 
-// admitInflight admits one key refresh against the global in-flight cap
-// only, with the same followed-actor bypass. A refresh is already limited per
-// actor; what it must not do is run past the cap the misses are held to.
-func (g *actorFetchGate) admitInflight(followed func() bool) (release func(), err error) {
-	return g.admit("", followed)
+// admitRefresh admits one key refresh of a cached actor: the host and domain
+// buckets and both in-flight caps, with the same followed bypass. The global
+// bucket is left to misses; a refresh is also limited per actor.
+func (g *actorFetchGate) admitRefresh(host, domain string, followed func() bool) (release func(), err error) {
+	return g.admit(host, domain, false, followed)
 }
 
-// admit is admitInbound (host != "") or admitInflight (host == "").
-func (g *actorFetchGate) admit(host string, followed func() bool) (func(), error) {
+// admit is the three admissions above. Buckets are only read while checking,
+// and created or spent only on admission, so refused requests for new hosts
+// can neither evict a drained bucket nor grow the maps.
+func (g *actorFetchGate) admit(host, domain string, global bool, followed func() bool) (func(), error) {
 	g.mu.Lock()
 	bypassed := false
-	if refusal := g.limitLocked(host); refusal != nil {
+	if refusal := g.limitLocked(host, domain, global); refusal != nil {
 		g.mu.Unlock()
 		if !g.lookup(followed) {
 			return nil, refusal
 		}
 		g.mu.Lock()
-		// Past the ordinary limits, a followed actor is held to the bypass
-		// ceiling, read now that the lock is held again.
 		now := g.now()
 		if g.bypass == nil {
 			g.bypass = &hostBudget{tokens: inboundBypassBurst, at: now}
 		}
-		g.bypass.tokens = min(inboundBypassBurst, g.bypass.tokens+float64(now.Sub(g.bypass.at))/float64(inboundBypassRefill))
-		g.bypass.at = now
-		if g.bypass.tokens < 1 || g.bypassInflight >= inboundBypassMaxInflight {
+		if refill(g.bypass, inboundBypassBurst, inboundBypassRefill, now).tokens < 1 || g.bypassInflight >= inboundBypassMaxInflight {
 			g.mu.Unlock()
 			return nil, errInboundBypassCeiling
 		}
@@ -221,8 +252,21 @@ func (g *actorFetchGate) admit(host string, followed func() bool) (func(), error
 		g.bypassInflight++
 		bypassed = true
 	}
-	if b := g.bucketLocked(host); b != nil && b.tokens >= 1 {
-		b.tokens--
+	now := g.now()
+	spend := func(b *hostBudget) {
+		if b.tokens >= 1 {
+			b.tokens--
+		}
+	}
+	if host != "" {
+		spend(g.createLocked(g.hosts, host, inboundHostBurst, inboundHostRefill, now))
+	}
+	if domain != "" {
+		spend(g.createLocked(g.domains, domain, inboundDomainBurst, inboundDomainRefill, now))
+		g.domainInflight[domain]++
+	}
+	if global {
+		spend(g.globalLocked(now))
 	}
 	g.inflight++
 	g.mu.Unlock()
@@ -231,6 +275,11 @@ func (g *actorFetchGate) admit(host string, followed func() bool) (func(), error
 		g.inflight--
 		if bypassed {
 			g.bypassInflight--
+		}
+		if domain != "" {
+			if g.domainInflight[domain]--; g.domainInflight[domain] <= 0 {
+				delete(g.domainInflight, domain)
+			}
 		}
 		g.mu.Unlock()
 	}, nil
@@ -248,12 +297,21 @@ func (g *actorFetchGate) lookup(followed func() bool) bool {
 	}
 }
 
-// limitLocked names the limit one more fetch for host would exceed — its
-// bucket (when host != "") or the global in-flight cap — or nil when it fits.
-// Callers hold mu.
-func (g *actorFetchGate) limitLocked(host string) error {
-	if b := g.bucketLocked(host); b != nil && b.tokens < 1 {
+// limitLocked names the limit one more fetch would exceed, or nil when it
+// fits. A bucket not yet created reads as full. Callers hold mu.
+func (g *actorFetchGate) limitLocked(host, domain string, global bool) error {
+	now := g.now()
+	if b, ok := g.hosts[host]; ok && host != "" && refill(b, inboundHostBurst, inboundHostRefill, now).tokens < 1 {
 		return errInboundHostBudget
+	}
+	if b, ok := g.domains[domain]; ok && domain != "" && refill(b, inboundDomainBurst, inboundDomainRefill, now).tokens < 1 {
+		return errInboundDomainBudget
+	}
+	if global && g.globalLocked(now).tokens < 1 {
+		return errInboundGlobalRate
+	}
+	if domain != "" && g.domainInflight[domain] >= inboundDomainMaxInflight {
+		return errInboundDomainCap
 	}
 	if g.inflight >= g.maxInflight {
 		return errInboundGlobalCap
@@ -261,46 +319,61 @@ func (g *actorFetchGate) limitLocked(host string) error {
 	return nil
 }
 
-// bucketLocked returns host's bucket, refilled to now, creating it on first
-// use; nil for host == "". Callers hold mu.
-func (g *actorFetchGate) bucketLocked(host string) *hostBudget {
-	if host == "" {
-		return nil
+// globalLocked returns the global bucket, refilled to now. Callers hold mu.
+func (g *actorFetchGate) globalLocked(now time.Time) *hostBudget {
+	if g.global == nil {
+		g.global = &hostBudget{tokens: inboundGlobalBurst, at: now}
 	}
-	now := g.now()
-	b, ok := g.hosts[host]
+	return refill(g.global, inboundGlobalBurst, inboundGlobalRefill, now)
+}
+
+// createLocked returns m[key] refilled to now, creating a full bucket on
+// first use and trimming m in one batch when it is at its cap. Callers hold mu.
+func (g *actorFetchGate) createLocked(m map[string]*hostBudget, key string, burst float64, every time.Duration, now time.Time) *hostBudget {
+	b, ok := m[key]
 	if !ok {
-		if len(g.hosts) >= maxActorFetchEntries {
-			g.trimHosts(now)
+		if len(m) >= maxActorFetchEntries {
+			trimBuckets(m, time.Duration(burst)*every, now)
 		}
-		b = &hostBudget{tokens: inboundHostBurst, at: now}
-		g.hosts[host] = b
+		b = &hostBudget{tokens: burst, at: now}
+		m[key] = b
 	}
-	b.tokens = min(inboundHostBurst, b.tokens+float64(now.Sub(b.at))/float64(inboundHostRefill))
+	return refill(b, burst, every, now)
+}
+
+// bucketLocked is host's bucket, created if missing (tests). Callers hold mu.
+func (g *actorFetchGate) bucketLocked(host string) *hostBudget {
+	return g.createLocked(g.hosts, host, inboundHostBurst, inboundHostRefill, g.now())
+}
+
+// refill tops b up for the time since it was last read.
+func refill(b *hostBudget, burst float64, every time.Duration, now time.Time) *hostBudget {
+	b.tokens = min(burst, b.tokens+float64(now.Sub(b.at))/float64(every))
 	b.at = now
 	return b
 }
 
-// trimHosts drops, in one batch, hosts whose bucket has refilled (forgetting
+// trimBuckets drops, in one batch, keys whose bucket has refilled (forgetting
 // them changes nothing), then arbitrary ones down to evictActorFetchTo.
-// Callers hold mu.
-func (g *actorFetchGate) trimHosts(now time.Time) {
-	for h, b := range g.hosts {
-		if now.Sub(b.at) >= inboundHostBurst*inboundHostRefill {
-			delete(g.hosts, h)
+// Callers hold the gate's mu.
+func trimBuckets(m map[string]*hostBudget, fullAfter time.Duration, now time.Time) {
+	for k, b := range m {
+		if now.Sub(b.at) >= fullAfter {
+			delete(m, k)
 		}
 	}
-	for h := range g.hosts {
-		if len(g.hosts) <= evictActorFetchTo {
+	for k := range m {
+		if len(m) <= evictActorFetchTo {
 			break
 		}
-		delete(g.hosts, h)
+		delete(m, k)
 	}
 }
 
 // WithInboundFetchRefusedCounter installs a counter of inbound-signature-path
 // requests whose actor fetch was refused before the network, called with a
-// fixed reason: host_budget, global_cap, followed_ceiling or blocked_host.
+// fixed reason: host_budget, domain_budget, global_rate, domain_cap,
+// global_cap, followed_ceiling or blocked_host.
 // Nil = not counted.
 func WithInboundFetchRefusedCounter(f func(reason string)) Option {
 	return func(s *Service) { s.onInboundFetchRefused = f }
@@ -319,6 +392,12 @@ func (s *Service) countInboundRefusal(err error) {
 		s.onInboundFetchRefused("global_cap")
 	case errors.Is(err, errInboundBypassCeiling):
 		s.onInboundFetchRefused("followed_ceiling")
+	case errors.Is(err, errInboundDomainBudget):
+		s.onInboundFetchRefused("domain_budget")
+	case errors.Is(err, errInboundDomainCap):
+		s.onInboundFetchRefused("domain_cap")
+	case errors.Is(err, errInboundGlobalRate):
+		s.onInboundFetchRefused("global_rate")
 	case errors.Is(err, ErrActorHostBlocked):
 		s.onInboundFetchRefused("blocked_host")
 	}
