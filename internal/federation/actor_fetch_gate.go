@@ -188,9 +188,8 @@ const (
 	inboundBypassMaxInflight = 16
 )
 
-// errInboundFetchBudget: the inbound-signature path's fetch budget for this
-// host, or its global in-flight cap, is spent. The request fails like any
-// unverifiable signature; the sender retries.
+// errInboundFetchBudget: one of the inbound-signature path's fetch limits is
+// spent. Nothing is fetched; the inbox answers "later" and the sender retries.
 var errInboundFetchBudget = errors.New("federation: inbound actor fetch budget spent")
 
 // IsInboundFetchRefused reports whether err is an inbound-path actor fetch
@@ -199,6 +198,12 @@ var errInboundFetchBudget = errors.New("federation: inbound actor fetch budget s
 // "later", not "bad signature". A blocked host, a failed fetch and a signature
 // that does not verify are not this.
 func IsInboundFetchRefused(err error) bool { return errors.Is(err, errInboundFetchBudget) }
+
+// errInboundHostUnkeyed: the actor URL's host has no key the per-host budget
+// can count under (NormalizeFollowHost refuses it, e.g. an IPv6 literal), so
+// it is not fetched from this path at all. Deliberately NOT a budget error: no
+// retry can succeed, so the sender is told "unverifiable", not "later".
+var errInboundHostUnkeyed = errors.New("federation: inbound actor host cannot be budgeted")
 
 // errInboundBypassCeiling: a followed actor's fetch is past the bypass ceiling.
 var errInboundBypassCeiling = fmt.Errorf("%w: followed ceiling", errInboundFetchBudget)
