@@ -1737,7 +1737,8 @@ All opt-in and zero-cost when disabled.
   inbox requests whose actor fetch was refused before the network. It counts
   REQUESTS, not distinct fetches: concurrent requests naming one actor share a
   fetch, and each refused one counts. `reason` is one of `host_budget`,
-  `global_cap`, `followed_ceiling` or `blocked_host`. A steady `host_budget` or
+  `domain_budget`, `global_rate`, `domain_cap`, `global_cap`,
+  `followed_ceiling` or `blocked_host`. A steady `host_budget` or
   `global_cap` rate is expected under abuse. A rise while a peer you follow
   reports delivery failures is worth a look. The endpoint is
   unauthenticated and lives at the root like the health probes — **network-scope
