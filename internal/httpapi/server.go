@@ -1378,6 +1378,11 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// can rely on it being present.
 	s.deliverysvc = s.newDeliveryResolver()
 
+	// While federation is off, an ActivityPub fetch of an actor or object is 503,
+	// not the unmounted route's 404 — a peer deletes its copy on 404. See
+	// federation_off.go.
+	e.Use(s.federationOff())
+
 	s.routes()
 	return s
 }
@@ -1395,7 +1400,7 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 		LogValuesFunc: func(c *echo.Context, v middleware.RequestLoggerValues) error {
 			level := slog.LevelInfo
 			switch {
-			case v.Status >= 500:
+			case v.Status >= 500 && c.Get(federationOffKey) == nil:
 				level = slog.LevelError
 			case v.Status >= 400:
 				level = slog.LevelWarn

@@ -212,14 +212,15 @@ func TestNoteObjectIsDereferenceableAsActivityPub(t *testing.T) {
 	}
 }
 
-// The object routes exist only when federation is on, like every other AP route.
+// The object routes exist only when federation is on, like every other AP route;
+// with it off an AP fetch is a 503, not a 404 (see federation_off.go).
 func TestObjectIdsAreAbsentWithoutFederation(t *testing.T) {
 	cfg := testConfig()
 	cfg.PublicBaseURL = "https://videos.example"
 	srv := New(cfg, nil, nil)
 	rec := getAccept(t, srv, "/videos/"+uuid.New().String(), apJSONAccept)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 with federation off", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 with federation off", rec.Code)
 	}
 }
 

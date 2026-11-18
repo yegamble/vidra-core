@@ -893,22 +893,30 @@ func TestCollectionRequiresActivityJSONAndExists(t *testing.T) {
 
 // The routes are a prod-safe opt-in: absent (404) when FEDERATION_ENABLED is off,
 // even though the service is wired — mirroring the dev-endpoint exclusion.
+// With federation disabled (even with the service wired) no federation route is
+// mounted: discovery is 404, so nodeinfo never advertises a federating server,
+// and an ActivityPub fetch is 503 rather than the 404 a peer deletes its copy
+// on (federation_off.go).
 func TestFederationRoutesAbsentWhenDisabled(t *testing.T) {
 	cfg := fedTestConfig()
 	cfg.FederationEnabled = false
 	srv := fedServer(cfg)
-	cases := []struct{ path, accept string }{
-		{"/.well-known/nodeinfo", ""},
-		{"/nodeinfo/2.1", ""},
-		{"/.well-known/webfinger?resource=acct:ada@videos.example", ""},
-		{"/accounts/ada", apAccept},
-		{"/video-channels/films", apAccept},
-		{"/video-channels/films/followers", apAccept},
-		{"/video-channels/films/outbox", apAccept},
+	cases := []struct {
+		path, accept string
+		want         int
+	}{
+		{"/.well-known/nodeinfo", "", http.StatusNotFound},
+		{"/nodeinfo/2.1", "", http.StatusNotFound},
+		{"/.well-known/webfinger?resource=acct:ada@videos.example", "", http.StatusNotFound},
+		{"/accounts/ada", apAccept, http.StatusServiceUnavailable},
+		{"/video-channels/films", apAccept, http.StatusServiceUnavailable},
+		{"/video-channels/films/followers", apAccept, http.StatusServiceUnavailable},
+		{"/video-channels/films/outbox", apAccept, http.StatusServiceUnavailable},
+		{"/accounts/ada", "text/html", http.StatusNotFound},
 	}
 	for _, tc := range cases {
-		if rec := getAccept(t, srv, tc.path, tc.accept); rec.Code != http.StatusNotFound {
-			t.Errorf("GET %s status = %d, want 404 when federation disabled", tc.path, rec.Code)
+		if rec := getAccept(t, srv, tc.path, tc.accept); rec.Code != tc.want {
+			t.Errorf("GET %s (Accept %q) status = %d, want %d when federation disabled", tc.path, tc.accept, rec.Code, tc.want)
 		}
 	}
 }
