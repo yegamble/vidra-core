@@ -1738,7 +1738,15 @@ All opt-in and zero-cost when disabled.
   REQUESTS, not distinct fetches: concurrent requests naming one actor share a
   fetch, and each refused one counts. `reason` is one of `host_budget`,
   `domain_budget`, `global_rate`, `domain_cap`, `global_cap`,
-  `followed_ceiling` or `blocked_host`. A steady `host_budget` or
+  `followed_ceiling` or `blocked_host`. On the wire, a request whose
+  signer could not be fetched for any of the limit reasons is answered
+  **429** with `Retry-After: 60` and `Cache-Control: no-store`, so the peer
+  retries instead of reading a rejection; `blocked_host` is answered 202 and
+  a signature that does not verify 401, as before. One exception: a limit
+  refusal while re-fetching the key of an actor already cached (a signature
+  that failed against the cached key) is counted here but still answered 401,
+  because the verifier reports every signature it could not verify as one
+  refusal. A steady `host_budget` or
   `global_cap` rate is expected under abuse. A rise while a peer you follow
   reports delivery failures is worth a look. The endpoint is
   unauthenticated and lives at the root like the health probes — **network-scope

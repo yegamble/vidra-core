@@ -126,9 +126,10 @@ func (s *Service) resolveActor(ctx context.Context, actorURL string, inbound boo
 	ra, err := s.fetchMissingActor(ctx, actorURL, inbound)
 	// A request the caller abandoned is not the actor failing, a blocked host
 	// or a failed blocklist read fetched nothing, and neither did a spent
-	// budget; none of them is remembered.
+	// budget or a host the gate cannot key; none of them is remembered.
 	if err != nil && inbound && ctx.Err() == nil && !errors.Is(err, ErrActorHostBlocked) &&
-		!errors.Is(err, errBlocklistLookup) && !errors.Is(err, errInboundFetchBudget) {
+		!errors.Is(err, errBlocklistLookup) && !errors.Is(err, errInboundFetchBudget) &&
+		!errors.Is(err, errInboundHostUnkeyed) {
 		s.actorFetches.recordFailure(actorURL)
 	}
 	return ra, err
@@ -145,7 +146,7 @@ func (s *Service) admitInboundFetch(ctx context.Context, actorURL string) (func(
 	}
 	host, ok := NormalizeFollowHost(u.Host)
 	if !ok {
-		return nil, errInboundHostBudget
+		return nil, errInboundHostUnkeyed
 	}
 	return s.actorFetches.admitInbound(host, inboundDomainKey(actorURL), s.followedLookup(ctx, actorURL))
 }
@@ -286,7 +287,7 @@ func (s *Service) refreshRemoteActorKey(ctx context.Context, actorURL string) (s
 		}
 		host, ok := NormalizeFollowHost(hostOf(actorURL))
 		if !ok {
-			return sqlcgen.RemoteActor{}, errInboundHostBudget
+			return sqlcgen.RemoteActor{}, errInboundHostUnkeyed
 		}
 		release, err := s.actorFetches.admitRefresh(host, inboundDomainKey(actorURL), s.followedLookup(ctx, actorURL))
 		if err != nil {

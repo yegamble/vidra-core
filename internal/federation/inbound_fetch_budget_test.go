@@ -341,3 +341,42 @@ func TestInboundFetchRefusalsAreCountedByReason(t *testing.T) {
 		}
 	}
 }
+
+// TestIsInboundFetchRefusedNamesEveryLimitAndNothingElse: the inbox answers
+// "later" for exactly the gate's limits. A blocked host, a fetch that failed,
+// a refresh inside its cooldown and an unsafe URL are other answers.
+func TestIsInboundFetchRefusedNamesEveryLimitAndNothingElse(t *testing.T) {
+	for _, err := range []error{errInboundHostBudget, errInboundGlobalCap, errInboundBypassCeiling,
+		errInboundDomainBudget, errInboundDomainCap, errInboundGlobalRate,
+		fmt.Errorf("wrapped: %w", errInboundHostBudget)} {
+		if !IsInboundFetchRefused(err) {
+			t.Errorf("IsInboundFetchRefused(%v) = false, want true", err)
+		}
+	}
+	for _, err := range []error{nil, ErrActorHostBlocked, errActorRecentlyFailed, errActorRefreshCooldown,
+		errInsecureFetchScheme, errInboundHostUnkeyed, errors.New("dial tcp: connection refused")} {
+		if IsInboundFetchRefused(err) {
+			t.Errorf("IsInboundFetchRefused(%v) = true, want false", err)
+		}
+	}
+}
+
+// A host the gate cannot key (an IPv6 literal) is not a spent limit: no later
+// retry can succeed, so it must never read as "later". Through the inbox path
+// the blocklist check refuses such a host first; admission says the same on
+// its own, so the answer does not depend on that ordering.
+func TestAHostTheGateCannotKeyIsNotALimitRefusal(t *testing.T) {
+	o := newPerHostOrigin()
+	svc := newBudgetService(o)
+	const actor = "https://[2606:4700::1111]/accounts/x"
+	if _, err := svc.admitInboundFetch(context.Background(), actor); err == nil || IsInboundFetchRefused(err) {
+		t.Errorf("admission of an unkeyable host = %v, want a refusal that is not a limit", err)
+	}
+	_, err := svc.ResolveKey(context.Background(), actor+"#main-key")
+	if err == nil || IsInboundFetchRefused(err) {
+		t.Errorf("ResolveKey on an unkeyable host = %v, want a refusal that is not a limit", err)
+	}
+	if got := o.count("2606:4700::1111"); got != 0 {
+		t.Errorf("an unkeyable host was fetched %d times", got)
+	}
+}
