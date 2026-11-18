@@ -1740,8 +1740,11 @@ All opt-in and zero-cost when disabled.
   `domain_budget`, `global_rate`, `domain_cap`, `global_cap`,
   `followed_ceiling` or `blocked_host`. On the wire, a request whose
   signer could not be fetched for any of the limit reasons is answered
-  **429** with `Retry-After: 60` and `Cache-Control: no-store`, so the peer
-  retries instead of reading a rejection; `blocked_host` is answered 202 and
+  **429** with `Retry-After: 60` and `Cache-Control: no-store`, which tells the
+  peer "later" rather than "rejected" and shows up here in the refusal counter.
+  What the peer then does is not established: PeerTube counts any non-2xx
+  answer as a failed delivery against the follow, and nothing shows it honours
+  `Retry-After`; `blocked_host` is answered 202 and
   a signature that does not verify 401, as before. One exception: a limit
   refusal while re-fetching the key of an actor already cached (a signature
   that failed against the cached key) is counted here but still answered 401,
