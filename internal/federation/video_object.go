@@ -2,7 +2,9 @@ package federation
 
 import (
 	"context"
+	"errors"
 	"image"
+	_ "image/gif"  // register the GIF decoder for image.DecodeConfig
 	_ "image/jpeg" // register the JPEG decoder for image.DecodeConfig
 	_ "image/png"  // register the PNG decoder for image.DecodeConfig
 	"io"
@@ -356,46 +358,93 @@ func publishedAt(originallyPublished, publishAt pgtype.Timestamptz, createdAt ti
 	return createdAt
 }
 
-// maxPosterHeaderBytes bounds the read that recovers a poster's pixel size;
-// maxPosterSizes bounds the in-process cache of the sizes read.
+// maxPosterHeaderBytes bounds the read that recovers a poster's pixel size.
+// The decoders stop at the frame header, so the bound costs bytes only on a
+// file whose metadata (EXIF, ICC, comments) runs that long before it — 256 KiB
+// was not enough for a camera JPEG's. maxPosterSizes bounds the cache.
 const (
-	maxPosterHeaderBytes = 256 << 10
+	maxPosterHeaderBytes = 2 << 20
 	maxPosterSizes       = 50000
 )
 
-// posterSize returns the pixel size of the poster stored at key (the
-// video_files thumbnail row /thumbnail serves), 0, 0 when unreadable. Only the
-// header is decoded and the reader is closed straight after, and a size is
-// cached per thumbnail ROW id: a replaced poster is a new row, so an outbox
-// page or object fetch re-reads nothing it has read before.
-func (s *Service) posterSize(ctx context.Context, fileID, key string) (int, int) {
-	if s.media == nil || key == "" {
-		return 0, 0
+// peertubeIconTypes are the icon media types PeerTube keeps (constants.ts
+// MIMETYPES.IMAGE, misc.ts setValidRemoteIcon), by the format name
+// image.DecodeConfig reports. Every decoder registered above is one of them.
+var peertubeIconTypes = map[string]string{"jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp"}
+
+// posterFacts is what the poster's bytes say: its pixel size and the media
+// type it decodes as. The zero value is "could not be decoded".
+type posterFacts struct {
+	width, height int
+	mediaType     string
+}
+
+// readErrRecorder remembers a storage read failure, which DecodeConfig would
+// otherwise report exactly like bytes that are not an image.
+type readErrRecorder struct {
+	r   io.Reader
+	err error
+}
+
+func (e *readErrRecorder) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		e.err = err
+	}
+	return n, err
+}
+
+// posterFactsOf decodes the header of the poster stored at key (the
+// video_files thumbnail row /thumbnail serves); the zero value when it cannot.
+// The type comes from the BYTES, not the stored content type: an imported
+// poster with an unknown extension is stored as application/octet-stream, and
+// SetThumbnail trusts the file extension, so the row's type can be one PeerTube
+// refuses for an image it would take. Results are cached per thumbnail ROW id
+// (a replaced poster is a new row, so nothing goes stale) — undecodable bytes
+// included, since they will not decode next time either, but never a storage
+// failure, which may be transient. Without a row id nothing could be cached,
+// so every emission would re-read up to maxPosterHeaderBytes: nothing is read
+// (the SQL yields the id and the key from the same row, so this is a caller
+// that has no poster row, not one that lost its id).
+func (s *Service) posterFactsOf(ctx context.Context, fileID, key string) posterFacts {
+	if s.media == nil || key == "" || fileID == "" {
+		return posterFacts{}
 	}
 	s.posterMu.Lock()
-	wh, ok := s.posterSizes[fileID]
+	cached, ok := s.posterSizes[fileID]
 	s.posterMu.Unlock()
 	if ok {
-		return wh[0], wh[1]
+		return cached
 	}
 	rc, err := s.media.Open(ctx, key)
 	if err != nil {
-		return 0, 0
+		return posterFacts{}
 	}
 	defer func() { _ = rc.Close() }()
-	cfg, _, err := image.DecodeConfig(io.LimitReader(rc, maxPosterHeaderBytes))
-	if err != nil {
-		return 0, 0
+	rec := &readErrRecorder{r: io.LimitReader(rc, maxPosterHeaderBytes)}
+	var facts posterFacts
+	// A format with no PeerTube type keeps the zero value, so a size is never
+	// stated under a type it was not read as.
+	if cfg, format, err := image.DecodeConfig(rec); err == nil && cfg.Width > 0 && cfg.Height > 0 && peertubeIconTypes[format] != "" {
+		facts = posterFacts{width: cfg.Width, height: cfg.Height, mediaType: peertubeIconTypes[format]}
+	} else if rec.err != nil {
+		return posterFacts{}
 	}
-	if fileID != "" {
-		s.posterMu.Lock()
-		if s.posterSizes == nil || len(s.posterSizes) >= maxPosterSizes {
-			s.posterSizes = map[string][2]int{}
+	s.posterMu.Lock()
+	if s.posterSizes == nil {
+		s.posterSizes = map[string]posterFacts{}
+	}
+	// At the cap one arbitrary entry makes room: resetting the whole map would
+	// send every poster of a busy instance back to storage at once.
+	for k := range s.posterSizes {
+		if len(s.posterSizes) < maxPosterSizes {
+			break
 		}
-		s.posterSizes[fileID] = [2]int{cfg.Width, cfg.Height}
-		s.posterMu.Unlock()
+		delete(s.posterSizes, k)
 	}
-	return cfg.Width, cfg.Height
+	s.posterSizes[fileID] = facts
+	s.posterMu.Unlock()
+	return facts
 }
 
 // videoObjectFromDetail gathers the AS Video facts for one video (the pushed
@@ -439,15 +488,19 @@ func (s *Service) videoObjectFromOutbox(ctx context.Context, channelActor string
 	}
 	if r.HasThumbnail {
 		in.IconURL = s.videoThumbnailURL(r.ID)
-		in.IconMediaTyp = r.ThumbnailContentType
-		in.IconWidth, in.IconHeight = s.posterSize(ctx, r.ThumbnailFileID, r.ThumbnailStorageKey)
+		facts := s.posterFactsOf(ctx, r.ThumbnailFileID, r.ThumbnailStorageKey)
+		in.IconMediaTyp, in.IconWidth, in.IconHeight = r.ThumbnailContentType, facts.width, facts.height
+		if facts.mediaType != "" {
+			in.IconMediaTyp = facts.mediaType
+		}
 	}
 	obj := videoObject(in)
-	// No poster, or one whose size could not be read: PeerTube would refuse
-	// the whole video, so the fallback poster is added (fallback_poster.go).
-	// AFTER the poster, which stays: a reader that needs no size — vidra's own
-	// ingest, Mastodon — takes the first icon and still gets the real image.
-	if in.IconWidth <= 0 || in.IconHeight <= 0 {
+	// When PeerTube would keep NO icon — no poster, or one without a size or
+	// with a media type it refuses — it refuses the whole video, so the
+	// fallback poster is added (fallback_poster.go). AFTER the poster, which
+	// stays: a reader that needs neither — vidra's own ingest, Mastodon — takes
+	// the first icon and still gets the real image.
+	if in.IconURL == "" || in.IconWidth <= 0 || in.IconHeight <= 0 || !peertubeIconType(in.IconMediaTyp) {
 		icons, _ := obj["icon"].([]map[string]any)
 		obj["icon"] = append(icons, map[string]any{
 			"type": "Image", "url": s.baseURL + FallbackPosterPath, "mediaType": fallbackPosterType,
@@ -456,6 +509,16 @@ func (s *Service) videoObjectFromOutbox(ctx context.Context, channelActor string
 	}
 	s.peertubeFields(obj, r)
 	return obj
+}
+
+// peertubeIconType reports whether PeerTube keeps an icon of this media type.
+func peertubeIconType(mediaType string) bool {
+	for _, t := range peertubeIconTypes {
+		if t == mediaType {
+			return true
+		}
+	}
+	return false
 }
 
 // peertubeSensitiveName maps a vidra sensitive flag to PeerTube's SensitiveTag

@@ -216,7 +216,7 @@ type Service struct {
 	media storage.Backend
 	// posterSizes caches outbound poster sizes by thumbnail row id.
 	posterMu    sync.Mutex
-	posterSizes map[string][2]int
+	posterSizes map[string]posterFacts
 	// flagger runs watched-words flagging over inbound federated comments
 	// (remote-content §6). Nil = no flagging.
 	flagger CommentFlagger
