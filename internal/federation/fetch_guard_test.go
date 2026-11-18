@@ -2,6 +2,7 @@ package federation
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/vidra/vidra-core/internal/httpsig"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // countingTransport answers every request with an empty 404 and counts it, so
@@ -70,5 +72,38 @@ func TestProductionFederationFetchesRequireHTTPS(t *testing.T) {
 	federationFetches(svc, "https://peer.example.test/accounts/bob")
 	if n.Load() == 0 {
 		t.Fatal("https federation URLs were never attempted")
+	}
+}
+
+// A remote actor cached with an http:// URL (before the https-only rule, or
+// by a lab) is refused in production, cache hit or not: the scheme is checked
+// before the cache is read, and that is deliberate — the rule is about the
+// URL, and a row does not make a URL acceptable by having been stored. Outside
+// production the same cached row still resolves. Neither path touches the
+// network. docs/operations.md has the query that counts such rows.
+func TestCachedHTTPActorIsRefusedInProductionAndResolvesOutsideIt(t *testing.T) {
+	const actor = "http://peer.example.test/accounts/bob"
+	pubPEM, _ := testActorPEM(t)
+	ctx := context.Background()
+	for _, prod := range []bool{true, false} {
+		var n atomic.Int64
+		repo := newRemoteRepo()
+		repo.remoteActors[actor] = sqlcgen.RemoteActor{ActorUrl: actor, PublicKeyPem: pubPEM}
+		svc := NewService(repo, WithAllowPrivateFetch(!prod),
+			WithFetchClient(&http.Client{Transport: countingTransport{n: &n}}))
+
+		_, keyErr := svc.ResolveKey(ctx, actor+"#main-key")
+		_, resolveErr := svc.ResolveRemoteActor(ctx, actor)
+		for name, err := range map[string]error{"ResolveKey": keyErr, "ResolveRemoteActor": resolveErr} {
+			switch {
+			case prod && !errors.Is(err, errInsecureFetchScheme):
+				t.Errorf("production %s: err = %v, want errInsecureFetchScheme", name, err)
+			case !prod && err != nil:
+				t.Errorf("non-production %s: err = %v, want the cached actor", name, err)
+			}
+		}
+		if got := n.Load(); got != 0 {
+			t.Errorf("prod=%v: a cached actor reached the network %d times", prod, got)
+		}
 	}
 }
