@@ -1400,7 +1400,7 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 		LogValuesFunc: func(c *echo.Context, v middleware.RequestLoggerValues) error {
 			level := slog.LevelInfo
 			switch {
-			case v.Status >= 500:
+			case v.Status >= 500 && c.Get(federationOffKey) == nil:
 				level = slog.LevelError
 			case v.Status >= 400:
 				level = slog.LevelWarn

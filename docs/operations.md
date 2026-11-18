@@ -1736,6 +1736,10 @@ All opt-in and zero-cost when disabled.
   unauthenticated and lives at the root like the health probes — **network-scope
   it** (internal Prometheus scrape only), do not expose it publicly. It is
   intentionally omitted from the public OpenAPI contract (an ops surface).
+  With federation off, an ActivityPub fetch or inbox delivery is answered 503
+  (a 404 would make PeerTube delete its copy of the actor or video), so such an
+  instance shows those refusals in the `5xx` status class even though each is
+  logged at WARN, not ERROR.
 
   The pool series is the one to watch before adding a replica. `_acquired_conns`
   pinned at `_max_conns` with a rising `rate(vidra_db_pool_empty_acquires_total)`

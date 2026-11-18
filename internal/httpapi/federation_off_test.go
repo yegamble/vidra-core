@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -42,6 +44,9 @@ func TestFederationOffAnswersActivityPubWith503(t *testing.T) {
 			if got := rec.Header().Get("Retry-After"); got != "86400" {
 				t.Errorf("GET %s: Retry-After = %q, want 86400", path, got)
 			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("GET %s: Cache-Control = %q, want no-store", path, got)
+			}
 			var body ErrorResponse
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Error.Code != "federation_disabled" {
 				t.Errorf("GET %s: body = %s (err %v), want error.code federation_disabled", path, rec.Body.String(), err)
@@ -56,6 +61,36 @@ func TestFederationOffAnswersActivityPubWith503(t *testing.T) {
 		if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "86400" {
 			t.Errorf("POST %s = %d (Retry-After %q), want 503 + 86400", path, rec.Code, rec.Header().Get("Retry-After"))
 		}
+	}
+}
+
+// The 503 is a deliberate answer, not a fault: a migrated instance with
+// federation off gets one on every peer refresh and delivery, and logging each
+// at ERROR would bury real 5xx. It logs at WARN, as the old 404 did.
+func TestFederationOffRefusalIsNotLoggedAsAnError(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := testConfig()
+	cfg.PublicBaseURL = "https://videos.example"
+	srv := New(cfg, nil, nil, WithLogger(slog.New(slog.NewJSONHandler(&buf, nil))))
+	if rec := getAccept(t, srv, "/accounts/ada", apAccept); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	var line struct {
+		Level  string `json:"level"`
+		Msg    string `json:"msg"`
+		Status int    `json:"status"`
+	}
+	found := false
+	for raw := range strings.SplitSeq(strings.TrimSpace(buf.String()), "\n") {
+		if json.Unmarshal([]byte(raw), &line) == nil && line.Msg == "request" && line.Status == http.StatusServiceUnavailable {
+			found = true
+			if line.Level != "WARN" {
+				t.Errorf("federation-off 503 logged at %s, want WARN", line.Level)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no request log line for the 503:\n%s", buf.String())
 	}
 }
 

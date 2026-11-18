@@ -13,6 +13,11 @@ import (
 // an operator decision, not a transient fault.
 const federationOffRetryAfter = "86400"
 
+// federationOffKey marks a request federationOff refused, so requestLogger logs
+// its 503 at WARN (what the unmounted route's 404 got) instead of ERROR: it is a
+// deliberate answer a migrated instance gives on every peer refresh, not a fault.
+const federationOffKey = "federation_off"
+
 // federationOff answers ActivityPub requests with 503 while federation is
 // switched off (or not wired), instead of the 404 an unmounted route gives.
 //
@@ -47,6 +52,10 @@ func (s *Server) federationOff() echo.MiddlewareFunc {
 			if !refuse {
 				return next(c)
 			}
+			c.Set(federationOffKey, true)
+			// no-store: the answer flips the moment the operator turns federation
+			// on, and a cached 503 would keep refusing peers after that.
+			c.Response().Header().Set("Cache-Control", "no-store")
 			c.Response().Header().Set("Retry-After", federationOffRetryAfter)
 			c.Response().Header().Add(echo.HeaderVary, echo.HeaderAccept)
 			return c.JSON(http.StatusServiceUnavailable, ErrorResponse{Error: ErrorBody{
