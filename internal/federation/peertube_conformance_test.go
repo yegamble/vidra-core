@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 	"unicode/utf8"
 
@@ -525,6 +526,7 @@ var (
 	ptGIFID       = uuid.MustParse("03a58bdb-e4c5-4c71-9095-8f7e6d5c4b37")
 	ptFatJPEGID   = uuid.MustParse("14b69cec-f5d6-4d82-a1a6-908f7e6d5c48")
 	ptAVIFID      = uuid.MustParse("25c7adfd-06e7-4e93-b2b7-a1908f7e6d59")
+	ptAnimWebPID  = uuid.MustParse("36d8be0e-17f8-4fa4-83c8-b2a1908f7e6a")
 )
 
 // ptPosterBytes stores raw poster bytes for a copy of base under id, with the
@@ -603,6 +605,11 @@ func ptWorld(t *testing.T) (*Service, fakeRepo) {
 	// register the decoder for the test binary and hide a missing registration.
 	ptPosterBytes(t, repo, blobs, finished, ptGIFID, "image/gif", []byte("GIF89a\xe0\x01\x0e\x01\x00\x00\x00;"))
 	ptPosterBytes(t, repo, blobs, finished, ptFatJPEGID, "image/jpeg", ptJPEGBytes(t, 1280, 720, 300<<10))
+	// An ANIMATED WebP (VP8X with the animation bit, then ANIM/ANMF): the
+	// decoder reads the canvas size from VP8X without looking at the frames.
+	anim := []byte("RIFF\x00\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00\x02\x00\x00\x00\x8f\x01\x00\x2b\x01\x00ANIM\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00")
+	anim[4] = byte(len(anim) - 8)
+	ptPosterBytes(t, repo, blobs, finished, ptAnimWebPID, "image/webp", anim)
 	// An AVIF saved as .jpg: SetThumbnail trusts the extension, nothing decodes it.
 	ptPosterBytes(t, repo, blobs, finished, ptAVIFID, "image/jpeg", append([]byte("\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf"), make([]byte, 64)...))
 
@@ -675,6 +682,9 @@ func TestVideoObjectPassesPeerTubeValidator(t *testing.T) {
 		{name: "JPEG poster stored as application/octet-stream", id: ptOctetID, check: func(t *testing.T, v ptVerdict) {
 			ptAssertIconType(t, v, 640, 360, "image/jpeg")
 		}},
+		// PeerTube keeps an image/webp icon; whether it can render the
+		// animation is its business, and the size is the real canvas.
+		{name: "animated WebP poster", id: ptAnimWebPID, check: func(t *testing.T, v ptVerdict) { ptAssertIconType(t, v, 400, 300, "image/webp") }},
 		{name: "GIF poster", id: ptGIFID, check: func(t *testing.T, v ptVerdict) { ptAssertIconType(t, v, 480, 270, "image/gif") }},
 		{name: "JPEG with 300 KiB of metadata before its frame header", id: ptFatJPEGID, check: func(t *testing.T, v ptVerdict) {
 			ptAssertIconType(t, v, 1280, 720, "image/jpeg")
@@ -986,6 +996,11 @@ func TestPosterSizeIsReadOncePerThumbnailRow(t *testing.T) {
 	if icon := obj["icon"].([]map[string]any)[0]; icon["width"] != 320 || opens != 2 {
 		t.Errorf("after replacement: icon = %v, opens = %d; want 320 wide from a second read", icon, opens)
 	}
+	// No row id means nothing could be cached, so nothing is read: up to 2 MiB
+	// per emission is not spent on a poster the next emission reads again.
+	if f := svc.posterFactsOf(t.Context(), "", media.VideoThumbnailKey(ctVideoID)); f != (posterFacts{}) || opens != 2 {
+		t.Errorf("a poster with no row id: facts %+v after %d opens, want none and no read", f, opens)
+	}
 }
 
 // failingOpenBackend fails every Open, as a storage outage does.
@@ -997,6 +1012,18 @@ type failingOpenBackend struct {
 func (f failingOpenBackend) Open(context.Context, string) (io.ReadCloser, error) {
 	*f.opens++
 	return nil, io.ErrUnexpectedEOF
+}
+
+// failingReadBackend opens, hands over the first bytes of a real JPEG, then
+// fails the read, as a connection dropped mid-object does.
+type failingReadBackend struct {
+	storage.Backend
+	opens *int
+}
+
+func (f failingReadBackend) Open(context.Context, string) (io.ReadCloser, error) {
+	*f.opens++
+	return io.NopCloser(io.MultiReader(bytes.NewReader([]byte{0xFF, 0xD8, 0xFF}), iotest.ErrReader(io.ErrUnexpectedEOF))), nil
 }
 
 // TestUndecodablePosterIsReadOnceButAnOutageIsRetried: with a 2 MiB header
@@ -1020,6 +1047,7 @@ func TestUndecodablePosterIsReadOnceButAnOutageIsRetried(t *testing.T) {
 	}{
 		{"undecodable bytes", func(o *int) storage.Backend { return countingBackend{local, o} }, 1},
 		{"storage outage", func(o *int) storage.Backend { return failingOpenBackend{local, o} }, 3},
+		{"read failing mid-object", func(o *int) storage.Backend { return failingReadBackend{local, o} }, 3},
 	} {
 		opens := 0
 		svc := NewService(repo, WithBaseURL(contractBase), WithMediaStorage(tc.backend(&opens)))

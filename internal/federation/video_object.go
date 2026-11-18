@@ -402,9 +402,12 @@ func (e *readErrRecorder) Read(p []byte) (int, error) {
 // refuses for an image it would take. Results are cached per thumbnail ROW id
 // (a replaced poster is a new row, so nothing goes stale) — undecodable bytes
 // included, since they will not decode next time either, but never a storage
-// failure, which may be transient.
+// failure, which may be transient. Without a row id nothing could be cached,
+// so every emission would re-read up to maxPosterHeaderBytes: nothing is read
+// (the SQL yields the id and the key from the same row, so this is a caller
+// that has no poster row, not one that lost its id).
 func (s *Service) posterFactsOf(ctx context.Context, fileID, key string) posterFacts {
-	if s.media == nil || key == "" {
+	if s.media == nil || key == "" || fileID == "" {
 		return posterFacts{}
 	}
 	s.posterMu.Lock()
@@ -420,19 +423,27 @@ func (s *Service) posterFactsOf(ctx context.Context, fileID, key string) posterF
 	defer func() { _ = rc.Close() }()
 	rec := &readErrRecorder{r: io.LimitReader(rc, maxPosterHeaderBytes)}
 	var facts posterFacts
-	if cfg, format, err := image.DecodeConfig(rec); err == nil && cfg.Width > 0 && cfg.Height > 0 {
+	// A format with no PeerTube type keeps the zero value, so a size is never
+	// stated under a type it was not read as.
+	if cfg, format, err := image.DecodeConfig(rec); err == nil && cfg.Width > 0 && cfg.Height > 0 && peertubeIconTypes[format] != "" {
 		facts = posterFacts{width: cfg.Width, height: cfg.Height, mediaType: peertubeIconTypes[format]}
 	} else if rec.err != nil {
 		return posterFacts{}
 	}
-	if fileID != "" {
-		s.posterMu.Lock()
-		if s.posterSizes == nil || len(s.posterSizes) >= maxPosterSizes {
-			s.posterSizes = map[string]posterFacts{}
-		}
-		s.posterSizes[fileID] = facts
-		s.posterMu.Unlock()
+	s.posterMu.Lock()
+	if s.posterSizes == nil {
+		s.posterSizes = map[string]posterFacts{}
 	}
+	// At the cap one arbitrary entry makes room: resetting the whole map would
+	// send every poster of a busy instance back to storage at once.
+	for k := range s.posterSizes {
+		if len(s.posterSizes) < maxPosterSizes {
+			break
+		}
+		delete(s.posterSizes, k)
+	}
+	s.posterSizes[fileID] = facts
+	s.posterMu.Unlock()
 	return facts
 }
 
