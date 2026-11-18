@@ -380,3 +380,33 @@ func TestAHostTheGateCannotKeyIsNotALimitRefusal(t *testing.T) {
 		t.Errorf("an unkeyable host was fetched %d times", got)
 	}
 }
+
+// The key-refresh path (ResolveKeyFresh, after a signature failed against a
+// CACHED key) keys its admission the same way inbound resolution does, so a
+// cached actor on a host the gate cannot key must also not read as "later":
+// no retry can succeed, nothing is fetched, the refresh cooldown is left
+// unspent, and nothing is written to the negative cache.
+func TestRefreshOfAnActorOnAnUnkeyableHostIsNotALimitRefusal(t *testing.T) {
+	o := newPerHostOrigin()
+	svc := newBudgetService(o)
+	const actor = "https://[2606:4700::1111]/accounts/x"
+	repo := svc.repo.(fakeRepo)
+	repo.remoteActors[actor] = sqlcgen.RemoteActor{ActorUrl: actor}
+
+	_, err := svc.ResolveKeyFresh(context.Background(), actor+"#main-key")
+	if !errors.Is(err, errInboundHostUnkeyed) {
+		t.Fatalf("ResolveKeyFresh = %v, want errInboundHostUnkeyed", err)
+	}
+	if IsInboundFetchRefused(err) {
+		t.Errorf("IsInboundFetchRefused(%v) = true, want false: an unkeyable host is not a spent limit", err)
+	}
+	if svc.actorFetches.recentlyFailed(actor) {
+		t.Error("a refusal for an unkeyable host was written to the negative cache")
+	}
+	if !svc.actorFetches.refreshDue(actor) {
+		t.Error("the refresh cooldown was spent by a refusal that fetched nothing")
+	}
+	if got := o.count("2606:4700::1111"); got != 0 {
+		t.Errorf("an unkeyable host was fetched %d times", got)
+	}
+}
