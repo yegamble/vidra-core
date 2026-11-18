@@ -597,6 +597,46 @@ func TestActorResponsesVaryOnAccept(t *testing.T) {
 	}
 }
 
+// TestAPObjectResponsesVaryOnAccept: the object ids (/videos/{uuid},
+// /comments/{uuid}, /videos/watch/{uuid}) are FRONTEND paths too — the proxy
+// sends an AP Accept here and everything else to the HTML page — and the
+// cacheable answers are public, max-age=300. Without Vary: Accept a shared
+// cache could hand a browser the JSON, or a peer the page.
+func TestAPObjectResponsesVaryOnAccept(t *testing.T) {
+	srv, videoID, commentID, deletedID := apObjectServer(t)
+	video := "/videos/" + videoID.String()
+	etag := getAccept(t, srv, video, apAccept).Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("video object carried no ETag to revalidate with")
+	}
+	notModified := httptest.NewRequest(http.MethodGet, video, nil)
+	notModified.Header.Set("Accept", apAccept)
+	notModified.Header.Set("If-None-Match", etag)
+	cases := map[string]*http.Request{
+		"video":       acceptReq(video, apAccept),
+		"video 304":   notModified,
+		"video 406":   acceptReq(video, "text/html"),
+		"tombstone":   acceptReq("/videos/"+deletedID.String(), apAccept),
+		"note":        acceptReq("/comments/"+commentID.String(), apAccept),
+		"legacy id":   acceptReq("/videos/watch/"+videoID.String(), apAccept),
+		"legacy 406":  acceptReq("/videos/watch/"+videoID.String(), "text/html"),
+		"unknown 404": acceptReq("/videos/"+uuid.NewString(), apAccept),
+	}
+	for name, req := range cases {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if got := strings.Join(rec.Header().Values("Vary"), ", "); !strings.Contains(got, "Accept") {
+			t.Errorf("%s (%d): Vary = %q, want it to include Accept", name, rec.Code, got)
+		}
+	}
+}
+
+func acceptReq(path, accept string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Accept", accept)
+	return req
+}
+
 func TestActorRequiresActivityJSONAccept(t *testing.T) {
 	// Neither AP nor HTML (e.g. a JSON API client) is 406.
 	rec := getAccept(t, fedServer(fedTestConfig()), "/accounts/ada", "application/json")
