@@ -1917,6 +1917,22 @@ enforced at boot in `VIDRA_ENV=production`:
   match the public domains.
 - Keep `HTTP_IMPORT_ALLOW_PRIVATE_URLS=false` (the SSRF guard) — it is a dev/e2e
   escape hatch only.
+  With it false, every federation fetch is https-only, and the scheme is
+  checked **before** the remote-actor cache is read: a remote actor cached
+  with a plain `http://` URL (stored before the rule, or while the escape
+  hatch was on) no longer resolves. An inbox delivery it signs is answered
+  401, and any local action that has to resolve it fails. This is
+  deliberate; cached rows get no exception
+  (`TestCachedHTTPActorIsRefusedInProductionAndResolvesOutsideIt`). To see
+  whether it affects you, count them (read-only):
+
+  ```sql
+  SELECT count(*) FROM remote_actors WHERE actor_url LIKE 'http://%';
+  ```
+
+  Zero means nothing is affected. A non-zero count is that many cached
+  remote actors this instance can no longer verify or reach; they recover
+  only if the peer serves them over https.
 
 Health/readiness for orchestrators: `GET /healthz` (liveness) and `GET /readyz`
 (503 until PostgreSQL + Redis are reachable). See the top-level
