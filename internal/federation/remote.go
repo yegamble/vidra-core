@@ -126,7 +126,7 @@ func (s *Service) resolveActor(ctx context.Context, actorURL string, inbound boo
 	ra, err := s.fetchMissingActor(ctx, actorURL)
 	// A request the caller abandoned is not the actor failing, and a blocked
 	// host is refused before any fetch; neither is remembered.
-	if err != nil && inbound && ctx.Err() == nil && !errors.Is(err, ErrActorHostBlocked) {
+	if err != nil && inbound && ctx.Err() == nil && !errors.Is(err, ErrActorHostBlocked) && !errors.Is(err, errBlocklistLookup) {
 		s.actorFetches.recordFailure(actorURL)
 	}
 	return ra, err
@@ -141,7 +141,14 @@ func (s *Service) fetchMissingActor(ctx context.Context, actorURL string) (sqlcg
 	if s.actorFetches == nil {
 		return s.refetchRemoteActor(ctx, actorURL)
 	}
-	ch := s.actorFetches.misses.DoChan(actorURL, func() (any, error) {
+	ch := s.actorFetches.misses.DoChan(actorURL, func() (v any, err error) {
+		// DoChan re-raises a panic on a goroutine of its own, out of reach of
+		// any request handler's recover; turn it into this fetch's error.
+		defer func() {
+			if r := recover(); r != nil {
+				v, err = sqlcgen.RemoteActor{}, fmt.Errorf("federation: actor fetch panicked: %v", r)
+			}
+		}()
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), remoteFetchTimeout)
 		defer cancel()
 		return s.refetchRemoteActor(fctx, actorURL)
@@ -161,6 +168,11 @@ var errActorRecentlyFailed = errors.New("federation: actor recently failed to re
 // errActorRefreshCooldown: the cached actor's key was re-fetched within the
 // cooldown, so it is not fetched again yet.
 var errActorRefreshCooldown = errors.New("federation: actor key refreshed recently")
+
+// errBlocklistLookup: the instance blocklist could not be read, so nothing was
+// fetched. It is this instance's failure, not the actor's, and is not
+// remembered by the negative cache.
+var errBlocklistLookup = errors.New("federation: instance blocklist lookup failed")
 
 // ErrActorHostBlocked: the actor lives on an admin-blocked instance, and was
 // not fetched. The inbox answers it with the same 202 any activity from a
@@ -232,7 +244,7 @@ func (s *Service) refetchRemoteActor(ctx context.Context, actorURL string) (sqlc
 		return sqlcgen.RemoteActor{}, fmt.Errorf("federation: parse actor URL: %w", err)
 	}
 	if blocked, err := s.hostBlocked(ctx, u); err != nil {
-		return sqlcgen.RemoteActor{}, err
+		return sqlcgen.RemoteActor{}, fmt.Errorf("%w: %w", errBlocklistLookup, err)
 	} else if blocked {
 		return sqlcgen.RemoteActor{}, ErrActorHostBlocked
 	}

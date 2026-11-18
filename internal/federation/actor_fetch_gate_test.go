@@ -2,6 +2,7 @@ package federation
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -115,5 +116,51 @@ func TestActorFetchGateEvictsInBatches(t *testing.T) {
 	}
 	if !g.recentlyFailed("https://peer.example.test/one-more") {
 		t.Fatal("the inserted entry was evicted")
+	}
+}
+
+// panickingTransport panics inside the fetch.
+type panickingTransport struct{}
+
+func (panickingTransport) RoundTrip(*http.Request) (*http.Response, error) { panic("transport bug") }
+
+// A panic inside the shared fetch comes back as an error. singleflight's
+// DoChan re-raises a panic on a goroutine of its own, where no request
+// handler's recover can reach it, so it would take the whole process down.
+func TestSharedActorFetchPanicIsAnError(t *testing.T) {
+	svc := NewService(newRemoteRepo(), WithFetchClient(&http.Client{Transport: panickingTransport{}}))
+	if _, err := svc.ResolveKey(context.Background(), "https://peer.example.test/accounts/bob#main-key"); err == nil {
+		t.Fatal("a panicking fetch resolved")
+	}
+}
+
+// flakyBlocklistRepo fails the blocklist lookup once.
+type flakyBlocklistRepo struct {
+	fakeRepo
+	failed *atomic.Bool
+}
+
+func (r flakyBlocklistRepo) IsInstanceBlocked(ctx context.Context, d string) (bool, error) {
+	if r.failed.CompareAndSwap(false, true) {
+		return false, errors.New("database unavailable")
+	}
+	return r.fakeRepo.IsInstanceBlocked(ctx, d)
+}
+
+// A failed blocklist lookup is this instance's failure, not the actor's: it is
+// not remembered, and the next request fetches.
+func TestBlocklistLookupFailureIsNotNegativeCached(t *testing.T) {
+	pemStr, _ := testActorPEM(t)
+	srv, hits := rotatingActorServer(t, &pemStr)
+	svc := NewService(flakyBlocklistRepo{fakeRepo: newRemoteRepo(), failed: &atomic.Bool{}}, WithAllowPrivateFetch(true))
+	keyID := srv.URL + "/accounts/bob#main-key"
+	if _, err := svc.ResolveKey(context.Background(), keyID); err == nil {
+		t.Fatal("resolved despite a failed blocklist lookup")
+	}
+	if _, err := svc.ResolveKey(context.Background(), keyID); err != nil {
+		t.Fatalf("the actor stayed unresolvable after the blocklist recovered: %v", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("fetches = %d, want 1", got)
 	}
 }
