@@ -23,10 +23,10 @@
 SELECT
     t.object_key::text     AS object_key,
     t.media_class::text    AS media_class,
-    t.video_id::uuid       AS video_id,
-    t.privacy::text        AS privacy,
-    t.state::text          AS state,
-    t.owner_unlisted::bool AS owner_unlisted
+    v.id                   AS video_id,
+    v.privacy::text        AS privacy,
+    v.state::text          AS state,
+    u.unlisted::bool       AS owner_unlisted
 FROM (
     SELECT vf.storage_key AS object_key,
            CASE vf.kind
@@ -36,31 +36,26 @@ FROM (
                WHEN 'storyboard'     THEN 'storyboard'
                WHEN 'storyboard_vtt' THEN 'storyboard_vtt'
            END AS media_class,
-           v.id AS video_id, v.privacy, v.state, u.unlisted AS owner_unlisted
+           vf.video_id
     FROM video_files vf
-    JOIN videos v ON v.id = vf.video_id
-    JOIN channels c ON c.id = v.channel_id
-    JOIN users u ON u.id = c.owner_id
     WHERE vf.kind IN ('original', 'webm', 'thumbnail', 'storyboard', 'storyboard_vtt')
 
     UNION ALL
 
-    SELECT cap.storage_key, 'caption', v.id, v.privacy, v.state, u.unlisted
-    FROM captions cap
-    JOIN videos v ON v.id = cap.video_id
-    JOIN channels c ON c.id = v.channel_id
-    JOIN users u ON u.id = c.owner_id
+    SELECT cap.storage_key, 'caption', cap.video_id FROM captions cap
 
     UNION ALL
 
-    SELECT 'streaming-playlists/' || v.id::text || '/', 'hls', v.id, v.privacy, v.state, u.unlisted
+    SELECT 'streaming-playlists/' || sp.video_id::text || '/', 'hls', sp.video_id
     FROM streaming_playlists sp
-    JOIN videos v ON v.id = sp.video_id
-    JOIN channels c ON c.id = v.channel_id
-    JOIN users u ON u.id = c.owner_id
     WHERE sp.state = 'ready'
 ) t
-WHERE t.privacy = 'public' AND t.state = 'published' AND NOT t.owner_unlisted
+JOIN videos v ON v.id = t.video_id
+JOIN channels c ON c.id = v.channel_id
+JOIN users u ON u.id = c.owner_id
+WHERE v.privacy = 'public' AND v.state = 'published'
+  AND u.is_active AND u.deleted_at IS NULL AND NOT u.unlisted
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 ORDER BY t.video_id, t.media_class, t.object_key;
 
 -- name: ListBackfillIdentityImages :many
@@ -109,3 +104,17 @@ WHERE visibility = 'public'
   AND thumbnail_ext IS NOT NULL
   AND thumbnail_ext <> ''
 ORDER BY id;
+
+-- name: ResolveLegacyIPFSVideo :many
+-- Old pin rows lacked video_id. A key shared by two videos has ambiguous
+-- moderation state. Returning at most two distinct IDs lets the caller refuse it.
+SELECT candidate.video_id
+FROM (
+    SELECT vf.video_id FROM video_files vf WHERE vf.storage_key = sqlc.arg(object_key)::text
+    UNION
+    SELECT cap.video_id FROM captions cap WHERE cap.storage_key = sqlc.arg(object_key)::text
+    UNION
+    SELECT sp.video_id FROM streaming_playlists sp
+    WHERE 'streaming-playlists/' || sp.video_id::text || '/' = sqlc.arg(object_key)::text
+) candidate
+LIMIT 2;

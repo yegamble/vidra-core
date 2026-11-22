@@ -506,6 +506,14 @@ type fakeLookups struct {
 	videoBlocked bool
 }
 
+func listedVideoLookups(tree string) *fakeLookups {
+	return &fakeLookups{videoPrivacy: "public", videoState: "published", videoOK: true, userActive: true, userOK: true, hlsTree: tree}
+}
+
+func (l *fakeLookups) LegacyVideoID(_ context.Context, _ string) (uuid.UUID, bool, error) {
+	return uuid.Nil, l.videoOK, nil
+}
+
 func (l *fakeLookups) VideoVisibility(ctx context.Context, videoID uuid.UUID) (string, string, uuid.UUID, bool, error) {
 	return l.videoPrivacy, l.videoState, uuid.Nil, l.videoOK, nil
 }
@@ -628,7 +636,7 @@ func TestWorkerFailureSemantics(t *testing.T) {
 	putBlob(t, blobs, key, "thumb")
 	seedPending(repo, key, string(ClassThumbnail))
 
-	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	svc := New(repo, listedVideoLookups(""), blobs, client, testConfig())
 
 	if n, _ := svc.DrainDue(context.Background(), 10); n != 0 {
 		t.Fatalf("drain while down = %d, want 0", n)
@@ -660,7 +668,7 @@ func TestWorkerDeadLetters(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.MaxAttempts = 3
-	svc := New(repo, &fakeLookups{}, blobs, client, cfg)
+	svc := New(repo, listedVideoLookups(""), blobs, client, cfg)
 	for i := 0; i < 3; i++ {
 		if _, err := svc.DrainDue(context.Background(), 10); err != nil {
 			t.Fatalf("drain %d: %v", i, err)
@@ -810,7 +818,7 @@ func TestSyncVideoPublishThenPrivate(t *testing.T) {
 	vid := uuid.New()
 	lk := &fakeLookups{
 		videoPrivacy: "public", videoState: "published", videoOK: true,
-		userOK: true, userUnlisted: false, // owner listed ⇒ video-derived classes eligible
+		userOK: true, userActive: true, userUnlisted: false, // owner listed ⇒ video-derived classes eligible
 		videoFiles: []VideoFileRef{
 			{Kind: "thumbnail", StorageKey: "thumbnails/v.jpg"},
 			{Kind: "original", StorageKey: "web-videos/v.mp4"},
@@ -858,7 +866,7 @@ func TestSyncVideoUnlistedOwnerNeverPins(t *testing.T) {
 	keys := []string{"thumbnails/v.jpg", "web-videos/v.mp4", "streaming-playlists/v/vp9.webm", "captions/v/en.vtt"}
 	lk := &fakeLookups{
 		videoPrivacy: "public", videoState: "published", videoOK: true,
-		userOK: true, userUnlisted: true, // OWNER UNLISTED ⇒ video-derived classes ineligible
+		userOK: true, userActive: true, userUnlisted: true, // OWNER UNLISTED ⇒ video-derived classes ineligible
 		videoFiles: []VideoFileRef{
 			{Kind: "thumbnail", StorageKey: "thumbnails/v.jpg"},
 			{Kind: "original", StorageKey: "web-videos/v.mp4"},
@@ -1158,7 +1166,7 @@ func TestWorkerPinsDirectoryTree(t *testing.T) {
 	putBlob(t, blobs, prefix+"vp9.webm", "webm-alt-bytes") // separate class — must be excluded
 	seedPending(repo, prefix, string(ClassHLS))
 
-	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	svc := New(repo, listedVideoLookups(""), blobs, client, testConfig())
 	n, err := svc.DrainDue(context.Background(), 10)
 	if err != nil {
 		t.Fatalf("DrainDue: %v", err)
@@ -1210,7 +1218,7 @@ func TestOnTranscodeCompleteEnqueuesHLS(t *testing.T) {
 	repo := newFakeRepo()
 	lk := &fakeLookups{
 		videoPrivacy: "public", videoState: "published", videoOK: true,
-		userOK: true, userUnlisted: false, // owner listed ⇒ eligible
+		userOK: true, userActive: true, userUnlisted: false, // owner listed ⇒ eligible
 		videoFiles: []VideoFileRef{{Kind: "webm", StorageKey: webmKey}},
 	}
 	svc := New(repo, lk, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
@@ -1234,7 +1242,7 @@ func TestOnTranscodeCompleteEnqueuesHLS(t *testing.T) {
 	repo2 := newFakeRepo()
 	lk2 := &fakeLookups{
 		videoPrivacy: "private", videoState: "published", videoOK: true,
-		userOK: true, userUnlisted: false, // owner listed ⇒ privacy alone bars it
+		userOK: true, userActive: true, userUnlisted: false, // owner listed ⇒ privacy alone bars it
 		videoFiles: []VideoFileRef{{Kind: "webm", StorageKey: webmKey}},
 	}
 	svc2 := New(repo2, lk2, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
@@ -1263,7 +1271,7 @@ func TestHLSPinLifecycle(t *testing.T) {
 	vid := uuid.New()
 	prefix := media.HLSKeyPrefix(vid) + "/"
 	gen1, gen2 := media.HLSPrefixForGeneration(vid, 1), media.HLSPrefixForGeneration(vid, 2)
-	lk := &fakeLookups{videoPrivacy: "public", videoState: "published", videoOK: true, userOK: true, hlsTree: gen1}
+	lk := &fakeLookups{videoPrivacy: "public", videoState: "published", videoOK: true, userOK: true, userActive: true, hlsTree: gen1}
 	svc := New(repo, lk, blobs, client, testConfig())
 	ctx := context.Background()
 
@@ -1355,7 +1363,7 @@ func TestRepinClearsSupersededFlipTarget(t *testing.T) {
 	prefix := "streaming-playlists/" + vid.String() + "/"
 
 	// Public+published+listed ⇒ effectiveNetwork(HLS) = public even with the private tier on.
-	lk := &fakeLookups{videoPrivacy: "public", videoState: "published", videoOK: true, userOK: true}
+	lk := &fakeLookups{videoPrivacy: "public", videoState: "published", videoOK: true, userOK: true, userActive: true}
 	svc := New(repo, lk, blobs, ipfs.NewFakeIPFSClient(), twoTierConfig(privateFake))
 
 	// Seed the HLS row mid-superseded-flip: still on public, an unfinished unpin toward
@@ -1439,7 +1447,7 @@ func TestPinLosesRaceToPrivacyFlip(t *testing.T) {
 		_ = repo.EnqueueIPFSUnpin(context.Background(), key)
 	}
 
-	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	svc := New(repo, listedVideoLookups(""), blobs, client, testConfig())
 	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
 		t.Fatalf("DrainDue: %v", err)
 	}
@@ -1567,7 +1575,7 @@ func TestPinDoubleFlipConvergesToPinned(t *testing.T) {
 		})
 	}
 
-	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	svc := New(repo, listedVideoLookups(""), blobs, client, testConfig())
 	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
 		t.Fatalf("DrainDue: %v", err)
 	}
@@ -1618,7 +1626,7 @@ func TestPinDirectoryLosesRaceToPrivacyFlip(t *testing.T) {
 		_ = repo.EnqueueIPFSUnpin(context.Background(), prefix)
 	}
 
-	svc := New(repo, &fakeLookups{hlsTree: tree}, blobs, client, testConfig())
+	svc := New(repo, listedVideoLookups(tree), blobs, client, testConfig())
 	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
 		t.Fatalf("DrainDue: %v", err)
 	}
@@ -1689,7 +1697,7 @@ func TestPinRacedToUnpinnedRetriesTransientUnpinFailure(t *testing.T) {
 		ObjectKey: key, MediaClass: string(ClassVideoOriginal), State: "pending",
 		VideoID: pgUUID(vid), NextAttemptAt: time.Now().UTC().Add(-time.Second),
 	}
-	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	svc := New(repo, listedVideoLookups(""), blobs, client, testConfig())
 
 	// The FIRST reference-checked node removal fails transiently; the retry succeeds.
 	var unpinAttempts int
@@ -1775,7 +1783,7 @@ func TestPinRacedToUnpinnedRemovesInline(t *testing.T) {
 		ObjectKey: key, MediaClass: string(ClassVideoOriginal), State: "pending",
 		VideoID: pgUUID(vid), NextAttemptAt: time.Now().UTC().Add(-time.Second),
 	}
-	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	svc := New(repo, listedVideoLookups(""), blobs, client, testConfig())
 
 	fired := false
 	client.AddHook = func() {
@@ -2010,7 +2018,7 @@ func seedPinnedForUnpin(t *testing.T, repo *fakeRepo, blobs storage.Backend, cli
 // instance's own gateway still serves the CID a moderator just withdrew.
 func TestUnpinLeavesTheBytesRetrievableUntilGC(t *testing.T) {
 	repo, blobs, client := newFakeRepo(), newBlobs(t), ipfs.NewFakeIPFSClient()
-	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	svc := New(repo, listedVideoLookups(""), blobs, client, testConfig())
 	key := "thumbnails/" + uuid.NewString() + ".jpg"
 	cid := seedPinnedForUnpin(t, repo, blobs, client, svc, key)
 
@@ -2042,7 +2050,7 @@ func TestGCAfterUnpinRemovesTheBytesInTheSameBatch(t *testing.T) {
 	repo, blobs, client := newFakeRepo(), newBlobs(t), ipfs.NewFakeIPFSClient()
 	cfg := testConfig()
 	cfg.GCAfterUnpin = true
-	svc := New(repo, &fakeLookups{}, blobs, client, cfg)
+	svc := New(repo, listedVideoLookups(""), blobs, client, cfg)
 	key := "thumbnails/" + uuid.NewString() + ".jpg"
 	cid := seedPinnedForUnpin(t, repo, blobs, client, svc, key)
 
@@ -2064,7 +2072,7 @@ func TestGCAfterUnpinDoesNotRunOnAPinOnlyBatch(t *testing.T) {
 	repo, blobs, client := newFakeRepo(), newBlobs(t), ipfs.NewFakeIPFSClient()
 	cfg := testConfig()
 	cfg.GCAfterUnpin = true
-	svc := New(repo, &fakeLookups{}, blobs, client, cfg)
+	svc := New(repo, listedVideoLookups(""), blobs, client, cfg)
 	key := "thumbnails/" + uuid.NewString() + ".jpg"
 	putBlob(t, blobs, key, "bytes")
 	seedPending(repo, key, string(ClassThumbnail))
@@ -2086,7 +2094,7 @@ func TestGCFailureDoesNotFailTheUnpinBatch(t *testing.T) {
 	repo, blobs, client := newFakeRepo(), newBlobs(t), ipfs.NewFakeIPFSClient()
 	cfg := testConfig()
 	cfg.GCAfterUnpin = true
-	svc := New(repo, &fakeLookups{}, blobs, client, cfg)
+	svc := New(repo, listedVideoLookups(""), blobs, client, cfg)
 	key := "thumbnails/" + uuid.NewString() + ".jpg"
 	cid := seedPinnedForUnpin(t, repo, blobs, client, svc, key)
 
@@ -2102,5 +2110,54 @@ func TestGCFailureDoesNotFailTheUnpinBatch(t *testing.T) {
 	}
 	if _, held := client.Content(cid); !held {
 		t.Error("the bytes went away despite the collection failing; the fixture is not testing what it claims")
+	}
+}
+
+func TestModerationBeforeTranscodePin(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		active, blocked bool
+	}{
+		{"suspended owner", false, false},
+		{"blocked video", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			lk := &fakeLookups{videoOK: true, videoPrivacy: "public", videoState: "published", userOK: true, userActive: tc.active, videoBlocked: tc.blocked}
+			s := New(repo, lk, newBlobs(t), ipfs.NewFakeIPFSClient(), twoTierConfig(ipfs.NewFakeIPFSClient()))
+			id := uuid.New()
+			if err := s.OnTranscodeComplete(context.Background(), id); err != nil {
+				t.Fatal(err)
+			}
+			if len(repo.rows) != 0 {
+				t.Fatalf("moderated media armed %d pin rows", len(repo.rows))
+			}
+		})
+	}
+}
+
+func TestSuspensionAfterQueuePreventsIPFSUpload(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	lk := listedVideoLookups("")
+	id := uuid.New()
+	key := "web-videos/" + id.String() + ".mp4"
+	lk.videoFiles = []VideoFileRef{{Kind: "original", StorageKey: key}}
+	client := ipfs.NewFakeIPFSClient()
+	blobs := newBlobs(t)
+	putBlob(t, blobs, key, "synthetic fixture")
+	s := New(repo, lk, blobs, client, testConfig())
+	if err := s.SyncVideo(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if repo.state(key) != "pending" {
+		t.Fatal("expected an eligible pending job")
+	}
+	lk.userActive = false
+	if _, err := s.DrainDue(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if client.AddCount != 0 || repo.state(key) != "unpinning" {
+		t.Fatal("queued pin survived account suspension")
 	}
 }

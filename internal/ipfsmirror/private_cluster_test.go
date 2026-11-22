@@ -43,7 +43,9 @@ func TestPrivateRowReplicatesViaPrivateClusterNeverPublic(t *testing.T) {
 	putBlob(t, blobs, key, "secret-bytes")
 	seedPendingNet(repo, key, string(ClassVideoOriginal), networkPrivate)
 
-	svc := New(repo, &fakeLookups{}, blobs, publicClient, privateClusterConfig(publicCluster, privateCluster, privateClient))
+	lk := listedVideoLookups("")
+	lk.videoPrivacy = "private"
+	svc := New(repo, lk, blobs, publicClient, privateClusterConfig(publicCluster, privateCluster, privateClient))
 	if n, err := svc.DrainDue(context.Background(), 10); err != nil || n != 1 {
 		t.Fatalf("DrainDue = %d, %v; want 1, nil", n, err)
 	}
