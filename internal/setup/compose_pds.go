@@ -17,7 +17,10 @@ func ComposeInvocation(envPath string, values map[string]string, tail ...string)
 	args := []string{"docker"}
 	if localPDSSelected(values) {
 		cfg := config.Config{ATProtoEnabled: true, PublicBaseURL: values["PUBLIC_BASE_URL"]}
-		host := strings.TrimPrefix(cfg.DefaultATProtoPDS(), "https://")
+		host := ""
+		if localPDSSite(cfg.PublicBaseURL) {
+			host = strings.TrimPrefix(cfg.DefaultATProtoPDS(), "https://")
+		}
 		args = []string{"env", "VIDRA_LOCAL_PDS_HOST=" + host, "docker"}
 	}
 	return append(args, RenderCheckArgs(envPath, values, tail...)...)
