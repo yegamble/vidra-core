@@ -4,10 +4,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -173,5 +175,47 @@ func TestATProtoQueriesPersist(t *testing.T) {
 	}
 	if _, err := q.GetATProtoPostByVideo(ctx, videoID); err == nil {
 		t.Errorf("post row survived video deletion (missing ON DELETE CASCADE)")
+	}
+}
+
+func TestATProtoPostVideoDistributionEligibility(t *testing.T) {
+	ctx := context.Background()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	owner, channel, cleanup := seedUserAndChannel(t, st)
+	defer cleanup()
+	var video uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO videos (channel_id,title,privacy,state) VALUES ($1,'fixture','public','published') RETURNING id`, channel).Scan(&video); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, change string
+		id           uuid.UUID
+	}{
+		{"blocked", "INSERT INTO video_blocks (video_id) VALUES ($1)", video},
+		{"suspended", "UPDATE users SET is_active=false WHERE id=$1", owner},
+		{"deleted owner", "UPDATE users SET deleted_at=now() WHERE id=$1", owner},
+		{"unlisted owner", "UPDATE users SET unlisted=true WHERE id=$1", owner},
+		{"draft", "UPDATE videos SET state='draft' WHERE id=$1", video},
+		{"quarantined", "UPDATE videos SET state='quarantined' WHERE id=$1", video},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx, err := st.Pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(ctx)
+			if _, err := tx.Exec(ctx, tc.change, tc.id); err != nil {
+				t.Fatal(err)
+			}
+			_, err = sqlcgen.New(tx).GetATProtoPostVideo(ctx, video)
+			if !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("distribution lookup returned %v, want no rows", err)
+			}
+		})
 	}
 }
