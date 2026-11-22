@@ -150,6 +150,7 @@ type ImageRef struct {
 // SQL-backed adapter (lookups.go) satisfies it in production; tests fake it. The
 // bool return distinguishes "missing row" (skip, not an error) from a real error.
 type Lookups interface {
+	LegacyVideoID(context.Context, string) (uuid.UUID, bool, error)
 	VideoVisibility(ctx context.Context, videoID uuid.UUID) (privacy, state string, ownerID uuid.UUID, ok bool, err error)
 	// VideoBlocked reports a moderator block (video_blocks). It is a SECOND lookup
 	// rather than a sixth return of VideoVisibility because a block lives in its own
@@ -501,9 +502,12 @@ func (s *Service) videoNetwork(ctx context.Context, videoID uuid.UUID) (string, 
 	if err != nil || !ok {
 		return "", false, err
 	}
-	ownerUnlisted, err := s.ownerUnlistedForVideo(ctx, ownerID)
+	active, ownerUnlisted, found, err := s.lookups.UserFlags(ctx, ownerID)
 	if err != nil {
 		return "", false, err
+	}
+	if !found || !active {
+		return NetworkNone, true, nil
 	}
 	blocked, err := s.lookups.VideoBlocked(ctx, videoID)
 	if err != nil {
@@ -645,23 +649,6 @@ func (s *Service) unpinAllForVideoCounted(ctx context.Context, videoID uuid.UUID
 	return n, nil
 }
 
-// ownerUnlistedForVideo resolves whether a video's owner currently bars mirroring
-// of that owner's public videos. Unlisted is treated as PRIVATE for mirroring
-// (spec §7): an unlisted owner's public videos and every derivative must be kept
-// off the public network, since a permanent public CID would defeat the
-// URL-unguessability the unlisted flag promises. Returns true (⇒ ineligible ⇒
-// unpin) when the account is unlisted OR its row is missing (default-deny: an
-// orphaned/mid-deletion video's derivatives are unpinned, never left pinned).
-// Account-active is deliberately NOT gated here — deactivation/deletion is the
-// separate re-evaluation trigger handled by the account delete/unpin path (§3).
-func (s *Service) ownerUnlistedForVideo(ctx context.Context, ownerID uuid.UUID) (bool, error) {
-	_, unlisted, ok, err := s.lookups.UserFlags(ctx, ownerID)
-	if err != nil {
-		return false, err
-	}
-	return unlisted || !ok, nil
-}
-
 // OnTranscodeComplete is the transcode-completion hook (P19.4): the video's HLS
 // tree — and, when VP9 is enabled, the progressive VP9/WebM alternate — have just
 // been produced, or replaced wholesale on a re-transcode ('0039'). For an ELIGIBLE
@@ -688,22 +675,9 @@ func (s *Service) OnTranscodeComplete(ctx context.Context, videoID uuid.UUID) er
 	if !s.enabled {
 		return nil
 	}
-	privacy, state, ownerID, ok, err := s.lookups.VideoVisibility(ctx, videoID)
-	if err != nil || !ok {
+	net, ok, err := s.videoNetwork(ctx, videoID)
+	if err != nil || !ok || net == NetworkNone {
 		return err
-	}
-	ownerUnlisted, err := s.ownerUnlistedForVideo(ctx, ownerID)
-	if err != nil {
-		return err
-	}
-	// The whole video shares one routing gate; ClassHLS is representative.
-	// effectiveNetwork resolves the swarm (public for a public+published+listed video,
-	// private for a private/unlisted one when that tier is on) and tier-gates it — a
-	// quarantined video, or a private one with the private tier off, routes to NONE and
-	// arms nothing here (the privacy fence at transcode completion).
-	net := s.effectiveNetwork(Subject{Class: ClassHLS, VideoPrivacy: privacy, VideoState: state, OwnerUnlisted: ownerUnlisted})
-	if net == NetworkNone {
-		return nil
 	}
 	// The HLS row's key is the STABLE per-video directory intent even though the
 	// bytes now live in the run's generation directory: the worker resolves the
@@ -1371,6 +1345,42 @@ func (s *Service) process(ctx context.Context, nc netClient, row sqlcgen.ClaimDu
 // pin streams the object's bytes from the authoritative store and add+pins them.
 // A trailing-slash object key is a directory intent (the HLS tree) → pinDirectory.
 func (s *Service) pin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPFSPinsRow) bool {
+	if class := MediaClass(row.MediaClass); isVideoDerived(class) {
+		// Moderation can change after a transcode, backfill or retry was queued.
+		// Recheck before opening the source or contacting either swarm.
+		net := NetworkNone
+		id, known := uuid.UUID(row.VideoID.Bytes), row.VideoID.Valid
+		if !known {
+			var err error
+			id, known, err = s.lookups.LegacyVideoID(ctx, row.ObjectKey)
+			if err != nil {
+				s.recordFailure(ctx, row, "legacy video ownership lookup failed")
+				return false
+			}
+		}
+		if known {
+			current, found, err := s.videoNetwork(ctx, id)
+			if err != nil {
+				s.recordFailure(ctx, row, "video eligibility lookup failed")
+				return false
+			}
+			if found {
+				net = current
+			}
+		}
+		if net != nc.network {
+			var err error
+			if net == NetworkNone {
+				err = s.repo.EnqueueIPFSUnpin(ctx, row.ObjectKey)
+			} else {
+				err = s.routePin(ctx, row.ObjectKey, class, id, uuid.Nil, net)
+			}
+			if err != nil {
+				s.logger.Warn("ipfs video pin eligibility update failed", "error", jobstatus.RedactError(err))
+			}
+			return false
+		}
+	}
 	if strings.HasSuffix(row.ObjectKey, "/") {
 		return s.pinDirectory(ctx, nc, row)
 	}

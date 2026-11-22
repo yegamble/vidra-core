@@ -22,6 +22,7 @@ const (
 
 // sqlQueries is the read surface SQLLookups needs; *sqlcgen.Queries satisfies it.
 type sqlQueries interface {
+	ResolveLegacyIPFSVideo(context.Context, string) ([]uuid.UUID, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	GetChannelByID(ctx context.Context, id uuid.UUID) (sqlcgen.Channel, error)
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
@@ -52,6 +53,14 @@ var _ Lookups = (*SQLLookups)(nil)
 func NewSQLLookups(q sqlQueries) *SQLLookups { return &SQLLookups{q: q} }
 
 func missing(err error) bool { return errors.Is(err, pgx.ErrNoRows) }
+
+func (l *SQLLookups) LegacyVideoID(ctx context.Context, key string) (uuid.UUID, bool, error) {
+	ids, err := l.q.ResolveLegacyIPFSVideo(ctx, key)
+	if err != nil || len(ids) != 1 {
+		return uuid.Nil, false, err
+	}
+	return ids[0], true, nil
+}
 
 func (l *SQLLookups) VideoVisibility(ctx context.Context, videoID uuid.UUID) (privacy, state string, ownerID uuid.UUID, ok bool, err error) {
 	v, err := l.q.GetVideoByID(ctx, videoID)

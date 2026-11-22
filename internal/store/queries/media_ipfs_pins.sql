@@ -402,7 +402,7 @@ WITH ineligible AS (
     WHERE p.video_id IS NOT NULL
       AND p.network = 'public'
       AND p.state IN ('pinned', 'pending')
-      AND (v.privacy <> 'public' OR v.state <> 'published' OR u.unlisted
+      AND (v.privacy <> 'public' OR v.state <> 'published' OR u.unlisted OR NOT u.is_active OR u.deleted_at IS NOT NULL
            OR EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id))
 
     UNION
@@ -421,10 +421,12 @@ WITH ineligible AS (
     SELECT p.object_key
     FROM media_ipfs_pins p
     JOIN videos v ON v.id = p.video_id
+    JOIN channels c ON c.id = v.channel_id
+    JOIN users u ON u.id = c.owner_id
     WHERE p.video_id IS NOT NULL
       AND p.network = 'private'
       AND p.state IN ('pinned', 'pending')
-      AND (v.state <> 'published'
+      AND (v.state <> 'published' OR NOT u.is_active OR u.deleted_at IS NOT NULL
            OR EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id))
 
     UNION

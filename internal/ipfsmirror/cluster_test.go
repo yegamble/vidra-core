@@ -59,7 +59,7 @@ func TestWorkerClusterReplicatesDirectoryPin(t *testing.T) {
 	putBlob(t, blobs, prefix+"720p/seg_00000.ts", "...ts...")
 	repo.rows[prefix] = &sqlcgen.MediaIpfsPin{ObjectKey: prefix, MediaClass: string(ClassHLS), State: "pending"}
 
-	svc := New(repo, &fakeLookups{}, blobs, client, clusterConfig(cluster))
+	svc := New(repo, listedVideoLookups(""), blobs, client, clusterConfig(cluster))
 	if n, err := svc.DrainDue(context.Background(), 10); err != nil || n != 1 {
 		t.Fatalf("DrainDue = %d, %v; want 1, nil", n, err)
 	}
@@ -145,7 +145,7 @@ func TestWorkerClusterErrorDoesNotFailPin(t *testing.T) {
 	putBlob(t, blobs, key, "thumb")
 	seedPending(repo, key, string(ClassThumbnail))
 
-	svc := New(repo, &fakeLookups{}, blobs, client, clusterConfig(cluster))
+	svc := New(repo, listedVideoLookups(""), blobs, client, clusterConfig(cluster))
 	if n, err := svc.DrainDue(context.Background(), 10); err != nil || n != 1 {
 		t.Fatalf("DrainDue = %d, %v; want 1, nil (cluster outage must not fail the node pin)", n, err)
 	}

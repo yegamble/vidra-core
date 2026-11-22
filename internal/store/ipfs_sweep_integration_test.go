@@ -110,6 +110,49 @@ func TestSweepIneligibleIPFSPinsJoin(t *testing.T) {
 		}
 	}
 
+	t.Run("suspended accounts leave the backfill and both swarms", func(t *testing.T) {
+		if _, err := st.Pool.Exec(ctx, "INSERT INTO video_files (video_id, storage_key, size_bytes) VALUES ($1, $2, 100)", vidID, vidKey); err != nil {
+			t.Fatal(err)
+		}
+		listed := func() bool {
+			rows, err := q.ListBackfillVideoObjects(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, row := range rows {
+				if row.ObjectKey == vidKey {
+					return true
+				}
+			}
+			return false
+		}
+		if !listed() {
+			t.Fatal("eligible stored original missing from backfill")
+		}
+		ids, err := q.ResolveLegacyIPFSVideo(ctx, vidKey)
+		if err != nil || len(ids) != 1 || ids[0] != vidID {
+			t.Fatalf("legacy owner lookup: %v, %v", ids, err)
+		}
+		seedPin(privKey, "video_original", "private", &vidID, nil)
+		if _, err := st.Pool.Exec(ctx, "UPDATE users SET is_active=false WHERE id=$1", owner); err != nil {
+			t.Fatal(err)
+		}
+		if listed() {
+			t.Fatal("suspended owner's original included in backfill")
+		}
+		sweep()
+		if state(vidKey) != "unpinning" || state(privKey) != "unpinning" {
+			t.Fatal("suspended owner's pins were retained")
+		}
+		if _, err := st.Pool.Exec(ctx, "UPDATE users SET is_active=true WHERE id=$1", owner); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.Pool.Exec(ctx, "DELETE FROM media_ipfs_pins WHERE object_key=$1", privKey); err != nil {
+			t.Fatal(err)
+		}
+		repin()
+	})
+
 	// Case 2: owner goes unlisted ⇒ BOTH the video-derived row and the identity image
 	// flip to 'unpinning'; the provenance-less playlist cover is untouched.
 	if _, err := st.Pool.Exec(ctx, `UPDATE users SET unlisted = true WHERE id = $1`, owner); err != nil {

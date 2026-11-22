@@ -75,7 +75,7 @@ func TestIntegrationMirrorPinsPromotedGeneration(t *testing.T) {
 	putBlob(t, blobs, promoted+"/"+media.HLSAudioDownloadFilename, "audio-download-"+nonce)
 
 	seedPendingVideo(repo, stable, string(ClassHLS), vid)
-	svc := New(repo, &fakeLookups{hlsTree: promoted}, blobs, client, testConfig())
+	svc := New(repo, listedVideoLookups(promoted), blobs, client, testConfig())
 
 	if n, err := svc.DrainDue(ctx, 10); err != nil || n != 1 {
 		t.Fatalf("DrainDue = %d, %v; want 1, nil (%s)", n, err, repo.rows[stable].LastError)

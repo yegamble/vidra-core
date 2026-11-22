@@ -77,7 +77,7 @@ func TestPinsPromotedGenerationTree(t *testing.T) {
 	putBlob(t, blobs, promoted+media.HLSAudioDownloadFilename, "DOWNLOAD-AUDIO-M4A")
 
 	seedPendingVideo(repo, stable, string(ClassHLS), vid)
-	lk := &fakeLookups{hlsTree: strings.TrimSuffix(promoted, "/")}
+	lk := listedVideoLookups(strings.TrimSuffix(promoted, "/"))
 	svc := New(repo, lk, blobs, client, testConfig())
 
 	n, err := svc.DrainDue(context.Background(), 10)
@@ -134,7 +134,7 @@ func TestPinRefusesWithoutPromotedTree(t *testing.T) {
 	putBlob(t, blobs, media.HLSPrefixForGeneration(vid, 1)+"/master.m3u8", "#EXTM3U\n")
 
 	seedPendingVideo(repo, stable, string(ClassHLS), vid)
-	svc := New(repo, &fakeLookups{}, blobs, client, testConfig()) // hlsTree unset ⇒ no promoted tree
+	svc := New(repo, listedVideoLookups(""), blobs, client, testConfig()) // hlsTree unset ⇒ no promoted tree
 
 	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
 		t.Fatalf("DrainDue: %v", err)
@@ -176,7 +176,7 @@ func TestReTranscodeMovesGenerationAndReleasesTheOld(t *testing.T) {
 	webm1, webm2 := media.VP9WebMKey(gen1), media.VP9WebMKey(gen2)
 
 	lk := &fakeLookups{
-		videoPrivacy: "public", videoState: "published", videoOK: true, userOK: true,
+		videoPrivacy: "public", videoState: "published", videoOK: true, userOK: true, userActive: true,
 		hlsTree:    gen1,
 		videoFiles: []VideoFileRef{{Kind: "webm", StorageKey: webm1}},
 	}
@@ -268,7 +268,7 @@ func TestReTranscodeLeavesOtherClassesAlone(t *testing.T) {
 	seedPinned(repo, original, string(ClassVideoOriginal), ipfs.DirCIDv1([]byte("orig")), vid)
 
 	lk := &fakeLookups{
-		videoPrivacy: "public", videoState: "published", videoOK: true, userOK: true,
+		videoPrivacy: "public", videoState: "published", videoOK: true, userOK: true, userActive: true,
 		hlsTree: media.HLSPrefixForGeneration(vid, 2),
 	}
 	svc := New(repo, lk, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())

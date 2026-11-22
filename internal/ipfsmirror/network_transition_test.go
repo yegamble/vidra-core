@@ -60,7 +60,7 @@ func TestPrivateVideoRoutesToPrivateNetworkOnly(t *testing.T) {
 	privateFake := ipfs.NewFakeIPFSClient()
 	lk := &fakeLookups{
 		videoPrivacy: "private", videoState: "published", videoOK: true,
-		userOK: true, userUnlisted: false,
+		userOK: true, userActive: true, userUnlisted: false,
 		videoFiles: []VideoFileRef{
 			{Kind: "original", StorageKey: origKey},
 			{Kind: "thumbnail", StorageKey: thumbKey},
@@ -116,7 +116,7 @@ func TestSyncVideoPublicToPrivateTransition(t *testing.T) {
 	privateFake := ipfs.NewFakeIPFSClient()
 	lk := &fakeLookups{
 		videoPrivacy: "public", videoState: "published", videoOK: true,
-		userOK: true, userUnlisted: false,
+		userOK: true, userActive: true, userUnlisted: false,
 		videoFiles: []VideoFileRef{{Kind: "original", StorageKey: origKey}},
 	}
 	svc := New(repo, lk, blobs, publicFake, twoTierConfig(privateFake))
@@ -184,7 +184,7 @@ func TestSyncVideoPrivateToPublicTransition(t *testing.T) {
 	privateFake := ipfs.NewFakeIPFSClient()
 	lk := &fakeLookups{
 		videoPrivacy: "private", videoState: "published", videoOK: true,
-		userOK: true, userUnlisted: false,
+		userOK: true, userActive: true, userUnlisted: false,
 		videoFiles: []VideoFileRef{{Kind: "original", StorageKey: origKey}},
 	}
 	svc := New(repo, lk, blobs, publicFake, twoTierConfig(privateFake))
@@ -240,13 +240,15 @@ func TestFlipToPrivateRacingInFlightPublicPinNeverPinsPublic(t *testing.T) {
 
 	publicFake := ipfs.NewFakeIPFSClient()
 	privateFake := ipfs.NewFakeIPFSClient()
-	svc := New(repo, &fakeLookups{}, blobs, publicFake, twoTierConfig(privateFake))
+	lk := listedVideoLookups("")
+	svc := New(repo, lk, blobs, publicFake, twoTierConfig(privateFake))
 
 	seedPendingNet(repo, origKey, string(ClassVideoOriginal), networkPublic)
 
 	// Mid-Add on the PUBLIC node, a privacy flip routes the SAME row to the private
 	// swarm (unpin public → re-arm private). AddHook fires in exactly that window.
 	publicFake.AddHook = func() {
+		lk.videoPrivacy = "private"
 		_, _ = repo.RouteIPFSPinIntent(ctx, sqlcgen.RouteIPFSPinIntentParams{
 			ObjectKey: origKey, MediaClass: string(ClassVideoOriginal),
 			VideoID: pgUUID(vid), TargetNetwork: networkPrivate,

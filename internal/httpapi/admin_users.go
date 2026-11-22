@@ -284,6 +284,11 @@ func (s *Server) handleUpdateUser(c *echo.Context) error {
 		}
 		return err
 	}
+	if in.IsActive != nil && res.Before.IsActive != res.After.IsActive && s.ipfsmirrorsvc != nil {
+		if err := s.ipfsmirrorsvc.EnqueueUserReeval(c.Request().Context(), targetID); err != nil {
+			s.logger.Warn("ipfs mirror reeval enqueue failed", "user_id", targetID, "error", err)
+		}
+	}
 	s.notifyBanChange(c, res, in)
 	// The ledger carries BOTH: the structured field list a consumer can read
 	// without parsing, and the human line the admin audit view already renders.

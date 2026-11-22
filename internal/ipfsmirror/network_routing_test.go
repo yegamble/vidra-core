@@ -49,7 +49,9 @@ func TestPrivateRowRoutedToPrivateClientNeverPublic(t *testing.T) {
 	cfg := testConfig()
 	cfg.PrivateEnabled = true
 	cfg.PrivateClient = privateFake
-	svc := New(repo, &fakeLookups{}, blobs, publicFake, cfg)
+	lk := listedVideoLookups("")
+	lk.videoPrivacy = "private"
+	svc := New(repo, lk, blobs, publicFake, cfg)
 
 	seedPendingNet(repo, "private-videos/p.mp4", string(ClassVideoOriginal), networkPrivate)
 
@@ -95,7 +97,7 @@ func TestPublicRowRoutedToPublicClientNeverPrivate(t *testing.T) {
 	cfg := testConfig()
 	cfg.PrivateEnabled = true
 	cfg.PrivateClient = privateFake
-	svc := New(repo, &fakeLookups{}, blobs, publicFake, cfg)
+	svc := New(repo, listedVideoLookups(""), blobs, publicFake, cfg)
 
 	seedPendingNet(repo, "web-videos/pub.mp4", string(ClassVideoOriginal), networkPublic)
 
@@ -136,7 +138,7 @@ func TestPrivateRowNotDrainedWhenPrivateTierDisabled(t *testing.T) {
 	publicFake := ipfs.NewFakeIPFSClient()
 
 	// Default testConfig: PrivateEnabled=false, no private client.
-	svc := New(repo, &fakeLookups{}, blobs, publicFake, testConfig())
+	svc := New(repo, listedVideoLookups(""), blobs, publicFake, testConfig())
 	seedPendingNet(repo, "private-videos/p.mp4", string(ClassVideoOriginal), networkPrivate)
 	seedPendingNet(repo, "web-videos/pub.mp4", string(ClassVideoOriginal), networkPublic)
 
