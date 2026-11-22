@@ -2448,6 +2448,7 @@ func run() error {
 	// ATProto KEK (ATPROTO_KEY_KEK, falling back to FEDERATION_KEY_KEK).
 	atprotoOpts := []atproto.Option{
 		atproto.WithEnabled(cfg.ATProtoEnabled),
+		atproto.WithDefaultPDS(cfg.DefaultATProtoPDS()),
 		atproto.WithBaseURL(cfg.PublicBaseURL),
 		atproto.WithThumbnails(videosvc),
 		atproto.WithLogger(logger),

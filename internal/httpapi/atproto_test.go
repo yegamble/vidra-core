@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -37,7 +38,7 @@ func (r *atprotoFakeRepo) UpsertATProtoAccount(_ context.Context, a sqlcgen.Upse
 func (r *atprotoFakeRepo) GetATProtoAccount(_ context.Context, userID uuid.UUID) (sqlcgen.AtprotoAccount, error) {
 	a, ok := r.accounts[userID]
 	if !ok {
-		return sqlcgen.AtprotoAccount{}, errors.New("not found")
+		return sqlcgen.AtprotoAccount{}, sql.ErrNoRows
 	}
 	return a, nil
 }

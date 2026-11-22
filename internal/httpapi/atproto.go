@@ -45,7 +45,7 @@ func newATProtoStatusView(a sqlcgen.AtprotoAccount) atprotoStatusView {
 type linkATProtoRequest struct {
 	Handle      string `json:"handle"`
 	AppPassword string `json:"app_password"`
-	// PDSURL is optional; empty defaults to https://bsky.social. It must be an
+	// PDSURL is optional; empty selects the saved or instance PDS. It must be an
 	// https, public origin.
 	PDSURL   string `json:"pds_url"`
 	AutoPost bool   `json:"auto_post"`

@@ -280,6 +280,8 @@ type Config struct {
 	// no auto-post worker runs. Independent of FederationEnabled: an instance may
 	// enable ActivityPub only, ATProto only, both, or neither.
 	ATProtoEnabled bool
+	// ATProtoPDSURL selects an external PDS. Empty selects the instance Docker PDS.
+	ATProtoPDSURL string
 
 	// ATProtoKeyKEK is the base64 (standard) 32-byte key-encryption key used to
 	// envelope-encrypt linked Bluesky app passwords at rest (same secretbox
@@ -1277,6 +1279,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		AdAntiAdblockProviders:                 getEnv("AD_ANTIADBLOCK_PROVIDERS", ""),
 		FederationKeyKEK:                       getEnv("FEDERATION_KEY_KEK", ""),
 		ATProtoEnabled:                         p.Bool("ATPROTO_ENABLED", false),
+		ATProtoPDSURL:                          strings.TrimSpace(getEnv("ATPROTO_PDS_URL", "")),
 		ATProtoKeyKEK:                          getEnv("ATPROTO_KEY_KEK", ""),
 		ATProtoLoginEnabled:                    p.Bool("ATPROTO_LOGIN_ENABLED", false),
 		ATProtoPLCURL:                          getEnv("ATPROTO_PLC_URL", ""),
@@ -2070,6 +2073,9 @@ func (c *Config) validate() error {
 		} else if c.Environment == "production" {
 			add(varErrorf("FEDERATION_KEY_KEK", "config: FEDERATION_KEY_KEK is required in production when FEDERATION_ENABLED=true"))
 		}
+	}
+	if c.ATProtoEnabled && (c.Environment == "production" || c.ATProtoPDSURL != "") && c.DefaultATProtoPDS() == "" {
+		add(varErrorf("ATPROTO_PDS_URL", "config: set a public HTTPS PDS origin or a PUBLIC_BASE_URL with a hostname for the local PDS"))
 	}
 	if c.ATProtoKeyKEK != "" {
 		if k, err := base64.StdEncoding.DecodeString(c.ATProtoKeyKEK); err != nil || len(k) != 32 {
@@ -2881,6 +2887,27 @@ func (c *Config) TrustedProxyNets() []*net.IPNet {
 // http origin is a cookie the browser never sends back.
 func (c *Config) CookieSecure() bool {
 	return c.PublicOriginIsHTTPS()
+}
+
+// DefaultATProtoPDS is the credential destination for new account links.
+// The Docker PDS gets its own public origin, even when it shares the app host.
+func (c *Config) DefaultATProtoPDS() string {
+	if !c.ATProtoEnabled {
+		return ""
+	}
+	if c.ATProtoPDSURL == "" {
+		u, err := url.Parse(c.PublicBaseURL)
+		if err != nil || u.Hostname() == "" || net.ParseIP(u.Hostname()) != nil {
+			return ""
+		}
+		return "https://pds." + u.Hostname()
+	}
+	u, err := url.Parse(c.ATProtoPDSURL)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
+		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return ""
+	}
+	return "https://" + u.Host
 }
 
 // ATProtoKEK returns the key-encryption key that seals linked Bluesky app

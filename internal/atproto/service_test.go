@@ -278,3 +278,23 @@ func TestEnqueueForVideoChannelATProtoDisabled(t *testing.T) {
 		t.Error("enqueued a post for a channel with atproto_enabled=false; want skip")
 	}
 }
+
+func TestLinkUsesSelectedPDSAndPreservesExistingDestination(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	pds := newFakePDS()
+	uid := uuid.New()
+	in := LinkInput{Handle: "creator.example", AppPassword: "fixture-password"}
+	for _, step := range []struct{ instance, explicit, want string }{
+		{"https://pds.video.example", "", "https://pds.video.example"},
+		{"https://hosted.example", "", "https://pds.video.example"},
+		{"https://hosted.example", "https://creator.example", "https://creator.example"},
+	} {
+		s := NewService(repo, WithEnabled(true), WithPDSClient(pds), WithDefaultPDS(step.instance))
+		in.PDSURL = step.explicit
+		got, err := s.Link(ctx, uid, in)
+		if err != nil || got.PdsUrl != step.want || pds.createCalls[len(pds.createCalls)-1].PDSURL != step.want {
+			t.Fatalf("link selected PDS = %q, error = %v, want %q", got.PdsUrl, err, step.want)
+		}
+	}
+}

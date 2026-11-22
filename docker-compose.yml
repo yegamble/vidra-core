@@ -534,6 +534,7 @@ x-api-env: &api-env
   # Bluesky app passwords at rest, so because of that FEDERATION_KEY_KEK
   # fallback, rotating the federation KEK silently breaks atproto keys too.
   ATPROTO_ENABLED: ${ATPROTO_ENABLED:-false}
+  ATPROTO_PDS_URL: ${ATPROTO_PDS_URL:-}
   ATPROTO_KEY_KEK: ${ATPROTO_KEY_KEK:-}
   # ATPROTO_PLC_URL overrides the did:plc directory (default https://plc.directory).
   # Only honoured with the loopback dev relax on; a lab points it at a local PLC

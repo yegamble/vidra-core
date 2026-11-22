@@ -20877,6 +20877,10 @@ components:
             properties:
               name: {type: string}
               display_name: {type: string}
+        atproto_pds_url:
+          type: string
+          format: uri
+          description: Default PDS for new cross-post connections when the instance enables ATProto.
         atproto_login:
           type: boolean
           description: >-
@@ -23845,8 +23849,8 @@ components:
           type: string
           maxLength: 2000
           description: >-
-            Optional PDS base URL; defaults to https://bsky.social. Must be an
-            https, public origin.
+            Optional public HTTPS PDS origin. New links use the instance default.
+            Reconnecting an existing link uses its saved PDS.
           example: https://bsky.social
         auto_post:
           type: boolean

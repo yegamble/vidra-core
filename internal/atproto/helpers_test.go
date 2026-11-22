@@ -2,7 +2,7 @@ package atproto
 
 import (
 	"context"
-	"errors"
+	"database/sql"
 	"sync"
 	"time"
 
@@ -13,7 +13,7 @@ import (
 )
 
 // errNoRows is the fake repository's not-found error.
-var errNoRows = errors.New("atproto fake: not found")
+var errNoRows = sql.ErrNoRows
 
 // fakeRepo is an in-memory Repository for unit tests.
 type fakeRepo struct {
