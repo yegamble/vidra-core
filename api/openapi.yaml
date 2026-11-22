@@ -125,6 +125,52 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/InstanceResponse"
+  /api/v1/pages:
+    get:
+      operationId: listMenuPages
+      summary: List public menu links in display order
+      tags: [system]
+      responses:
+        "200":
+          description: Menu entries without their Markdown bodies.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/SitePageSummary"}}
+  /api/v1/pages/{slug}:
+    parameters:
+      - {in: path, name: slug, required: true, schema: {type: string}}
+    get:
+      operationId: getSitePage
+      summary: Read a published page by its stable slug
+      tags: [system]
+      responses:
+        "200":
+          description: Page metadata and raw Markdown.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SitePage"}
+        "404":
+          description: Unknown page.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+  /api/v1/admin/pages:
+    get:
+      operationId: listAdminSitePages
+      summary: List all published pages, including those omitted from menus
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: All page summaries.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/SitePageSummary"}}
+        "401":
+          description: Authentication required.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "403":
+          description: Administrator role required.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
   /api/v1/instance/about:
     get:
       operationId: getInstanceAbout
@@ -21366,6 +21412,23 @@ components:
           description: Public serving path, e.g. /api/v1/instance/avatar.
         is_fallback:
           type: boolean
+    SitePageSummary:
+      type: object
+      required: [slug, title, menu_label, in_menu, menu_order, revision]
+      properties:
+        slug: {type: string, maxLength: 80, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"}
+        title: {type: string, maxLength: 150}
+        menu_label: {type: string, maxLength: 150, description: Empty uses the page title.}
+        in_menu: {type: boolean}
+        menu_order: {type: integer, format: int32, minimum: 0}
+        revision: {type: string, format: uuid}
+    SitePage:
+      allOf:
+        - {$ref: "#/components/schemas/SitePageSummary"}
+        - type: object
+          required: [body]
+          properties:
+            body: {type: string, description: Raw Markdown.}
     InstanceAboutResponse:
       type: object
       description: >-

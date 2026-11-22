@@ -111,6 +111,7 @@ func fullRouteOptions() []Option {
 		// configured already).
 		WithMailConfigService(mailconfig.NewService(nil, nil, mailconfig.EnvConfig{})),
 		WithOIDCProviderService(oidcproviders.NewService(nil, nil, nil)),
+		WithSitePages(&pageReaderFixture{}),
 		WithInstanceDocumentsService(instancedocs.NewService(nil)),
 		WithFeedTokenService(feedtoken.NewService(nil)),
 		WithRemoteVideoService(remotevideo.NewService(nil, nil)),
