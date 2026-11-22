@@ -949,6 +949,7 @@ type Config struct {
 	// responses (e.g. https://ipfs.example.org) — required when enabled so we never
 	// default to ipfs.io.
 	IPFSAPIURL     string
+	IPFSRPCToken   string
 	IPFSGatewayURL string
 	// IPFSAddTimeout bounds each add/pin RPC; IPFSPinConcurrency bounds worker
 	// parallelism (pinning is I/O heavy); IPFSReconcileInterval is the backfill
@@ -1008,7 +1009,8 @@ type Config struct {
 	// IPFSMirrorPrivate=true; must differ from IPFSAPIURL (refusing to dual-home,
 	// spec §1). There is deliberately NO IPFSPrivateGatewayURL: private CIDs are
 	// never emitted with a gateway URL, and not having the knob is the guarantee.
-	IPFSPrivateAPIURL string
+	IPFSPrivateAPIURL   string
+	IPFSPrivateRPCToken string
 	// IPFSPrivateClusterAPIURL / IPFSPrivateClusterToken are the OPTIONAL IPFS
 	// Cluster REST API + Bearer token on the PRIVATE swarm (P19.P3 replication).
 	// The token is a SECRET (denylist ipfs_private_cluster_token).
@@ -1394,6 +1396,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		IPFSEnabled:                            p.Bool("IPFS_ENABLED", false),
 		IPFSManagerSocket:                      strings.TrimSpace(getEnv("IPFS_MANAGER_SOCKET", "")),
 		IPFSAPIURL:                             strings.TrimRight(getEnv("IPFS_API_URL", ""), "/"),
+		IPFSRPCToken:                           getEnv("IPFS_RPC_TOKEN", ""),
 		IPFSGatewayURL:                         strings.TrimRight(getEnv("IPFS_GATEWAY_URL", ""), "/"),
 		IPFSAddTimeout:                         p.Duration("IPFS_ADD_TIMEOUT", 60*time.Second),
 		IPFSReconcileInterval:                  p.Duration("IPFS_RECONCILE_INTERVAL", 5*time.Minute),
@@ -1404,6 +1407,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		IPFSClusterAPIURL:                      strings.TrimRight(getEnv("IPFS_CLUSTER_API_URL", ""), "/"),
 		IPFSClusterToken:                       getEnv("IPFS_CLUSTER_TOKEN", ""),
 		IPFSPrivateAPIURL:                      strings.TrimRight(getEnv("IPFS_PRIVATE_API_URL", ""), "/"),
+		IPFSPrivateRPCToken:                    getEnv("IPFS_PRIVATE_RPC_TOKEN", ""),
 		IPFSPrivateClusterAPIURL:               strings.TrimRight(getEnv("IPFS_PRIVATE_CLUSTER_API_URL", ""), "/"),
 		IPFSPrivateClusterToken:                getEnv("IPFS_PRIVATE_CLUSTER_TOKEN", ""),
 		UploadMaxSize:                          getEnv("UPLOAD_MAX_SIZE", "2G"),
@@ -2285,6 +2289,21 @@ const (
 // dedicated, separate private-swarm node — never the public node, never dual-homed.
 func (c *Config) validateIPFS() error {
 	var errs []error
+	for _, rpc := range []struct{ key, endpoint, token string }{
+		{"IPFS_RPC_TOKEN", c.IPFSAPIURL, c.IPFSRPCToken},
+		{"IPFS_PRIVATE_RPC_TOKEN", c.IPFSPrivateAPIURL, c.IPFSPrivateRPCToken},
+	} {
+		if rpc.token == "" {
+			continue
+		}
+		u, err := url.Parse(rpc.endpoint)
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			errs = append(errs, varErrorf(rpc.key, "config: %s requires an HTTPS RPC URL without embedded credentials, query or fragment", rpc.key))
+		}
+		if strings.ContainsAny(rpc.token, " \t\r\n") {
+			errs = append(errs, varErrorf(rpc.key, "config: %s contains whitespace", rpc.key))
+		}
+	}
 	if c.IPFSManagerSocket != "" && (!filepath.IsAbs(c.IPFSManagerSocket) || strings.ContainsRune(c.IPFSManagerSocket, 0)) {
 		errs = append(errs, varErrorf("IPFS_MANAGER_SOCKET", "config: IPFS_MANAGER_SOCKET must be an absolute Unix socket path"))
 	}

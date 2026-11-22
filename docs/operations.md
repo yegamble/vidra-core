@@ -1303,6 +1303,8 @@ zero bitrate switches there is a capability gap, not flawless adaptive streaming
 
 ## IPFS mirror (pinset) — a distribution surface, not a backup
 
+To keep full pins off the application disk, point `IPFS_API_URL` at a dedicated remote Kubo RPC endpoint. The worker streams objects from the configured storage backend (including S3) into the node. The node stores the pin. Set `IPFS_GATEWAY_URL` to the visitor-facing gateway. Configure Kubo's [API authorizations](https://github.com/ipfs/kubo/blob/v0.43.1/docs/config.md#apiauthorizations) and put its bearer token in `IPFS_RPC_TOKEN` on the application and worker. Supply a different credential in `IPFS_PRIVATE_RPC_TOKEN` for a dedicated private swarm. Authenticated RPC requires HTTPS and rejects redirects. Keep RPC access limited to your workers and API hosts. Gateway requests from browsers never carry the RPC credential.
+
 When `IPFS_ENABLED=true` (`IPFS_API_URL` + `IPFS_GATEWAY_URL` required), the mirror
 add+pins **only already-public media** — public+published videos and their
 derivatives (HLS tree, thumbnail, storyboard, captions, VP9), non-unlisted

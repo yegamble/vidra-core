@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -106,20 +107,42 @@ type RepoSizer interface {
 type KuboClient struct {
 	apiURL string
 	http   *http.Client
+	bearer string
 }
 
 // compile-time assertion that KuboClient satisfies Client.
 var _ Client = (*KuboClient)(nil)
 var _ RepoSizer = (*KuboClient)(nil)
 
+// KuboOption configures the operator-selected RPC connection.
+type KuboOption func(*KuboClient)
+
+// WithRPCBearer authenticates this swarm's RPC calls. Refuse redirects on
+// authenticated requests, including redirects within the same origin.
+func WithRPCBearer(token string) KuboOption {
+	return func(c *KuboClient) {
+		if token == "" {
+			return
+		}
+		client := *c.http
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		c.http = &client
+		c.bearer = token
+	}
+}
+
 // NewKuboClient builds a client for the given Kubo RPC base URL (no trailing
 // slash needed). hc may be nil, in which case http.DefaultClient is used; callers
 // bound each call with a context deadline (IPFS_ADD_TIMEOUT).
-func NewKuboClient(apiURL string, hc *http.Client) *KuboClient {
+func NewKuboClient(apiURL string, hc *http.Client, opts ...KuboOption) *KuboClient {
 	if hc == nil {
 		hc = http.DefaultClient
 	}
-	return &KuboClient{apiURL: strings.TrimRight(apiURL, "/"), http: hc}
+	c := &KuboClient{apiURL: strings.TrimRight(apiURL, "/"), http: hc}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // addResponse is one NDJSON object from /api/v0/add.
@@ -432,6 +455,12 @@ func (c *KuboClient) do(ctx context.Context, path string, body io.Reader, conten
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL+path, body)
 	if err != nil {
 		return nil, fmt.Errorf("ipfs: build request: %w", err)
+	}
+	if c.bearer != "" {
+		if req.URL.Scheme != "https" || req.URL.Hostname() == "" || req.URL.User != nil {
+			return nil, errors.New("ipfs: authenticated RPC requires HTTPS without URL credentials")
+		}
+		req.Header.Set("Authorization", "Bearer "+c.bearer)
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)

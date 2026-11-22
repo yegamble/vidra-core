@@ -682,6 +682,7 @@ x-api-env: &api-env
   IPFS_ENABLED: ${IPFS_ENABLED:-false}
   IPFS_MANAGER_SOCKET: ${IPFS_MANAGER_SOCKET:-}
   IPFS_API_URL: ${IPFS_API_URL:-http://ipfs:5001}
+  IPFS_RPC_TOKEN: ${IPFS_RPC_TOKEN:-}
   IPFS_GATEWAY_URL: ${IPFS_GATEWAY_URL:-http://localhost:9090}
   IPFS_ADD_TIMEOUT: ${IPFS_ADD_TIMEOUT:-60s}
   IPFS_PIN_CONCURRENCY: ${IPFS_PIN_CONCURRENCY:-2}
@@ -719,6 +720,7 @@ x-api-env: &api-env
   # service). Private-media mirroring may run standalone (IPFS_ENABLED=false).
   IPFS_MIRROR_PRIVATE: ${IPFS_MIRROR_PRIVATE:-false}
   IPFS_PRIVATE_API_URL: ${IPFS_PRIVATE_API_URL:-http://kubo-private:5001}
+  IPFS_PRIVATE_RPC_TOKEN: ${IPFS_PRIVATE_RPC_TOKEN:-}
   # Optional IPFS Cluster on the PRIVATE swarm (P19.P3; a fully separate cluster from
   # the public one). IPFS_PRIVATE_CLUSTER_TOKEN is a SECRET — never commit a real value.
   IPFS_PRIVATE_CLUSTER_API_URL: ${IPFS_PRIVATE_CLUSTER_API_URL:-}
