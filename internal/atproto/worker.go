@@ -86,7 +86,10 @@ func (s *Service) DrainPosts(ctx context.Context, limit int) (int, error) {
 func (s *Service) runPost(ctx context.Context, row sqlcgen.ClaimDueATProtoPostsRow) error {
 	info, err := s.repo.GetATProtoPostVideo(ctx, row.VideoID)
 	if err != nil {
-		return permanentf("the video no longer exists")
+		return permanentf("the video is no longer eligible for cross-posting")
+	}
+	if !info.AtprotoEnabled {
+		return permanentf("cross-posting is disabled for the channel")
 	}
 	if info.Privacy != "public" {
 		return permanentf("the video is no longer public")

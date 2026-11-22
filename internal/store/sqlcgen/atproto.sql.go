@@ -179,7 +179,10 @@ const getATProtoPostVideo = `-- name: GetATProtoPostVideo :one
 SELECT v.id, v.title, v.privacy, v.short_code, c.owner_id, c.atproto_enabled
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
-WHERE v.id = $1
+JOIN users u ON u.id = c.owner_id
+WHERE v.id = $1 AND v.state = 'published'
+  AND u.is_active AND u.deleted_at IS NULL AND NOT u.unlisted
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 `
 
 type GetATProtoPostVideoRow struct {
@@ -191,10 +194,8 @@ type GetATProtoPostVideoRow struct {
 	AtprotoEnabled bool      `json:"atproto_enabled"`
 }
 
-// Resolve the video's owner + title + privacy for the enqueue decision and for
-// building the post record. Joins through the owning channel so the atproto
-// package needs no dependency on the video package. atproto_enabled gates the
-// per-channel cross-post opt-out (migration 0096).
+// Both enqueue and delivery use this lookup. A moderation or owner change
+// during queue backoff must take effect before the worker contacts the PDS.
 func (q *Queries) GetATProtoPostVideo(ctx context.Context, id uuid.UUID) (GetATProtoPostVideoRow, error) {
 	row := q.db.QueryRow(ctx, getATProtoPostVideo, id)
 	var i GetATProtoPostVideoRow

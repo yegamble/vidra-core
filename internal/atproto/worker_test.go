@@ -230,3 +230,19 @@ func TestPostBackoffGrowsAndCaps(t *testing.T) {
 		t.Errorf("attempt 100 backoff = %v, want capped %v", got, maxPostBackoff)
 	}
 }
+
+func TestDrainPostsHonorsChannelOptOutAfterEnqueue(t *testing.T) {
+	repo := newFakeRepo()
+	pds := newFakePDS()
+	_, vid := seedPublishable(t, repo)
+	video := repo.videos[vid]
+	video.AtprotoEnabled = false
+	repo.videos[vid] = video
+	s := NewService(repo, WithEnabled(true), WithPDSClient(pds), WithBaseURL("https://videos.example"))
+
+	count, err := s.DrainPosts(context.Background(), 10)
+	if err != nil || count != 0 || len(pds.createCalls) != 0 || len(pds.recordCalls) != 0 || repo.postForVideo(vid).State != "failed" {
+		t.Fatalf("opted-out post: posted=%d error=%v sessions=%d records=%d state=%s",
+			count, err, len(pds.createCalls), len(pds.recordCalls), repo.postForVideo(vid).State)
+	}
+}
