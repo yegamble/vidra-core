@@ -134,6 +134,7 @@ func instanceConfigServerWithRepo(t *testing.T) (*Server, *authFakeRepo) {
 		WithAuthService(authsvc, 15*time.Minute),
 		WithSettingsService(settingssvc),
 		WithInstanceDocumentsService(docsvc),
+		WithSitePages(&pageReaderFixture{}),
 		WithProfileImageService(imagesvc),
 		WithMediaStorage(blobs),
 	), repo
