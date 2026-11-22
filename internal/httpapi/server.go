@@ -255,6 +255,7 @@ type Server struct {
 	// event may be emitted. Nil (tests / no Redis) suppresses watch_progress
 	// emission entirely (it is a low-value signal).
 	searchWatchThrottle func(ctx context.Context, key string) bool
+	sitePages           sitePageRepository
 	instancedocssvc     *instancedocs.Service
 	feedtokensvc        *feedtoken.Service
 	mediagcsvc          *mediagc.Service
@@ -1664,6 +1665,7 @@ func (s *Server) routes() {
 	// admin-authored homepage (markdown JSON) and the custom CSS/JS as
 	// same-origin external files (hash-busted via GET /instance's
 	// customization block), plus the admin editor surface.
+	s.registerSitePages(api)
 	if s.instancedocssvc != nil {
 		api.GET("/instance/homepage", s.handleGetInstanceHomepage)
 		api.GET("/instance/custom.css", s.handleGetInstanceCustomCSS)

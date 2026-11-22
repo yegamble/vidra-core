@@ -369,6 +369,7 @@ func run() error {
 	if err := instancedocssvc.Load(startCtx); err != nil {
 		return err
 	}
+	opts = append(opts, httpapi.WithSitePages(db.Queries()))
 	opts = append(opts, httpapi.WithInstanceDocumentsService(instancedocssvc))
 	opts = append(opts, httpapi.WithFeedTokenService(feedtoken.NewService(db.Queries())))
 
