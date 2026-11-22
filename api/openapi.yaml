@@ -157,7 +157,8 @@ paths:
       operationId: listAdminSitePages
       summary: List all published pages, including those omitted from menus
       tags: [admin]
-      security: [{bearerAuth: []}]
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: All page summaries.
