@@ -25,6 +25,7 @@ package atproto
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"strings"
@@ -93,7 +94,8 @@ type Service struct {
 	pds          PDSClient
 	thumbs       Thumbnails
 	enabled      bool
-	allowPrivate bool   // dev/test: relax the PDS SSRF guard (loopback/http)
+	allowPrivate bool // dev/test: relax the PDS SSRF guard (loopback/http)
+	defaultPDS   string
 	baseURL      string // public origin used to build watch URLs (no trailing slash)
 	logger       *slog.Logger
 	now          func() time.Time
@@ -119,6 +121,11 @@ func WithEnabled(enabled bool) Option {
 // Bluesky post (e.g. https://videos.example). Trailing slashes are trimmed.
 func WithBaseURL(u string) Option {
 	return func(s *Service) { s.baseURL = strings.TrimRight(u, "/") }
+}
+
+// WithDefaultPDS selects the instance-configured endpoint for new links.
+func WithDefaultPDS(origin string) Option {
+	return func(s *Service) { s.defaultPDS = origin }
 }
 
 // WithPDSClient overrides the PDS XRPC client (tests inject a fake; the link
@@ -167,9 +174,10 @@ func WithClock(now func() time.Time) Option {
 // defaults to the SSRF-guarded HTTP client (production wiring); tests pass a fake.
 func NewService(repo Repository, opts ...Option) *Service {
 	s := &Service{
-		repo:   repo,
-		logger: slog.Default(),
-		now:    time.Now,
+		repo:       repo,
+		defaultPDS: DefaultPDSURL,
+		logger:     slog.Default(),
+		now:        time.Now,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -209,7 +217,20 @@ func (s *Service) Link(ctx context.Context, userID uuid.UUID, in LinkInput) (sql
 	}
 	pdsURL := strings.TrimRight(strings.TrimSpace(in.PDSURL), "/")
 	if pdsURL == "" {
-		pdsURL = DefaultPDSURL
+		// Old clients omit pds_url on reconnect. Keep their credentials on
+		// the previously linked host after an administrator changes defaults.
+		previous, err := s.repo.GetATProtoAccount(ctx, userID)
+		switch {
+		case err == nil:
+			pdsURL = previous.PdsUrl
+		case errors.Is(err, sql.ErrNoRows):
+			pdsURL = s.defaultPDS
+		default:
+			return sqlcgen.AtprotoAccount{}, err
+		}
+		if pdsURL == "" {
+			return sqlcgen.AtprotoAccount{}, ErrInvalidPDS
+		}
 	}
 
 	sess, err := s.pds.CreateSession(ctx, pdsURL, handle, appPassword)

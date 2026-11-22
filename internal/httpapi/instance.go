@@ -310,7 +310,8 @@ type instanceResponse struct {
 	// ATProtoLogin reports whether ATProto identity login (Bluesky / any PDS) is
 	// enabled (ATPROTO_LOGIN_ENABLED), so the frontend can show the "sign in with
 	// a handle" affordance. Independent of the OAuth providers above.
-	ATProtoLogin bool `json:"atproto_login"`
+	ATProtoLogin  bool   `json:"atproto_login"`
+	ATProtoPDSURL string `json:"atproto_pds_url,omitempty"`
 	// FederationEnabled reports whether ActivityPub federation is on, so the
 	// frontend can show/hide remote-content surfaces (remote follows, remote
 	// videos).
@@ -437,6 +438,7 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 		OwnerClaimPending:                     s.ownerClaimPending(ctx),
 		OAuthProviders:                        names,
 		OAuthProviderDetails:                  labels,
+		ATProtoPDSURL:                         s.cfg.DefaultATProtoPDS(),
 		ATProtoLogin:                          s.atprotologinsvc != nil && s.atprotologinsvc.Enabled(),
 		FederationEnabled:                     s.cfg.FederationEnabled,
 		TermsURL:                              s.settingString(instancesettings.KeyTermsURL, s.cfg.InstanceTermsURL),

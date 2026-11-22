@@ -1440,6 +1440,7 @@ func TestATProtoProductionRequiresKEKWhenEnabled(t *testing.T) {
 	t.Setenv("VIDRA_ENV", "production")
 	t.Setenv("JWT_SECRET", "a-strong-production-secret-32bytes-long")
 	t.Setenv("ATPROTO_ENABLED", "true")
+	t.Setenv("PUBLIC_BASE_URL", "https://videos.example")
 	t.Setenv("ATPROTO_KEY_KEK", "")
 	t.Setenv("FEDERATION_KEY_KEK", "")
 	if _, err := Load(); err == nil {
