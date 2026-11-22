@@ -139,6 +139,8 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 	// through internal/config's own rule — the api's, not a second opinion — and
 	// NOTHING here connects to anything. The stack does not exist while this
 	// wizard is open; the import runs inside the api container later.
+	case "atproto_pds_url":
+		normalized, err = setup.ExternalPDSOrigin(req.Value)
 	case "peertube_source_url":
 		// Normalized stays EMPTY for this one, deliberately. Every other field
 		// echoes what the engine would store so the page can show it; this value is

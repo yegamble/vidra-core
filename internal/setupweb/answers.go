@@ -91,6 +91,9 @@ func BuildAnswers(form Form, tmpl, existing *setup.EnvFile) setup.Answers {
 	// sends false otherwise, and the engine refuses the answer where it cannot be
 	// honoured (applyFederationRule). No second opinion here.
 	a.Federation = form.Federation
+	if p := form.ATProto; p != nil {
+		a.ATProto = &setup.ATProtoAnswers{Enabled: p.Enabled, Provider: strings.TrimSpace(p.Provider)}
+	}
 	if p := form.PeerTube; p != nil {
 		a.PeerTube = &setup.PeerTubeAnswers{
 			Enabled: p.Enabled,

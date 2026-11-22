@@ -339,6 +339,23 @@ button.ghost{background:transparent}
       </div>
     </fieldset>
 
+    <fieldset>
+      <legend>ATProto</legend>
+      <label for="f-atproto">Creator cross-posting</label>
+      <select id="f-atproto">
+        <option value="">Keep deployment setting</option>
+        <option value="local">Enable with a local Docker PDS</option>
+        <option value="external">Enable with an external PDS or service</option>
+        <option value="off">Disable cross-posting</option>
+      </select>
+      <div id="w-atproto-url" hidden>
+        <label for="f-atproto-url">PDS HTTPS origin</label>
+        <input type="url" id="f-atproto-url" placeholder="https://pds.example.org" aria-describedby="e-atproto-url">
+        <p class="err" id="e-atproto-url" role="alert"></p>
+      </div>
+      <p id="atproto-local-dns" class="hint" hidden>Point the pds subdomain of your site at this deployment before starting the local PDS.</p>
+    </fieldset>
+
     <!-- Hand-sync: interview()'s peerTubeInterview(), cmd/vidra/setup.go. ONE
          gate, and nine questions behind it, in the interview's own order. It is
          last here as it is last there: it is the only block about a DIFFERENT
@@ -821,7 +838,7 @@ button.ghost{background:transparent}
   function fieldInput(field) {
     return {
       tls_mode: $("f-tls"), domain: $("f-domain"), acme_email: $("f-acme"),
-      peertube_source_url: $("f-pt-url"),
+      atproto_pds_url: $("f-atproto-url"), peertube_source_url: $("f-pt-url"),
       peertube_source_s3_endpoint: $("f-pt-s3-endpoint"),
     }[field] || null;
   }
@@ -1012,6 +1029,8 @@ button.ghost{background:transparent}
       registration: { enabled: $("f-reg-open").checked, require_approval: $("f-reg-approval").checked },
       federation: federationAsked() && $("f-fed").checked,
     };
+    const pds = $("f-atproto").value;
+    if (pds) form.atproto = { enabled: pds !== "off", provider: pds === "external" ? $("f-atproto-url").value.trim() : pds === "local" ? "local" : "" };
     if (app.advanced) {
       if ($("f-db-external").checked) form.database = { mode: "external", url: $("f-db-url").value };
       if ($("f-redis-external").checked) form.redis = { mode: "external", url: $("f-redis-url").value };
@@ -1343,6 +1362,15 @@ button.ghost{background:transparent}
 
   async function next() {
     const id = STEPS[app.step].id;
+    if (id === "s-features" && $("f-atproto").value === "external") {
+      const input = $("f-atproto-url");
+      if (!input.value.trim()) {
+        setFieldError(input, $("e-atproto-url"), "Enter the HTTPS origin of the external PDS.");
+        focusInvalid(input);
+        return;
+      }
+      if (!await validateField("atproto_pds_url", input.value.trim(), $("e-atproto-url"))) { focusInvalid(input); return; }
+    }
     if (id === "s-domain") {
       // Order matters: the first failing field is the one we take the operator
       // to, and the fields are validated top to bottom as they appear.
@@ -1401,6 +1429,12 @@ button.ghost{background:transparent}
     $("f-storage").addEventListener("change", onStorageChange);
     $("f-mail-on").addEventListener("change", onMailToggle);
     $("f-reg-open").addEventListener("change", onRegToggle);
+    $("f-atproto").addEventListener("change", () => {
+      $("w-atproto-url").hidden = $("f-atproto").value !== "external";
+      $("atproto-local-dns").hidden = $("f-atproto").value !== "local";
+      clearFieldError($("f-atproto-url"), $("e-atproto-url"));
+    });
+    $("f-atproto-url").addEventListener("input", () => clearFieldError($("f-atproto-url"), $("e-atproto-url")));
     $("f-db-external").addEventListener("change", onDatastoreToggle);
     $("f-redis-external").addEventListener("change", onDatastoreToggle);
     $("f-pt-on").addEventListener("change", onPeerTubeToggle);

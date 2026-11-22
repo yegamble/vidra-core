@@ -297,6 +297,11 @@ flags:
 		answers.Registration = reg
 	}
 	answers.Federation = opt.federation
+	if opt.atproto.set || opt.atprotoPDS != "" {
+		answers.ATProto = &setup.ATProtoAnswers{
+			Enabled: !opt.atproto.set || opt.atproto.value, Provider: opt.atprotoPDS,
+		}
+	}
 	if opt.peertube.answered(peerTubeConn, peerTubeS3Secret) {
 		answers.PeerTube = opt.peertube.answers(peerTubeConn, peerTubeS3Secret)
 	}
@@ -403,6 +408,8 @@ type setupOptions struct {
 	smtpFrom       string
 	registration   string
 	federation     bool
+	atproto        optionalBool
+	atprotoPDS     string
 	rotate         stringList
 	features       featureFlags
 	peertube       peerTubeFlags
@@ -465,6 +472,8 @@ func registerSetupFlags(fs *flag.FlagSet) *setupOptions {
 
 	fs.StringVar(&o.registration, "registration", "", "signup policy: `closed|open|approval`")
 	fs.BoolVar(&o.federation, "federation", false, "FIRST INSTALL only: enable ActivityPub federation and mint its key (FEDERATION_KEY_KEK). Refused on plain-http, and on an existing install that has no key — see the federation docs for a running instance")
+	fs.Var(&o.atproto, "atproto", "enable ATProto creator cross-posting using the saved PDS or the local Docker default (--atproto=false disables cross-posting)")
+	fs.StringVar(&o.atprotoPDS, "atproto-pds", "", "enable ATProto and select its provider: local for Docker, or the HTTPS origin of an external PDS")
 	fs.Var(&o.rotate, "rotate", "re-generate the secret in this `VAR` even though it already has a value (repeatable)")
 	o.features.register(fs)
 	o.peertube.register(fs)
