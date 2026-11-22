@@ -810,6 +810,31 @@ func TestLoadIPFSEnabledValid(t *testing.T) {
 	}
 }
 
+func TestIPFSRPCCredentialsStayWithTheirSwarm(t *testing.T) {
+	for _, prefix := range []string{"IPFS", "IPFS_PRIVATE"} {
+		t.Run(prefix, func(t *testing.T) {
+			const token = "test-token"
+			t.Setenv(prefix+"_RPC_TOKEN", token)
+			for _, endpoint := range []string{"", "http://node.example", "https://user@node.example", "https://node.example?query", "https://node.example#part"} {
+				t.Setenv(prefix+"_API_URL", endpoint)
+				_, err := Load()
+				if err == nil || strings.Contains(err.Error(), token) {
+					t.Fatalf("unsafe endpoint accepted or token exposed for %q", endpoint)
+				}
+			}
+			t.Setenv(prefix+"_API_URL", "https://node.example")
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prefix == "IPFS" && (cfg.IPFSRPCToken != token || cfg.IPFSPrivateRPCToken != "") ||
+				prefix == "IPFS_PRIVATE" && (cfg.IPFSPrivateRPCToken != token || cfg.IPFSRPCToken != "") {
+				t.Fatal("RPC credential assigned to wrong swarm")
+			}
+		})
+	}
+}
+
 // TestLoadIPFSValidation is the config validation table, incl. the privacy guard
 // (mirrors the TestLoadRejectsAV1 defer style): IPFS_MIRROR_PRIVATE=true without a
 // private cluster URL is a hard error — private media must never reach a public

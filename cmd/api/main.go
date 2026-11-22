@@ -948,7 +948,7 @@ func run() error {
 	if cfg.IPFSAPIURL != "" {
 		// Managed copies can take hours at the selected background rate. Each RPC
 		// has its own bounded context; an HTTP-wide minute timeout aborts them.
-		ipfsClient = ipfs.NewKuboClient(cfg.IPFSAPIURL, &http.Client{})
+		ipfsClient = ipfs.NewKuboClient(cfg.IPFSAPIURL, &http.Client{}, ipfs.WithRPCBearer(cfg.IPFSRPCToken))
 		// Optional IPFS Cluster replication (STOR-05). Best-effort — the local node
 		// pin is the authoritative mirror action; the cluster replicates it. The
 		// token is a SECRET (Bearer), never logged.
@@ -965,7 +965,7 @@ func run() error {
 	var ipfsPrivateCluster ipfs.ClusterClient
 	privateEnabled := cfg.IPFSMirrorPrivate && cfg.IPFSPrivateAPIURL != ""
 	if privateEnabled {
-		ipfsPrivateClient = ipfs.NewKuboClient(cfg.IPFSPrivateAPIURL, &http.Client{Timeout: cfg.IPFSPrivateAddTimeout})
+		ipfsPrivateClient = ipfs.NewKuboClient(cfg.IPFSPrivateAPIURL, &http.Client{Timeout: cfg.IPFSPrivateAddTimeout}, ipfs.WithRPCBearer(cfg.IPFSPrivateRPCToken))
 		if cfg.IPFSPrivateClusterAPIURL != "" {
 			ipfsPrivateCluster = ipfs.NewKuboClusterClient(cfg.IPFSPrivateClusterAPIURL, cfg.IPFSPrivateClusterToken, &http.Client{Timeout: cfg.IPFSPrivateAddTimeout})
 		}
