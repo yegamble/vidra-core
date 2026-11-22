@@ -178,7 +178,8 @@ paths:
       operationId: saveSitePage
       summary: Publish a new page or edit the revision opened by the administrator
       tags: [admin]
-      security: [{bearerAuth: []}]
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -207,7 +208,8 @@ paths:
       operationId: deleteSitePage
       summary: Remove the page and its menu entry
       tags: [admin]
-      security: [{bearerAuth: []}]
+      security:
+        - bearerAuth: []
       parameters:
         - {in: query, name: revision, required: true, schema: {type: string, format: uuid}}
       responses:
