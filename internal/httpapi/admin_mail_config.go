@@ -247,7 +247,11 @@ func (s *Server) handleDeleteMailConfig(c *echo.Context) error {
 // a panel that mis-spells `password` would otherwise silently save a
 // configuration with no credential and report success.
 func decodeAdminDocumentBody(c *echo.Context, out any) error {
-	d := json.NewDecoder(http.MaxBytesReader(c.Response(), c.Request().Body, maxMailConfigBody))
+	return decodeLimitedAdminDocument(c, out, maxMailConfigBody)
+}
+
+func decodeLimitedAdminDocument(c *echo.Context, out any, limit int64) error {
+	d := json.NewDecoder(http.MaxBytesReader(c.Response(), c.Request().Body, limit))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "malformed or invalid configuration document")

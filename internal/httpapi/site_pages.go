@@ -12,6 +12,9 @@ import (
 )
 
 type sitePageRepository interface {
+	CreateSitePage(context.Context, sqlcgen.CreateSitePageParams) (sqlcgen.SitePage, error)
+	UpdateSitePage(context.Context, sqlcgen.UpdateSitePageParams) (sqlcgen.SitePage, error)
+	DeleteSitePage(context.Context, sqlcgen.DeleteSitePageParams) (int64, error)
 	ListSitePages(context.Context, bool) ([]sqlcgen.ListSitePagesRow, error)
 	GetSitePage(context.Context, string) (sqlcgen.SitePage, error)
 }
@@ -24,6 +27,8 @@ func (s *Server) registerSitePages(api *echo.Group) {
 	}
 	api.GET("/pages", s.listSitePages(true))
 	api.GET("/pages/:slug", s.getSitePage)
+	api.PUT("/admin/pages/:slug", s.saveSitePage, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	api.DELETE("/admin/pages/:slug", s.deleteSitePage, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	api.GET("/admin/pages", s.listSitePages(false), s.requireAuth, s.requireRole(admin.RoleAdmin))
 }
 

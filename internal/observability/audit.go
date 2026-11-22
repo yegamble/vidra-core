@@ -164,6 +164,8 @@ const (
 	// Reason carries the document NAME and the new content sha256 only — never
 	// the body (custom JS/CSS is operator-authored code).
 	ActionAdminInstanceDocumentUpdate = "admin.instance_document.update"
+	ActionAdminSitePageSave           = "admin.site_page.save"
+	ActionAdminSitePageDelete         = "admin.site_page.delete"
 	// ActionAdminMailTest records an admin sending the outbound-mail probe. The
 	// probe goes to the instance's contact address unless the caller names a
 	// recipient behind a fresh password proof, and the reason carries the

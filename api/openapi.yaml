@@ -171,6 +171,61 @@ paths:
         "403":
           description: Administrator role required.
           content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+  /api/v1/admin/pages/{slug}:
+    parameters:
+      - {in: path, name: slug, required: true, schema: {type: string}}
+    put:
+      operationId: saveSitePage
+      summary: Publish a new page or edit the revision opened by the administrator
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SitePageInput"}
+      responses:
+        "200":
+          description: Published page with its new revision.
+          content: {application/json: {schema: {$ref: "#/components/schemas/SitePage"}}}
+        "400":
+          description: Malformed request.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "401":
+          description: Authentication required.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "403":
+          description: Administrator role required.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "409":
+          description: Slug already exists or the supplied revision is stale.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "422":
+          description: Invalid page fields.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+    delete:
+      operationId: deleteSitePage
+      summary: Remove the page and its menu entry
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - {in: query, name: revision, required: true, schema: {type: string, format: uuid}}
+      responses:
+        "204": {description: Page removed.}
+        "400":
+          description: A valid revision is required.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "401":
+          description: Authentication required.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "403":
+          description: Administrator role required.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "409":
+          description: Page was changed or removed.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
   /api/v1/instance/about:
     get:
       operationId: getInstanceAbout
@@ -21412,6 +21467,17 @@ components:
           description: Public serving path, e.g. /api/v1/instance/avatar.
         is_fallback:
           type: boolean
+    SitePageInput:
+      type: object
+      additionalProperties: false
+      required: [title, body]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 150}
+        body: {type: string, minLength: 1, description: Markdown up to 100 KiB.}
+        menu_label: {type: string, maxLength: 150}
+        in_menu: {type: boolean, default: false}
+        menu_order: {type: integer, format: int32, minimum: 0, default: 0}
+        revision: {type: string, format: uuid, description: Omit to create. Supply the current revision to edit.}
     SitePageSummary:
       type: object
       required: [slug, title, menu_label, in_menu, menu_order, revision]
