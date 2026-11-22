@@ -2095,18 +2095,12 @@ func syncDir(dir string) error {
 //
 // Pass nil for the legacy base profiles only.
 func RenderCheckCommand(envPath string, values map[string]string) string {
-	if IsTrue(values["ATPROTO_ENABLED"]) && strings.TrimSpace(values["ATPROTO_PDS_URL"]) == "" {
+	if localPDSSelected(values) {
 		// The PDS env_file is created once on first deploy. The wrapper derives
 		// its hostname and selects the same overlays as the deployment.
 		return "python3 deploy/atproto-pds.py --prepare env/atproto-pds.env && ENV_FILE=" + shellQuote(envPath) + " ./deploy/compose.sh config -q"
 	}
-	parts := RenderCheckArgs(envPath, values)
-	quoted := make([]string, 0, len(parts)+1)
-	quoted = append(quoted, "docker")
-	for _, p := range parts {
-		quoted = append(quoted, shellQuote(p))
-	}
-	return strings.Join(quoted, " ")
+	return QuoteInvocation(ComposeInvocation(envPath, values))
 }
 
 // RenderCheckArgs is RenderCheckCommand as an argv, for a caller that runs the
@@ -2126,6 +2120,9 @@ func RenderCheckCommand(envPath string, values map[string]string) string {
 // a model nothing deploys.
 func RenderCheckArgs(envPath string, values map[string]string, tail ...string) []string {
 	args := []string{"compose", "-f", "docker-compose.yml", "-f", "docker-compose.prod.yml"}
+	if localPDSSelected(values) {
+		args = append(args, "-f", "docker-compose.atproto-pds.yml")
+	}
 	// Order matters: a compose overlay only wins over what an EARLIER file said,
 	// so the external-service overlays go after docker-compose.prod.yml.
 	for _, c := range externalOverlays {

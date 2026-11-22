@@ -353,8 +353,7 @@ func checkSearchService(ctx context.Context, s *state) []Finding {
 	if !ok {
 		return []Finding{skipf("the search service is not running on this host (it publishes no host port, so there is no other way to reach it)")}
 	}
-	args := s.composeArgs("exec", "-T", "search", "wget", "-qO-", "http://127.0.0.1:8080/healthz")
-	out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+	out, err := s.runCompose(ctx, "exec", "-T", "search", "wget", "-qO-", "http://127.0.0.1:8080/healthz")
 	if err != nil {
 		return []Finding{skipf("docker is not on this host's PATH, so the search container could not be probed")}
 	}
@@ -378,8 +377,7 @@ func checkFFmpeg(ctx context.Context, s *state) []Finding {
 	running, why := s.containers(ctx)
 	if why == "" {
 		if _, ok := serviceContainer(running, "api"); ok {
-			args := s.composeArgs("exec", "-T", "api", "ffmpeg", "-version")
-			out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+			out, err := s.runCompose(ctx, "exec", "-T", "api", "ffmpeg", "-version")
 			if err == nil && out.ExitCode == 0 {
 				return []Finding{okf("ffmpeg is present in the api container: " + firstLine(out.Stdout))}
 			}
@@ -635,8 +633,7 @@ func (s *state) ffmpegEncoders(ctx context.Context) (list map[string]bool, where
 	running, reason := s.containers(ctx)
 	if reason == "" {
 		if _, ok := serviceContainer(running, "api"); ok {
-			args := s.composeArgs("exec", "-T", "api", "ffmpeg", "-hide_banner", "-encoders")
-			out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+			out, err := s.runCompose(ctx, "exec", "-T", "api", "ffmpeg", "-hide_banner", "-encoders")
 			if err == nil && out.ExitCode == 0 {
 				return ffmpegEncoderNames(out.Stdout), "the api container's ffmpeg", true, ""
 			}
