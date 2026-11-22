@@ -1203,6 +1203,16 @@ type SettingsVersion struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type SitePage struct {
+	Slug      string    `json:"slug"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	MenuLabel string    `json:"menu_label"`
+	InMenu    bool      `json:"in_menu"`
+	MenuOrder int32     `json:"menu_order"`
+	Revision  uuid.UUID `json:"revision"`
+}
+
 type StepUpToken struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`
