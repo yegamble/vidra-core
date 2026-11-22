@@ -121,8 +121,7 @@ func (s *state) ledgerViaContainer(ctx context.Context, label, table string) Fin
 	// to report the one state it exists for: a DIRTY ledger after a failed
 	// migration, when `migrate version` prints `version=N dirty=true` and the
 	// runbook depends on somebody being told.
-	args := s.composeArgs("exec", "-T", "api", apiEntrypoint, "migrate", "version")
-	out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+	out, err := s.runCompose(ctx, "exec", "-T", "api", apiEntrypoint, "migrate", "version")
 	if err != nil {
 		return skipf("the ledger could not be read from inside the api container (docker is not on this host's PATH)")
 	}
@@ -150,8 +149,7 @@ func (s *state) ledgerViaContainer(ctx context.Context, label, table string) Fin
 // the ledger-ahead check silent, which is the right failure: "I could not check"
 // must never render as "checked and fine".
 func (s *state) imageEmbeddedMax(ctx context.Context) uint {
-	args := s.composeArgs("exec", "-T", "api", apiEntrypoint, "migrate", "embedded-max")
-	out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+	out, err := s.runCompose(ctx, "exec", "-T", "api", apiEntrypoint, "migrate", "embedded-max")
 	if err != nil || out.ExitCode != 0 {
 		return 0
 	}
@@ -374,13 +372,12 @@ func (s *state) storageMigrationViaContainer(ctx context.Context) Finding {
 	// own healthcheck runs `pg_isready -U ${POSTGRES_USER:-vidra} -d
 	// ${POSTGRES_DB:-vidra}`). With POSTGRES_USER set to anything, the image does
 	// NOT create a `postgres` role, so psql's default would not connect.
-	args := s.composeArgs("exec", "-T", "postgres", "psql",
+	out, err := s.runCompose(ctx, "exec", "-T", "postgres", "psql",
 		"-U", orDefault(s.value("POSTGRES_USER"), "vidra"),
 		"-d", orDefault(s.value("POSTGRES_DB"), "vidra"),
 		// -t drops the header and row count, -A the column padding: what comes
 		// back is one line that is exactly `t` or `f`.
 		"-tA", "-c", activeStorageMigrationSQL)
-	out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
 	if err != nil {
 		return skipf(noPort + ", and docker is not on this host's PATH to read it from the postgres container")
 	}
@@ -773,11 +770,10 @@ func (s *state) poolSizingViaContainer(ctx context.Context, pool int) Finding {
 	if _, ok := serviceContainer(running, "postgres"); !ok {
 		return skipf(noPort + ", and the postgres container is not running to read it from")
 	}
-	args := s.composeArgs("exec", "-T", "postgres", "psql",
+	out, err := s.runCompose(ctx, "exec", "-T", "postgres", "psql",
 		"-U", orDefault(s.value("POSTGRES_USER"), "vidra"),
 		"-d", orDefault(s.value("POSTGRES_DB"), "vidra"),
 		"-tA", "-c", "SHOW max_connections")
-	out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
 	if err != nil {
 		return skipf(noPort + ", and docker is not on this host's PATH to read it from the postgres container")
 	}
@@ -888,11 +884,10 @@ func (s *state) instanceOwnerViaContainer(ctx context.Context) Finding {
 	if _, ok := serviceContainer(running, "postgres"); !ok {
 		return skipf(noPort + ", and the postgres container is not running to read it from — read it at GET /api/v1/admin/users instead")
 	}
-	args := s.composeArgs("exec", "-T", "postgres", "psql",
+	out, err := s.runCompose(ctx, "exec", "-T", "postgres", "psql",
 		"-U", orDefault(s.value("POSTGRES_USER"), "vidra"),
 		"-d", orDefault(s.value("POSTGRES_DB"), "vidra"),
 		"-tA", "-c", countOwnersAndActiveAdminsSQL)
-	out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
 	if err != nil {
 		return skipf(noPort + ", and docker is not on this host's PATH to read it from the postgres container")
 	}

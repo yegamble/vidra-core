@@ -210,8 +210,7 @@ func (s *state) composeModel(ctx context.Context) (*composeModel, string) {
 			s.modelErr = fmt.Sprintf("the env file could not be read (%s), and the compose chain is built from it", s.envErr)
 			return
 		}
-		args := setup.RenderCheckArgs(s.envRel, s.vars, "config", "--format", "json")
-		out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+		out, err := s.runCompose(ctx, "config", "--format", "json")
 		if err != nil {
 			s.modelErr = "docker is not on this host's PATH, so the compose model could not be rendered"
 			return
@@ -230,15 +229,15 @@ func (s *state) composeModel(ctx context.Context) (*composeModel, string) {
 	return s.model, s.modelErr
 }
 
-// composeArgs is the deploy's compose chain with a different tail — for the
-// `exec` probes, and for quoting the right invocation back at an operator.
-func (s *state) composeArgs(tail ...string) []string {
-	return setup.RenderCheckArgs(s.envRel, s.vars, tail...)
+// All model and container probes use the same invocation, including the
+// local PDS hostname when the operator selected the Docker service.
+func (s *state) runCompose(ctx context.Context, tail ...string) (Output, error) {
+	cmd := setup.ComposeInvocation(s.envRel, s.vars, tail...)
+	return s.opt.Host.Run(ctx, s.root, cmd[0], cmd[1:]...)
 }
 
-// composeCommand is composeArgs as a pasteable command line.
 func (s *state) composeCommand(tail ...string) string {
-	return "docker " + strings.Join(s.composeArgs(tail...), " ")
+	return setup.QuoteInvocation(setup.ComposeInvocation(s.envRel, s.vars, tail...))
 }
 
 // ---------------------------------------------------------------------------

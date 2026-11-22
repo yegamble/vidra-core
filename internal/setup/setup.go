@@ -2126,6 +2126,9 @@ func RenderCheckCommand(envPath string, values map[string]string) string {
 // a model nothing deploys.
 func RenderCheckArgs(envPath string, values map[string]string, tail ...string) []string {
 	args := []string{"compose", "-f", "docker-compose.yml", "-f", "docker-compose.prod.yml"}
+	if localPDSSelected(values) {
+		args = append(args, "-f", "docker-compose.atproto-pds.yml")
+	}
 	// Order matters: a compose overlay only wins over what an EARLIER file said,
 	// so the external-service overlays go after docker-compose.prod.yml.
 	for _, c := range externalOverlays {
