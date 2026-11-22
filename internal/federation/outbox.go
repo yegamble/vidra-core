@@ -12,6 +12,11 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
+// A suspension applies to every video, even when no video-specific block exists.
+func distributionWithheld(v sqlcgen.GetVideoByIDRow) bool {
+	return v.Blocked || v.OwnerInactive
+}
+
 // publicAudience is the ActivityStreams magic collection marking an activity as
 // public (delivered to followers and visible to anyone).
 const publicAudience = "https://www.w3.org/ns/activitystreams#Public"
@@ -26,7 +31,7 @@ func (s *Service) AnnounceVideo(ctx context.Context, videoID uuid.UUID) error {
 	if !ch.ActivitypubEnabled {
 		return nil // channel opted out of ActivityPub (migration 0096)
 	}
-	if v.Privacy != "public" || v.State != "published" || v.Blocked {
+	if v.Privacy != "public" || v.State != "published" || distributionWithheld(v) {
 		return nil // a moderator-blocked video is never (re)federated (T13)
 	}
 	payload, err := s.buildVideoActivity(ctx, "Create", ch.Handle, v)
@@ -65,7 +70,7 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID uuid.UUID, wasFederat
 		return nil // channel opted out of ActivityPub (migration 0096)
 	}
 	switch {
-	case v.Blocked:
+	case distributionWithheld(v):
 		// The Delete went out when the block landed; an edit or a transcode
 		// completion on a blocked video must neither Update it back into
 		// existence nor repeat the retraction (T13).
@@ -110,7 +115,7 @@ func (s *Service) RetractMovedVideo(ctx context.Context, videoID, oldChannelID u
 	// The new channel's followers are covered only when UpdateVideo really sends
 	// an Update to them: AP enabled, public+published, not blocked.
 	covered := map[string]bool{}
-	if newCh.ActivitypubEnabled && !v.Blocked && v.Privacy == "public" && v.State == "published" {
+	if newCh.ActivitypubEnabled && !distributionWithheld(v) && v.Privacy == "public" && v.State == "published" {
 		newInboxes, lerr := s.videoAudience(ctx, newCh.ID)
 		if lerr != nil {
 			return lerr

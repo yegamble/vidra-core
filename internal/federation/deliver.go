@@ -551,7 +551,7 @@ func (s *Service) payloadOfBlockedVideo(ctx context.Context, payload []byte) boo
 		videoID = c.VideoID
 	}
 	v, err := s.repo.GetVideoByID(ctx, videoID)
-	return err == nil && v.Blocked
+	return err == nil && distributionWithheld(v)
 }
 
 // videoStillPublishable is the video arm of redeliverable: the snapshot may go
@@ -561,7 +561,7 @@ func (s *Service) videoStillPublishable(ctx context.Context, videoID uuid.UUID) 
 	if err != nil || !found {
 		return false, err
 	}
-	return ch.ActivitypubEnabled && v.Privacy == "public" && v.State == "published" && !v.Blocked, nil
+	return ch.ActivitypubEnabled && v.Privacy == "public" && v.State == "published" && !distributionWithheld(v), nil
 }
 
 // commentStillPublishable is the comment arm, and it is deliberately the video
