@@ -159,3 +159,25 @@ func TestQueuedCreateForBlockedVideoIsNotDelivered(t *testing.T) {
 		t.Errorf("videoStillPublishable = %v, %v; want false", ok, err)
 	}
 }
+
+func TestSuspendedOwnerVideoIsNotServedOrAnnounced(t *testing.T) {
+	channel, video := uuid.New(), uuid.New()
+	repo := newOutboxRepo(channel, video, "public", "published", []string{"https://peer.example/inbox"})
+	v := repo.videosByID[video]
+	v.OwnerInactive = true
+	repo.videosByID[video] = v
+	svc := NewService(repo, WithBaseURL("https://video.example"))
+	ctx := context.Background()
+	if _, err := svc.VideoObject(ctx, video); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("inactive owner object: %v", err)
+	}
+	if err := svc.AnnounceVideo(ctx, video); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.UpdateVideo(ctx, video, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.deliveries) != 0 {
+		t.Fatalf("suspended owner produced %d announcements", len(repo.deliveries))
+	}
+}

@@ -64,6 +64,18 @@ func TestFederationQueriesExcludeBlockedVideosOnRealPG(t *testing.T) {
 	if n, c, b := state(); n != 1 || c != 1 || b {
 		t.Fatalf("unblocked: list=%d count=%d blocked=%v, want 1/1/false", n, c, b)
 	}
+	// A suspension is an account change and writes no per-video block row.
+	// Both collection surfaces must disappear before another peer can crawl.
+	if _, err := st.Pool.Exec(ctx, "UPDATE users SET is_active=false WHERE id=$1", owner); err != nil {
+		t.Fatal(err)
+	}
+	if n, c, b := state(); n != 0 || c != 0 || b {
+		t.Fatalf("suspended owner: list=%d count=%d blocked=%v, want 0/0/false", n, c, b)
+	}
+	if _, err := st.Pool.Exec(ctx, "UPDATE users SET is_active=true WHERE id=$1", owner); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := st.Pool.Exec(ctx, `INSERT INTO video_blocks (video_id, reason) VALUES ($1, 'tos')`, videoID); err != nil {
 		t.Fatalf("block: %v", err)
 	}

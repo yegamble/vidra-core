@@ -166,7 +166,11 @@ func (q *Queries) CountPublicVideos(ctx context.Context) (int64, error) {
 }
 
 const countPublicVideosByChannel = `-- name: CountPublicVideosByChannel :one
-SELECT count(*) FROM videos v WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+SELECT count(*) FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users u ON u.id = c.owner_id
+WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+  AND u.is_active AND u.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 `
 
@@ -832,6 +836,7 @@ SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.st
        ) AS has_hls,
        -- Federation must not serve or push a moderator-blocked video (T13); the
        -- flag rides this row so the check cannot disagree with the read.
+       (NOT au.is_active OR au.deleted_at IS NOT NULL)::boolean AS owner_inactive,
        EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
@@ -870,6 +875,7 @@ type GetVideoByIDRow struct {
 	HasThumbnail            bool               `json:"has_thumbnail"`
 	ThumbnailContentType    string             `json:"thumbnail_content_type"`
 	HasHls                  bool               `json:"has_hls"`
+	OwnerInactive           bool               `json:"owner_inactive"`
 	Blocked                 bool               `json:"blocked"`
 }
 
@@ -906,6 +912,7 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 		&i.HasThumbnail,
 		&i.ThumbnailContentType,
 		&i.HasHls,
+		&i.OwnerInactive,
 		&i.Blocked,
 	)
 	return i, err
@@ -1255,6 +1262,7 @@ LEFT JOIN LATERAL (
     ORDER BY f.created_at DESC LIMIT 1
 ) th ON true
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+  AND au.is_active AND au.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 ORDER BY v.created_at DESC, v.id DESC
 LIMIT $2 OFFSET $3

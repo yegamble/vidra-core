@@ -354,7 +354,7 @@ func (s *Service) videoIsPubliclyVisible(ctx context.Context, videoID uuid.UUID)
 		}
 		return false, err
 	}
-	return v.Privacy == "public" && v.State == "published" && !v.Blocked, nil
+	return v.Privacy == "public" && v.State == "published" && !distributionWithheld(v), nil
 }
 
 // commentHolder is the optional second face of the comment flagger: whether a

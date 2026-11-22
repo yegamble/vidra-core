@@ -62,7 +62,7 @@ func (s *Service) VideoObject(ctx context.Context, videoID uuid.UUID) (map[strin
 	// A moderator-blocked video was unfederated (UnfederateBlockedVideo records
 	// its tombstone), so a peer dereferencing the Delete it was sent gets the same
 	// 410 a deleted video answers — and a block with no recorded tombstone is 404.
-	if v.Blocked {
+	if distributionWithheld(v) {
 		return nil, s.tombstoneOrNotFound(ctx, videoID)
 	}
 	ch, err := s.repo.GetChannelByID(ctx, v.ChannelID)

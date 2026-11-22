@@ -86,8 +86,8 @@ func (s *Service) backfillChannelFollower(ctx context.Context, channelID uuid.UU
 	}
 	for i := len(ids) - 1; i >= 0; i-- { // oldest first, so the newest lands on top
 		v, err := s.repo.GetVideoByID(ctx, ids[i])
-		if err != nil {
-			continue // vanished since listing
+		if err != nil || distributionWithheld(v) || v.Privacy != "public" || v.State != "published" {
+			continue // withdrawn since listing
 		}
 		payload, err := s.buildVideoActivity(ctx, "Create", channelHandle, v)
 		if err != nil {
