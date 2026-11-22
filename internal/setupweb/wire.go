@@ -46,12 +46,18 @@ type Form struct {
 	Mail         *MailForm         `json:"mail"`
 	Registration *RegistrationForm `json:"registration"`
 	PeerTube     *PeerTubeForm     `json:"peertube"`
+	ATProto      *ATProtoForm      `json:"atproto"`
 
 	// Federation is the first-install "federate with other servers (ActivityPub)"
 	// answer. A plain bool, unlike the pointers above: false is "no" and
 	// "unanswered" alike and the engine treats both as touch-nothing, so a page
 	// that omits it can never switch off an instance that federates.
 	Federation bool `json:"federation"`
+}
+
+type ATProtoForm struct {
+	Enabled  bool   `json:"enabled"`
+	Provider string `json:"provider"`
 }
 
 // PeerTubeForm is the migration-source block, and it is the FOURTH pointer for

@@ -180,6 +180,10 @@ type Answers struct {
 	// instance that federates. ActivityPub only; see applyFederationRule.
 	Federation bool
 
+	// ATProto is independent of ActivityPub. A nil answer preserves the
+	// operator's existing PDS and cross-posting configuration.
+	ATProto *ATProtoAnswers
+
 	// PeerTube nil keeps the file's PeerTube-source configuration exactly as it
 	// is — a re-run about the domain must not reconfigure a migration in flight.
 	// A non-nil value is an ANSWER, including PeerTube.Enabled=false, which is
@@ -601,6 +605,11 @@ func Generate(req Request) (*Result, error) {
 		return nil, err
 	}
 	added = append(added, fedAdded...)
+	pdsAdded, err := applyATProtoRule(req, res)
+	if err != nil {
+		return nil, err
+	}
+	added = append(added, pdsAdded...)
 	res.Warnings = append(res.Warnings, droppedProfileWarnings(req, res.Values)...)
 
 	// Line-shape before rendering: a value carrying a newline would not be a bad
@@ -2086,6 +2095,11 @@ func syncDir(dir string) error {
 //
 // Pass nil for the legacy base profiles only.
 func RenderCheckCommand(envPath string, values map[string]string) string {
+	if IsTrue(values["ATPROTO_ENABLED"]) && strings.TrimSpace(values["ATPROTO_PDS_URL"]) == "" {
+		// The PDS env_file is created once on first deploy. The wrapper derives
+		// its hostname and selects the same overlays as the deployment.
+		return "python3 deploy/atproto-pds.py --prepare env/atproto-pds.env && ENV_FILE=" + shellQuote(envPath) + " ./deploy/compose.sh config -q"
+	}
 	parts := RenderCheckArgs(envPath, values)
 	quoted := make([]string, 0, len(parts)+1)
 	quoted = append(quoted, "docker")
