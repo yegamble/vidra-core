@@ -775,7 +775,7 @@ x-api-env: &api-env
 
 services:
   postgres:
-    image: postgres:18-alpine
+    image: postgres:19-alpine
     profiles: ["core"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-vidra}
