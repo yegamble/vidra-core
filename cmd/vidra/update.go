@@ -74,16 +74,29 @@ func runUpdate(s streams, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Before the env file is read, GitHub asked or git run: a bundle tree is
-	// pin-release.sh's to upgrade, or nobody's. See updateBundle.
+	processEnv := environMap(theRunner.Environ())
+	values, valuesErr := dep.values()
+	if uf.source || strings.EqualFold(envGet(processEnv, values, "VIDRA_SOURCE_BUILD", ""), "true") {
+		return sourceUpdate(s, dep, uf)
+	}
+	if !uf.check && processEnv["RESTIC_REPOSITORY"] != "" {
+		dep.maintenanceLock, err = lockImageUpdate(dep.root)
+		if err != nil {
+			return err
+		}
+		defer dep.maintenanceLock.Close()
+		// A competing source upgrade may have completed before the lock was granted.
+		values, valuesErr = dep.values()
+		if strings.EqualFold(envGet(processEnv, values, "VIDRA_SOURCE_BUILD", ""), "true") {
+			return fmt.Errorf("source mode was activated concurrently. Run vidra update --source")
+		}
+	}
 	if isBundleTree(dep.root) {
 		return updateBundle(s, dep, uf)
 	}
-	values, err := dep.values()
-	if err != nil {
-		return fmt.Errorf("update: %s — it holds the tags this command reads and rewrites", err)
+	if valuesErr != nil {
+		return fmt.Errorf("update: %s — it holds the tags this command reads and rewrites", valuesErr)
 	}
-	processEnv := environMap(theRunner.Environ())
 
 	current, err := currentTags(processEnv, values, dep.envFile)
 	if err != nil {
@@ -157,6 +170,9 @@ func runUpdate(s streams, args []string) error {
 	// From here on the deployment is being modified, and every step says what it
 	// did before the next one starts — an update interrupted by a dropped ssh
 	// session has to be reconstructable from what reached the terminal.
+	if err := snapshotBeforePin(dep, s); err != nil {
+		return err
+	}
 	snapshot, snapErr := snapshotEnvFile(dep.root, dep.envPath, keep, time.Now())
 	if snapshot == "" {
 		return fmt.Errorf("update: %v", snapErr)
@@ -192,6 +208,7 @@ func runUpdate(s streams, args []string) error {
 
 // updateFlags are `vidra update`'s own.
 type updateFlags struct {
+	source     bool
 	check      bool
 	tag        string
 	yes        bool
@@ -233,6 +250,11 @@ func parseUpdateFlags(args []string) (wrapperFlags, updateFlags, error) {
 			f.envFile, f.explicit = value, true
 		case "--tag", "-tag":
 			uf.tag = value
+		case "--source":
+			if hasValue {
+				return f, uf, fmt.Errorf("update: --source takes no value")
+			}
+			uf.source = true
 		case "--check", "-check":
 			uf.check = true
 		case "--yes", "-yes", "-y":
@@ -242,7 +264,7 @@ func parseUpdateFlags(args []string) (wrapperFlags, updateFlags, error) {
 		case "-h", "--help", "-help":
 			f.help = true
 		default:
-			return f, uf, fmt.Errorf("update: %s is not one of this command's flags (--check, --tag, --yes, --no-rollback, -C/--repo, --env)", args[i])
+			return f, uf, fmt.Errorf("update: %s is not one of this command's flags (--source, --check, --tag, --yes, --no-rollback, -C/--repo, --env)", args[i])
 		}
 	}
 	if f.repo == "" {
@@ -1208,7 +1230,7 @@ func renderUpdatePlan(w io.Writer, dep deployment, p updatePlan, gate schemaChec
 
 func updateUsage(w io.Writer) {
 	fmt.Fprintf(w, `usage: vidra update [-C <deployment directory>] [--env <env file>]
-                    [--check] [--tag vX.Y.Z] [--yes] [--no-rollback]
+                    [--source] [--check] [--tag vX.Y.Z] [--yes] [--no-rollback]
 
 Move this deployment to the newest release: find it, pin it in the env file, and
 run ./deploy/deploy.sh. If the deploy's health probes fail, put the previous tags
@@ -1239,7 +1261,12 @@ is the same variable deploy/lib.sh reads, because both halves prune the same
 directory. deploy/rollback.sh keeps one .bak, which after two rollbacks holds the
 middle of the incident rather than the beginning.
 
+When RESTIC_REPOSITORY is exported, image upgrades take a full install
+snapshot before changing pins. Use vidra backups to see recovery dates.
+
 flags:
+      --source       compile the selected release from its recorded Git commits.
+                     Source installs keep this mode on subsequent updates.
   -C, --repo <dir>   the deployment directory (default ".")
       --env <file>   the deployment's env file, also exported as ENV_FILE
                      (default %s)

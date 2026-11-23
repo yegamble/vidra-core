@@ -39,6 +39,7 @@ type runner interface {
 
 // execSpec is one child process.
 type execSpec struct {
+	extraFiles []*os.File
 	// Path is the program. It is "bash" for every script this CLI runs, with
 	// the script itself as Args[0] — the deployment's scripts are bash and are
 	// run as bash, rather than relying on an executable bit that a tarball, a
@@ -92,6 +93,7 @@ func (osRunner) Environ() []string { return os.Environ() }
 
 func (osRunner) Passthrough(spec execSpec, s streams) error {
 	cmd := exec.Command(spec.Path, spec.Args...) //nolint:gosec // the path is deploy/<name>.sh under the operator's own --repo.
+	cmd.ExtraFiles = spec.extraFiles
 	cmd.Dir = spec.Dir
 	cmd.Env = spec.Env
 	// Assigned as-is, deliberately. os/exec dups an *os.File straight onto the

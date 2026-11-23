@@ -106,7 +106,8 @@ func splitFlag(arg string) (name, value string, hasValue bool) {
 // deployment is a resolved deployment directory: the absolute root, and the
 // absolute path of the script about to be run.
 type deployment struct {
-	root string
+	maintenanceLock *os.File
+	root            string
 	// envFile is as the OPERATOR spelled it — relative stays relative, because
 	// that is what ENV_FILE hands to the scripts and what their messages quote
 	// back. envPath is the same thing resolved, for reading it here.
