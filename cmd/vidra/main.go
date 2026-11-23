@@ -105,6 +105,11 @@ var commands = []command{
 		run:     runRestart,
 	},
 	{
+		name:    "backups",
+		summary: "browse, create, or recover dated installation snapshots",
+		run:     runBackups,
+	},
+	{
 		name:    "backup",
 		summary: "dump the database now, and prune the old dumps (deploy/backup.sh)",
 		run:     func(s streams, args []string) error { return runScript(backupScript, s, args) },

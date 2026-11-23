@@ -174,6 +174,9 @@ func updateBundle(s streams, dep deployment, uf updateFlags) error {
 		}
 	}
 	fmt.Fprintf(s.out, "vidra update — %s is a release bundle: running deploy/pin-release.sh %s (downloads, verifies and installs it, then pins the tags; it does not deploy)\n", dep.root, tag)
+	if err := snapshotBeforePin(dep, s); err != nil {
+		return err
+	}
 	return theRunner.Passthrough(dep.bash(script, tag), s)
 }
 
