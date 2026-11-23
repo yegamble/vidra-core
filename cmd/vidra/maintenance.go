@@ -10,13 +10,12 @@ import (
 	"syscall"
 )
 
-// The installed deployment owns both the on-disk format and its interpreter.
 func maintenanceCommand(dep deployment, helper string, args ...string) (execSpec, error) {
 	path := filepath.Join(dep.root, "deploy", helper)
 	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
 		return execSpec{}, fmt.Errorf("this installation needs deploy/%s. Upgrade its deployment tree to a release containing the maintenance helpers", helper)
 	}
-	return execSpec{Path: "python3", Args: append([]string{path}, args...), Dir: dep.root, Env: dep.env}, nil
+	return dep.command("python3", path, args...), nil
 }
 
 func runBackups(s streams, args []string) error {
@@ -67,8 +66,7 @@ func sourceUpdate(s streams, dep deployment, uf updateFlags) error {
 	return theRunner.Passthrough(cmd, s)
 }
 
-// Match deploy/snapshot_lock.py so a restore cannot race an image update
-// between its pre-upgrade snapshot and the change to the application's pins.
+// Share deploy/snapshot_lock.py's lock until new pins and containers agree.
 func lockImageUpdate(root string) (*os.File, error) {
 	dir := filepath.Join(root, "backups")
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -86,17 +84,13 @@ func lockImageUpdate(root string) (*os.File, error) {
 }
 
 func snapshotBeforePin(dep deployment, s streams) error {
-	if dep.maintenanceLock == nil {
+	if environMap(dep.env)["RESTIC_REPOSITORY"] == "" {
 		return nil
 	}
 	cmd, err := maintenanceCommand(dep, "snapshots.py", "create", "--reason", "pre-upgrade")
 	if err != nil {
 		return err
 	}
-	// ExtraFiles[0] is descriptor 3 in the child. The Python helper checks
-	// its inode before sharing this exact open-file description's flock.
-	cmd.extraFiles = []*os.File{dep.maintenanceLock}
-	cmd.Env = append(append([]string(nil), cmd.Env...), "VIDRA_MAINTENANCE_LOCK_FD=3")
 	var id strings.Builder
 	s.out = io.MultiWriter(s.out, &id)
 	if err = theRunner.Passthrough(cmd, s); err != nil {
@@ -106,6 +100,6 @@ func snapshotBeforePin(dep deployment, s streams) error {
 	if _, err = hex.DecodeString(snapshot); len(snapshot) != 64 || err != nil {
 		return fmt.Errorf("snapshot command returned no full snapshot ID. Upgrade stopped before pinning")
 	}
-	fmt.Fprintf(s.err, "From %s, preview recovery with vidra backups restore %s\n", dep.root, snapshot)
+	fmt.Fprintf(s.err, "Preview with vidra backups restore %s using this deployment and env file (%s).\n", snapshot, dep.envFile)
 	return nil
 }

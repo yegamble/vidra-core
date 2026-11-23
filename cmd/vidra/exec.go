@@ -117,6 +117,7 @@ func (osRunner) Passthrough(spec execSpec, s streams) error {
 
 func (osRunner) Capture(ctx context.Context, spec execSpec) (execResult, error) {
 	cmd := exec.CommandContext(ctx, spec.Path, spec.Args...) //nolint:gosec // as above.
+	cmd.ExtraFiles = spec.extraFiles
 	cmd.Dir = spec.Dir
 	cmd.Env = spec.Env
 	var stdout, stderr strings.Builder

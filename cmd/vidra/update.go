@@ -79,12 +79,17 @@ func runUpdate(s streams, args []string) error {
 	if uf.source || strings.EqualFold(envGet(processEnv, values, "VIDRA_SOURCE_BUILD", ""), "true") {
 		return sourceUpdate(s, dep, uf)
 	}
-	if !uf.check && processEnv["RESTIC_REPOSITORY"] != "" {
+	_, helperErr := os.Stat(filepath.Join(dep.root, "deploy", "snapshots.py"))
+	capture := processEnv["RESTIC_REPOSITORY"] != ""
+	if !uf.check && (capture || helperErr == nil) {
 		dep.maintenanceLock, err = lockImageUpdate(dep.root)
 		if err != nil {
 			return err
 		}
 		defer dep.maintenanceLock.Close()
+		if capture {
+			fmt.Fprintln(s.out, "Changing release pins will first pause this installation to capture a full recovery snapshot.")
+		}
 		// A competing source upgrade may have completed before the lock was granted.
 		values, valuesErr = dep.values()
 		if strings.EqualFold(envGet(processEnv, values, "VIDRA_SOURCE_BUILD", ""), "true") {

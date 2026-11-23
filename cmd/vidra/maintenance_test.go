@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -28,20 +27,23 @@ func TestSourceUpdateUsesRecordedReleaseHelper(t *testing.T) {
 	}
 }
 
-func TestBackupsListsByDefaultAndDelegatesRestorePreview(t *testing.T) {
-	for _, args := range [][]string{nil, {"restore", "abcd"}} {
+func TestBackupsUsesTheInstalledManager(t *testing.T) {
+	for _, tc := range []struct {
+		helper     string
+		args, want []string
+	}{
+		{"snapshots.py", nil, []string{"list"}},
+		{"snapshots.py", []string{"restore", "abcd"}, []string{"restore", "abcd"}},
+		{"snapshot_ui.py", []string{"web", "--port", "9005"}, []string{"--port", "9005"}},
+	} {
 		f := swapRunner(t, &fakeRunner{})
 		dir := fakeDeployment(t, defaultEnv)
-		write(t, filepath.Join(dir, "deploy", "snapshots.py"), "# helper")
-		if err := newHarness(t).run(append([]string{"backups", "-C", dir}, args...)...); err != nil {
+		write(t, filepath.Join(dir, "deploy", tc.helper), "# helper")
+		if err := newHarness(t).run(append([]string{"backups", "-C", dir}, tc.args...)...); err != nil {
 			t.Fatal(err)
 		}
 		c := f.only(t)
-		want := args
-		if want == nil {
-			want = []string{"list"}
-		}
-		if c.Path != "python3" || filepath.Base(c.script()) != "snapshots.py" || !slices.Equal(c.tail(), want) {
+		if c.Path != "python3" || filepath.Base(c.script()) != tc.helper || !slices.Equal(c.tail(), tc.want) {
 			t.Fatalf("unexpected backup command %s %v", c.Path, c.Args)
 		}
 	}
@@ -63,9 +65,6 @@ func TestImageUpdateRefusesToPinWhenConfiguredSnapshotFails(t *testing.T) {
 			if c.Path != "python3" || !slices.Equal(c.tail(), []string{"create", "--reason", "pre-upgrade"}) {
 				t.Fatalf("unexpected pre-snapshot mutation %v", c.Args)
 			}
-			if _, err := os.Stat(filepath.Join(st.dir, "backups", ".vidra-maintenance.lock")); err != nil {
-				t.Fatalf("no install lock: %v", err)
-			}
 			return errors.New("snapshot fixture failed")
 		}
 		if err := st.run(args...); err == nil || !strings.Contains(err.Error(), "snapshot fixture failed") {
@@ -74,19 +73,6 @@ func TestImageUpdateRefusesToPinWhenConfiguredSnapshotFails(t *testing.T) {
 		if st.envFile() != before {
 			t.Fatal("failed snapshot changed deployment pins")
 		}
-	}
-}
-
-func TestBackupsWebUsesLoopbackViewerHelper(t *testing.T) {
-	f := swapRunner(t, &fakeRunner{})
-	dir := fakeDeployment(t, defaultEnv)
-	write(t, filepath.Join(dir, "deploy", "snapshot_ui.py"), "# helper")
-	if err := newHarness(t).run("backups", "-C", dir, "web", "--port", "9005"); err != nil {
-		t.Fatal(err)
-	}
-	c := f.only(t)
-	if c.Path != "python3" || filepath.Base(c.script()) != "snapshot_ui.py" || !slices.Equal(c.tail(), []string{"--port", "9005"}) {
-		t.Fatalf("unexpected web process %v", c)
 	}
 }
 
@@ -124,5 +110,9 @@ func TestImageUpdateSnapshotsOldPinsUnderSharedLock(t *testing.T) {
 	if err != nil {
 		t.Fatal("lock leaked after update")
 	}
-	lock.Close()
+	defer lock.Close()
+	st.runner.environ = nil // a separate operator shell without backup credentials
+	if err := st.run("--yes"); err == nil || !strings.Contains(err.Error(), "could not lock") {
+		t.Fatalf("an unconfigured caller escaped the recovery lock: %v", err)
+	}
 }

@@ -283,12 +283,22 @@ func (d deployment) envReadError(err error) error {
 
 // bash builds the spec for running one of the deployment's scripts.
 func (d deployment) bash(path string, args ...string) execSpec {
-	return execSpec{
-		Path: "bash",
+	return d.command("bash", path, args...)
+}
+
+func (d deployment) command(program, path string, args ...string) execSpec {
+	cmd := execSpec{
+		Path: program,
 		Args: append([]string{path}, args...),
 		Dir:  d.root,
 		Env:  d.env,
 	}
+	if d.maintenanceLock != nil {
+		// ExtraFiles[0] is child fd 3. The helpers verify the inode before sharing the flock.
+		cmd.extraFiles = []*os.File{d.maintenanceLock}
+		cmd.Env = append(append([]string(nil), d.env...), "VIDRA_MAINTENANCE_LOCK_FD=3")
+	}
+	return cmd
 }
 
 // composeCommandLine is the compose.sh invocation as something an operator can
