@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
@@ -17,6 +18,39 @@ const federationOffRetryAfter = "86400"
 // its 503 at WARN (what the unmounted route's 404 got) instead of ERROR: it is a
 // deliberate answer a migrated instance gives on every peer refresh, not a fault.
 const federationOffKey = "federation_off"
+
+// Use public profile lookups while federation is paused. Looking up an actor
+// instead would require a federation service and could mint a signing key.
+func (s *Server) legacyBrowserProfile(prefix string) echo.HandlerFunc {
+	return func(c *echo.Context) error {
+		c.Response().Header().Add(echo.HeaderVary, echo.HeaderAccept)
+		if !strings.Contains(strings.ToLower(c.Request().Header.Get("Accept")), "text/html") {
+			return echo.ErrNotFound
+		}
+		ctx := c.Request().Context()
+		handle := c.Param("handle")
+		if prefix == "/users/" {
+			profile, err := s.authsvc.PublicProfileByUsername(ctx, handle)
+			if err != nil {
+				return echo.ErrNotFound
+			}
+			handle = profile.Username
+		} else {
+			ch, err := s.channelsvc.GetByHandle(ctx, handle)
+			if err != nil {
+				current, ok := s.channelsvc.RenamedHandleRedirect(ctx, handle)
+				if !ok {
+					return echo.ErrNotFound
+				}
+				handle = current
+			} else {
+				handle = ch.Handle
+			}
+		}
+		target := url.URL{Path: prefix + handle, RawQuery: c.Request().URL.RawQuery}
+		return c.Redirect(http.StatusFound, target.RequestURI())
+	}
+}
 
 // federationOff answers ActivityPub requests with 503 while federation is
 // switched off (or not wired), instead of the 404 an unmounted route gives.

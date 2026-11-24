@@ -1619,6 +1619,14 @@ func (s *Server) routes() {
 		if s.authoredrcsvc != nil {
 			s.echo.GET("/remote-comments/:id", s.handleRemoteCommentObject)
 		}
+	} else if s.cfg.PublicBaseURL != "" {
+		// PeerTube also used actor URLs as browser links during a migration.
+		if s.authsvc != nil {
+			s.echo.GET("/accounts/:handle", s.legacyBrowserProfile("/users/"))
+		}
+		if s.channelsvc != nil {
+			s.echo.GET("/video-channels/:handle", s.legacyBrowserProfile("/channels/"))
+		}
 	}
 
 	// Distribution surfaces (audit Wave E): RSS 2.0 feed, oEmbed provider, and an

@@ -597,6 +597,36 @@ func TestActorResponsesVaryOnAccept(t *testing.T) {
 	}
 }
 
+func TestLegacyBrowserProfilesWhileFederationOff(t *testing.T) {
+	srv, _, _ := distributionServer(t)
+	token := createChannelFor(t, srv, "bob", "bob@example.test", "films")
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me", `{"profile_public":true}`, token); rec.Code != http.StatusOK {
+		t.Fatalf("publish Bob's profile: %d", rec.Code)
+	}
+	for _, tc := range []struct {
+		path, accept string
+		status       int
+		location     string
+	}{
+		{"/accounts/bob", "text/html", 302, "/users/bob"},
+		{"/video-channels/films", "text/html", 302, "/channels/films"},
+		{"/video-channels/films?sort=latest", "text/html", 302, "/channels/films?sort=latest"},
+		{"/accounts/ada", "text/html", 404, ""}, // private
+		{"/accounts/missing", "text/html", 404, ""},
+		{"/video-channels/missing", "text/html", 404, ""},
+		{"/video-channels/films", "application/json", 404, ""},
+		{"/accounts/bob", "text/html, application/activity+json", 503, ""},
+	} {
+		rec := getAccept(t, srv, tc.path, tc.accept)
+		if rec.Code != tc.status || rec.Header().Get("Location") != tc.location {
+			t.Errorf("%s (%s): got %d %q, want %d %q", tc.path, tc.accept, rec.Code, rec.Header().Get("Location"), tc.status, tc.location)
+		}
+		if !strings.Contains(strings.Join(rec.Header().Values("Vary"), ", "), "Accept") {
+			t.Errorf("%s (%s): missing Vary: Accept", tc.path, tc.accept)
+		}
+	}
+}
+
 // TestAPObjectResponsesVaryOnAccept: the object ids (/videos/{uuid},
 // /comments/{uuid}, /videos/watch/{uuid}) are FRONTEND paths too — the proxy
 // sends an AP Accept here and everything else to the HTML page — and the
