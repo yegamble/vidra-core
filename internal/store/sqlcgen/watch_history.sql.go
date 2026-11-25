@@ -117,7 +117,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code,
        wh.position_seconds, wh.updated_at AS watched_at
 FROM watch_history wh
 JOIN videos v ON v.id = wh.video_id
@@ -155,6 +155,7 @@ type ListWatchHistoryRow struct {
 	IsSensitive        bool      `json:"is_sensitive"`
 	SensitiveFlags     []string  `json:"sensitive_flags"`
 	SensitiveReason    string    `json:"sensitive_reason"`
+	ListedAt           time.Time `json:"listed_at"`
 	ShortCode          string    `json:"short_code"`
 	PositionSeconds    int32     `json:"position_seconds"`
 	WatchedAt          time.Time `json:"watched_at"`
@@ -190,6 +191,7 @@ func (q *Queries) ListWatchHistory(ctx context.Context, arg ListWatchHistoryPara
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 			&i.PositionSeconds,
 			&i.WatchedAt,
@@ -214,7 +216,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code,
        wh.position_seconds, wh.updated_at AS watched_at
 FROM watch_history wh
 JOIN videos v ON v.id = wh.video_id
@@ -256,6 +258,7 @@ type ListWatchHistoryInProgressRow struct {
 	IsSensitive        bool      `json:"is_sensitive"`
 	SensitiveFlags     []string  `json:"sensitive_flags"`
 	SensitiveReason    string    `json:"sensitive_reason"`
+	ListedAt           time.Time `json:"listed_at"`
 	ShortCode          string    `json:"short_code"`
 	PositionSeconds    int32     `json:"position_seconds"`
 	WatchedAt          time.Time `json:"watched_at"`
@@ -293,6 +296,7 @@ func (q *Queries) ListWatchHistoryInProgress(ctx context.Context, arg ListWatchH
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 			&i.PositionSeconds,
 			&i.WatchedAt,

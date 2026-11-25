@@ -194,11 +194,12 @@ type videoView struct {
 	// SensitiveReason is the creator's optional content-warning text, paired with
 	// IsSensitive by the frontend. Always emitted (empty string when unset or on
 	// remote cards).
-	SensitiveReason string    `json:"sensitive_reason"`
-	CreatedAt       time.Time `json:"created_at"`
-	DurationSeconds *int32    `json:"duration_seconds,omitempty"`
-	Width           *int32    `json:"width,omitempty"`
-	Height          *int32    `json:"height,omitempty"`
+	SensitiveReason string     `json:"sensitive_reason"`
+	CreatedAt       time.Time  `json:"created_at"`
+	PublishedAt     *time.Time `json:"published_at,omitempty"`
+	DurationSeconds *int32     `json:"duration_seconds,omitempty"`
+	Width           *int32     `json:"width,omitempty"`
+	Height          *int32     `json:"height,omitempty"`
 	// Domain, WatchURL, and StreamURL are the remote-card fields (set only when
 	// Remote): the origin instance's domain, its human watch page, and the best
 	// playable origin stream URL (HLS preferred; absent when the origin
@@ -352,6 +353,7 @@ func newVideoView(v sqlcgen.Video) videoView {
 		Support:               v.Support,
 		PublishAt:             video.TimePtr(v.PublishAt),
 		OriginallyPublishedAt: video.TimePtr(v.OriginallyPublishedAt),
+		PublishedAt:           video.TimePtr(v.PeertubePublishedAt),
 		CommentsPolicy:        v.CommentsPolicy,
 		DownloadEnabled:       &downloadEnabled,
 		PublishAfterTranscode: &publishAfterTranscode,
@@ -384,6 +386,7 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 		ChannelHandle:         &handle,
 		ChannelDisplayName:    &name,
 		OriginallyPublishedAt: video.TimePtr(v.OriginallyPublishedAt),
+		PublishedAt:           video.TimePtr(v.SourcePublished),
 		CommentsPolicy:        v.CommentsPolicy,
 		DownloadEnabled:       &downloadEnabled,
 		PublishAfterTranscode: &publishAfterTranscode,

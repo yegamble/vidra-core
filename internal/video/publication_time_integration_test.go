@@ -40,8 +40,8 @@ func TestNewestFeedUsesPublicationTime(t *testing.T) {
 			continue
 		}
 		v := items[0].Video
-		if !v.CreatedAt.Equal(created) {
-			t.Errorf("%s lost the creation timestamp", name)
+		if !v.CreatedAt.Equal(created) || !v.PeertubePublishedAt.Valid || !v.PeertubePublishedAt.Time.Equal(published) {
+			t.Errorf("%s lost the creation or publication timestamp", name)
 		}
 	}
 	after := published.Add(-time.Hour)
