@@ -46,7 +46,8 @@ const (
 	// visited by the video pass again. Like KindViewCount it counts only the
 	// videos that HAD something to carry — a source video with no original date
 	// contributes nothing to any column, because there is no data there.
-	KindVideoOriginalDate = "video_original_date"
+	KindVideoOriginalDate    = "video_original_date"
+	KindVideoPublicationDate = "video_publication_date"
 	// KindUserSuspension counts USERS whose source suspension (user.blocked) was
 	// carried onto users.is_active; KindVideoSensitive counts VIDEOS the source
 	// flagged nsfw. Both count only what was CARRIED, never the whole family:
@@ -109,7 +110,7 @@ var orderedKinds = []string{
 	KindUser, KindUserSensitivePolicy, KindUserSuspension, KindUserMFAHold, KindUserQuotaUnlimited, KindChannel, KindActorAvatar, KindActorBanner,
 	KindVideo, KindVideoCommentPolicy, KindVideoSensitive, KindVideoBlock, KindVideoFile,
 	KindHLSPlaylist, KindVideoNoMedia, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
-	KindVideoOriginalDate, KindChapter, KindRating, KindRendition, KindComment,
+	KindVideoOriginalDate, KindVideoPublicationDate, KindChapter, KindRating, KindRendition, KindComment,
 	KindPlaylist, KindPlaylistItem, KindFollow, KindRemoteFollower, KindWatchHistory,
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -150,6 +151,25 @@ func (im *Importer) importVideoOriginalDates(ctx context.Context, r *Report) err
 	videos, err := im.src.Videos(ctx)
 	if err != nil {
 		return err
+	}
+	// Historical creation time, publication on the source and first publication
+	// elsewhere are separate. The source-owned publication time also needs to
+	// reach videos whose import ledger was completed by an older release.
+	var ids []uuid.UUID
+	var times []time.Time
+	for _, v := range videos {
+		id, err := uuid.Parse(v.UUID)
+		if v.PublishedAt != nil && err == nil {
+			ids = append(ids, id)
+			times = append(times, *v.PublishedAt)
+		}
+	}
+	if len(ids) > 0 {
+		updated, err := im.q.ImportBackfillPublicationTimes(ctx, sqlcgen.ImportBackfillPublicationTimesParams{SourceIds: ids, PublicationTimes: times})
+		if err != nil {
+			return err
+		}
+		r.count(KindVideoPublicationDate).Imported += int(updated)
 	}
 	c := r.count(KindVideoOriginalDate)
 	for _, v := range videos {
@@ -529,6 +549,9 @@ func (im *Importer) importOneRendition(
 // total — one per video, never a number of views.
 func (im *Importer) planPerVideo(ctx context.Context, r *Report, videos []SourceVideo) error {
 	for _, v := range videos {
+		if v.PublishedAt != nil {
+			r.count(KindVideoPublicationDate).Planned++
+		}
 		if v.Views > 0 {
 			r.count(KindViewCount).Planned++
 		}

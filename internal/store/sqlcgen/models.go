@@ -1480,6 +1480,7 @@ type Video struct {
 	TranscodeGeneration   int32              `json:"transcode_generation"`
 	Support               *string            `json:"support"`
 	SensitiveFlags        []string           `json:"sensitive_flags"`
+	PeertubePublishedAt   pgtype.Timestamptz `json:"peertube_published_at"`
 }
 
 type VideoBlock struct {

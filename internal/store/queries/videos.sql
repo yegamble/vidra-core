@@ -1,7 +1,7 @@
 -- name: CreateVideo :one
 INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason, support, sensitive_flags)
 VALUES (sqlc.arg('channel_id'), sqlc.arg('title'), sqlc.arg('description'), sqlc.arg('privacy'), sqlc.arg('category'), sqlc.arg('language'), sqlc.arg('license'), sqlc.arg('publish_at'), sqlc.arg('is_sensitive'), sqlc.arg('comments_policy'), sqlc.arg('download_enabled'), sqlc.arg('publish_after_transcode'), sqlc.arg('sensitive_reason'), sqlc.arg('support'), COALESCE(sqlc.arg('sensitive_flags')::text[], '{}'))
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support, sensitive_flags;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support, sensitive_flags, peertube_published_at;
 
 -- name: CountPublicVideos :one
 -- Public, published videos — the "local posts" count NodeInfo advertises. Only
@@ -1379,14 +1379,14 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     channel_id  = COALESCE(sqlc.narg('channel_id'), channel_id),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support, sensitive_flags;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support, sensitive_flags, peertube_published_at;
 
 -- name: SetVideoState :one
 UPDATE videos
 SET state      = sqlc.arg('state'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support, sensitive_flags;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid, transcode_generation, support, sensitive_flags, peertube_published_at;
 
 -- name: SetVideoPinnedComment :exec
 -- Set (or clear, when NULL) a video's pinned comment (YouTube-style creator pin,

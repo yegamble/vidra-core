@@ -424,6 +424,14 @@ DO UPDATE SET vidra_id     = EXCLUDED.vidra_id,
               source_value = EXCLUDED.source_value,
               updated_at   = now();
 
+-- name: ImportBackfillPublicationTimes :execrows
+-- Source UUIDs are unique on mapped videos. Re-running also picks up a newly
+-- published draft or an upstream correction without rewriting unchanged rows.
+UPDATE videos v SET peertube_published_at = src.published
+FROM (SELECT unnest(sqlc.arg('source_ids')::uuid[]) AS id,
+             unnest(sqlc.arg('publication_times')::timestamptz[]) AS published) src
+WHERE v.peertube_uuid = src.id AND v.peertube_published_at IS DISTINCT FROM src.published;
+
 -- name: ImportSetVideoOriginallyPublishedAt :exec
 -- Carry the source's originallyPublishedAt onto an ALREADY-IMPORTED video.
 --

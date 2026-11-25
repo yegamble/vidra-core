@@ -400,6 +400,28 @@ func (q *Queries) ImportApplyVideoViewDelta(ctx context.Context, arg ImportApply
 	return err
 }
 
+const importBackfillPublicationTimes = `-- name: ImportBackfillPublicationTimes :execrows
+UPDATE videos v SET peertube_published_at = src.published
+FROM (SELECT unnest($1::uuid[]) AS id,
+             unnest($2::timestamptz[]) AS published) src
+WHERE v.peertube_uuid = src.id AND v.peertube_published_at IS DISTINCT FROM src.published
+`
+
+type ImportBackfillPublicationTimesParams struct {
+	SourceIds        []uuid.UUID `json:"source_ids"`
+	PublicationTimes []time.Time `json:"publication_times"`
+}
+
+// Source UUIDs are unique on mapped videos. Re-running also picks up a newly
+// published draft or an upstream correction without rewriting unchanged rows.
+func (q *Queries) ImportBackfillPublicationTimes(ctx context.Context, arg ImportBackfillPublicationTimesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, importBackfillPublicationTimes, arg.SourceIds, arg.PublicationTimes)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const importCaptionExists = `-- name: ImportCaptionExists :one
 SELECT EXISTS (SELECT 1 FROM captions WHERE video_id = $1 AND language = $2)
 `
