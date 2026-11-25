@@ -189,8 +189,8 @@ LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.channel_id = sqlc.arg('channel_id')
 ORDER BY
-    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN v.created_at END ASC,
-    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN v.created_at END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN COALESCE(v.peertube_published_at, v.created_at) END ASC,
+    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN COALESCE(v.peertube_published_at, v.created_at) END DESC,
     v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
@@ -231,8 +231,8 @@ WHERE c.owner_id = sqlc.arg('owner_id')
   AND (sqlc.narg('state')::text IS NULL OR v.state = sqlc.narg('state')::text)
   AND (sqlc.narg('channel_id')::uuid IS NULL OR v.channel_id = sqlc.narg('channel_id')::uuid)
 ORDER BY
-    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN v.created_at END ASC,
-    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN v.created_at END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN COALESCE(v.peertube_published_at, v.created_at) END ASC,
+    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN COALESCE(v.peertube_published_at, v.created_at) END DESC,
     v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
@@ -295,8 +295,8 @@ WHERE v.channel_id = sqlc.arg('channel_id') AND (v.privacy = 'public' OR (v.priv
   -- count rows the caller can never see.
   AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid))
 ORDER BY
-    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN v.created_at END ASC,
-    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN v.created_at END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN COALESCE(v.peertube_published_at, v.created_at) END ASC,
+    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN COALESCE(v.peertube_published_at, v.created_at) END DESC,
     v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
@@ -367,8 +367,8 @@ WHERE c.owner_id = sqlc.arg('owner_id')::uuid AND (v.privacy = 'public' OR (v.pr
   -- count rows the caller can never see.
   AND NOT (v.is_sensitive AND vidra_sensitive_hidden(v.is_sensitive, v.sensitive_flags, sqlc.arg('hide_sensitive')::bool, sqlc.narg('viewer_id')::uuid))
 ORDER BY
-    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN v.created_at END ASC,
-    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN v.created_at END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN COALESCE(v.peertube_published_at, v.created_at) END ASC,
+    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN COALESCE(v.peertube_published_at, v.created_at) END DESC,
     v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
@@ -442,7 +442,7 @@ FROM (
            NULL::text AS stream_url,
            v.is_sensitive, v.sensitive_flags,
            v.sensitive_reason,
-           v.short_code
+           COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
     JOIN users au ON au.id = c.owner_id
@@ -488,7 +488,7 @@ FROM (
            rv.stream_url,
            rv.is_sensitive, rv.sensitive_flags,
            ''::text AS sensitive_reason,
-           ''::text AS short_code
+           COALESCE(rv.published_at, rv.fetched_at)::timestamptz AS listed_at, ''::text AS short_code
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     WHERE sqlc.arg('include_remote')::bool
@@ -531,7 +531,8 @@ ORDER BY
     END DESC,
     CASE WHEN sqlc.arg('sort')::text = 'originally_published_at' THEN feed.sort_at END DESC,
     CASE WHEN sqlc.arg('sort')::text = 'name' THEN lower(feed.title) END ASC,
-    feed.created_at DESC, feed.id DESC
+    CASE WHEN sqlc.arg('sort')::text = 'recent' THEN feed.listed_at
+         ELSE feed.created_at END DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: ListPublicVideosRecent :many
@@ -545,7 +546,7 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 -- unlisted owners' channels. Card columns are joined for the page only, and are
 -- the same columns in the same order as ListPublicVideosSorted.
 WITH page AS MATERIALIZED (
-    SELECT v.id, v.created_at
+    SELECT v.id, COALESCE(v.peertube_published_at, v.created_at) AS published_sort
     FROM videos v
     WHERE v.privacy = 'public' AND v.state = 'published'
       AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
@@ -554,7 +555,7 @@ WITH page AS MATERIALIZED (
           WHERE uc.id = v.channel_id AND u.unlisted
       )
       AND NOT (v.is_sensitive AND sqlc.arg('hide_sensitive')::bool)
-    ORDER BY v.created_at DESC, v.id DESC
+    ORDER BY published_sort DESC, v.id DESC
     LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset')
 )
 SELECT v.id, false AS remote, v.channel_id, v.title, v.description,
@@ -575,7 +576,7 @@ JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
-ORDER BY p.created_at DESC, p.id DESC;
+ORDER BY p.published_sort DESC, p.id DESC;
 
 -- name: ListPublicVideosRanked :many
 -- The same anonymous, local, unfiltered shape as ListPublicVideosRecent for the
@@ -777,7 +778,7 @@ FROM (
            NULL::text AS stream_url,
            v.is_sensitive, v.sensitive_flags,
            v.sensitive_reason,
-           v.short_code
+           COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
     JOIN users au ON au.id = c.owner_id
@@ -814,7 +815,7 @@ FROM (
            rv.stream_url,
            rv.is_sensitive, rv.sensitive_flags,
            ''::text AS sensitive_reason,
-           ''::text AS short_code
+           COALESCE(rv.published_at, rv.fetched_at)::timestamptz AS listed_at, ''::text AS short_code
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     -- local_only is the zero-value-safe polarity: a caller that sets nothing
@@ -852,7 +853,7 @@ FROM (
             AND rab.actor_url = rv.remote_actor_url
       )
 ) AS feed
-ORDER BY feed.created_at DESC, feed.id DESC
+ORDER BY feed.listed_at DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: CountSubscriptionVideos :one
@@ -963,9 +964,9 @@ FROM (
 -- that does not match evaluates to NULL for every row, which is a no-op.
 -- 'relevance' is the default and reproduces the previous fixed
 -- `search_rank DESC, created_at DESC, id DESC` exactly. As in the admin list,
--- 'published_at' is created_at: local videos carry no separate published_at
--- column and the remote arm already projects COALESCE(published_at, fetched_at)
--- INTO created_at, so they are the same column by construction.
+-- Publication sorting uses a local import's source date when available. The
+-- remote arm already projects COALESCE(published_at, fetched_at)
+-- as its creation-time fallback.
 --
 -- The duration and publish-window filters are applied at the OUTER level, over
 -- the union, so they narrow local and remote rows by the same predicate. A row
@@ -999,7 +1000,7 @@ FROM (
            NULL::text AS stream_url,
            v.is_sensitive, v.sensitive_flags,
            v.sensitive_reason,
-           v.short_code,
+           COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code,
            similarity(v.title, sqlc.arg('query')) AS search_rank
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
@@ -1073,7 +1074,7 @@ FROM (
            rv.stream_url,
            rv.is_sensitive, rv.sensitive_flags,
            ''::text AS sensitive_reason,
-           ''::text AS short_code,
+           COALESCE(rv.published_at, rv.fetched_at)::timestamptz AS listed_at, ''::text AS short_code,
            similarity(rv.title, sqlc.arg('query')) AS search_rank
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -1118,12 +1119,12 @@ FROM (
 ) AS feed
 WHERE (sqlc.narg('duration_min')::int IS NULL OR feed.duration_seconds >= sqlc.narg('duration_min')::int)
   AND (sqlc.narg('duration_max')::int IS NULL OR feed.duration_seconds <= sqlc.narg('duration_max')::int)
-  AND (sqlc.narg('published_after')::timestamptz IS NULL OR feed.created_at >= sqlc.narg('published_after')::timestamptz)
-  AND (sqlc.narg('published_before')::timestamptz IS NULL OR feed.created_at <= sqlc.narg('published_before')::timestamptz)
+  AND (sqlc.narg('published_after')::timestamptz IS NULL OR feed.listed_at >= sqlc.narg('published_after')::timestamptz)
+  AND (sqlc.narg('published_before')::timestamptz IS NULL OR feed.listed_at <= sqlc.narg('published_before')::timestamptz)
 ORDER BY
     CASE WHEN sqlc.arg('sort')::text = 'relevance' THEN feed.search_rank END DESC,
-    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN feed.created_at END ASC,
-    CASE WHEN sqlc.arg('sort')::text = '-published_at' THEN feed.created_at END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN feed.listed_at END ASC,
+    CASE WHEN sqlc.arg('sort')::text = '-published_at' THEN feed.listed_at END DESC,
     CASE WHEN sqlc.arg('sort')::text = 'views' THEN feed.views END ASC,
     CASE WHEN sqlc.arg('sort')::text = '-views' THEN feed.views END DESC,
     feed.created_at DESC, feed.id DESC
@@ -1140,7 +1141,7 @@ FROM (
            false AS remote,
            v.channel_id,
            v.title, v.description, v.privacy, v.state,
-           v.created_at, v.updated_at,
+           COALESCE(v.peertube_published_at, v.created_at) AS created_at, v.updated_at,
            COALESCE(vc.views, 0)::bigint AS views,
            EXISTS (
                SELECT 1 FROM video_files f

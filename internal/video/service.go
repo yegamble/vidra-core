@@ -2995,8 +2995,8 @@ func (s *Service) ClearHistory(ctx context.Context, userID uuid.UUID) error {
 // Accepted ?sort values for the public video search. SearchSortRelevance is the
 // default and reproduces the endpoint's behaviour from before it took a sort at
 // all: trigram similarity, then recency. The other four use the same
-// `-field`/`field` convention as the admin inventory, and `published_at` is the
-// same created_at alias it is there.
+// `-field`/`field` convention. Publication sorts use the source timestamp
+// for imports when available.
 const (
 	SearchSortRelevance   = "relevance"
 	SearchSortNewest      = "-published_at"

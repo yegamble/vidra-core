@@ -131,7 +131,7 @@ func (q *Queries) EnqueueSearchEvent(ctx context.Context, arg EnqueueSearchEvent
 const getVideoSearchDoc = `-- name: GetVideoSearchDoc :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.category, v.language, v.license, v.is_sensitive,
-       v.created_at, v.updated_at, v.publish_at,
+       v.created_at, v.updated_at, v.publish_at, v.peertube_published_at AS source_published,
        c.handle AS channel_handle, c.display_name AS channel_name,
        c.owner_id,
        au.display_name AS owner_display_name,
@@ -165,6 +165,7 @@ type GetVideoSearchDocRow struct {
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
 	PublishAt        pgtype.Timestamptz `json:"publish_at"`
+	SourcePublished  pgtype.Timestamptz `json:"source_published"`
 	ChannelHandle    string             `json:"channel_handle"`
 	ChannelName      string             `json:"channel_name"`
 	OwnerID          uuid.UUID          `json:"owner_id"`
@@ -197,6 +198,7 @@ func (q *Queries) GetVideoSearchDoc(ctx context.Context, id uuid.UUID) (GetVideo
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishAt,
+		&i.SourcePublished,
 		&i.ChannelHandle,
 		&i.ChannelName,
 		&i.OwnerID,
@@ -213,7 +215,7 @@ func (q *Queries) GetVideoSearchDoc(ctx context.Context, id uuid.UUID) (GetVideo
 const listVideoSearchDocsPage = `-- name: ListVideoSearchDocsPage :many
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.category, v.language, v.license, v.is_sensitive,
-       v.created_at, v.updated_at, v.publish_at,
+       v.created_at, v.updated_at, v.publish_at, v.peertube_published_at AS source_published,
        c.handle AS channel_handle, c.display_name AS channel_name,
        c.owner_id,
        au.display_name AS owner_display_name,
@@ -257,6 +259,7 @@ type ListVideoSearchDocsPageRow struct {
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
 	PublishAt        pgtype.Timestamptz `json:"publish_at"`
+	SourcePublished  pgtype.Timestamptz `json:"source_published"`
 	ChannelHandle    string             `json:"channel_handle"`
 	ChannelName      string             `json:"channel_name"`
 	OwnerID          uuid.UUID          `json:"owner_id"`
@@ -295,6 +298,7 @@ func (q *Queries) ListVideoSearchDocsPage(ctx context.Context, arg ListVideoSear
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.PublishAt,
+			&i.SourcePublished,
 			&i.ChannelHandle,
 			&i.ChannelName,
 			&i.OwnerID,
