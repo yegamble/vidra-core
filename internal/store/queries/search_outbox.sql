@@ -70,7 +70,7 @@ GROUP BY state;
 -- from privacy+state+owner_unlisted, so those raw fields ride along.
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.category, v.language, v.license, v.is_sensitive,
-       v.created_at, v.updated_at, v.publish_at,
+       v.created_at, v.updated_at, v.publish_at, v.peertube_published_at AS source_published,
        c.handle AS channel_handle, c.display_name AS channel_name,
        c.owner_id,
        au.display_name AS owner_display_name,
@@ -96,7 +96,7 @@ WHERE v.id = $1;
 -- projection as GetVideoSearchDoc so both build the identical doc payload.
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.category, v.language, v.license, v.is_sensitive,
-       v.created_at, v.updated_at, v.publish_at,
+       v.created_at, v.updated_at, v.publish_at, v.peertube_published_at AS source_published,
        c.handle AS channel_handle, c.display_name AS channel_name,
        c.owner_id,
        au.display_name AS owner_display_name,

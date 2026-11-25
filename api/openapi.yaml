@@ -4766,10 +4766,11 @@ paths:
             Result ordering, using the same `-field`/`field` convention as the
             admin video list. `relevance` (the default) is trigram similarity
             then recency — the behaviour this endpoint had before it accepted a
-            sort at all, so existing callers are unaffected. `published_at` is
-            an alias of created_at: local videos carry no separate published_at
-            column, and remote rows project COALESCE(published_at, fetched_at)
-            into the same column. An unrecognised value is a 400, never a silent
+            sort at all, so existing callers are unaffected. Publication sorts use
+            the source publication timestamp for imported videos, when present,
+            and otherwise fall back to the local creation time. For remote rows
+            the origin's publication time falls back to the fetch time.
+            An unrecognised value is a 400, never a silent
             fallback to a different order. Anything other than `relevance` is
             served by the local SQL backend (see the description above).
           schema:

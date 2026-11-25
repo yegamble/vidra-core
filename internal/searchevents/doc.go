@@ -17,26 +17,27 @@ const docKindLocal = "local"
 // (GetVideoSearchDocRow and ListVideoSearchDocsPageRow), so both build an
 // identical VideoDoc.
 type videoDocFields struct {
-	ID              uuid.UUID
-	ChannelID       uuid.UUID
-	ChannelHandle   string
-	ChannelName     string
-	OwnerID         uuid.UUID
-	Title           string
-	Description     string
-	Tags            []string
-	Category        *string
-	Language        *string
-	License         *string
-	DurationSeconds *int32
-	IsSensitive     bool
-	Privacy         string
-	State           string
-	PublishAt       pgtype.Timestamptz
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	Views           int64
-	Likes           int64
+	ID                uuid.UUID
+	ChannelID         uuid.UUID
+	ChannelHandle     string
+	ChannelName       string
+	OwnerID           uuid.UUID
+	Title             string
+	Description       string
+	Tags              []string
+	Category          *string
+	Language          *string
+	License           *string
+	DurationSeconds   *int32
+	IsSensitive       bool
+	Privacy           string
+	State             string
+	PublishAt         pgtype.Timestamptz
+	SourcePublishedAt pgtype.Timestamptz
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	Views             int64
+	Likes             int64
 }
 
 // buildVideoDoc assembles the wire VideoDoc from the shared fields, resolving the
@@ -72,6 +73,9 @@ func buildVideoDoc(f videoDocFields) VideoDoc {
 		Likes:           f.Likes,
 	}
 	switch {
+	case f.State == "published" && f.SourcePublishedAt.Valid:
+		t := f.SourcePublishedAt.Time
+		doc.PublishedAt = &t
 	case f.State == "published":
 		t := f.CreatedAt
 		doc.PublishedAt = &t
@@ -88,7 +92,7 @@ func videoDocFromRow(r sqlcgen.GetVideoSearchDocRow) VideoDoc {
 		ID: r.ID, ChannelID: r.ChannelID, ChannelHandle: r.ChannelHandle, ChannelName: r.ChannelName,
 		OwnerID: r.OwnerID, Title: r.Title, Description: r.Description, Tags: r.Tags,
 		Category: r.Category, Language: r.Language, License: r.License, DurationSeconds: r.DurationSeconds,
-		IsSensitive: r.IsSensitive, Privacy: r.Privacy, State: r.State, PublishAt: r.PublishAt,
+		IsSensitive: r.IsSensitive, Privacy: r.Privacy, State: r.State, PublishAt: r.PublishAt, SourcePublishedAt: r.SourcePublished,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Views: r.Views, Likes: r.Likes,
 	})
 }
@@ -99,7 +103,7 @@ func videoDocFromPageRow(r sqlcgen.ListVideoSearchDocsPageRow) VideoDoc {
 		ID: r.ID, ChannelID: r.ChannelID, ChannelHandle: r.ChannelHandle, ChannelName: r.ChannelName,
 		OwnerID: r.OwnerID, Title: r.Title, Description: r.Description, Tags: r.Tags,
 		Category: r.Category, Language: r.Language, License: r.License, DurationSeconds: r.DurationSeconds,
-		IsSensitive: r.IsSensitive, Privacy: r.Privacy, State: r.State, PublishAt: r.PublishAt,
+		IsSensitive: r.IsSensitive, Privacy: r.Privacy, State: r.State, PublishAt: r.PublishAt, SourcePublishedAt: r.SourcePublished,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Views: r.Views, Likes: r.Likes,
 	})
 }

@@ -1,0 +1,1 @@
+DROP INDEX videos_publication_order_idx;
