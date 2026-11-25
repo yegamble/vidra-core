@@ -809,7 +809,7 @@ func (q *Queries) DeleteVideo(ctx context.Context, id uuid.UUID) error {
 }
 
 const getVideoByID = `-- name: GetVideoByID :one
-SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
+SELECT v.id, v.peertube_published_at AS source_published, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license, v.publish_at, v.originally_published_at,
        v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.support,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
@@ -848,6 +848,7 @@ WHERE v.id = $1
 
 type GetVideoByIDRow struct {
 	ID                      uuid.UUID          `json:"id"`
+	SourcePublished         pgtype.Timestamptz `json:"source_published"`
 	ShortCode               string             `json:"short_code"`
 	ChannelID               uuid.UUID          `json:"channel_id"`
 	Title                   string             `json:"title"`
@@ -885,6 +886,7 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 	var i GetVideoByIDRow
 	err := row.Scan(
 		&i.ID,
+		&i.SourcePublished,
 		&i.ShortCode,
 		&i.ChannelID,
 		&i.Title,
@@ -1438,7 +1440,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code,
        EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
        COALESCE(
            (SELECT b.reason FROM video_blocks b WHERE b.video_id = v.id),
@@ -1491,6 +1493,7 @@ type ListOwnerVideosRow struct {
 	IsSensitive        bool               `json:"is_sensitive"`
 	SensitiveFlags     []string           `json:"sensitive_flags"`
 	SensitiveReason    string             `json:"sensitive_reason"`
+	ListedAt           time.Time          `json:"listed_at"`
 	ShortCode          string             `json:"short_code"`
 	Blocked            bool               `json:"blocked"`
 	BlockReason        string             `json:"block_reason"`
@@ -1539,6 +1542,7 @@ func (q *Queries) ListOwnerVideos(ctx context.Context, arg ListOwnerVideosParams
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 			&i.Blocked,
 			&i.BlockReason,
@@ -1563,7 +1567,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -1624,6 +1628,7 @@ type ListPublicVideosByChannelRow struct {
 	IsSensitive        bool      `json:"is_sensitive"`
 	SensitiveFlags     []string  `json:"sensitive_flags"`
 	SensitiveReason    string    `json:"sensitive_reason"`
+	ListedAt           time.Time `json:"listed_at"`
 	ShortCode          string    `json:"short_code"`
 }
 
@@ -1664,6 +1669,7 @@ func (q *Queries) ListPublicVideosByChannel(ctx context.Context, arg ListPublicV
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 		); err != nil {
 			return nil, err
@@ -1688,7 +1694,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -1734,6 +1740,7 @@ type ListPublicVideosByIDsRow struct {
 	IsSensitive        bool      `json:"is_sensitive"`
 	SensitiveFlags     []string  `json:"sensitive_flags"`
 	SensitiveReason    string    `json:"sensitive_reason"`
+	ListedAt           time.Time `json:"listed_at"`
 	ShortCode          string    `json:"short_code"`
 }
 
@@ -1771,6 +1778,7 @@ func (q *Queries) ListPublicVideosByIDs(ctx context.Context, arg ListPublicVideo
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 		); err != nil {
 			return nil, err
@@ -1793,7 +1801,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -1854,6 +1862,7 @@ type ListPublicVideosByOwnerRow struct {
 	IsSensitive        bool      `json:"is_sensitive"`
 	SensitiveFlags     []string  `json:"sensitive_flags"`
 	SensitiveReason    string    `json:"sensitive_reason"`
+	ListedAt           time.Time `json:"listed_at"`
 	ShortCode          string    `json:"short_code"`
 }
 
@@ -1897,6 +1906,7 @@ func (q *Queries) ListPublicVideosByOwner(ctx context.Context, arg ListPublicVid
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 		); err != nil {
 			return nil, err
@@ -1943,7 +1953,7 @@ SELECT v.id, false AS remote, v.channel_id, v.title, v.description,
        au.display_name AS author_display_name,
        vm.duration_seconds,
        ''::text AS domain, ''::text AS watch_url, NULL::text AS stream_url,
-       v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+       v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
 FROM page p
 JOIN videos v ON v.id = p.id
 JOIN channels c ON c.id = v.channel_id
@@ -1982,6 +1992,7 @@ type ListPublicVideosRankedRow struct {
 	IsSensitive        bool      `json:"is_sensitive"`
 	SensitiveFlags     []string  `json:"sensitive_flags"`
 	SensitiveReason    string    `json:"sensitive_reason"`
+	ListedAt           time.Time `json:"listed_at"`
 	ShortCode          string    `json:"short_code"`
 }
 
@@ -2026,6 +2037,7 @@ func (q *Queries) ListPublicVideosRanked(ctx context.Context, arg ListPublicVide
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 		); err != nil {
 			return nil, err
@@ -2063,7 +2075,7 @@ SELECT v.id, false AS remote, v.channel_id, v.title, v.description,
        au.display_name AS author_display_name,
        vm.duration_seconds,
        ''::text AS domain, ''::text AS watch_url, NULL::text AS stream_url,
-       v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+       v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
 FROM page p
 JOIN videos v ON v.id = p.id
 JOIN channels c ON c.id = v.channel_id
@@ -2101,6 +2113,7 @@ type ListPublicVideosRecentRow struct {
 	IsSensitive        bool      `json:"is_sensitive"`
 	SensitiveFlags     []string  `json:"sensitive_flags"`
 	SensitiveReason    string    `json:"sensitive_reason"`
+	ListedAt           time.Time `json:"listed_at"`
 	ShortCode          string    `json:"short_code"`
 }
 
@@ -2144,6 +2157,7 @@ func (q *Queries) ListPublicVideosRecent(ctx context.Context, arg ListPublicVide
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 		); err != nil {
 			return nil, err
@@ -2162,7 +2176,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.short_code
+       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.listed_at, feed.short_code
 FROM (
     SELECT v.id,
            false AS remote,
@@ -2311,6 +2325,7 @@ type ListPublicVideosSortedRow struct {
 	IsSensitive        bool      `json:"is_sensitive"`
 	SensitiveFlags     []string  `json:"sensitive_flags"`
 	SensitiveReason    string    `json:"sensitive_reason"`
+	ListedAt           time.Time `json:"listed_at"`
 	ShortCode          string    `json:"short_code"`
 }
 
@@ -2377,6 +2392,7 @@ func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVide
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 		); err != nil {
 			return nil, err
@@ -2458,7 +2474,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code,
        (v.channel_id = $1)::bool AS same_channel
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
@@ -2513,6 +2529,7 @@ type ListRelatedVideosFallbackRow struct {
 	IsSensitive        bool      `json:"is_sensitive"`
 	SensitiveFlags     []string  `json:"sensitive_flags"`
 	SensitiveReason    string    `json:"sensitive_reason"`
+	ListedAt           time.Time `json:"listed_at"`
 	ShortCode          string    `json:"short_code"`
 	SameChannel        bool      `json:"same_channel"`
 }
@@ -2557,6 +2574,7 @@ func (q *Queries) ListRelatedVideosFallback(ctx context.Context, arg ListRelated
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 			&i.SameChannel,
 		); err != nil {
@@ -2613,7 +2631,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.short_code
+       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.listed_at, feed.short_code
 FROM (
     SELECT v.id,
            false AS remote,
@@ -2741,6 +2759,7 @@ type ListSubscriptionVideosRow struct {
 	IsSensitive        bool      `json:"is_sensitive"`
 	SensitiveFlags     []string  `json:"sensitive_flags"`
 	SensitiveReason    string    `json:"sensitive_reason"`
+	ListedAt           time.Time `json:"listed_at"`
 	ShortCode          string    `json:"short_code"`
 }
 
@@ -2787,6 +2806,7 @@ func (q *Queries) ListSubscriptionVideos(ctx context.Context, arg ListSubscripti
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 		); err != nil {
 			return nil, err
@@ -2870,7 +2890,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code,
        -- A moderator block changes neither state nor privacy, so without this
        -- column the owner's own management list shows a blocked video as
        -- 'published' while it 404s for everyone including them (A16 slice 2).
@@ -2925,6 +2945,7 @@ type ListVideosByChannelRow struct {
 	IsSensitive        bool               `json:"is_sensitive"`
 	SensitiveFlags     []string           `json:"sensitive_flags"`
 	SensitiveReason    string             `json:"sensitive_reason"`
+	ListedAt           time.Time          `json:"listed_at"`
 	ShortCode          string             `json:"short_code"`
 	Blocked            bool               `json:"blocked"`
 	BlockReason        string             `json:"block_reason"`
@@ -2969,6 +2990,7 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, arg ListVideosByChann
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 			&i.Blocked,
 			&i.BlockReason,
@@ -3009,7 +3031,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.short_code
+       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.listed_at, feed.short_code
 FROM (
     SELECT v.id,
            false AS remote,
@@ -3201,6 +3223,7 @@ type SearchPublicVideosRow struct {
 	IsSensitive        bool      `json:"is_sensitive"`
 	SensitiveFlags     []string  `json:"sensitive_flags"`
 	SensitiveReason    string    `json:"sensitive_reason"`
+	ListedAt           time.Time `json:"listed_at"`
 	ShortCode          string    `json:"short_code"`
 }
 
@@ -3275,6 +3298,7 @@ func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideos
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 		); err != nil {
 			return nil, err

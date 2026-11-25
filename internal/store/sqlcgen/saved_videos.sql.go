@@ -41,7 +41,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
 FROM saved_videos s
 JOIN videos v ON v.id = s.video_id
 JOIN channels c ON c.id = v.channel_id
@@ -78,6 +78,7 @@ type ListSavedVideosRow struct {
 	IsSensitive        bool      `json:"is_sensitive"`
 	SensitiveFlags     []string  `json:"sensitive_flags"`
 	SensitiveReason    string    `json:"sensitive_reason"`
+	ListedAt           time.Time `json:"listed_at"`
 	ShortCode          string    `json:"short_code"`
 }
 
@@ -110,6 +111,7 @@ func (q *Queries) ListSavedVideos(ctx context.Context, arg ListSavedVideosParams
 			&i.IsSensitive,
 			&i.SensitiveFlags,
 			&i.SensitiveReason,
+			&i.ListedAt,
 			&i.ShortCode,
 		); err != nil {
 			return nil, err

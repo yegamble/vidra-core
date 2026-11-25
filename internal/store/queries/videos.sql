@@ -102,7 +102,7 @@ LEFT JOIN LATERAL (
 WHERE v.id = $1;
 
 -- name: GetVideoByID :one
-SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
+SELECT v.id, v.peertube_published_at AS source_published, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license, v.publish_at, v.originally_published_at,
        v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.support,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
@@ -166,7 +166,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code,
        -- A moderator block changes neither state nor privacy, so without this
        -- column the owner's own management list shows a blocked video as
        -- 'published' while it 404s for everyone including them (A16 slice 2).
@@ -214,7 +214,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code,
        EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
        COALESCE(
            (SELECT b.reason FROM video_blocks b WHERE b.video_id = v.id),
@@ -267,7 +267,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -339,7 +339,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -421,7 +421,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.short_code
+       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.listed_at, feed.short_code
 FROM (
     SELECT v.id,
            false AS remote,
@@ -569,7 +569,7 @@ SELECT v.id, false AS remote, v.channel_id, v.title, v.description,
        au.display_name AS author_display_name,
        vm.duration_seconds,
        ''::text AS domain, ''::text AS watch_url, NULL::text AS stream_url,
-       v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+       v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
 FROM page p
 JOIN videos v ON v.id = p.id
 JOIN channels c ON c.id = v.channel_id
@@ -617,7 +617,7 @@ SELECT v.id, false AS remote, v.channel_id, v.title, v.description,
        au.display_name AS author_display_name,
        vm.duration_seconds,
        ''::text AS domain, ''::text AS watch_url, NULL::text AS stream_url,
-       v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+       v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
 FROM page p
 JOIN videos v ON v.id = p.id
 JOIN channels c ON c.id = v.channel_id
@@ -758,7 +758,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.short_code
+       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.listed_at, feed.short_code
 FROM (
     SELECT v.id,
            false AS remote,
@@ -980,7 +980,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.short_code
+       feed.is_sensitive, feed.sensitive_flags, feed.sensitive_reason, feed.listed_at, feed.short_code
 FROM (
     SELECT v.id,
            false AS remote,
@@ -1293,7 +1293,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -1329,7 +1329,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.short_code,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, COALESCE(v.peertube_published_at, v.created_at)::timestamptz AS listed_at, v.short_code,
        (v.channel_id = sqlc.arg('channel_id'))::bool AS same_channel
 FROM videos v
 JOIN channels c ON c.id = v.channel_id

@@ -11964,7 +11964,7 @@ paths:
           description: >-
             Ordering. Each key is accepted bare (ascending) or `-`-prefixed
             (descending). `published_at` is an ALIAS of `created_at`: videos
-            carry no separate published_at column and the federated arm projects
+            use creation time for this admin inventory and the federated arm projects
             its own publish time into created_at, so they order the same rows the
             same way. The default reproduces the previous fixed ordering.
           schema:
@@ -22307,6 +22307,10 @@ components:
             The creator's optional content-warning text, paired with
             is_sensitive by the frontend. Always present (empty string when
             unset, and on remote cards). At most 280 characters.
+        published_at:
+          type: string
+          format: date-time
+          description: When the video was published on its source instance, if known. For display and newest-first browsing, fall back to created_at when absent.
         created_at:
           type: string
           format: date-time
@@ -22370,8 +22374,7 @@ components:
             When the video was FIRST published elsewhere (a PeerTube import's
             originallyPublishedAt, or a date the creator set). Present on the
             detail and create/update views when known; omitted for anything
-            first published on this instance, where created_at is the only
-            date.
+            first published on this instance.
         duration_seconds:
           type:
             - integer
