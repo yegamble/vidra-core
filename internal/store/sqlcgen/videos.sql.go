@@ -748,7 +748,36 @@ type CreateVideoParams struct {
 	SensitiveFlags        []string           `json:"sensitive_flags"`
 }
 
-func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video, error) {
+type CreateVideoRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	ChannelID             uuid.UUID          `json:"channel_id"`
+	Title                 string             `json:"title"`
+	Description           string             `json:"description"`
+	Privacy               string             `json:"privacy"`
+	State                 string             `json:"state"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+	Category              *string            `json:"category"`
+	Language              *string            `json:"language"`
+	License               *string            `json:"license"`
+	PublishAt             pgtype.Timestamptz `json:"publish_at"`
+	EmbedPrivacy          string             `json:"embed_privacy"`
+	EmbedAllowedDomains   []string           `json:"embed_allowed_domains"`
+	IsSensitive           bool               `json:"is_sensitive"`
+	CommentsPolicy        string             `json:"comments_policy"`
+	DownloadEnabled       bool               `json:"download_enabled"`
+	PublishAfterTranscode bool               `json:"publish_after_transcode"`
+	PinnedCommentID       pgtype.UUID        `json:"pinned_comment_id"`
+	SensitiveReason       string             `json:"sensitive_reason"`
+	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
+	ShortCode             string             `json:"short_code"`
+	PeertubeUuid          pgtype.UUID        `json:"peertube_uuid"`
+	TranscodeGeneration   int32              `json:"transcode_generation"`
+	Support               *string            `json:"support"`
+	SensitiveFlags        []string           `json:"sensitive_flags"`
+}
+
+func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (CreateVideoRow, error) {
 	row := q.db.QueryRow(ctx, createVideo,
 		arg.ChannelID,
 		arg.Title,
@@ -766,7 +795,7 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		arg.Support,
 		arg.SensitiveFlags,
 	)
-	var i Video
+	var i CreateVideoRow
 	err := row.Scan(
 		&i.ID,
 		&i.ChannelID,
@@ -3319,9 +3348,38 @@ type SetVideoStateParams struct {
 	ID    uuid.UUID `json:"id"`
 }
 
-func (q *Queries) SetVideoState(ctx context.Context, arg SetVideoStateParams) (Video, error) {
+type SetVideoStateRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	ChannelID             uuid.UUID          `json:"channel_id"`
+	Title                 string             `json:"title"`
+	Description           string             `json:"description"`
+	Privacy               string             `json:"privacy"`
+	State                 string             `json:"state"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+	Category              *string            `json:"category"`
+	Language              *string            `json:"language"`
+	License               *string            `json:"license"`
+	PublishAt             pgtype.Timestamptz `json:"publish_at"`
+	EmbedPrivacy          string             `json:"embed_privacy"`
+	EmbedAllowedDomains   []string           `json:"embed_allowed_domains"`
+	IsSensitive           bool               `json:"is_sensitive"`
+	CommentsPolicy        string             `json:"comments_policy"`
+	DownloadEnabled       bool               `json:"download_enabled"`
+	PublishAfterTranscode bool               `json:"publish_after_transcode"`
+	PinnedCommentID       pgtype.UUID        `json:"pinned_comment_id"`
+	SensitiveReason       string             `json:"sensitive_reason"`
+	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
+	ShortCode             string             `json:"short_code"`
+	PeertubeUuid          pgtype.UUID        `json:"peertube_uuid"`
+	TranscodeGeneration   int32              `json:"transcode_generation"`
+	Support               *string            `json:"support"`
+	SensitiveFlags        []string           `json:"sensitive_flags"`
+}
+
+func (q *Queries) SetVideoState(ctx context.Context, arg SetVideoStateParams) (SetVideoStateRow, error) {
 	row := q.db.QueryRow(ctx, setVideoState, arg.State, arg.ID)
-	var i Video
+	var i SetVideoStateRow
 	err := row.Scan(
 		&i.ID,
 		&i.ChannelID,
@@ -3400,7 +3458,36 @@ type UpdateVideoParams struct {
 	ID                    uuid.UUID          `json:"id"`
 }
 
-func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video, error) {
+type UpdateVideoRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	ChannelID             uuid.UUID          `json:"channel_id"`
+	Title                 string             `json:"title"`
+	Description           string             `json:"description"`
+	Privacy               string             `json:"privacy"`
+	State                 string             `json:"state"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+	Category              *string            `json:"category"`
+	Language              *string            `json:"language"`
+	License               *string            `json:"license"`
+	PublishAt             pgtype.Timestamptz `json:"publish_at"`
+	EmbedPrivacy          string             `json:"embed_privacy"`
+	EmbedAllowedDomains   []string           `json:"embed_allowed_domains"`
+	IsSensitive           bool               `json:"is_sensitive"`
+	CommentsPolicy        string             `json:"comments_policy"`
+	DownloadEnabled       bool               `json:"download_enabled"`
+	PublishAfterTranscode bool               `json:"publish_after_transcode"`
+	PinnedCommentID       pgtype.UUID        `json:"pinned_comment_id"`
+	SensitiveReason       string             `json:"sensitive_reason"`
+	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
+	ShortCode             string             `json:"short_code"`
+	PeertubeUuid          pgtype.UUID        `json:"peertube_uuid"`
+	TranscodeGeneration   int32              `json:"transcode_generation"`
+	Support               *string            `json:"support"`
+	SensitiveFlags        []string           `json:"sensitive_flags"`
+}
+
+func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (UpdateVideoRow, error) {
 	row := q.db.QueryRow(ctx, updateVideo,
 		arg.Title,
 		arg.Description,
@@ -3420,7 +3507,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		arg.ChannelID,
 		arg.ID,
 	)
-	var i Video
+	var i UpdateVideoRow
 	err := row.Scan(
 		&i.ID,
 		&i.ChannelID,
