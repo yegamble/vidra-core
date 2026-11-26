@@ -14,8 +14,15 @@ tool *moves content in*, once.
 
 **Imported** (local content only — remote/federated actors are never migrated):
 
-- Users/accounts (bcrypt password hashes carried, so passwords keep working) and
-  their ActivityPub actor keypairs (for federation continuity).
+- Local accounts, their stored bcrypt password hashes and their ActivityPub
+  actor keypairs. The importer creates suspended accounts inactive. It also
+  holds accounts with a source authenticator enrollment for operator-assisted
+  recovery. See [sign-in verification](#6-post-import-verification).
+- Source video blacklist entries become Vidra video blocks. If the source
+  lacks the `videoBlacklist` table, the report lists moderator removals as
+  deferred. Inspect `video_block`, `user_suspension` and `user_mfa_hold`.
+- Local-video watch history carries the resume position and source timestamps
+  for mapped users and videos. Reruns preserve history edited or cleared on Vidra.
 - Channels.
 - Videos + their metadata (title, description, privacy, category/licence/
   language, duration, original publication date), the primary web video file,
@@ -27,14 +34,12 @@ tool *moves content in*, once.
 - Subscriptions (local user → local channel follows).
 - **View totals** — each video's lifetime count (see §1.1 for what that does and
   does not mean).
-- **Original publication dates** — PeerTube's `originallyPublishedAt`, the day a
-  video was first published *somewhere else*. Without it a 2016 talk migrated
-  today reads as a 2026 video, because `created_at` only ever records when the
-  row appeared here. It is carried on the video insert **and** by a backfill pass
-  of its own, so a catalogue imported by an earlier release gets its dates on the
-  next run rather than needing a re-import. A source too old to have the column
-  loses the dates and nothing else, and a video first published on the source
-  itself stays unset — the absence is the answer, not a gap.
+- **Publication dates.** `video_publication_date` tracks PeerTube's
+  `publishedAt`, when the video was published on the source site. Vidra uses
+  that timestamp for display and newest-first browsing, falling back to
+  `created_at`. `video_original_date` tracks first publication elsewhere
+  (`originallyPublishedAt`). The importer can fill dates for previously
+  imported videos when the source provides them.
 - **Chapters** — seek-bar marks. `has_chapters` on the video detail is derived
   from the rows, so it flips on by itself.
 - **Ratings** — likes/dislikes cast by local accounts on local videos.
@@ -60,8 +65,8 @@ tool *moves content in*, once.
   require conversion; failures remain visible in `hls_playlist.failed` and
   `video_no_media`. No automatic re-transcode is scheduled.
 - **Per-day view history** — see §1.1.
-- **Moderation state** (video blacklist, account/server blocklists, abuse reports).
-- **User notification settings and watch history.**
+- **Moderation records outside the import:** account/server blocklists and abuse reports.
+- **User settings and history outside the import:** notification settings and remote-video watch history.
 - **Original-file history and provenance** (`videoSource`) beyond the latest
   retained upload. Initial imports prefer that upload's `keptOriginalFilename`
   under `original-video-files/`, including HLS-only sources; otherwise they use
@@ -339,10 +344,15 @@ reports. Missing thumbnails still need source artwork or usable video media.
 > (`ssh -L 15432:127.0.0.1:5432 <source host>`) is the answer that changes
 > nothing on the source.
 
-> Password hashes: PeerTube and Vidra both use bcrypt, and a bcrypt hash encodes
-> its own cost, so carried hashes verify directly — users keep their passwords.
-> If you ever import from a system with an incompatible scheme, import with
-> credentials disabled and require a password reset instead.
+> Active imported accounts with a local bcrypt password can sign in with that
+> password. A PeerTube account that used only external authentication has no
+> local password to carry. For a newly imported account with PeerTube TOTP,
+> the importer records `user_mfa_hold` and leaves the account inactive. The
+> operator must verify the recovery request and coordinate reactivation and
+> enrollment of a new Vidra authenticator. A source-suspended account with
+> TOTP counts under `user_suspension` only. The importer applies these holds
+> when creating an account. On a later authoritative run it preserves the
+> account's current active or inactive state on Vidra.
 
 > Storage quotas: an account the import CREATES is written
 > `storage_quota_bytes = 0` — **unlimited** — because its back-catalogue is
@@ -653,9 +663,11 @@ to be ticked again before every launch.
 1. **Counts.** Compare the run's `report.entities[*].imported` against your
    source (`SELECT count(*) FROM "user"`, `video`, …). `skipped`/`failed` explain
    any difference; `conflicts` lists resolved collisions.
-2. **Sign-in.** A migrated user can log in with their existing password, and
-   `GET /api/v1/me/quota` reports `quota_bytes: null` for them — an imported
-   creator is unlimited, not over the instance default with their own catalogue.
+2. **Sign-in.** Use a consenting, active imported account with a local password.
+   Verify sign-in after the final source-authoritative import, which can
+   replace a password changed during rehearsal. Check that a source-suspended
+   account and a newly imported account held for MFA remain inactive. For a
+   newly imported creator, `GET /api/v1/me/quota` reports `quota_bytes: null`.
 3. **Playback.** Open an imported public video. In reference mode, both the
    original and PeerTube's existing HLS playlist should play through Vidra's
    authenticated proxy. In copy mode, the original plays immediately; enable
