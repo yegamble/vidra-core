@@ -34,10 +34,6 @@ func TestCatalogCaptureRetainsPrivacyCommitFromPreBootstrapWriter(t *testing.T) 
 	if _, err := st.Pool.Exec(ctx, `INSERT INTO videos(id,channel_id,title,privacy,state) VALUES ($1,$2,'before','public','published')`, video, channel); err != nil {
 		t.Fatal(err)
 	}
-	var baseline []uuid.UUID
-	if err := st.Pool.QueryRow(ctx, `SELECT array_agg(id) FROM search_catalog_dirty`).Scan(&baseline); err != nil {
-		t.Fatal(err)
-	}
 	writer, err := st.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		t.Fatal(err)
@@ -47,13 +43,23 @@ func TestCatalogCaptureRetainsPrivacyCommitFromPreBootstrapWriter(t *testing.T) 
 	if err := writer.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM search_catalog_state)`).Scan(&initialized); err != nil || initialized {
 		t.Fatalf("writer did not begin before bootstrap: %v/%v", initialized, err)
 	}
+	// Both observations must use the writer's snapshot. Other test packages
+	// share this database and can commit unrelated hints between transactions.
+	var baseline []uuid.UUID
+	if err := writer.QueryRow(ctx, `SELECT ARRAY(SELECT id FROM search_catalog_dirty)`).Scan(&baseline); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := writer.Exec(ctx, `UPDATE videos SET privacy='private' WHERE id=$1`, video); err != nil {
 		t.Fatal(err)
 	}
-	var hint uuid.UUID
-	if err := writer.QueryRow(ctx, `SELECT id FROM search_catalog_dirty WHERE NOT(id=ANY($1::uuid[]))`, baseline).Scan(&hint); err != nil {
-		t.Fatalf("pre-bootstrap canonical write lacks its transactional hint: %v", err)
+	var added []uuid.UUID
+	if err := writer.QueryRow(ctx, `SELECT ARRAY(SELECT id FROM search_catalog_dirty WHERE NOT(id=ANY($1::uuid[])))`, baseline).Scan(&added); err != nil {
+		t.Fatal(err)
 	}
+	if len(added) != 1 {
+		t.Fatalf("pre-bootstrap write added %d transactional hints, want one", len(added))
+	}
+	hint := added[0]
 	for _, statement := range []string{`INSERT INTO search_catalog_epochs(scope,epoch) VALUES ('local',$1)`,
 		`INSERT INTO search_catalog_state(scope,epoch) VALUES ('local',$1)`} {
 		if _, err := st.Pool.Exec(ctx, statement, epoch); err != nil {
