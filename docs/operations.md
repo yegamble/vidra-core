@@ -1521,6 +1521,33 @@ bytes:
   it must never have been public in the first place. Replicating **non-public** media
   is a separate tier with its own node and its own rules — see the next section.
 
+### Checking a video for public S3 reference publication
+
+A reference publisher checks the current PostgreSQL view before publishing a
+generation and before each object read, including ranged requests. Use a fresh
+read from the primary and match both values in the operator's approval record.
+
+```sql
+SELECT EXISTS (
+    SELECT 1 FROM ipfs_public_reference_videos
+    WHERE video_id = $1 AND master_key = $2
+);
+```
+
+The view admits public, published videos with a listed, active owner. It excludes
+soft-deleted or banned owners, moderation blocks, video passwords, DRM keys,
+and videos marked sensitive or carrying a sensitive-content flag. It requires
+the ready Vidra master for the video's current positive transcode generation.
+A new transcode, a block or a change in visibility invalidates a previous match.
+
+The deployment operator grants a dedicated reader SELECT on the view. The
+publisher must also require explicit approval for the individual video and
+generation, confine reads to the approved S3 objects, and deny a read when
+either check fails or the database is unavailable. The view identifies a
+generation. Verifying object versions and bytes is the publisher's responsibility.
+Public IPFS peers can retain bytes they have received. A website's browser age
+prompt cannot govern those copies.
+
 ## Private IPFS mirror tier (P19.P) — replication, not distribution
 
 `IPFS_MIRROR_PRIVATE=true` opts the instance into replicating **non-public** media

@@ -1,0 +1,1 @@
+DROP VIEW ipfs_public_reference_videos;

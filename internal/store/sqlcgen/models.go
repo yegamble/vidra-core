@@ -526,6 +526,12 @@ type IpfsCopyCleanup struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// Live candidates for individually approved public S3 references. The publisher separately requires operator approval for the exact video and generation and verifies the storage objects.
+type IpfsPublicReferenceVideo struct {
+	VideoID   uuid.UUID `json:"video_id"`
+	MasterKey string    `json:"master_key"`
+}
+
 type JobEvent struct {
 	Cursor          int64       `json:"cursor"`
 	ID              uuid.UUID   `json:"id"`
