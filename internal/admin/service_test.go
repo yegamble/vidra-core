@@ -69,21 +69,22 @@ func newFakeRepo() *fakeRepo {
 
 func (f *fakeRepo) CountUsers(_ context.Context) (int64, error) { return int64(len(f.users)), nil }
 
-// CountUsersMatching mirrors ListUsers' filter so a test asserting the total
-// against a filtered page is actually asserting something.
-func (f *fakeRepo) CountUsersMatching(_ context.Context, query string) (int64, error) {
-	if query == "" {
-		return int64(len(f.users)), nil
-	}
-	q := strings.ToLower(query)
-	var n int64
+func (f *fakeRepo) CountUsersMatching(_ context.Context, query string) (sqlcgen.CountUsersMatchingRow, error) {
+	var counts sqlcgen.CountUsersMatchingRow
+	query = strings.ToLower(query)
 	for _, u := range f.users {
-		if strings.Contains(strings.ToLower(u.Username), q) ||
-			strings.Contains(strings.ToLower(u.Email), q) {
-			n++
+		if !strings.Contains(strings.ToLower(u.Username), query) && !strings.Contains(strings.ToLower(u.Email), query) {
+			continue
+		}
+		counts.All++
+		if u.Role == "admin" || u.Role == "moderator" {
+			counts.Staff++
+		}
+		if !u.IsActive && !u.DeletedAt.Valid {
+			counts.Deactivated++
 		}
 	}
-	return n, nil
+	return counts, nil
 }
 func (f *fakeRepo) CountPublicVideos(_ context.Context) (int64, error) {
 	return f.publicVideos, nil
@@ -123,6 +124,9 @@ func (f *fakeRepo) add(username, role string) uuid.UUID {
 func (f *fakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) ([]sqlcgen.ListUsersRow, error) {
 	var out []sqlcgen.ListUsersRow
 	for _, u := range f.users {
+		if a.UserFilter == "staff" && u.Role != "admin" && u.Role != "moderator" || a.UserFilter == "deactivated" && (u.IsActive || u.DeletedAt.Valid) {
+			continue
+		}
 		if a.Query == "" || strings.Contains(u.Username, a.Query) || strings.Contains(u.Email, a.Query) {
 			out = append(out, sqlcgen.ListUsersRow{
 				ID: u.ID, Username: u.Username, Email: u.Email, Role: u.Role,
@@ -218,16 +222,16 @@ func TestListUsersSearch(t *testing.T) {
 	repo.used[adaID] = 42
 	svc := NewService(repo)
 
-	all, _ := svc.ListUsers(context.Background(), "", 20, 0)
+	all, _, _ := svc.ListUsers(context.Background(), sqlcgen.ListUsersParams{Query: "", ResultLimit: 20})
 	if len(all) != 2 {
 		t.Fatalf("all users = %d, want 2", len(all))
 	}
-	only, _ := svc.ListUsers(context.Background(), "bob", 20, 0)
+	only, _, _ := svc.ListUsers(context.Background(), sqlcgen.ListUsersParams{Query: "bob", ResultLimit: 20})
 	if len(only) != 1 || only[0].Username != "bob" {
 		t.Fatalf("search bob = %+v, want [bob]", only)
 	}
 	// The list rows carry storage usage for the admin view.
-	adas, _ := svc.ListUsers(context.Background(), "ada", 20, 0)
+	adas, _, _ := svc.ListUsers(context.Background(), sqlcgen.ListUsersParams{Query: "ada", ResultLimit: 20})
 	if len(adas) != 1 || adas[0].StorageUsedBytes != 42 {
 		t.Errorf("ada storage_used_bytes = %+v, want 42", adas)
 	}
@@ -687,7 +691,7 @@ func TestUpdateUserDailyQuotaRollsBackWithFailedUserWrite(t *testing.T) {
 	repo.users[userID] = sqlcgen.User{ID: userID, Role: RoleUser, IsActive: true}
 	repo.daily = map[uuid.UUID]int64{userID: 100}
 	ran := 0
-	svc := NewService(repo, WithTx(func(ctx context.Context, fn func(Repository) error) error {
+	svc := NewService(repo, WithTx(func(ctx context.Context, _ pgx.TxOptions, fn func(Repository) error) error {
 		ran++
 		snap := map[uuid.UUID]int64{}
 		for k, v := range repo.daily {

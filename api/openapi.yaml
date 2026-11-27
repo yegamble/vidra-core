@@ -19954,10 +19954,11 @@ paths:
       operationId: listUsers
       summary: List accounts (admin)
       description: >-
-        Returns accounts, newest first, optionally filtered by a username/email
-        substring (q). Admins and moderators. Paginated via limit (1–200, default
-        50) and offset; `total` counts the accounts matching the same q, so a
-        client can tell how many pages exist.
+        Admins and moderators can search accounts by username or email substring
+        (q). Results are ordered newest first, with account ID breaking ties.
+        Filter selection precedes pagination. The total counts the selected
+        group. Counts cover every account matching q, independent of the
+        selected group, limit and offset.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -19968,6 +19969,17 @@ paths:
           description: Username/email substring filter.
           schema:
             type: string
+        - name: filter
+          in: query
+          description: >-
+            All includes deleted-account tombstones. Staff includes every admin
+            and moderator regardless of active status. Deactivated includes
+            inactive accounts without a deletion timestamp. Inactive staff can
+            belong to both staff and deactivated.
+          schema:
+            type: string
+            enum: [all, staff, deactivated]
+            default: all
         - name: limit
           in: query
           required: false
@@ -19984,6 +19996,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminUserListResponse"
+        "400":
+          description: Invalid account filter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing, invalid, or expired token.
           content:
@@ -19991,7 +20009,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: The caller is not an admin.
+          description: The caller is neither an admin nor a moderator.
           content:
             application/json:
               schema:
@@ -25971,8 +25989,15 @@ components:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
         - type: object
-          required: [users]
+          required: [users, counts]
           properties:
+            counts:
+              type: object
+              required: [all, staff, deactivated]
+              properties:
+                all: {type: integer, format: int64, minimum: 0}
+                staff: {type: integer, format: int64, minimum: 0}
+                deactivated: {type: integer, format: int64, minimum: 0}
             users:
               type: array
               items:
