@@ -114,11 +114,23 @@ func (s *Service) DrainDeliveries(ctx context.Context, limit int) (int, error) {
 			s.reflectAuthoredCommentDelivery(ctx, row, authoredCommentFailed, "cancelled: video blocked", row.Attempts)
 			continue
 		}
+		payload, err := s.currentProfilePayload(ctx, row)
+		if errors.Is(err, ErrNotFound) {
+			const reason = "cancelled: account unavailable"
+			_ = s.repo.FailDelivery(ctx, sqlcgen.FailDeliveryParams{ID: row.ID, LastError: reason})
+			s.reflectAuthoredCommentDelivery(ctx, row, authoredCommentFailed, reason, row.Attempts)
+			continue
+		}
+		if err != nil {
+			s.recordDeliveryFailure(ctx, row, err)
+			continue
+		}
+		row.Payload = payload
 		if err := s.attemptDelivery(ctx, row); err != nil {
 			s.recordDeliveryFailure(ctx, row, err)
 			continue
 		}
-		_ = s.repo.MarkDeliveryDelivered(ctx, row.ID)
+		_ = s.repo.MarkDeliveryDelivered(ctx, sqlcgen.MarkDeliveryDeliveredParams{ID: row.ID, Payload: payload})
 		// The origin accepted the reply: move the author's badge to delivered.
 		s.reflectAuthoredCommentDelivery(ctx, row, authoredCommentDelivered, "", row.Attempts+1)
 		delivered++
