@@ -189,6 +189,58 @@ func (q *Queries) FailDelivery(ctx context.Context, arg FailDeliveryParams) erro
 	return err
 }
 
+const knownAccountRetractionActivity = `-- name: KnownAccountRetractionActivity :one
+WITH candidates AS (
+    SELECT signing_user_id, signing_channel_id,
+           CASE WHEN convert_from(payload, 'UTF8') IS JSON OBJECT
+                THEN convert_from(payload, 'UTF8')::jsonb END AS activity
+    FROM federation_deliveries
+    WHERE inbox_url = $6::text AND state = 'delivered'
+      AND (signing_user_id = $3::uuid OR signing_channel_id IS NOT NULL)
+      AND position(convert_to($2::text,'UTF8') IN payload) > 0
+)
+SELECT (c.activity->>'id')::text AS activity_id
+FROM candidates c
+WHERE c.activity->>'id' <> ''
+  AND CASE WHEN $1::text = 'Delete' THEN
+      c.activity->>'type' IN ('Create','Update') AND c.activity#>>'{object,id}' = $2::text
+      AND ((c.signing_user_id = $3::uuid AND c.activity->>'actor' = $4::text)
+        OR (EXISTS (SELECT FROM channels ch WHERE ch.id=c.signing_channel_id AND ch.owner_id=$3::uuid)
+            AND (c.activity#>'{object,attributedTo}') @>
+              jsonb_build_array(jsonb_build_object('type','Person','id',$4::text))))
+  ELSE
+      c.signing_user_id = $3::uuid AND c.activity->>'actor' = $4::text
+      AND c.activity->>'type' = $1::text AND c.activity->>'object' = $2::text
+      AND c.activity->>'id' = $5::text
+  END
+LIMIT 1
+`
+
+type KnownAccountRetractionActivityParams struct {
+	Kind       string    `json:"kind"`
+	Target     string    `json:"target"`
+	AccountID  uuid.UUID `json:"account_id"`
+	Actor      string    `json:"actor"`
+	PreviousID string    `json:"previous_id"`
+	Inbox      string    `json:"inbox"`
+}
+
+// A successful send to this exact inbox is evidence of prior disclosure.
+// Pending/failed jobs and the same object at another inbox prove nothing.
+func (q *Queries) KnownAccountRetractionActivity(ctx context.Context, arg KnownAccountRetractionActivityParams) (string, error) {
+	row := q.db.QueryRow(ctx, knownAccountRetractionActivity,
+		arg.Kind,
+		arg.Target,
+		arg.AccountID,
+		arg.Actor,
+		arg.PreviousID,
+		arg.Inbox,
+	)
+	var activity_id string
+	err := row.Scan(&activity_id)
+	return activity_id, err
+}
+
 const listCancelledDeliveriesForRedelivery = `-- name: ListCancelledDeliveriesForRedelivery :many
 SELECT id, inbox_url, payload
 FROM federation_deliveries

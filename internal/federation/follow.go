@@ -248,19 +248,19 @@ func (s *Service) UnfollowRemoteChannel(ctx context.Context, userID, followID uu
 		return nil
 	}
 	// Local removal still works after an account withdraws its public Person.
-	u, err := s.repo.GetUserActorByID(ctx, userID)
+	username, err := s.repo.GetRetractionActorUsername(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	accountActor := s.baseURL + "/accounts/" + u.Username
+	accountActor := s.baseURL + "/accounts/" + username
 	payload, err := buildUndoFollow(accountActor, row.FollowActivityUrl, row.RemoteActorUrl)
 	if err != nil {
 		return err
 	}
-	return s.enqueueAccountDelivery(ctx, userID, u.Username, row.InboxUrl, payload)
+	return s.enqueueAccountDelivery(ctx, userID, username, row.InboxUrl, payload)
 }
 
 // ListRemoteFollows returns the user's outbound remote-channel follows, newest

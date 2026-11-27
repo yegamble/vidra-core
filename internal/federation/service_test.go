@@ -664,6 +664,15 @@ func (f fakeRepo) ClaimDueDeliveries(_ context.Context, arg sqlcgen.ClaimDueDeli
 	return out, nil
 }
 
+func (f fakeRepo) GetRetractionActorUsername(ctx context.Context, id uuid.UUID) (string, error) {
+	u, err := f.GetUserActorByID(ctx, id)
+	return u.Username, err
+}
+
+func (fakeRepo) KnownAccountRetractionActivity(context.Context, sqlcgen.KnownAccountRetractionActivityParams) (string, error) {
+	return "", pgx.ErrNoRows
+}
+
 func (f fakeRepo) MarkDeliveryDelivered(_ context.Context, arg sqlcgen.MarkDeliveryDeliveredParams) error {
 	if d, ok := f.deliveries[arg.ID]; ok {
 		d.row.Payload = arg.Payload

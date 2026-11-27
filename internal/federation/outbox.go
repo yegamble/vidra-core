@@ -255,14 +255,14 @@ func (s *Service) retractVideo(ctx context.Context, ch sqlcgen.Channel, videoID 
 // receiver that already dropped the video ignores it, where the same Delete
 // arriving first is logged there as a failure.
 func (s *Service) enqueueVideoDeletes(ctx context.Context, ch sqlcgen.Channel, videoID uuid.UUID, inboxes []string) error {
-	owner, err := s.repo.GetUserActorByID(ctx, ch.OwnerID)
+	username, err := s.repo.GetRetractionActorUsername(ctx, ch.OwnerID)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		// No account to speak as: the channel's Delete is all there is.
 	case err != nil:
 		return err
 	default:
-		payload, err := s.buildDeleteVideo(s.baseURL+"/accounts/"+owner.Username, videoID)
+		payload, err := s.buildDeleteVideo(s.baseURL+"/accounts/"+username, videoID)
 		if err != nil {
 			return err
 		}
@@ -270,7 +270,7 @@ func (s *Service) enqueueVideoDeletes(ctx context.Context, ch sqlcgen.Channel, v
 			if inbox == "" {
 				continue
 			}
-			if err := s.enqueueAccountDelivery(ctx, owner.ID, owner.Username, inbox, payload); err != nil {
+			if err := s.enqueueAccountDelivery(ctx, ch.OwnerID, username, inbox, payload); err != nil {
 				return err
 			}
 		}

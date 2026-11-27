@@ -150,3 +150,31 @@ UPDATE federation_deliveries
 SET state = 'pending', attempts = 0, next_attempt_at = now(),
     last_error = '', updated_at = now()
 WHERE id = $1 AND state = 'failed';
+
+-- name: KnownAccountRetractionActivity :one
+-- A successful send to this exact inbox is evidence of prior disclosure.
+-- Pending/failed jobs and the same object at another inbox prove nothing.
+WITH candidates AS (
+    SELECT signing_user_id, signing_channel_id,
+           CASE WHEN convert_from(payload, 'UTF8') IS JSON OBJECT
+                THEN convert_from(payload, 'UTF8')::jsonb END AS activity
+    FROM federation_deliveries
+    WHERE inbox_url = sqlc.arg(inbox)::text AND state = 'delivered'
+      AND (signing_user_id = sqlc.arg(account_id)::uuid OR signing_channel_id IS NOT NULL)
+      AND position(convert_to(sqlc.arg(target)::text,'UTF8') IN payload) > 0
+)
+SELECT (c.activity->>'id')::text AS activity_id
+FROM candidates c
+WHERE c.activity->>'id' <> ''
+  AND CASE WHEN sqlc.arg(kind)::text = 'Delete' THEN
+      c.activity->>'type' IN ('Create','Update') AND c.activity#>>'{object,id}' = sqlc.arg(target)::text
+      AND ((c.signing_user_id = sqlc.arg(account_id)::uuid AND c.activity->>'actor' = sqlc.arg(actor)::text)
+        OR (EXISTS (SELECT FROM channels ch WHERE ch.id=c.signing_channel_id AND ch.owner_id=sqlc.arg(account_id)::uuid)
+            AND (c.activity#>'{object,attributedTo}') @>
+              jsonb_build_array(jsonb_build_object('type','Person','id',sqlc.arg(actor)::text))))
+  ELSE
+      c.signing_user_id = sqlc.arg(account_id)::uuid AND c.activity->>'actor' = sqlc.arg(actor)::text
+      AND c.activity->>'type' = sqlc.arg(kind)::text AND c.activity->>'object' = sqlc.arg(target)::text
+      AND c.activity->>'id' = sqlc.arg(previous_id)::text
+  END
+LIMIT 1;

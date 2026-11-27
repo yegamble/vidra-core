@@ -20,7 +20,7 @@ func (s *Service) currentProfilePayload(ctx context.Context, row sqlcgen.ClaimDu
 	if row.SigningUserID.Valid {
 		user, err := s.repo.GetUserActorByID(ctx, uuid.UUID(row.SigningUserID.Bytes))
 		if errors.Is(err, pgx.ErrNoRows) || err == nil && user.Username != row.SigningUsername {
-			return nil, ErrNotFound
+			return s.privateRetraction(ctx, row)
 		}
 		if err != nil {
 			return nil, err

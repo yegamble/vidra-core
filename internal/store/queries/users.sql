@@ -30,6 +30,11 @@ FROM users
 WHERE id = $1 AND is_active AND profile_public AND deleted_at IS NULL
   AND NOT EXISTS (SELECT FROM user_bans b WHERE b.user_id = users.id);
 
+-- name: GetRetractionActorUsername :one
+-- Internal signing identity for Delete/Undo. The worker requires proof of
+-- previous disclosure before sending either activity for a withdrawn Person.
+SELECT username FROM users WHERE id = $1;
+
 -- name: GetUserByEmail :one
 SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 FROM users

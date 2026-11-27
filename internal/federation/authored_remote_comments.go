@@ -90,14 +90,14 @@ func (s *Service) DeleteAuthoredRemoteComment(ctx context.Context, commentID, re
 	if err != nil || !ok {
 		return err // origin gone/blocked → nothing to retract there
 	}
-	u, err := s.repo.GetUserActorByID(ctx, userID)
+	username, err := s.repo.GetRetractionActorUsername(ctx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		return err
 	}
-	accountActor := s.baseURL + "/accounts/" + u.Username
+	accountActor := s.baseURL + "/accounts/" + username
 	payload, err := json.Marshal(map[string]any{
 		"@context": "https://www.w3.org/ns/activitystreams",
 		"id":       accountActor + "/activities/delete/" + uuid.NewString(),
@@ -115,7 +115,7 @@ func (s *Service) DeleteAuthoredRemoteComment(ctx context.Context, commentID, re
 	}
 	// The row is gone: the Delete carries no authored_remote_comment_id (its FK
 	// would be NULLed anyway), it just needs to reach the origin.
-	return s.enqueueAccountDelivery(ctx, userID, u.Username, inbox, payload)
+	return s.enqueueAccountDelivery(ctx, userID, username, inbox, payload)
 }
 
 // resolveAuthoredCommentOrigin returns the origin author actor URL and the inbox to
