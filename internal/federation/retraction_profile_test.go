@@ -53,7 +53,7 @@ func TestPrivateAccountRetractionsOnlyReachKnownRecipient(t *testing.T) {
 		put(srv.URL+path, map[string]any{"id": actor + "/activities/delete/" + uuid.NewString(), "type": "Delete", "actor": actor, "object": subject, "summary": "private text"}, false)
 	}
 	followID := actor + "/activities/follow/" + uuid.NewString()
-	target := "https://peer.example/video-channels/old"
+	target := "https://peer.example/actor?id=old&kind=channel"
 	previousFollow := map[string]any{"id": followID, "type": "Follow", "actor": actor, "object": target}
 	put(srv.URL+"/known", previousFollow, true)
 	for _, path := range []string{"/known", "/new"} {

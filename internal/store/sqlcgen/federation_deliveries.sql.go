@@ -197,7 +197,6 @@ WITH candidates AS (
     FROM federation_deliveries
     WHERE inbox_url = $6::text AND state = 'delivered'
       AND (signing_user_id = $3::uuid OR signing_channel_id IS NOT NULL)
-      AND position(convert_to($2::text,'UTF8') IN payload) > 0
 )
 SELECT (c.activity->>'id')::text AS activity_id
 FROM candidates c

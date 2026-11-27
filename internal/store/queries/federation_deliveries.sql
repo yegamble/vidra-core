@@ -161,7 +161,6 @@ WITH candidates AS (
     FROM federation_deliveries
     WHERE inbox_url = sqlc.arg(inbox)::text AND state = 'delivered'
       AND (signing_user_id = sqlc.arg(account_id)::uuid OR signing_channel_id IS NOT NULL)
-      AND position(convert_to(sqlc.arg(target)::text,'UTF8') IN payload) > 0
 )
 SELECT (c.activity->>'id')::text AS activity_id
 FROM candidates c
