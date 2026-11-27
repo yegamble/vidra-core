@@ -286,7 +286,7 @@ func TestQueuedAnnounceForBlockedVideoIsNotDelivered(t *testing.T) {
 		t.Fatalf("DrainDeliveries = %d, %v; want nothing delivered", n, err)
 	}
 	for _, d := range repo.deliveries {
-		if d.state != "failed" || d.lastError != "cancelled: video blocked" {
+		if d.state != "failed" || d.lastError != "cancelled: content no longer public" {
 			t.Errorf("queued %s: state %q (%q), want cancelled", d.enqueued.Payload[:20], d.state, d.lastError)
 		}
 	}
@@ -327,5 +327,56 @@ func TestBackfillRechecksTheInboxHostAtSendTime(t *testing.T) {
 	}
 	if len(repo.deliveries) != 0 {
 		t.Errorf("%d deliveries to a re-pointed inbox, want none", len(repo.deliveries))
+	}
+}
+
+func TestQueuedVideoRechecksCurrentPublication(t *testing.T) {
+	ctx := context.Background()
+	const base = "https://videos.example"
+	channel, video := uuid.New(), uuid.New()
+	for _, state := range []string{"public", "private", "draft", "blocked", "owner inactive", "channel opted out", "instance unlisted", "removed"} {
+		t.Run(state, func(t *testing.T) {
+			repo := newAnnounceRepo(channel, video, "public")
+			v := repo.videosByID[video]
+			switch state {
+			case "private":
+				v.Privacy = "private"
+			case "draft":
+				v.State = "draft"
+			case "blocked":
+				v.Blocked = true
+			case "owner inactive":
+				v.OwnerInactive = true
+			case "channel opted out":
+				repo.apDisabled = map[uuid.UUID]bool{channel: true}
+			case "instance unlisted":
+				repo.inst.outbox = nil
+			}
+			repo.videosByID[video] = v
+			if state == "removed" {
+				delete(repo.videosByID, video)
+			}
+			svc := NewService(repo, WithBaseURL(base))
+			id := base + "/videos/" + video.String()
+			for _, kind := range []string{"Create", "Update", "Announce"} {
+				var object any = map[string]string{"type": "Video", "id": id}
+				if kind == "Announce" {
+					object = id
+				}
+				payload, err := json.Marshal(map[string]any{"type": kind, "object": object})
+				if err != nil {
+					t.Fatal(err)
+				}
+				withheld, err := svc.deliveryObjectWithheld(ctx, payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				visible := !withheld
+				want := state == "public" || state == "instance unlisted" && kind != "Announce"
+				if visible != want {
+					t.Errorf("%s visible=%v, want %v", kind, visible, want)
+				}
+			}
+		})
 	}
 }

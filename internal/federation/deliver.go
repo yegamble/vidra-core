@@ -107,11 +107,16 @@ func (s *Service) DrainDeliveries(ctx context.Context, limit int) (int, error) {
 			s.reflectAuthoredCommentDelivery(ctx, row, authoredCommentFailed, deliveryCancelledBlocked, row.Attempts)
 			continue
 		}
-		// A Create/Update queued (or retrying) before a moderator block landed
-		// must not reach a peer after the Delete and resurrect the video (T13).
-		if s.payloadOfBlockedVideo(ctx, row.Payload) {
-			_ = s.repo.FailDelivery(ctx, sqlcgen.FailDeliveryParams{ID: row.ID, LastError: "cancelled: video blocked"})
-			s.reflectAuthoredCommentDelivery(ctx, row, authoredCommentFailed, "cancelled: video blocked", row.Attempts)
+		// A queued snapshot must still be publishable when the remote peer receives it.
+		withheld, err := s.deliveryObjectWithheld(ctx, row.Payload)
+		if err != nil {
+			s.recordDeliveryFailure(ctx, row, err)
+			continue
+		}
+		if withheld {
+			const reason = "cancelled: content no longer public"
+			_ = s.repo.FailDelivery(ctx, sqlcgen.FailDeliveryParams{ID: row.ID, LastError: reason})
+			s.reflectAuthoredCommentDelivery(ctx, row, authoredCommentFailed, reason, row.Attempts)
 			continue
 		}
 		payload, err := s.currentProfilePayload(ctx, row)
@@ -538,32 +543,35 @@ func (s *Service) redeliverable(ctx context.Context, payload []byte) (bool, erro
 	return false, nil
 }
 
-// payloadOfBlockedVideo reports whether a Create/Update snapshot — or the
-// instance actor's Announce — describes a local video (or a comment on one)
-// that a moderator has since blocked. Errors read as "not blocked": the check
-// must never stall the queue.
-func (s *Service) payloadOfBlockedVideo(ctx context.Context, payload []byte) bool {
+// A channel follower may receive a public video even when its owner opts out
+// of instance discovery. An Announce must also satisfy the instance outbox.
+func (s *Service) deliveryObjectWithheld(ctx context.Context, payload []byte) (bool, error) {
 	var env struct {
-		Type   string          `json:"type"`
-		Object json.RawMessage `json:"object"`
+		Type   string
+		Object json.RawMessage
 	}
-	if json.Unmarshal(payload, &env) != nil || (env.Type != "Create" && env.Type != "Update" && env.Type != "Announce") {
-		return false
+	if err := json.Unmarshal(payload, &env); err != nil {
+		return false, err
 	}
-	videoID, ok := s.localVideoIDFromObject(env.Object)
-	if !ok {
-		commentID, isComment := s.localCommentIDFromObject(env.Object)
-		if !isComment {
-			return false
+	if env.Type != "Create" && env.Type != "Update" && env.Type != "Announce" {
+		return false, nil
+	}
+	if id, ok := s.localVideoIDFromObject(env.Object); ok {
+		public, err := s.videoStillPublishable(ctx, id)
+		if err != nil || !public || env.Type != "Announce" {
+			return !public, err
 		}
-		c, err := s.repo.GetComment(ctx, commentID)
-		if err != nil {
-			return false
+		if s.inst == nil {
+			return true, nil
 		}
-		videoID = c.VideoID
+		listed, err := s.inst.IsVideoInInstanceOutbox(ctx, id)
+		return !listed, err
 	}
-	v, err := s.repo.GetVideoByID(ctx, videoID)
-	return err == nil && distributionWithheld(v)
+	if id, ok := s.localCommentIDFromObject(env.Object); ok {
+		public, err := s.commentStillPublishable(ctx, id)
+		return !public, err
+	}
+	return false, nil
 }
 
 // videoStillPublishable is the video arm of redeliverable: the snapshot may go
