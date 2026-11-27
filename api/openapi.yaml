@@ -20494,13 +20494,12 @@ components:
             type: string
           description: >-
             Component-specific facts beside the verdict, omitted when a component
-            has none. Only the federation component sets it today, with pending,
-            dead_lettered and — when anything has ever been delivered —
-            last_delivered_at as an RFC 3339 timestamp. last_delivered_at is what
-            separates a DRAINED federation queue from an ABANDONED one: both read
-            as zero pending, and only the time of the last success tells them
-            apart. It is absent rather than zero on an instance that has never
-            delivered anything.
+            has none. Federation reports pending and dead_lettered counts and the
+            last successful delivery time, last_delivered_at, when available.
+            On the admin system endpoint, ipfs_reference reports probed_at as an
+            RFC 3339 timestamp and pinned as the verified number of approved
+            reference roots. An unknown count is omitted. An expired observation
+            degrades this component. The ipfs asset mirror has its own verdict.
           example:
             pending: "0"
             dead_lettered: "2"
