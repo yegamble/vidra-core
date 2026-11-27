@@ -179,16 +179,17 @@ LEFT JOIN user_daily_quotas dq ON dq.user_id = u.id
 WHERE (sqlc.arg('query')::text = ''
        OR u.username ILIKE '%' || sqlc.arg('query')::text || '%'
        OR u.email ILIKE '%' || sqlc.arg('query')::text || '%')
+  AND (sqlc.arg('user_filter')::text IN ('', 'all')
+       OR (sqlc.arg('user_filter')::text = 'staff' AND u.role IN ('admin', 'moderator'))
+       OR (sqlc.arg('user_filter')::text = 'deactivated' AND NOT u.is_active AND u.deleted_at IS NULL))
 ORDER BY u.created_at DESC, u.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: CountUsersMatching :one
--- How many accounts ListUsers would return for the same query, ignoring
--- pagination. The WHERE clause MUST stay identical to ListUsers': a total that
--- counts a different set than the page it labels is worse than no total, since
--- the admin UI derives its page count from it. CountUsers (unfiltered) is a
--- different question and is kept for callers that ask it.
-SELECT count(*)
+-- All counts use the same username/email search, independently of the selected page.
+SELECT count(*) AS "all",
+       count(*) FILTER (WHERE u.role IN ('admin', 'moderator')) AS staff,
+       count(*) FILTER (WHERE NOT u.is_active AND u.deleted_at IS NULL) AS deactivated
 FROM users u
 WHERE (sqlc.arg('query')::text = ''
        OR u.username ILIKE '%' || sqlc.arg('query')::text || '%'

@@ -119,36 +119,37 @@ const (
 	maxUserPageLimit     = 200
 )
 
-// adminUserListResponse is the paginated admin user list. Total is how many
-// accounts match the same query, so a client can tell how many pages exist;
-// without it a caller cannot distinguish "last page" from "there is more".
 type adminUserListResponse struct {
-	Users []adminUserView `json:"users"`
+	Users  []adminUserView               `json:"users"`
+	Counts sqlcgen.CountUsersMatchingRow `json:"counts"`
 	pageMeta
 }
 
-// handleListUsers returns accounts, newest first, optionally filtered by ?q
-// (username/email substring). Behind requireRole(admin). Pagination via ?limit
-// (1–200, default 50) and ?offset.
 func (s *Server) handleListUsers(c *echo.Context) error {
-	ctx := c.Request().Context()
-	query := strings.TrimSpace(c.QueryParam("q"))
-	page := parsePage(c, defaultUserPageLimit, maxUserPageLimit)
-	users, err := s.adminsvc.ListUsers(ctx, query, page.Limit32(), page.Offset32())
+	filter, err := parseEnumParam(c, "filter", []string{"all", "staff", "deactivated"}, "all")
 	if err != nil {
 		return err
 	}
-	// Counted with the SAME query as the page, so a filtered page reports the
-	// size of its own result set rather than the instance total.
-	total, err := s.adminsvc.CountUsersMatching(ctx, query)
+	page := parsePage(c, defaultUserPageLimit, maxUserPageLimit)
+	users, counts, err := s.adminsvc.ListUsers(c.Request().Context(), sqlcgen.ListUsersParams{
+		Query: strings.TrimSpace(c.QueryParam("q")), UserFilter: filter,
+		ResultLimit: page.Limit32(), ResultOffset: page.Offset32(),
+	})
 	if err != nil {
 		return err
+	}
+	total := counts.All
+	switch filter {
+	case "staff":
+		total = counts.Staff
+	case "deactivated":
+		total = counts.Deactivated
 	}
 	views := make([]adminUserView, 0, len(users))
 	for _, u := range users {
 		views = append(views, newAdminUserViewFromRow(u))
 	}
-	return c.JSON(http.StatusOK, adminUserListResponse{Users: views, pageMeta: page.meta(total)})
+	return c.JSON(http.StatusOK, adminUserListResponse{Users: views, Counts: counts, pageMeta: page.meta(total)})
 }
 
 // updateUserRequest is the PATCH /admin/users/{id} body. Fields are optional;

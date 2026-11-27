@@ -209,6 +209,16 @@ func TestAdminUserListTotalTracksFilterAndPaging(t *testing.T) {
 	if paged.Total != 3 {
 		t.Errorf("total under limit=1 is %d, want 3", paged.Total)
 	}
+	staff := adminUsers(t, srv, "?filter=staff&limit=1&offset=1", adminTok)
+	if len(staff.Users) != 0 || staff.Total != 1 || staff.Counts.All != 3 || staff.Counts.Staff != 1 || staff.Counts.Deactivated != 0 {
+		t.Fatalf("empty staff page: total %d, rows %d, counts %+v", staff.Total, len(staff.Users), staff.Counts)
+	}
+	if filtered.Counts.All != 2 || filtered.Counts.Staff != 0 {
+		t.Errorf("counts for q=bob = %+v", filtered.Counts)
+	}
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/users?filter=unknown", "", adminTok); rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown user group = %d, want 400", rec.Code)
+	}
 }
 
 // TestRoleChangeReachesTheExistingSession pins ADM-01's effect-timing rule: a

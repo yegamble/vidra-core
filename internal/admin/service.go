@@ -73,7 +73,7 @@ const MaxBanReasonLen = 500
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
 	ListUsers(ctx context.Context, arg sqlcgen.ListUsersParams) ([]sqlcgen.ListUsersRow, error)
-	CountUsersMatching(ctx context.Context, query string) (int64, error)
+	CountUsersMatching(ctx context.Context, query string) (sqlcgen.CountUsersMatchingRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	AdminUpdateUser(ctx context.Context, arg sqlcgen.AdminUpdateUserParams) (sqlcgen.User, error)
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
@@ -113,7 +113,7 @@ type Service struct {
 
 // TxRunner runs fn against a Repository bound to one database transaction,
 // committing when fn returns nil and rolling back otherwise.
-type TxRunner func(ctx context.Context, fn func(Repository) error) error
+type TxRunner func(ctx context.Context, opts pgx.TxOptions, fn func(Repository) error) error
 
 // WithTx wires the transaction runner the multi-write edit uses.
 func WithTx(r TxRunner) Option { return func(s *Service) { s.tx = r } }
@@ -122,11 +122,11 @@ func WithTx(r TxRunner) Option { return func(s *Service) { s.tx = r } }
 type Option func(*Service)
 
 // inTx runs fn transactionally when a runner is wired, else directly.
-func (s *Service) inTx(ctx context.Context, fn func(Repository) error) error {
+func (s *Service) inTx(ctx context.Context, opts pgx.TxOptions, fn func(Repository) error) error {
 	if s.tx == nil {
 		return fn(s.repo)
 	}
-	return s.tx(ctx, fn)
+	return s.tx(ctx, opts, fn)
 }
 
 // NewService builds the admin service.
@@ -138,23 +138,19 @@ func NewService(repo Repository, opts ...Option) *Service {
 	return s
 }
 
-// ListUsers returns accounts, newest first, optionally filtered by a
-// username/email substring (empty query returns all), each row carrying the
-// account's current storage usage. The caller clamps limit/offset.
-func (s *Service) ListUsers(ctx context.Context, query string, limit, offset int32) ([]sqlcgen.ListUsersRow, error) {
-	return s.repo.ListUsers(ctx, sqlcgen.ListUsersParams{
-		Query:        query,
-		ResultLimit:  limit,
-		ResultOffset: offset,
+// ListUsers reads the page and the three search-wide group counts from one
+// snapshot, including when the requested page is empty.
+func (s *Service) ListUsers(ctx context.Context, args sqlcgen.ListUsersParams) (users []sqlcgen.ListUsersRow, counts sqlcgen.CountUsersMatchingRow, err error) {
+	err = s.inTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(repo Repository) error {
+		var readErr error
+		users, readErr = repo.ListUsers(ctx, args)
+		if readErr != nil {
+			return readErr
+		}
+		counts, readErr = repo.CountUsersMatching(ctx, args.Query)
+		return readErr
 	})
-}
-
-// CountUsersMatching returns how many accounts ListUsers would return for the
-// same query, ignoring pagination — the total a caller needs to know how many
-// pages exist. It counts the SAME set the page came from, so it moves with the
-// search filter rather than reporting the instance total next to a filtered page.
-func (s *Service) CountUsersMatching(ctx context.Context, query string) (int64, error) {
-	return s.repo.CountUsersMatching(ctx, query)
+	return
 }
 
 // MFAEnabled reports whether the account has a confirmed second factor. An
@@ -280,7 +276,7 @@ func (s *Service) UpdateUserDetailed(ctx context.Context, callerID, targetID uui
 	// transaction when one is wired (boot) and sequentially otherwise (fakes).
 	var dailyBefore, dailyAfter *int64
 	var updated sqlcgen.User
-	err = s.inTx(ctx, func(repo Repository) error {
+	err = s.inTx(ctx, pgx.TxOptions{}, func(repo Repository) error {
 		if in.SetDailyQuota {
 			var derr error
 			if dailyBefore, derr = dailyOverride(ctx, repo, targetID); derr != nil {

@@ -311,20 +311,22 @@ func (f *authFakeRepo) UpdateUserPassword(_ context.Context, a sqlcgen.UpdateUse
 
 func (f *authFakeRepo) CountUsers(context.Context) (int64, error) { return int64(len(f.users)), nil }
 
-// CountUsersMatching mirrors ListUsers' username/email substring filter.
-func (f *authFakeRepo) CountUsersMatching(_ context.Context, query string) (int64, error) {
-	if query == "" {
-		return int64(len(f.users)), nil
-	}
-	q := strings.ToLower(query)
-	var n int64
+func (f *authFakeRepo) CountUsersMatching(_ context.Context, query string) (sqlcgen.CountUsersMatchingRow, error) {
+	var counts sqlcgen.CountUsersMatchingRow
+	query = strings.ToLower(query)
 	for _, u := range f.users {
-		if strings.Contains(strings.ToLower(u.Username), q) ||
-			strings.Contains(strings.ToLower(u.Email), q) {
-			n++
+		if !strings.Contains(strings.ToLower(u.Username), query) && !strings.Contains(strings.ToLower(u.Email), query) {
+			continue
+		}
+		counts.All++
+		if u.Role == "admin" || u.Role == "moderator" {
+			counts.Staff++
+		}
+		if !u.IsActive && !u.DeletedAt.Valid {
+			counts.Deactivated++
 		}
 	}
-	return n, nil
+	return counts, nil
 }
 
 func (f *authFakeRepo) CreateSession(_ context.Context, a sqlcgen.CreateSessionParams) (sqlcgen.CreateSessionRow, error) {
@@ -839,6 +841,9 @@ func (f *authFakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) (
 	var out []sqlcgen.ListUsersRow
 	q := strings.ToLower(a.Query)
 	for _, u := range f.users {
+		if a.UserFilter == "staff" && u.Role != "admin" && u.Role != "moderator" || a.UserFilter == "deactivated" && (u.IsActive || u.DeletedAt.Valid) {
+			continue
+		}
 		if q == "" || strings.Contains(strings.ToLower(u.Username), q) || strings.Contains(strings.ToLower(u.Email), q) {
 			used, _ := f.SumUserStorageUsage(context.Background(), u.ID)
 			row := sqlcgen.ListUsersRow{

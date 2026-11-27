@@ -205,23 +205,27 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 }
 
 const countUsersMatching = `-- name: CountUsersMatching :one
-SELECT count(*)
+SELECT count(*) AS "all",
+       count(*) FILTER (WHERE u.role IN ('admin', 'moderator')) AS staff,
+       count(*) FILTER (WHERE NOT u.is_active AND u.deleted_at IS NULL) AS deactivated
 FROM users u
 WHERE ($1::text = ''
        OR u.username ILIKE '%' || $1::text || '%'
        OR u.email ILIKE '%' || $1::text || '%')
 `
 
-// How many accounts ListUsers would return for the same query, ignoring
-// pagination. The WHERE clause MUST stay identical to ListUsers': a total that
-// counts a different set than the page it labels is worse than no total, since
-// the admin UI derives its page count from it. CountUsers (unfiltered) is a
-// different question and is kept for callers that ask it.
-func (q *Queries) CountUsersMatching(ctx context.Context, query string) (int64, error) {
+type CountUsersMatchingRow struct {
+	All         int64 `json:"all"`
+	Staff       int64 `json:"staff"`
+	Deactivated int64 `json:"deactivated"`
+}
+
+// All counts use the same username/email search, independently of the selected page.
+func (q *Queries) CountUsersMatching(ctx context.Context, query string) (CountUsersMatchingRow, error) {
 	row := q.db.QueryRow(ctx, countUsersMatching, query)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	var i CountUsersMatchingRow
+	err := row.Scan(&i.All, &i.Staff, &i.Deactivated)
+	return i, err
 }
 
 const createUser = `-- name: CreateUser :one
@@ -650,12 +654,16 @@ LEFT JOIN user_daily_quotas dq ON dq.user_id = u.id
 WHERE ($1::text = ''
        OR u.username ILIKE '%' || $1::text || '%'
        OR u.email ILIKE '%' || $1::text || '%')
+  AND ($2::text IN ('', 'all')
+       OR ($2::text = 'staff' AND u.role IN ('admin', 'moderator'))
+       OR ($2::text = 'deactivated' AND NOT u.is_active AND u.deleted_at IS NULL))
 ORDER BY u.created_at DESC, u.id DESC
-LIMIT $3 OFFSET $2
+LIMIT $4 OFFSET $3
 `
 
 type ListUsersParams struct {
 	Query        string `json:"query"`
+	UserFilter   string `json:"user_filter"`
 	ResultOffset int32  `json:"result_offset"`
 	ResultLimit  int32  `json:"result_limit"`
 }
@@ -694,7 +702,12 @@ type ListUsersRow struct {
 // current storage usage (SUM of its video_files bytes via channel ownership)
 // so the admin view can show usage next to the quota.
 func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error) {
-	rows, err := q.db.Query(ctx, listUsers, arg.Query, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listUsers,
+		arg.Query,
+		arg.UserFilter,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

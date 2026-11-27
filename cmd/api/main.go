@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/gommon/bytes"
 
@@ -1833,8 +1834,8 @@ func run() error {
 	watchwordsvc := watchword.NewService(db.Queries())
 	opts = append(opts, httpapi.WithWatchWordService(watchwordsvc))
 
-	adminsvc := admin.NewService(db.Queries(), admin.WithTx(func(ctx context.Context, fn func(admin.Repository) error) error {
-		tx, err := db.Pool.Begin(ctx)
+	adminsvc := admin.NewService(db.Queries(), admin.WithTx(func(ctx context.Context, opts pgx.TxOptions, fn func(admin.Repository) error) error {
+		tx, err := db.Pool.BeginTx(ctx, opts)
 		if err != nil {
 			return err
 		}
