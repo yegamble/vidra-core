@@ -154,7 +154,7 @@ func (s *Service) actorImage(contentType, path string, lookupErr error) *Image {
 // from — the actor id a peer already holds is exactly the latter, so refusing it
 // would be refusing the address every existing follower uses.
 func (s *Service) ChannelActor(ctx context.Context, handle string) (*Actor, error) {
-	ch, err := s.resolveLocalChannel(ctx, strings.TrimSpace(handle))
+	ch, err := s.resolveChannel(ctx, strings.TrimSpace(handle), s.repo.GetFederatedChannelByHandle)
 	if err != nil {
 		return nil, err
 	}
@@ -162,25 +162,18 @@ func (s *Service) ChannelActor(ctx context.Context, handle string) (*Actor, erro
 	if err != nil {
 		return nil, err
 	}
-	// PeerTube's actor validator rejects a Group with an empty attributedTo, then
-	// findOwner FETCHES each entry and requires a same-host Person. Attribute the
-	// Group to its OWNER ACCOUNT (…/accounts/<owner-username>) — which can differ
-	// from the channel handle — whose Person actor is already served, validates,
-	// and is same-host.
+	// A private profile has no Person to attribute. Its public channel remains a
+	// Group; PeerTube peers that require a Person can import it after opt-in.
 	owner, err := s.repo.GetUserActorByID(ctx, ch.OwnerID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	base := s.baseURL + "/video-channels/" + s.channelActorHandle(ctx, ch)
 	actor := s.buildActor(base, "Group", ch.Handle, ch.DisplayName, ch.Description, pub)
 	actor.Support = federatedSupport(ch.Support)
-	actor.AttributedTo = []AttributedItem{{
-		Type: "Person",
-		ID:   s.baseURL + "/accounts/" + owner.Username,
-	}}
+	if err == nil {
+		actor.AttributedTo = []AttributedItem{{Type: "Person", ID: s.baseURL + "/accounts/" + owner.Username}}
+	}
 	actor.URL = s.baseURL + "/channels/" + url.PathEscape(ch.Handle) // human page, not the AP id
 	img := func(kind string) *Image {
 		row, err := s.repo.GetChannelImage(ctx, sqlcgen.GetChannelImageParams{ChannelID: ch.ID, Kind: kind})
@@ -190,7 +183,7 @@ func (s *Service) ChannelActor(ctx context.Context, handle string) (*Actor, erro
 	return actor, nil
 }
 
-// resolveLocalChannel finds a local channel by its current handle, falling back
+// resolveChannel finds a local channel by its current handle, falling back
 // to a handle it was renamed away from (migration 0142's alias). Unknown →
 // ErrNotFound.
 //
@@ -199,8 +192,8 @@ func (s *Service) ChannelActor(ctx context.Context, handle string) (*Actor, erro
 // expires, and the ActivityPub identity, which does not — a peer holding
 // `…/video-channels/ownera` in its follow rows must keep resolving it for as
 // long as that follow exists.
-func (s *Service) resolveLocalChannel(ctx context.Context, handle string) (sqlcgen.Channel, error) {
-	ch, err := s.repo.GetChannelByHandle(ctx, handle)
+func (s *Service) resolveChannel(ctx context.Context, handle string, lookup func(context.Context, string) (sqlcgen.Channel, error)) (sqlcgen.Channel, error) {
+	ch, err := lookup(ctx, handle)
 	if err == nil {
 		return ch, nil
 	}
@@ -214,7 +207,7 @@ func (s *Service) resolveLocalChannel(ctx context.Context, handle string) (sqlcg
 		}
 		return sqlcgen.Channel{}, aerr
 	}
-	ch, err = s.repo.GetChannelByHandle(ctx, alias.CurrentHandle)
+	ch, err = lookup(ctx, alias.CurrentHandle)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sqlcgen.Channel{}, ErrNotFound
@@ -306,7 +299,7 @@ func (s *Service) WebFinger(ctx context.Context, resource string) (*JRD, error) 
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	switch ch, err := s.resolveLocalChannel(ctx, name); {
+	switch ch, err := s.resolveChannel(ctx, name, s.repo.GetFederatedChannelByHandle); {
 	case err == nil:
 		channelURL = s.baseURL + "/video-channels/" + s.channelActorHandle(ctx, ch)
 	case errors.Is(err, ErrNotFound):

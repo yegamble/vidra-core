@@ -19,6 +19,14 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
+func publishFixtureProfile(t *testing.T, ctx context.Context, q *sqlcgen.Queries, id uuid.UUID) {
+	t.Helper()
+	public := true
+	if _, err := q.UpdateUserProfile(ctx, sqlcgen.UpdateUserProfileParams{ID: id, ProfilePublic: &public}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestActorKeyMintingPersists(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -45,6 +53,7 @@ func TestActorKeyMintingPersists(t *testing.T) {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
+	publishFixtureProfile(t, ctx, q, u.ID)
 	svc := federation.NewService(q, federation.WithBaseURL("https://videos.example"))
 
 	// Mint on first fetch; the key is served and persisted.

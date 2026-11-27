@@ -75,6 +75,19 @@ func (f fakeFedRepo) GetUserActorByUsername(_ context.Context, name string) (sql
 	return sqlcgen.GetUserActorByUsernameRow{}, pgx.ErrNoRows
 }
 
+func (f fakeFedRepo) GetFederatedChannelByHandle(ctx context.Context, handle string) (sqlcgen.Channel, error) {
+	ch, err := f.GetChannelByHandle(ctx, handle)
+	if err == nil && !ch.ActivitypubEnabled {
+		return sqlcgen.Channel{}, pgx.ErrNoRows
+	}
+	return ch, err
+}
+
+func (f fakeFedRepo) GetCommentAuthorIDByUsername(ctx context.Context, username string) (uuid.UUID, error) {
+	u, err := f.GetUserActorByUsername(ctx, username)
+	return u.ID, err
+}
+
 func (f fakeFedRepo) GetChannelByHandle(_ context.Context, handle string) (sqlcgen.Channel, error) {
 	if strings.EqualFold(handle, "films") {
 		return sqlcgen.Channel{ID: f.channelID, OwnerID: f.userID, Handle: "films", DisplayName: "Films", ActivitypubEnabled: true}, nil

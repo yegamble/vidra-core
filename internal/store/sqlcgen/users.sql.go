@@ -376,7 +376,8 @@ func (q *Queries) GetPublicUserProfileByUsername(ctx context.Context, lower stri
 const getUserActorByID = `-- name: GetUserActorByID :one
 SELECT id, username, display_name, bio, created_at
 FROM users
-WHERE id = $1 AND is_active = true
+WHERE id = $1 AND is_active AND profile_public AND deleted_at IS NULL
+  AND NOT EXISTS (SELECT FROM user_bans b WHERE b.user_id = users.id)
 `
 
 type GetUserActorByIDRow struct {
@@ -387,8 +388,7 @@ type GetUserActorByIDRow struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// GetUserActorByUsername keyed by id — resolves the authenticated caller's
-// actor identity (username) for outbound account-actor activities.
+// Apply the same publication policy when attributing or sending as a Person.
 func (q *Queries) GetUserActorByID(ctx context.Context, id uuid.UUID) (GetUserActorByIDRow, error) {
 	row := q.db.QueryRow(ctx, getUserActorByID, id)
 	var i GetUserActorByIDRow
@@ -405,7 +405,8 @@ func (q *Queries) GetUserActorByID(ctx context.Context, id uuid.UUID) (GetUserAc
 const getUserActorByUsername = `-- name: GetUserActorByUsername :one
 SELECT id, username, display_name, bio, created_at
 FROM users
-WHERE lower(username) = lower($1) AND is_active = true
+WHERE lower(username) = lower($1) AND is_active AND profile_public AND deleted_at IS NULL
+  AND NOT EXISTS (SELECT FROM user_bans b WHERE b.user_id = users.id)
 `
 
 type GetUserActorByUsernameRow struct {
@@ -416,8 +417,7 @@ type GetUserActorByUsernameRow struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// Minimal, secret-free account fields for the ActivityPub Person actor. Only
-// active accounts are federated (deactivated accounts 404).
+// A Person is public only while its owner has opted in and is in good standing.
 func (q *Queries) GetUserActorByUsername(ctx context.Context, lower string) (GetUserActorByUsernameRow, error) {
 	row := q.db.QueryRow(ctx, getUserActorByUsername, lower)
 	var i GetUserActorByUsernameRow

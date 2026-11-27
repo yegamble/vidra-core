@@ -8,6 +8,13 @@ SELECT id, owner_id, handle, display_name, description, created_at, updated_at, 
 FROM channels
 WHERE id = $1;
 
+-- name: GetFederatedChannelByHandle :one
+-- Publishing a channel is independent of publishing the owner's personal profile.
+SELECT c.* FROM channels c JOIN users u ON u.id = c.owner_id
+WHERE lower(c.handle) = lower($1) AND c.activitypub_enabled
+  AND u.is_active AND u.deleted_at IS NULL
+  AND NOT EXISTS (SELECT FROM user_bans b WHERE b.user_id = u.id);
+
 -- name: GetChannelByHandle :one
 SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled, support
 FROM channels

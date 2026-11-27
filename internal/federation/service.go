@@ -31,6 +31,8 @@ type Repository interface {
 	// Actor resolution + lazily-minted keypairs.
 	GetUserActorByUsername(ctx context.Context, username string) (sqlcgen.GetUserActorByUsernameRow, error)
 	GetChannelByHandle(ctx context.Context, handle string) (sqlcgen.Channel, error)
+	GetFederatedChannelByHandle(ctx context.Context, handle string) (sqlcgen.Channel, error)
+	GetCommentAuthorIDByUsername(ctx context.Context, username string) (uuid.UUID, error)
 	GetAccountActorKey(ctx context.Context, userID uuid.UUID) (sqlcgen.GetAccountActorKeyRow, error)
 	InsertAccountActorKeyIfAbsent(ctx context.Context, arg sqlcgen.InsertAccountActorKeyIfAbsentParams) (int64, error)
 	GetChannelActorKey(ctx context.Context, channelID uuid.UUID) (sqlcgen.GetChannelActorKeyRow, error)

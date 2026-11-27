@@ -180,6 +180,32 @@ func (q *Queries) GetChannelByID(ctx context.Context, id uuid.UUID) (Channel, er
 	return i, err
 }
 
+const getFederatedChannelByHandle = `-- name: GetFederatedChannelByHandle :one
+SELECT c.id, c.owner_id, c.handle, c.display_name, c.description, c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled, c.support FROM channels c JOIN users u ON u.id = c.owner_id
+WHERE lower(c.handle) = lower($1) AND c.activitypub_enabled
+  AND u.is_active AND u.deleted_at IS NULL
+  AND NOT EXISTS (SELECT FROM user_bans b WHERE b.user_id = u.id)
+`
+
+// Publishing a channel is independent of publishing the owner's personal profile.
+func (q *Queries) GetFederatedChannelByHandle(ctx context.Context, lower string) (Channel, error) {
+	row := q.db.QueryRow(ctx, getFederatedChannelByHandle, lower)
+	var i Channel
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Handle,
+		&i.DisplayName,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ActivitypubEnabled,
+		&i.AtprotoEnabled,
+		&i.Support,
+	)
+	return i, err
+}
+
 const listChannelsByOwner = `-- name: ListChannelsByOwner :many
 SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled, support
 FROM channels

@@ -17,18 +17,18 @@ WHERE lower(u.username) = lower($1)
   AND u.profile_public = TRUE;
 
 -- name: GetUserActorByUsername :one
--- Minimal, secret-free account fields for the ActivityPub Person actor. Only
--- active accounts are federated (deactivated accounts 404).
+-- A Person is public only while its owner has opted in and is in good standing.
 SELECT id, username, display_name, bio, created_at
 FROM users
-WHERE lower(username) = lower($1) AND is_active = true;
+WHERE lower(username) = lower($1) AND is_active AND profile_public AND deleted_at IS NULL
+  AND NOT EXISTS (SELECT FROM user_bans b WHERE b.user_id = users.id);
 
 -- name: GetUserActorByID :one
--- GetUserActorByUsername keyed by id — resolves the authenticated caller's
--- actor identity (username) for outbound account-actor activities.
+-- Apply the same publication policy when attributing or sending as a Person.
 SELECT id, username, display_name, bio, created_at
 FROM users
-WHERE id = $1 AND is_active = true;
+WHERE id = $1 AND is_active AND profile_public AND deleted_at IS NULL
+  AND NOT EXISTS (SELECT FROM user_bans b WHERE b.user_id = users.id);
 
 -- name: GetUserByEmail :one
 SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
