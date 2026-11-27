@@ -222,13 +222,6 @@ func (s *Service) followResolvedActor(ctx context.Context, userID uuid.UUID, use
 // deleted immediately (local intent wins) and a signed Undo{Follow} is queued
 // to the remote inbox. Unknown/foreign id → ErrFollowNotFound.
 func (s *Service) UnfollowRemoteChannel(ctx context.Context, userID, followID uuid.UUID) error {
-	u, err := s.repo.GetUserActorByID(ctx, userID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrFollowNotFound
-		}
-		return err
-	}
 	row, err := s.repo.GetRemoteChannelFollowByID(ctx, sqlcgen.GetRemoteChannelFollowByIDParams{
 		ID:     followID,
 		UserID: userID,
@@ -253,6 +246,14 @@ func (s *Service) UnfollowRemoteChannel(ctx context.Context, userID, followID uu
 	// there is nowhere to send the Undo.
 	if row.InboxUrl == "" {
 		return nil
+	}
+	// Local removal still works after an account withdraws its public Person.
+	u, err := s.repo.GetUserActorByID(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	accountActor := s.baseURL + "/accounts/" + u.Username
 	payload, err := buildUndoFollow(accountActor, row.FollowActivityUrl, row.RemoteActorUrl)

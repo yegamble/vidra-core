@@ -366,6 +366,19 @@ func (f fakeRepo) GetUserActorByUsername(_ context.Context, name string) (sqlcge
 	return sqlcgen.GetUserActorByUsernameRow{}, pgx.ErrNoRows
 }
 
+func (f fakeRepo) GetFederatedChannelByHandle(ctx context.Context, handle string) (sqlcgen.Channel, error) {
+	ch, err := f.GetChannelByHandle(ctx, handle)
+	if err == nil && !ch.ActivitypubEnabled {
+		return sqlcgen.Channel{}, pgx.ErrNoRows
+	}
+	return ch, err
+}
+
+func (f fakeRepo) GetCommentAuthorIDByUsername(ctx context.Context, username string) (uuid.UUID, error) {
+	u, err := f.GetUserActorByUsername(ctx, username)
+	return u.ID, err
+}
+
 func (f fakeRepo) GetChannelByHandle(_ context.Context, handle string) (sqlcgen.Channel, error) {
 	if c, ok := f.channels[strings.ToLower(handle)]; ok {
 		return f.withAP(c), nil

@@ -95,14 +95,14 @@ func (s *Service) resolveFlagTarget(ctx context.Context, uri string) (string, uu
 		return moderation.TargetComment, id, true, nil
 	}
 	if name, ok := strings.CutPrefix(uri, s.baseURL+"/accounts/"); ok && name != "" && !strings.ContainsAny(name, "/#?") {
-		u, err := s.repo.GetUserActorByUsername(ctx, name)
+		id, err := s.repo.GetCommentAuthorIDByUsername(ctx, name)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", uuid.Nil, false, nil
 		}
-		return moderation.TargetAccount, u.ID, err == nil, err
+		return moderation.TargetAccount, id, err == nil, err
 	}
 	if handle, ok := s.localChannelHandle(uri); ok {
-		ch, err := s.resolveLocalChannel(ctx, handle)
+		ch, err := s.resolveChannel(ctx, handle, s.repo.GetChannelByHandle)
 		if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
 			return "", uuid.Nil, false, nil
 		}

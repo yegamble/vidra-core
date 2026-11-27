@@ -171,6 +171,7 @@ JOIN channels c ON c.id = v.channel_id
 JOIN users u ON u.id = c.owner_id
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
   AND u.is_active AND u.deleted_at IS NULL
+  AND NOT EXISTS (SELECT FROM user_bans b WHERE b.user_id = u.id)
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 `
 
@@ -837,7 +838,7 @@ SELECT v.id, v.peertube_published_at AS source_published, v.short_code, v.channe
        ) AS has_hls,
        -- Federation must not serve or push a moderator-blocked video (T13); the
        -- flag rides this row so the check cannot disagree with the read.
-       (NOT au.is_active OR au.deleted_at IS NOT NULL)::boolean AS owner_inactive,
+       (NOT au.is_active OR au.deleted_at IS NOT NULL OR EXISTS (SELECT FROM user_bans b WHERE b.user_id = au.id))::boolean AS owner_inactive,
        EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
@@ -922,7 +923,7 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 }
 
 const getVideoFederationFacts = `-- name: GetVideoFederationFacts :one
-SELECT au.username AS owner_username,
+SELECT CASE WHEN au.profile_public THEN au.username ELSE '' END::text AS owner_username,
        COALESCE(vc.views, 0)::bigint AS views,
        ARRAY(SELECT t.tag FROM video_tags t WHERE t.video_id = v.id ORDER BY t.tag)::text[] AS tags,
        ARRAY(SELECT cp.language FROM captions cp WHERE cp.video_id = v.id ORDER BY cp.language)::text[] AS caption_languages,
@@ -1245,7 +1246,7 @@ SELECT v.id, v.title, v.description, v.short_code, v.support,
        -- pushed object (T05), so the walked outbox and the push agree.
        v.category, v.language, v.license, v.is_sensitive, v.sensitive_flags, v.sensitive_reason, v.comments_policy,
        v.download_enabled, v.publish_after_transcode,
-       au.username AS owner_username,
+       CASE WHEN au.profile_public THEN au.username ELSE '' END::text AS owner_username,
        COALESCE(vc.views, 0)::bigint AS views,
        ARRAY(SELECT t.tag FROM video_tags t WHERE t.video_id = v.id ORDER BY t.tag)::text[] AS tags,
        ARRAY(SELECT cp.language FROM captions cp WHERE cp.video_id = v.id ORDER BY cp.language)::text[] AS caption_languages,
@@ -1266,6 +1267,7 @@ LEFT JOIN LATERAL (
 ) th ON true
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
   AND au.is_active AND au.deleted_at IS NULL
+  AND NOT EXISTS (SELECT FROM user_bans b WHERE b.user_id = au.id)
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 ORDER BY v.created_at DESC, v.id DESC
 LIMIT $2 OFFSET $3

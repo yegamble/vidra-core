@@ -750,6 +750,12 @@ counts only; ciphertext/keys never appear in logs.
 
 ## Federation & identity
 
+A public account profile makes its ActivityPub Person, account collections and
+attributed Notes available to peers. A private profile keeps these personal
+representations private. An active owner can still publish through a channel
+with ActivityPub enabled. Its Group, videos and outbox then identify the
+channel alone. PeerTube 8.3 requires a public owner Person to import that Group.
+
 ### ATProto / Bluesky cross-posting
 
 **ATProto / Bluesky cross-posting** (a Vidra extension; see

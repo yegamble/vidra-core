@@ -289,6 +289,7 @@ func TestFederatedCommentFullLoop(t *testing.T) {
 	ctx, q := integrationQueries(t)
 	suf := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	u := seedUser(t, ctx, q, suf)
+	publishFixtureProfile(t, ctx, q, u.ID)
 	ch, v := seedPublicVideo(t, ctx, q, u.ID, suf)
 
 	svc := federation.NewService(q,

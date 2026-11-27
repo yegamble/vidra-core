@@ -40,6 +40,7 @@ func TestVideoObjectPeerTubeFactsFromSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
+	publishFixtureProfile(t, ctx, q, u.ID)
 	ch, err := q.CreateChannel(ctx, sqlcgen.CreateChannelParams{OwnerID: u.ID, Handle: "ptch" + suf, DisplayName: "Ch"})
 	if err != nil {
 		t.Fatalf("CreateChannel: %v", err)

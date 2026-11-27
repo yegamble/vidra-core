@@ -200,7 +200,7 @@ func (s *Service) handleUndo(ctx context.Context, act inboxActivity, signerActor
 	// every peer that already federated with it holds, and it is the one this
 	// instance still advertises as the actor id. An inbound activity aimed at
 	// that id must find the channel.
-	ch, err := s.resolveLocalChannel(ctx, handle)
+	ch, err := s.resolveChannel(ctx, handle, s.repo.GetChannelByHandle)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -234,7 +234,7 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 	// renamed channel is the ordinary case for every peer that followed before
 	// the rename, and the A29 rehearsal 3 lab watched one answered 202 and
 	// dropped because this lookup could not see the alias.
-	ch, err := s.resolveLocalChannel(ctx, handle)
+	ch, err := s.resolveChannel(ctx, handle, s.repo.GetChannelByHandle)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
 			return nil // unknown local channel → ignore
@@ -393,7 +393,7 @@ func (s *Service) rejectFollowFromBlockedSender(ctx context.Context, act inboxAc
 	if !ok {
 		return
 	}
-	ch, err := s.resolveLocalChannel(ctx, handle)
+	ch, err := s.resolveChannel(ctx, handle, s.repo.GetChannelByHandle)
 	if err != nil || !ch.ActivitypubEnabled {
 		return
 	}
