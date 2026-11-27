@@ -2075,9 +2075,17 @@ func originalKey(videoID uuid.UUID, ext string) string {
 func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	v, err := s.repo.GetVideoByID(ctx, id)
 	if err != nil {
-		return sqlcgen.GetVideoByIDRow{}, ErrNotFound
+		return sqlcgen.GetVideoByIDRow{}, videoLookupError(err)
 	}
 	return v, nil
+}
+
+// Only a completed lookup with no row establishes that the video is missing.
+func videoLookupError(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
 }
 
 // ShortCodeLen is the length of videos.short_code: 11 base58 characters, about
@@ -2116,7 +2124,7 @@ func (s *Service) IDByShortCode(ctx context.Context, code string) (uuid.UUID, er
 	}
 	id, err := s.repo.GetVideoIDByShortCode(ctx, code)
 	if err != nil {
-		return uuid.Nil, ErrNotFound
+		return uuid.Nil, videoLookupError(err)
 	}
 	return id, nil
 }
@@ -2131,7 +2139,7 @@ func (s *Service) IDByLegacyUUID(ctx context.Context, legacy uuid.UUID) (uuid.UU
 	}
 	id, err := s.repo.GetVideoIDByLegacyUUID(ctx, legacy)
 	if err != nil {
-		return uuid.Nil, ErrNotFound
+		return uuid.Nil, videoLookupError(err)
 	}
 	return id, nil
 }

@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -30,6 +32,40 @@ func getByLegacyUUID(srv *Server, id, token string) *httptest.ResponseRecorder {
 	}
 	srv.Handler().ServeHTTP(rec, req)
 	return rec
+}
+
+func TestWatchLookupDatabaseOutage(t *testing.T) {
+	srv, _, _, _, repo := videoServerFull(t, testConfig())
+	tok := createChannelFor(t, srv, "fixture", "fixture@example.test", "fixture")
+	id := createVideo(t, srv, tok, "fixture", `{"title":"Local fixture","privacy":"public"}`)
+	code := shortCodeOf(t, srv, id, tok)
+	outage := &pgconn.PgError{Code: "57P03", Message: "private database diagnostic"}
+
+	for _, tc := range []struct {
+		name            string
+		identifierFails bool
+		get             func() *httptest.ResponseRecorder
+	}{
+		{"short code resolution", true, func() *httptest.ResponseRecorder { return getByCode(srv, code, "") }},
+		{"legacy UUID resolution", true, func() *httptest.ResponseRecorder { return getByLegacyUUID(srv, id, "") }},
+		{"short code detail", false, func() *httptest.ResponseRecorder { return getByCode(srv, code, "") }},
+		{"legacy UUID detail", false, func() *httptest.ResponseRecorder { return getByLegacyUUID(srv, id, "") }},
+		{"canonical detail", false, func() *httptest.ResponseRecorder { return getVideo(srv, id, "") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo.identifierLookupErr, repo.videoDetailErr = nil, outage
+			if tc.identifierFails {
+				repo.identifierLookupErr, repo.videoDetailErr = outage, nil
+			}
+			rec := tc.get()
+			if rec.Code != http.StatusServiceUnavailable || decodeError(t, rec).Error.Code != "database_unavailable" {
+				t.Fatalf("lookup returned %d: %s", rec.Code, rec.Body)
+			}
+			if strings.Contains(rec.Body.String(), outage.Message) {
+				t.Fatal("watch response exposed a database diagnostic")
+			}
+		})
+	}
 }
 
 // shortCodeOf reads the code off the detail view, which is where the frontend

@@ -599,7 +599,7 @@ func (s *Server) handleResolveVideo(c *echo.Context) error {
 	case code != "":
 		id, err := s.videosvc.IDByShortCode(c.Request().Context(), code)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+			return videoError(err)
 		}
 		return s.respondVideo(c, id)
 	case legacy != "":
@@ -609,7 +609,7 @@ func (s *Server) handleResolveVideo(c *echo.Context) error {
 		}
 		id, err := s.videosvc.IDByLegacyUUID(c.Request().Context(), parsed)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+			return videoError(err)
 		}
 		return s.respondVideo(c, id)
 	default:

@@ -58,9 +58,11 @@ import (
 // videoFakeRepo is an in-memory video.Repository. It resolves a new video's
 // owner from the shared channelFakeRepo so GetVideoByID can return owner_id.
 type videoFakeRepo struct {
-	channels *channelFakeRepo
-	mutes    *muteFakeRepo
-	blocks   *moderationFakeRepo
+	identifierLookupErr error
+	videoDetailErr      error
+	channels            *channelFakeRepo
+	mutes               *muteFakeRepo
+	blocks              *moderationFakeRepo
 	// userBlocks mirrors the §13 user_blocks content filter (viewer = blocker).
 	userBlocks *blockFakeRepo
 	videos     map[uuid.UUID]sqlcgen.GetVideoByIDRow
@@ -491,6 +493,9 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 // empty-code guard matters: rows seeded directly by a test (rather than through
 // CreateVideo) carry no code, and without it a lookup for "" would match them.
 func (f *videoFakeRepo) GetVideoIDByShortCode(_ context.Context, code string) (uuid.UUID, error) {
+	if f.identifierLookupErr != nil {
+		return uuid.Nil, f.identifierLookupErr
+	}
 	for id, v := range f.videos {
 		if v.ShortCode != "" && v.ShortCode == code {
 			return id, nil
@@ -502,6 +507,9 @@ func (f *videoFakeRepo) GetVideoIDByShortCode(_ context.Context, code string) (u
 // GetVideoIDByLegacyUUID mirrors "WHERE id = $1 OR peertube_uuid = $1", keeping
 // the query's preference for this instance's own id namespace.
 func (f *videoFakeRepo) GetVideoIDByLegacyUUID(_ context.Context, legacy uuid.UUID) (uuid.UUID, error) {
+	if f.identifierLookupErr != nil {
+		return uuid.Nil, f.identifierLookupErr
+	}
 	if _, ok := f.videos[legacy]; ok {
 		return legacy, nil
 	}
@@ -526,9 +534,12 @@ func fakeShortCode() string {
 }
 
 func (f *videoFakeRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+	if f.videoDetailErr != nil {
+		return sqlcgen.GetVideoByIDRow{}, f.videoDetailErr
+	}
 	v, ok := f.videos[id]
 	if !ok {
-		return sqlcgen.GetVideoByIDRow{}, errors.New("not found")
+		return sqlcgen.GetVideoByIDRow{}, pgx.ErrNoRows
 	}
 	// Mirror the real query's channels + users JOINs so the detail view carries
 	// the owning channel's identity and the uploader's display name.

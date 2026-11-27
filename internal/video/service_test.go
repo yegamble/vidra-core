@@ -283,7 +283,7 @@ func (f *fakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoParams) (
 func (f *fakeRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	v, ok := f.videos[id]
 	if !ok {
-		return sqlcgen.GetVideoByIDRow{}, errors.New("not found")
+		return sqlcgen.GetVideoByIDRow{}, pgx.ErrNoRows
 	}
 	return v, nil
 }
@@ -295,7 +295,7 @@ func (f *fakeRepo) GetVideoIDByShortCode(_ context.Context, code string) (uuid.U
 			return id, nil
 		}
 	}
-	return uuid.Nil, errors.New("not found")
+	return uuid.Nil, pgx.ErrNoRows
 }
 
 // GetVideoIDByLegacyUUID mirrors "WHERE id = $1 OR peertube_uuid = $1", with the
@@ -309,7 +309,7 @@ func (f *fakeRepo) GetVideoIDByLegacyUUID(_ context.Context, legacy uuid.UUID) (
 			return id, nil
 		}
 	}
-	return uuid.Nil, errors.New("not found")
+	return uuid.Nil, pgx.ErrNoRows
 }
 
 // fakeShortCode mints an 11-character base58 code, mirroring what migration
