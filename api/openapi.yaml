@@ -5217,6 +5217,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            The database is temporarily unavailable (database_unavailable) or
+            the lookup exceeded the request deadline (request_timeout).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /api/v1/videos/{id}:
     get:
       operationId: getVideo
@@ -5276,6 +5283,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            The database is temporarily unavailable (database_unavailable) or
+            the lookup exceeded the request deadline (request_timeout).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
     patch:
       operationId: updateVideo
       summary: Update a video
