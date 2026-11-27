@@ -92,6 +92,9 @@ func (s *Server) systemComponents(ctx context.Context) (map[string]componentStat
 		"ffmpeg": s.probeFFmpeg,
 		"clamav": s.probeMalwareScanner,
 	}
+	if s.cfg.IPFSReferenceStatusFile != "" {
+		probes["ipfs_reference"] = s.probeIPFSReference
+	}
 	var (
 		mu sync.Mutex
 		wg sync.WaitGroup
