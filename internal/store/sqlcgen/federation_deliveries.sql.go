@@ -271,12 +271,18 @@ func (q *Queries) ListCancelledDeliveriesForRedelivery(ctx context.Context, arg 
 
 const markDeliveryDelivered = `-- name: MarkDeliveryDelivered :exec
 UPDATE federation_deliveries
-SET state = 'delivered', updated_at = now()
+SET state = 'delivered', payload = $2, updated_at = now()
 WHERE id = $1
 `
 
-func (q *Queries) MarkDeliveryDelivered(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markDeliveryDelivered, id)
+type MarkDeliveryDeliveredParams struct {
+	ID      uuid.UUID `json:"id"`
+	Payload []byte    `json:"payload"`
+}
+
+// The receipt must reflect the bytes actually sent after a profile withdrawal.
+func (q *Queries) MarkDeliveryDelivered(ctx context.Context, arg MarkDeliveryDeliveredParams) error {
+	_, err := q.db.Exec(ctx, markDeliveryDelivered, arg.ID, arg.Payload)
 	return err
 }
 

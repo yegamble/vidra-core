@@ -664,8 +664,9 @@ func (f fakeRepo) ClaimDueDeliveries(_ context.Context, arg sqlcgen.ClaimDueDeli
 	return out, nil
 }
 
-func (f fakeRepo) MarkDeliveryDelivered(_ context.Context, id uuid.UUID) error {
-	if d, ok := f.deliveries[id]; ok {
+func (f fakeRepo) MarkDeliveryDelivered(_ context.Context, arg sqlcgen.MarkDeliveryDeliveredParams) error {
+	if d, ok := f.deliveries[arg.ID]; ok {
+		d.row.Payload = arg.Payload
 		d.state = "delivered"
 	}
 	return nil

@@ -45,7 +45,11 @@ WHERE rf.state = 'pending';
 -- Admin approval: flips one pending follow to accepted and returns what the
 -- Accept delivery needs. Resolved/unknown ids match no row (pgx.ErrNoRows).
 UPDATE remote_follows SET state = 'accepted'
-WHERE id = $1 AND state = 'pending'
+WHERE remote_follows.id = $1 AND remote_follows.state = 'pending'
+  AND EXISTS (SELECT FROM channels c JOIN users u ON u.id = c.owner_id
+              WHERE c.id = remote_follows.channel_id AND c.activitypub_enabled
+                AND u.is_active AND u.deleted_at IS NULL
+                AND NOT EXISTS (SELECT FROM user_bans b WHERE b.user_id = u.id))
 RETURNING channel_id, remote_actor_url, follow_activity_url;
 
 -- name: DeletePendingRemoteFollowByID :one

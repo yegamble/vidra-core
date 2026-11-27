@@ -80,7 +80,8 @@ ORDER BY created_at, id;
 
 -- name: MarkDeliveryDelivered :exec
 UPDATE federation_deliveries
-SET state = 'delivered', updated_at = now()
+-- The receipt must reflect the bytes actually sent after a profile withdrawal.
+SET state = 'delivered', payload = $2, updated_at = now()
 WHERE id = $1;
 
 -- name: RescheduleDelivery :exec

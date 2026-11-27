@@ -235,7 +235,9 @@ func (f fakeFedRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDeliv
 func (fakeFedRepo) ClaimDueDeliveries(context.Context, sqlcgen.ClaimDueDeliveriesParams) ([]sqlcgen.ClaimDueDeliveriesRow, error) {
 	return nil, nil
 }
-func (fakeFedRepo) MarkDeliveryDelivered(context.Context, uuid.UUID) error { return nil }
+func (fakeFedRepo) MarkDeliveryDelivered(context.Context, sqlcgen.MarkDeliveryDeliveredParams) error {
+	return nil
+}
 func (fakeFedRepo) RescheduleDelivery(context.Context, sqlcgen.RescheduleDeliveryParams) error {
 	return nil
 }

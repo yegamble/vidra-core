@@ -5,9 +5,11 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -55,6 +57,12 @@ func TestFederatedProfileVisibility(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer sp.Rollback(ctx)
+			pending, err := sqlcgen.New(sp).InsertRemoteFollowPending(ctx, sqlcgen.InsertRemoteFollowPendingParams{
+				ChannelID: channel, RemoteActorUrl: "https://peer.example/accounts/earlier", FollowActivityUrl: "https://peer.example/follow/earlier",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
 			if tc.change != "" {
 				if _, err := sp.Exec(ctx, tc.change, owner); err != nil {
 					t.Fatal(err)
@@ -79,6 +87,20 @@ func TestFederatedProfileVisibility(t *testing.T) {
 			check("Note", err, tc.person)
 			_, err = svc.WebFinger(ctx, "acct:"+ch.Handle+"@vidra.example")
 			check("channel discovery", err, tc.group)
+			const follower = "https://peer.example/accounts/viewer"
+			local := "https://vidra.example/video-channels/" + ch.Handle
+			follow := []byte(fmt.Sprintf(`{"id":"%s/follow/%s","type":"Follow","actor":%q,"object":%q}`, follower, uuid.New(), follower, local))
+			if err := svc.HandleInbox(ctx, follower, follow); err != nil {
+				t.Fatal(err)
+			}
+			n, err := sqlcgen.New(sp).CountRemoteFollowers(ctx, channel)
+			if err != nil || (n == 1) != tc.group {
+				t.Errorf("accepted follows=%d, err=%v", n, err)
+			}
+			_, err = sqlcgen.New(sp).AcceptPendingRemoteFollowByID(ctx, pending)
+			if tc.group && err != nil || !tc.group && !errors.Is(err, pgx.ErrNoRows) {
+				t.Errorf("pending follow approval: eligible=%t, err=%v", tc.group, err)
+			}
 			group, err := svc.ChannelActor(ctx, ch.Handle)
 			check("Group", err, tc.group)
 			if group != nil && (len(group.AttributedTo) > 0) != tc.person {

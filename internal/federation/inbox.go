@@ -234,7 +234,7 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 	// renamed channel is the ordinary case for every peer that followed before
 	// the rename, and the A29 rehearsal 3 lab watched one answered 202 and
 	// dropped because this lookup could not see the alias.
-	ch, err := s.resolveChannel(ctx, handle, s.repo.GetChannelByHandle)
+	ch, err := s.resolveChannel(ctx, handle, s.repo.GetFederatedChannelByHandle)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
 			return nil // unknown local channel → ignore
@@ -393,7 +393,7 @@ func (s *Service) rejectFollowFromBlockedSender(ctx context.Context, act inboxAc
 	if !ok {
 		return
 	}
-	ch, err := s.resolveChannel(ctx, handle, s.repo.GetChannelByHandle)
+	ch, err := s.resolveChannel(ctx, handle, s.repo.GetFederatedChannelByHandle)
 	if err != nil || !ch.ActivitypubEnabled {
 		return
 	}

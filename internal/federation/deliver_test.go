@@ -129,6 +129,7 @@ func TestUnlockPrivateKeyRawAndSealed(t *testing.T) {
 func TestDrainDeliveriesSignsDeliversAndMarks(t *testing.T) {
 	channelID := uuid.New()
 	repo := fakeRepo{
+		channels:   map[string]sqlcgen.Channel{"films": {ID: channelID, Handle: "films"}},
 		chanKeys:   map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
 		deliveries: map[uuid.UUID]*fakeDelivery{},
 	}
@@ -169,6 +170,7 @@ func TestDrainDeliveriesSignsDeliversAndMarks(t *testing.T) {
 func TestDrainDeliveriesSignsAsAccountActor(t *testing.T) {
 	userID := uuid.New()
 	repo := fakeRepo{
+		usersByID:  map[uuid.UUID]sqlcgen.GetUserActorByIDRow{userID: {ID: userID, Username: "ada"}},
 		acctKeys:   map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
 		deliveries: map[uuid.UUID]*fakeDelivery{},
 	}
