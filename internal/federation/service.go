@@ -61,6 +61,8 @@ type Repository interface {
 	// Outbound delivery queue (Slice 5a).
 	EnqueueDelivery(ctx context.Context, arg sqlcgen.EnqueueDeliveryParams) error
 	ClaimDueDeliveries(ctx context.Context, arg sqlcgen.ClaimDueDeliveriesParams) ([]sqlcgen.ClaimDueDeliveriesRow, error)
+	GetRetractionActorUsername(ctx context.Context, id uuid.UUID) (string, error)
+	KnownAccountRetractionActivity(ctx context.Context, arg sqlcgen.KnownAccountRetractionActivityParams) (string, error)
 	MarkDeliveryDelivered(ctx context.Context, arg sqlcgen.MarkDeliveryDeliveredParams) error
 	RescheduleDelivery(ctx context.Context, arg sqlcgen.RescheduleDeliveryParams) error
 	FailDelivery(ctx context.Context, arg sqlcgen.FailDeliveryParams) error

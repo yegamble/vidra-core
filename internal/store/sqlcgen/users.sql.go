@@ -373,6 +373,19 @@ func (q *Queries) GetPublicUserProfileByUsername(ctx context.Context, lower stri
 	return i, err
 }
 
+const getRetractionActorUsername = `-- name: GetRetractionActorUsername :one
+SELECT username FROM users WHERE id = $1
+`
+
+// Internal signing identity for Delete/Undo. The worker requires proof of
+// previous disclosure before sending either activity for a withdrawn Person.
+func (q *Queries) GetRetractionActorUsername(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getRetractionActorUsername, id)
+	var username string
+	err := row.Scan(&username)
+	return username, err
+}
+
 const getUserActorByID = `-- name: GetUserActorByID :one
 SELECT id, username, display_name, bio, created_at
 FROM users

@@ -56,14 +56,14 @@ func (s *Service) DeleteComment(ctx context.Context, commentID, videoID, authorI
 	if !ch.ActivitypubEnabled {
 		return nil // channel opted out of ActivityPub (migration 0096)
 	}
-	u, err := s.repo.GetUserActorByID(ctx, authorID)
+	username, err := s.repo.GetRetractionActorUsername(ctx, authorID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		return err
 	}
-	accountActor := s.baseURL + "/accounts/" + u.Username
+	accountActor := s.baseURL + "/accounts/" + username
 	payload, err := json.Marshal(map[string]any{
 		"@context": "https://www.w3.org/ns/activitystreams",
 		"id":       accountActor + "/activities/delete/" + uuid.NewString(),
@@ -75,7 +75,7 @@ func (s *Service) DeleteComment(ctx context.Context, commentID, videoID, authorI
 	if err != nil {
 		return err
 	}
-	return s.fanOutAsAccount(ctx, v.ChannelID, authorID, u.Username, payload)
+	return s.fanOutAsAccount(ctx, v.ChannelID, authorID, username, payload)
 }
 
 // federateComment loads the comment + its video/channel and enqueues the

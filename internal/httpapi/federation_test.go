@@ -235,6 +235,15 @@ func (f fakeFedRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDeliv
 func (fakeFedRepo) ClaimDueDeliveries(context.Context, sqlcgen.ClaimDueDeliveriesParams) ([]sqlcgen.ClaimDueDeliveriesRow, error) {
 	return nil, nil
 }
+func (f fakeFedRepo) GetRetractionActorUsername(ctx context.Context, id uuid.UUID) (string, error) {
+	u, err := f.GetUserActorByID(ctx, id)
+	return u.Username, err
+}
+
+func (fakeFedRepo) KnownAccountRetractionActivity(context.Context, sqlcgen.KnownAccountRetractionActivityParams) (string, error) {
+	return "", pgx.ErrNoRows
+}
+
 func (fakeFedRepo) MarkDeliveryDelivered(context.Context, sqlcgen.MarkDeliveryDeliveredParams) error {
 	return nil
 }
