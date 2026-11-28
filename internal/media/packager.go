@@ -236,9 +236,10 @@ func dirRef(dir string) rungRef {
 // and its argument-contributing half can be used (by the ladder builders, and by
 // tests) without wiring up a transcoder.
 type packageTools struct {
-	blobs   storage.Backend
-	ffmpeg  string
-	ffprobe string
+	blobs       storage.Backend
+	ffmpeg      string
+	ffprobe     string
+	outputLimit int64
 }
 
 // packageRequest is one finished encode, handed to a packager for finalisation.
@@ -262,8 +263,9 @@ type packageRequest struct {
 	// codecs is the codec plan the ladder was encoded with, H.264 first. Never
 	// empty: finalisation checks ffmpeg's own manifest against it, and "no plan"
 	// would make that check vacuous rather than trivially true.
-	codecs []codecProfile
-	tools  packageTools
+	codecs    []codecProfile
+	tools     packageTools
+	skipTrick bool
 	// onPackagingFailed and onStoreFailed report a fatal error through the
 	// caller's per-rung progress projection before it is returned. Both are
 	// optional.
@@ -280,15 +282,22 @@ type packageRequest struct {
 	// full decode of the source or reading the whole ladder back out of the object
 	// store. A failure is fatal to the transcode, exactly as a storeTree failure
 	// at the same point already is.
-	onRungPackaged func(ctx context.Context, r HLSRung, dir string) error
+	onRungPackaged func(ctx context.Context, r HLSRung, dir string, muxedAvailable bool) error
 }
 
 // rungPackaged notifies the optional per-rung derivative hook.
 func (req packageRequest) rungPackaged(ctx context.Context, r HLSRung, dir string) error {
+	muxedOmitted, err := req.tools.omitOversized(ctx, filepath.Join(dir, HLSMuxedDownloadFilename), path.Join(req.prefix, r.Name(), HLSMuxedDownloadFilename))
+	if err != nil {
+		return err
+	}
+	if _, err := req.tools.omitOversized(ctx, filepath.Join(dir, HLSVideoOnlyDownloadFilename), path.Join(req.prefix, r.Name(), HLSVideoOnlyDownloadFilename)); err != nil {
+		return err
+	}
 	if req.onRungPackaged == nil {
 		return nil
 	}
-	return req.onRungPackaged(ctx, r, dir)
+	return req.onRungPackaged(ctx, r, dir, !muxedOmitted)
 }
 
 func (req packageRequest) packagingFailed() {
@@ -497,7 +506,7 @@ func (tsPackager) Finalize(ctx context.Context, req packageRequest) (packageResu
 		dir := filepath.Join(req.scratch, r.Name())
 		rio := rungIO{out: req.out, rung: r, scratch: dir}
 		playlist := rio.ref(hlsVariantPlaylistFilename)
-		if err := remuxHLSDownloads(ctx, req.tools.ffmpeg, req.sourceKey, playlist, dir, r); err != nil {
+		if err := req.tools.remuxHLSDownloads(ctx, req.sourceKey, playlist, dir, r); err != nil {
 			req.packagingFailed()
 			return packageResult{}, err
 		}
@@ -505,18 +514,20 @@ func (tsPackager) Finalize(ctx context.Context, req packageRequest) (packageResu
 			req.packagingFailed()
 			return packageResult{}, err
 		}
-		trickInfo, err := finalizeTrickPlay(ctx, req.tools.ffprobe, rio)
+		trickInfo, err := req.trickPlay(ctx, rio.tree(), HLSIFramePlaylistFilename, HLSIFrameMediaFilename)
 		if err != nil {
 			req.packagingFailed()
 			return packageResult{}, fmt.Errorf("media: trick-play %s for %q: %w", r.Name(), req.sourceKey, err)
 		}
-		trickPlay[r.Height] = trickInfo
+		if trickInfo.Bandwidth > 0 {
+			trickPlay[r.Height] = trickInfo
+		}
 		if i == 0 {
 			// Audio-only is an optional convenience asset. A silent source (or
 			// any extraction failure) must not fail the canonical HLS transcode.
 			// It is written at the TOP level, so it survives this rung's cleanup.
 			dst := filepath.Join(req.scratch, HLSAudioDownloadFilename)
-			cmd := exec.CommandContext(ctx, req.tools.ffmpeg, hlsAudioM4AArgs(playlist, dst)...)
+			cmd := exec.CommandContext(ctx, req.tools.ffmpeg, limitSingleFile(hlsAudioM4AArgs(playlist, dst), req.tools.outputLimit)...)
 			if err := cmd.Run(); err != nil {
 				_ = os.Remove(dst)
 			}
@@ -549,7 +560,7 @@ func (tsPackager) Finalize(ctx context.Context, req packageRequest) (packageResu
 	// the exact stored HLS-tree size, not just the variant subdirectories. The
 	// rung directories are already uploaded and removed, so what remains in the
 	// scratch root IS exactly the top-level extra.
-	extra, err := directorySize(req.scratch)
+	extra, err := req.topLevelSize(ctx)
 	if err != nil {
 		return packageResult{}, err
 	}
@@ -557,20 +568,6 @@ func (tsPackager) Finalize(ctx context.Context, req packageRequest) (packageResu
 		rungSizes[req.rungs[0].Height] += extra
 	}
 
-	// A replacement source may be silent even when the previous generation had
-	// audio. storeTree only overwrites files present in the new tree, so remove
-	// the old optional derivative before storing a generation that omits it.
-	// (Redundant when the backend is a PrefixDeleter -- the prefix was already
-	// cleared before the encode -- but backends without that capability still
-	// need it.)
-	if _, statErr := os.Stat(filepath.Join(req.scratch, HLSAudioDownloadFilename)); os.IsNotExist(statErr) {
-		if err := req.tools.blobs.Delete(ctx, req.prefix+"/"+HLSAudioDownloadFilename); err != nil {
-			return packageResult{}, err
-		}
-	} else if statErr != nil {
-		return packageResult{}, statErr
-	}
-	// Only the master playlist and the optional audio-only download are left.
 	if err := storeTree(ctx, req.tools.blobs, req.scratch, req.prefix); err != nil {
 		req.storeFailed(req.rungs...)
 		return packageResult{}, err
@@ -677,17 +674,6 @@ func (io rungIO) tree() treeIO {
 
 func (io rungIO) ref(name string) string { return io.tree().ref(name) }
 
-// finalizeTrickPlay turns one rung's freshly-encoded trick-play output into the
-// playlist clients can use: FFmpeg's `iframes_only` flag emits incorrect
-// repeated @0 offsets, so the byte ranges are generated with `single_file` and
-// the standards tag is added here after the playlist shape is verified. It also
-// measures the declared peak bandwidth and probes the codec string for the
-// master playlist. No decoding happens here, so it is cheap to run per rung
-// after a single shared encode pass.
-func finalizeTrickPlay(ctx context.Context, ffprobeBin string, rio rungIO) (hlsTrickPlayInfo, error) {
-	return finalizeTrickPlayIn(ctx, ffprobeBin, rio.tree(), HLSIFramePlaylistFilename, HLSIFrameMediaFilename)
-}
-
 // finalizeTrickPlayIn is finalizeTrickPlay with the directory and asset names
 // supplied: CMAF keeps every rung's trick-play pair in the shared segment
 // directory, so the names carry the rung's representation index instead of
@@ -718,7 +704,7 @@ func finalizeTrickPlayIn(ctx context.Context, ffprobeBin string, tio treeIO, pla
 // remuxHLSDownloads emits the two required progressive MP4 assets for a
 // rendition. Both are canonical download outputs, so either command failing
 // fails the transcode rather than storing a partial tree.
-func remuxHLSDownloads(ctx context.Context, ffmpegBin, sourceKey, playlist, dir string, r HLSRung) error {
+func (tools packageTools) remuxHLSDownloads(ctx context.Context, sourceKey, playlist, dir string, r HLSRung) error {
 	outputs := []struct {
 		includeAudio bool
 		filename     string
@@ -729,7 +715,7 @@ func remuxHLSDownloads(ctx context.Context, ffmpegBin, sourceKey, playlist, dir 
 	}
 	for _, output := range outputs {
 		dst := filepath.Join(dir, output.filename)
-		cmd := exec.CommandContext(ctx, ffmpegBin, hlsProgressiveMP4Args(playlist, dst, output.includeAudio)...)
+		cmd := exec.CommandContext(ctx, tools.ffmpeg, limitSingleFile(hlsProgressiveMP4Args(playlist, dst, output.includeAudio), tools.outputLimit)...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {

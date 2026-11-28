@@ -41,6 +41,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -49,6 +50,8 @@ import (
 
 	"github.com/vidra/vidra-core/internal/jobtrace"
 	"github.com/vidra/vidra-core/internal/lease"
+	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/processedupload"
 	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/safeerr"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -110,10 +113,11 @@ type Pipeline interface {
 
 // Service runs the asynchronous completion queue.
 type Service struct {
-	repo     Repository
-	uploads  *upload.Service
-	pipeline Pipeline
-	logger   *slog.Logger
+	repo      Repository
+	uploads   *upload.Service
+	pipeline  Pipeline
+	normalize func(context.Context, io.Reader, int64) (*os.File, error)
+	logger    *slog.Logger
 	// onReplaced routes a just-swapped source into the transcode pipeline (the
 	// replace-purpose equivalent of the onTranscode hook Process fires for a
 	// plain upload). Best-effort: the swap already happened.
@@ -129,6 +133,10 @@ type Service struct {
 
 // Option customises the Service.
 type Option func(*Service)
+
+func WithNormalizer(client processedupload.Client) Option {
+	return func(s *Service) { s.normalize = client.Normalize }
+}
 
 // WithLogger overrides the logger used for unexpected (non-client-facing) errors.
 func WithLogger(l *slog.Logger) Option {
@@ -286,7 +294,11 @@ func (s *Service) LatestForSession(ctx context.Context, uploadID uuid.UUID) (sql
 //
 // Intended to be called on a ticker by a single worker goroutine per instance.
 func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
-	rows, err := s.repo.ClaimDueUploadFinalizeJobs(ctx, int32(limit))
+	// A claim starts the database lease. Only claim jobs that can start their
+	// heartbeat now, so a long upload cannot exhaust the next job's lease
+	// while that job is still waiting for a local worker slot.
+	workers := s.Concurrency()
+	rows, err := s.repo.ClaimDueUploadFinalizeJobs(ctx, int32(min(limit, workers)))
 	if err != nil {
 		return 0, err
 	}
@@ -294,7 +306,7 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 		mu   sync.Mutex
 		done int
 	)
-	workerpool.Run(s.Concurrency(), len(rows), func(i int) {
+	workerpool.Run(workers, len(rows), func(i int) {
 		row := rows[i]
 		// Assembling a multi-gigabyte upload out of object storage and probing
 		// it routinely outlives one lease, so renew while the work runs —
@@ -385,17 +397,34 @@ func (s *Service) runFinalize(ctx context.Context, row sqlcgen.ClaimDueUploadFin
 		return safeerr.New("the video no longer exists")
 	}
 
-	if row.Purpose == upload.PurposeReplace {
+	input := video.UploadInput{Filename: sess.Filename, Reader: reader}
+	if sess.Purpose == upload.PurposeProcessed {
+		if s.normalize == nil || row.Purpose == upload.PurposeReplace {
+			return s.internalf("process private upload", errors.New("normalizer unavailable"))
+		}
+		f, err := s.normalize(ctx, reader, sess.TotalSize)
+		switch {
+		case errors.Is(err, processedupload.ErrInfected):
+			s.logger.Warn("processed upload safety scan refused the file", "video_id", row.VideoID, "outcome", "infected")
+			return safeerr.NewTerminal(video.SafetyScanRejectedMessage)
+		case errors.Is(err, media.ErrScanLimit), errors.Is(err, processedupload.ErrScanTooLarge):
+			s.logger.Warn("processed upload safety scan refused the file", "video_id", row.VideoID, "outcome", "scan_limit")
+			return safeerr.NewTerminal(video.SafetyScanRejectedMessage)
+		case errors.Is(err, processedupload.ErrRejected):
+			return safeerr.NewTerminal("the uploaded video could not be converted to a playable file")
+		case err != nil:
+			return s.internalf("process private upload", err)
+		}
+		defer f.Close()
+		input = video.UploadInput{Filename: "processed.mp4", ContentType: "video/mp4", Reader: f, InputSize: sess.TotalSize, Reconstructed: true}
+	} else if row.Purpose == upload.PurposeReplace {
 		return s.runReplace(ctx, row, sess, reader)
 	}
 
 	// The bytes land under, and count against, the video's channel OWNER — the
 	// same attribution the request-time quota check used, so an editor
 	// collaborator's upload is billed to the owner rather than to themselves.
-	_, file, err := s.pipeline.AttachOriginal(ctx, v.OwnerID, row.VideoID, video.UploadInput{
-		Filename: sess.Filename,
-		Reader:   reader,
-	})
+	_, file, err := s.pipeline.AttachOriginal(ctx, v.OwnerID, row.VideoID, input)
 	if err != nil {
 		switch {
 		case errors.Is(err, video.ErrUnsupportedMedia):

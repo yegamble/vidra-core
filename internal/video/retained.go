@@ -24,13 +24,16 @@ type retainedQueries interface {
 
 type retainedSource struct {
 	Repository
-	queries retainedQueries
-	job     uuid.UUID
+	queries    retainedQueries
+	invalidate func()
+	job        uuid.UUID
 }
 
 // Every outcome, including publication and quarantine, must still match the
 // creator, visibility, moderation state and attached source at the state write.
 func (r *retainedSource) SetVideoState(ctx context.Context, p sqlcgen.SetVideoStateParams) (sqlcgen.Video, error) {
+	// This guarded write replaces SetVideoState on the cached repository.
+	defer r.invalidate()
 	row, err := r.queries.SetRetainedScanVideoState(ctx, sqlcgen.SetRetainedScanVideoStateParams{
 		VideoID: p.ID, JobID: r.job, NewState: p.State,
 	})
@@ -57,9 +60,9 @@ func (s retainedScanner) Scan(ctx context.Context, key string) (bool, error) {
 // after the operator has enrolled the exact failed upload. A regular finalize
 // has no such enrollment and reaches Process through AttachOriginal instead.
 func (s *Service) ProcessRetained(ctx context.Context, jobID, videoID uuid.UUID) error {
-	q, ok := s.repo.(retainedQueries)
+	q := s.retained
 	scanner, verifies := s.scanner.(verifiedScanner)
-	if !ok || !verifies || s.scanMode != ScanModeFailClosed || s.prober == nil {
+	if q == nil || !verifies || s.scanMode != ScanModeFailClosed || s.prober == nil {
 		return ErrRecoveryIneligible
 	}
 	source, err := q.GetCurrentRetainedScanRecovery(ctx, jobID)
@@ -83,7 +86,7 @@ func (s *Service) ProcessRetained(ctx context.Context, jobID, videoID uuid.UUID)
 	if err != nil {
 		return err
 	}
-	guard := &retainedSource{Repository: s.repo, queries: q, job: jobID}
+	guard := &retainedSource{Repository: s.repo, queries: q, invalidate: s.InvalidateAnonymous, job: jobID}
 	operation := *s
 	operation.repo = guard
 	operation.scanner = retainedScanner{verifiedScanner: scanner, source: source}

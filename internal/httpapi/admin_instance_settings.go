@@ -47,11 +47,15 @@ func (s *Server) settingInt(key string, configDefault int64) int64 {
 	return configDefault
 }
 
-// uploadMaxSizeBytes is the effective single-upload byte cap (0 = no cap): the
+// configuredUploadMaxSizeBytes is the configured single-upload byte cap (0 = no cap): the
 // DB overlay when wired, else the boot-validated UPLOAD_MAX_SIZE parsed to bytes.
-func (s *Server) uploadMaxSizeBytes() int64 {
+func (s *Server) configuredUploadMaxSizeBytes() int64 {
 	def, _ := bytes.Parse(s.cfg.UploadMaxSize) // boot-validated (config.go), so err is unreachable
 	return s.settingInt(instancesettings.KeyUploadMaxSizeBytes, def)
+}
+
+func (s *Server) uploadMaxSizeBytes() int64 {
+	return s.cfg.UploadLimit(s.configuredUploadMaxSizeBytes(), false)
 }
 
 // uploadMaxActiveSessions is the effective per-user active-session cap

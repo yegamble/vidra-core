@@ -282,8 +282,9 @@ type fakePipeline struct {
 
 	ownerID uuid.UUID
 
-	attached  []byte // the bytes AttachOriginal was handed
-	attachErr error
+	attached      []byte // the bytes AttachOriginal was handed
+	reconstructed bool
+	attachErr     error
 
 	processedKey string
 	processErr   error
@@ -306,6 +307,7 @@ func (p *fakePipeline) AttachOriginal(_ context.Context, ownerID, videoID uuid.U
 	body, _ := io.ReadAll(in.Reader)
 	p.mu.Lock()
 	p.attached = body
+	p.reconstructed = in.Reconstructed
 	p.mu.Unlock()
 	if p.attachErr != nil {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, p.attachErr
@@ -397,6 +399,30 @@ func (h *harness) openAndFill(t *testing.T, payload string, purpose string) sqlc
 }
 
 // ---- tests -----------------------------------------------------------------
+
+func TestDrainLeavesQueuedJobsUnclaimedUntilAWorkerCanRenewTheirLease(t *testing.T) {
+	ctx := t.Context()
+	h := newHarness(t) // One worker, the default.
+	var sessions []sqlcgen.UploadSession
+	for range 2 {
+		h.video = uuid.New()
+		sess := h.openAndFill(t, "abcdefgh", upload.PurposeUpload)
+		if _, err := h.svc.Enqueue(ctx, sess.ID, h.video, upload.PurposeUpload, false); err != nil {
+			t.Fatal(err)
+		}
+		sessions = append(sessions, sess)
+	}
+	for i, sess := range sessions {
+		job, err := h.svc.LatestForSession(ctx, sess.ID)
+		if err != nil || job.State != StatePending {
+			t.Fatalf("job %d before its worker slot: state=%q err=%v", i, job.State, err)
+		}
+		done, err := h.svc.DrainJobs(ctx, 2)
+		if err != nil || done != 1 {
+			t.Fatalf("drain %d = %d, %v; want one job", i, done, err)
+		}
+	}
+}
 
 // TestFinalizeRunsThePipeline is the happy path the request used to run inline:
 // the worker assembles the chunks in order, hands them to AttachOriginal

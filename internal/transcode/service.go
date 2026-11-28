@@ -503,8 +503,25 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	if s.transcoder == nil {
 		return 0, ErrNoTranscoder
 	}
+	workers := s.Concurrency()
+	done := 0
+	for remaining := limit; remaining > 0; {
+		slots := min(workers, remaining)
+		claimed, completed, err := s.drainAvailable(ctx, slots)
+		done += completed
+		if err != nil || claimed < slots {
+			return done, err
+		}
+		remaining -= claimed
+	}
+	return done, nil
+}
+
+// Claim only jobs that have a worker ready to renew their lease. An encode
+// can run longer than the lease of any job waiting behind it in a local queue.
+func (s *Service) drainAvailable(ctx context.Context, slots int) (claimed, completed int, err error) {
 	if !s.Enabled() {
-		return 0, nil
+		return 0, 0, nil
 	}
 	// Scratch floor: below it, claim nothing. Checked BEFORE the claim so a
 	// nearly-full disk leaves jobs in 'pending' where the next tick (or an
@@ -515,7 +532,7 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	if freeKnown && free < s.minFreeScratch {
 		slog.WarnContext(ctx, "transcode: deferring all jobs, scratch space below the floor",
 			"free_bytes", free, "min_free_bytes", s.minFreeScratch)
-		return 0, nil
+		return 0, 0, nil
 	}
 	// Storage floor, same rule as the scratch floor above and for the same
 	// reason: a destination that will not take the output makes every claim a
@@ -525,18 +542,18 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 		if writable, class := s.storageWritableFn(); !writable {
 			slog.WarnContext(ctx, "transcode: deferring all jobs, the object store is not accepting writes",
 				"class", class)
-			return 0, nil
+			return 0, 0, nil
 		}
 	}
-	rows, err := s.repo.ClaimDueTranscodeJobs(ctx, int32(limit))
+	rows, err := s.repo.ClaimDueTranscodeJobs(ctx, int32(slots))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	var (
 		mu   sync.Mutex
 		done int
 	)
-	workerpool.Run(s.Concurrency(), len(rows), func(i int) {
+	workerpool.Run(slots, len(rows), func(i int) {
 		row := rows[i]
 		// Every queue-state write below runs under its OWN bookkeeping context,
 		// built immediately before it (see bookkeepingCtx). One context shared
@@ -616,7 +633,7 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 		done++
 		mu.Unlock()
 	})
-	return done, nil
+	return len(rows), done, nil
 }
 
 // progressWriteStep is how many whole percent one rung must advance before its
@@ -815,13 +832,15 @@ func (s *Service) storeResult(ctx context.Context, videoID uuid.UUID, res media.
 	// Progressive VP9/WebM alternate (when TRANSCODING_VP9_ENABLED): recorded as a
 	// single kind='webm' video_file, replacing any prior one, so /download can
 	// surface it. Absent when VP9 is off.
-	if res.WebMKey != "" {
+	if res.WebMKey != "" || res.WebMOmitted {
 		if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
 			VideoID: videoID,
 			Kind:    "webm",
 		}); err != nil {
 			return err
 		}
+	}
+	if res.WebMKey != "" {
 		if _, err := s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
 			VideoID:      videoID,
 			Kind:         "webm",

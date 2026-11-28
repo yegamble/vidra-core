@@ -51,7 +51,7 @@ func webVideoEncodeArgs(r HLSRung, vf string) []string {
 // single time and writes every rung's progressive MP4. Same reasoning as
 // hlsLadderArgs: the previous per-rung loop decoded the whole source once per
 // resolution to produce different scalings of identical frames.
-func webVideoLadderArgs(src source, root string, rungs []HLSRung, threads int) []string {
+func webVideoLadderArgs(src source, root string, rungs []HLSRung, threads int, outputLimit int64) []string {
 	args := []string{"-y"}
 	args = append(args, src.inputArgs()...)
 
@@ -75,7 +75,7 @@ func webVideoLadderArgs(src source, root string, rungs []HLSRung, threads int) [
 			args = append(args, "-threads", strconv.Itoa(per))
 		}
 		args = append(args, webVideoEncodeArgs(r, "")...)
-		args = append(args, filepath.Join(root, r.Name()+".mp4"))
+		args = limitSingleFile(append(args, filepath.Join(root, r.Name()+".mp4")), outputLimit)
 	}
 	return args
 }
@@ -129,7 +129,16 @@ type webVideoDeriver struct {
 }
 
 // rungPackaged satisfies packageRequest.onRungPackaged.
-func (d *webVideoDeriver) rungPackaged(ctx context.Context, r HLSRung, dir string) error {
+func (d *webVideoDeriver) rungPackaged(ctx context.Context, r HLSRung, dir string, muxedAvailable bool) error {
+	key := path.Join(d.prefix, r.Name()+".mp4")
+	if !muxedAvailable {
+		if err := deleteExistingOutput(ctx, d.blobs, key); err != nil {
+			d.report(r, ProgressFailed, "storing", 97)
+			return err
+		}
+		d.report(r, ProgressSucceeded, "omitted_size_limit", 100)
+		return nil
+	}
 	d.report(r, ProgressRunning, "storing", 97)
 	src := filepath.Join(dir, HLSMuxedDownloadFilename)
 	f, err := os.Open(src)
@@ -144,7 +153,6 @@ func (d *webVideoDeriver) rungPackaged(ctx context.Context, r HLSRung, dir strin
 	if info, serr := f.Stat(); serr == nil {
 		size = info.Size()
 	}
-	key := path.Join(d.prefix, r.Name()+".mp4")
 	stored, sum, perr := storage.PutSizedHashed(ctx, d.blobs, key, f, size)
 	if perr != nil {
 		d.report(r, ProgressFailed, "storing", 97)
@@ -177,7 +185,10 @@ func WebVideoPrefixForGeneration(videoID uuid.UUID, generation int) string {
 // standalone web-video rebuild writes its own directory rather than overwriting
 // the one the last run left. md is the caller's already-obtained probe of
 // sourceKey; the worker probes once per job and shares it across targets.
-func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md Metadata, progress ProgressFunc) ([]WebVideoResult, error) {
+func (t HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md Metadata, progress ProgressFunc) ([]WebVideoResult, error) {
+	if err := t.prepareOutputScan(videoID, sourceKey); err != nil {
+		return nil, err
+	}
 	settings := t.encodeSettings()
 	rungs := PlanHLSLadderWith(settings, md.Width, md.Height, md.FPS)
 	if len(rungs) == 0 {
@@ -226,7 +237,7 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 		}
 	}
 	reportAll("encoding", ProgressRunning, 1)
-	stderr, runErr := runFFmpegWithProgress(ctx, t.bin, webVideoLadderArgs(src, tmp, rungs, settings.Threads), md.DurationSeconds, func(percent int) {
+	stderr, runErr := runFFmpegWithProgress(ctx, t.bin, webVideoLadderArgs(src, tmp, rungs, settings.Threads, t.outputLimit()), md.DurationSeconds, func(percent int) {
 		reportAll("encoding", ProgressRunning, percent*95/100)
 	})
 	if runErr != nil {
@@ -248,12 +259,23 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 		})
 		filename := r.Name() + ".mp4"
 		local := filepath.Join(tmp, filename)
+		key := path.Join(prefix, filename)
+		omitted, err := t.packageTools().omitOversized(ctx, local, key)
+		if err != nil {
+			return nil, err
+		}
+		if omitted {
+			reportProgress(progress, TranscodeProgress{
+				Format: TranscodeFormatWebVideo, Height: r.Height, Width: r.Width,
+				State: ProgressSucceeded, Stage: "omitted_size_limit", Percent: 100,
+			})
+			continue
+		}
 		f, err := os.Open(local)
 		if err != nil {
 			return nil, err
 		}
-		key := path.Join(prefix, filename)
-		size, sum, putErr := storage.PutSizedHashed(ctx, t.blobs, key, f, storage.SizeUnknown)
+		size, sum, putErr := storage.PutSizedHashed(ctx, t.outputStore(), key, f, storage.SizeUnknown)
 		_ = f.Close()
 		if putErr != nil {
 			return nil, putErr

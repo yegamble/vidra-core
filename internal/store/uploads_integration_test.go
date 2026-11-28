@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -45,6 +46,35 @@ func seedVideoRow(t *testing.T, st *Store) (uuid.UUID, func()) {
 		t.Fatalf("seed video: %v", err)
 	}
 	return videoID, cleanup
+}
+
+// A previous worker recognizes only the filename. Keep the staging suffix a
+// database constraint so even a session created outside the HTTP handler is protected.
+func TestProcessedUploadSessionRequiresStagingFilename(t *testing.T) {
+	ctx := t.Context()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	videoID, cleanup := seedVideoRow(t, st)
+	defer cleanup()
+	args := sqlcgen.CreateUploadSessionParams{VideoID: videoID, Filename: "film.mp4",
+		TotalSize: 20 << 30, ChunkSize: 8 << 20, Purpose: "processed", ExpiresAt: time.Now().Add(time.Hour)}
+	err = st.Pool.QueryRow(ctx, "SELECT c.owner_id,c.id FROM videos v JOIN channels c ON c.id=v.channel_id WHERE v.id=$1", videoID).Scan(&args.UserID, &args.ChannelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.Queries().CreateUploadSession(ctx, args)
+	var constraint *pgconn.PgError
+	if !errors.As(err, &constraint) || constraint.ConstraintName != "upload_sessions_processed_filename_check" {
+		t.Fatalf("unmarked input returned %v", err)
+	}
+	args.Filename += ".vidra-unscanned"
+	sess, err := st.Queries().CreateUploadSession(ctx, args)
+	if err != nil || sess.TotalSize != args.TotalSize || sess.Purpose != args.Purpose {
+		t.Fatalf("protected 20 GiB session: size %d, purpose %q, error %v", sess.TotalSize, sess.Purpose, err)
+	}
 }
 
 // TestUploadSessionQueriesPersist exercises the resumable-upload queries against
