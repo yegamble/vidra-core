@@ -244,7 +244,7 @@ func TestTrickPlayLadderArgs(t *testing.T) {
 func TestWebVideoLadderArgs(t *testing.T) {
 	rungs := testLadder()
 	root := "/out"
-	args := webVideoLadderArgs(localSource("/in/src.mp4"), root, rungs, 0)
+	args := webVideoLadderArgs(localSource("/in/src.mp4"), root, rungs, 0, 0)
 	if n := countArg(args, "-i"); n != 1 {
 		t.Errorf("-i appears %d times, want 1", n)
 	}

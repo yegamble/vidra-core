@@ -114,6 +114,18 @@ func TestVideoDownloadsShape(t *testing.T) {
 		t.Errorf("missing-object direct HLS = %d disposition=%q, want 404 without attachment header", rec.Code, rec.Header().Get("Content-Disposition"))
 	}
 
+	// A native rung may legitimately have only its segmented playback. With no
+	// muxed object, the download list keeps the original and omits this rung.
+	body = decodeDownloads(t, getDownloads(srv, id, ""))
+	if len(body.Files) != 3 || body.Files[0].Kind != "original" {
+		t.Fatalf("downloads after omitting a progressive rung: %+v", body.Files)
+	}
+	for _, f := range body.Files {
+		if f.Kind == "hls" {
+			t.Fatalf("advertised missing progressive rendition: %+v", f)
+		}
+	}
+
 	// Non-published UUIDs never become public by-id surfaces. The owner can still
 	// inspect a draft, which truthfully has no downloadable file yet.
 	draft := createVideo(t, srv, tok, "ada", `{"title":"Draft","privacy":"public"}`)

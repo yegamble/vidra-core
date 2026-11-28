@@ -297,7 +297,7 @@ func TestTrickPlayAndDerivedAssetsStaySoftware(t *testing.T) {
 			t.Errorf("trick-play picked up %q:\n%s", unwanted, trick)
 		}
 	}
-	if web := strings.Join(webVideoLadderArgs(src, "/out", plan.rungs, 0), " "); !strings.Contains(web, "-c:v libx264") {
+	if web := strings.Join(webVideoLadderArgs(src, "/out", plan.rungs, 0, 0), " "); !strings.Contains(web, "-c:v libx264") {
 		t.Errorf("the standalone web-video ladder left libx264:\n%s", web)
 	}
 }

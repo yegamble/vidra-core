@@ -106,7 +106,7 @@ func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, hlsPre
 	_ = out.Close()
 	defer func() { _ = os.Remove(outPath) }()
 
-	cmd := exec.CommandContext(ctx, t.bin, vp9WebMArgs(src, outPath, top)...)
+	cmd := exec.CommandContext(ctx, t.bin, limitSingleFile(vp9WebMArgs(src, outPath, top), t.outputLimit())...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
