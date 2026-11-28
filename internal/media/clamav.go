@@ -99,6 +99,11 @@ func (c *ClamAV) ScanBytes(ctx context.Context, data []byte) (bool, error) {
 	return c.scan(ctx, bytes.NewReader(data))
 }
 
+// ScanReader checks a private candidate before any publicly addressable write.
+func (c *ClamAV) ScanReader(ctx context.Context, input io.Reader) (bool, error) {
+	return c.scan(ctx, input)
+}
+
 // scan is the shared INSTREAM body: everything after "where do the bytes come
 // from".
 func (c *ClamAV) scan(ctx context.Context, rc io.Reader) (bool, error) {
