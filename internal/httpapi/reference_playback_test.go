@@ -15,6 +15,7 @@ import (
 
 func TestApprovedReferencePlayback(t *testing.T) {
 	env := newPlaybackSessionEnv(t)
+	setReferenceDelivery(t, env.srv, "true")
 	id := uuid.New()
 	master := "streaming-playlists/" + id.String() + "/r5/master.m3u8"
 	prefix := "/api/v1/videos/" + id.String() + "/ipfs-reference/r5/"
