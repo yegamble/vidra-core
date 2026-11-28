@@ -6030,7 +6030,7 @@ paths:
             video/mp2t: { schema: { type: string, format: binary } }
             audio/mp4: { schema: { type: string, format: binary } }
             audio/aac: { schema: { type: string, format: binary } }
-        "404": { description: Unknown, ineligible, replaced or unapproved media. }
+        "404": { description: "Unknown, ineligible, replaced or unapproved media." }
         "416": { description: Unsatisfiable or unsupported byte range. }
         "503": { description: Reference playback is temporarily unavailable. }
   /api/v1/videos/{id}/hls/master.m3u8:
