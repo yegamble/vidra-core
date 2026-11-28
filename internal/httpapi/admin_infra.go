@@ -35,9 +35,10 @@ import (
 // while no RTMP ingest exists is the sentence this page has to be able to
 // contradict. The runtime toggles live on /admin/config and GET /instance.
 //
-// EXACTLY THREE ROWS BREAK THAT RULE, all for the same underlying reason: a
-// delivery posture whose only spelling is a runtime setting.
+// The following rows also report runtime settings.
 //
+//   - ipfs, for an API wired to a reference playback bridge. Its delivery switch
+//     controls access to approved generations independently of the pinning worker.
 //   - cdn, for its ENABLED half. A CDN has no env spelling of "on" —
 //     DELIVERY_CDN_BASE_URL is the wiring and delivery_cdn_enabled is the
 //     posture (config.go, phase-4 item 2) — so a boot-config-only reading could
@@ -421,8 +422,9 @@ func (s *Server) infraFeatures() []infraFeature {
 	// because a toggle flipped between two reads would be worse than either.
 	cdnEnabled := s.cdnDeliveryEnabled()
 	cdnWired := strings.TrimSpace(cfg.DeliveryCDNBaseURL) != ""
-	// The other overlay read this page makes (see the file header): the presign
-	// toggle, consulted only to decide the object_storage row's note.
+	ipfsPinning := s.ipfsConfigured()
+	referenceWired := s.referencePlayback != nil
+	// The presign toggle decides the object_storage row's note.
 	onS3 := cfg.StorageBackend == "s3"
 	presignOn := s.presignedDeliveryEnabled()
 	// Hoisted for the same reason as the CDN pair: the drm row's columns and its
@@ -519,8 +521,8 @@ func (s *Server) infraFeatures() []infraFeature {
 		},
 		{
 			Key:        "ipfs",
-			Enabled:    s.ipfsConfigured(),
-			Configured: s.ipfsConfigured(),
+			Enabled:    ipfsPinning || (referenceWired && s.ipfsDeliverySettingOn()),
+			Configured: ipfsPinning || referenceWired,
 		},
 		{
 			Key: "cdn",
@@ -739,6 +741,8 @@ func drmTestProviderNote(enabled, configured bool, provider string) string {
 // gets no note — the success pill already says everything.
 func infraFeatureNote(f infraFeature) string {
 	switch {
+	case f.Key == "ipfs" && f.Configured && !f.Enabled:
+		return "The reference playback bridge is configured. Turn on delivery_ipfs_enabled to offer approved videos through IPFS."
 	case f.Enabled && f.Configured:
 		return ""
 	case f.Enabled && !f.Configured:
