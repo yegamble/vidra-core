@@ -294,7 +294,11 @@ func (s *Service) LatestForSession(ctx context.Context, uploadID uuid.UUID) (sql
 //
 // Intended to be called on a ticker by a single worker goroutine per instance.
 func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
-	rows, err := s.repo.ClaimDueUploadFinalizeJobs(ctx, int32(limit))
+	// A claim starts the database lease. Only claim jobs that can start their
+	// heartbeat now, so a long upload cannot exhaust the next job's lease
+	// while that job is still waiting for a local worker slot.
+	workers := s.Concurrency()
+	rows, err := s.repo.ClaimDueUploadFinalizeJobs(ctx, int32(min(limit, workers)))
 	if err != nil {
 		return 0, err
 	}
@@ -302,7 +306,7 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 		mu   sync.Mutex
 		done int
 	)
-	workerpool.Run(s.Concurrency(), len(rows), func(i int) {
+	workerpool.Run(workers, len(rows), func(i int) {
 		row := rows[i]
 		// Assembling a multi-gigabyte upload out of object storage and probing
 		// it routinely outlives one lease, so renew while the work runs —
