@@ -945,7 +945,8 @@ type Config struct {
 	// IPFSManagerSocket opts into the fixed host manager; it does not enable publication.
 	IPFSManagerSocket string
 	// IPFSReferenceStatusFile is the read-only observation of the operator-managed reference node.
-	IPFSReferenceStatusFile string
+	IPFSReferenceStatusFile     string
+	IPFSReferencePlaybackSocket string
 	// IPFSAPIURL is the Kubo RPC address (e.g. http://ipfs:5001). Required when
 	// enabled. IPFSGatewayURL is the public-facing gateway base emitted in API
 	// responses (e.g. https://ipfs.example.org) — required when enabled so we never
@@ -1398,6 +1399,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		IPFSEnabled:                            p.Bool("IPFS_ENABLED", false),
 		IPFSManagerSocket:                      strings.TrimSpace(getEnv("IPFS_MANAGER_SOCKET", "")),
 		IPFSReferenceStatusFile:                strings.TrimSpace(getEnv("IPFS_REFERENCE_STATUS_FILE", "")),
+		IPFSReferencePlaybackSocket:            strings.TrimSpace(getEnv("IPFS_REFERENCE_PLAYBACK_SOCKET", "")),
 		IPFSAPIURL:                             strings.TrimRight(getEnv("IPFS_API_URL", ""), "/"),
 		IPFSRPCToken:                           getEnv("IPFS_RPC_TOKEN", ""),
 		IPFSGatewayURL:                         strings.TrimRight(getEnv("IPFS_GATEWAY_URL", ""), "/"),
@@ -2309,6 +2311,9 @@ func (c *Config) validateIPFS() error {
 	}
 	if c.IPFSManagerSocket != "" && (!filepath.IsAbs(c.IPFSManagerSocket) || strings.ContainsRune(c.IPFSManagerSocket, 0)) {
 		errs = append(errs, varErrorf("IPFS_MANAGER_SOCKET", "config: IPFS_MANAGER_SOCKET must be an absolute Unix socket path"))
+	}
+	if p := c.IPFSReferencePlaybackSocket; p != "" && (!filepath.IsAbs(p) || filepath.Clean(p) != p || strings.ContainsRune(p, 0)) {
+		errs = append(errs, varErrorf("IPFS_REFERENCE_PLAYBACK_SOCKET", "config: expected an absolute Unix socket path"))
 	}
 	if c.IPFSReferenceStatusFile != "" && (!filepath.IsAbs(c.IPFSReferenceStatusFile) || strings.ContainsRune(c.IPFSReferenceStatusFile, 0)) {
 		errs = append(errs, varErrorf("IPFS_REFERENCE_STATUS_FILE", "config: IPFS_REFERENCE_STATUS_FILE must be an absolute file path"))

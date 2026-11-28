@@ -276,9 +276,10 @@ type Server struct {
 	// so the page and the redirect decision can never be answered from different
 	// sources — and so every existing fake that predates the probe keeps compiling
 	// and keeps its pre-probe behaviour.
-	ipfsHealth ipfsHealthReader
-	metrics    *observability.Metrics
-	media      storage.Backend
+	ipfsHealth        ipfsHealthReader
+	referencePlayback *referencePlayback
+	metrics           *observability.Metrics
+	media             storage.Backend
 	// mediaPresigner is the RAW primary storage backend when it can mint signed
 	// URLs, and nil otherwise — including, deliberately, whenever a storage
 	// migration is in flight (see WithDeliveryPresigner). It is NOT `media`:
@@ -1978,6 +1979,7 @@ func (s *Server) routes() {
 		// variant playlists/segments, same visibility as /original. Registered only
 		// when the transcode read side is wired.
 		if s.transcodesvc != nil {
+			mediaGET(api, referencePlaybackRoute, s.handleReferenceFile)
 			mediaGET(api, "/videos/:id/hls/master.m3u8", s.handleGetHLSMaster, s.optionalAuth)
 			mediaGET(api, "/videos/:id/hls/:rendition/:file", s.handleGetHLSFile, s.optionalAuth)
 		}
