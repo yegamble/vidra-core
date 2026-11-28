@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -38,6 +39,7 @@ func TestReferenceDeliverySwitch(t *testing.T) {
 	master := "streaming-playlists/" + video + "/r7/master.m3u8"
 	env.tc.playlists[id] = sqlcgen.StreamingPlaylist{VideoID: id, MasterKey: master, State: "ready"}
 	url := referencePath(id, "r7", "master.m3u8")
+	const playlist = "#EXTM3U\n"
 	calls := 0
 	disableDuringRequest := false
 	env.srv.referencePlayback = &referencePlayback{
@@ -47,7 +49,7 @@ func TestReferenceDeliverySwitch(t *testing.T) {
 			if disableDuringRequest {
 				set("false")
 			}
-			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(playlist))}, nil
 		})},
 	}
 	check := func(method string, code int) {
@@ -56,6 +58,9 @@ func TestReferenceDeliverySwitch(t *testing.T) {
 		env.srv.Handler().ServeHTTP(r, httptest.NewRequest(method, url, nil))
 		if r.Code != code || r.Header().Get("Cache-Control") != "private, no-store" {
 			t.Errorf("%s returned %d, want %d with no-store", method, r.Code, code)
+		}
+		if strings.Contains(r.Body.String(), playlist) != (method == http.MethodGet && code == http.StatusOK) {
+			t.Errorf("%s returned unexpected media bytes for status %d", method, r.Code)
 		}
 	}
 	set("false")
