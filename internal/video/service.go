@@ -1057,6 +1057,9 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 	if s.scanner != nil {
 		clean, serr := s.scanner.Scan(ctx, key)
 		switch {
+		case errors.Is(serr, media.ErrScanLimit):
+			s.auditMalwareRejected(ctx, videoID, "scan_limit")
+			return reject(SafetyScanRejectedMessage)
 		case serr != nil:
 			if s.scanMode == ScanModeFailOpen {
 				slog.WarnContext(ctx, "malware scan failed; accepting replacement anyway (MALWARE_SCAN_MODE=fail-open)",
@@ -1151,7 +1154,7 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 }
 
 // auditMalwareRejected records (best-effort) that the malware scanner kept an
-// upload out of the published state. outcome is "infected" or "scan_error"; the
+// upload out of the published state. The outcome is a staff-only class; the
 // reason carries only the safe video id, the outcome, and the applied policy —
 // never the scanned bytes or any file content. A no-op when no auditor is wired.
 func (s *Service) auditMalwareRejected(ctx context.Context, videoID uuid.UUID, outcome string) {
@@ -1216,6 +1219,12 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 	if s.scanner != nil {
 		clean, err := s.scanner.Scan(ctx, originalKey)
 		switch {
+		case errors.Is(err, media.ErrScanLimit):
+			// An explicit resource limit never authorizes publication or a
+			// moderation override. Keep the owner's existing private original.
+			state = "failed"
+			scanRejected = &MalwareRejectedError{Outcome: "scan_limit"}
+			s.auditMalwareRejected(ctx, videoID, "scan_limit")
 		case err != nil:
 			// The scan could not complete — MALWARE_SCAN_MODE decides.
 			switch s.scanMode {

@@ -16,6 +16,7 @@ import (
 	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/channelsync"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/video"
@@ -252,6 +253,44 @@ func (f infectedScanner) ScanBytes(context.Context, []byte) (bool, error) {
 		return false, f.err
 	}
 	return false, nil
+}
+
+func (f infectedScanner) Scan(context.Context, string) (bool, error) { return false, f.err }
+
+func TestInspectionLimitKeepsInitialOriginalPrivateInEveryMode(t *testing.T) {
+	for _, mode := range []string{"fail-closed", "fail-open", "quarantine"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := testConfig()
+			cfg.MalwareScanMode = mode
+			cfg.ClamAVAddr = "clamav:3310"
+			cfg.MalwareScanEnabled = true
+			scanner := infectedScanner{err: media.ErrScanLimit}
+			srv, _, _, _, _ := videoServerFullWith(t, cfg, []Option{WithFileScanner(scanner)}, video.WithScanner(scanner), video.WithScanMode(mode))
+			owner := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+			viewer := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+			id := createVideo(t, srv, owner, "ada", `{"title":"Fixture","privacy":"public"}`)
+			const original = "synthetic origin bytes"
+			rec := uploadVideoFile(srv, id, "clip.mp4", "video/mp4", original, owner)
+			if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), video.SafetyScanRejectedCode) {
+				t.Fatalf("upload = %d %s", rec.Code, rec.Body.String())
+			}
+			base := "/api/v1/videos/" + id
+			for _, path := range []string{"/original", "/download/original", "/hls/master.m3u8"} {
+				for _, token := range []string{"", viewer} {
+					if rec = sendJSONAuth(srv, http.MethodGet, base+path, "", token); rec.Code != http.StatusNotFound {
+						t.Fatalf("non-owner %s = %d", path, rec.Code)
+					}
+				}
+			}
+			if rec = sendJSONAuth(srv, http.MethodGet, base+"/download/original", "", owner); rec.Code != http.StatusOK || rec.Body.String() != original {
+				t.Fatalf("creator could not privately retrieve the retained original, status %d", rec.Code)
+			}
+			var rejected *SafetyScanRejectedError
+			if err := srv.scanBeforeStore(t.Context(), "avatar", []byte(original)); !errors.As(err, &rejected) {
+				t.Fatalf("small asset scan_limit = %v, want refusal", err)
+			}
+		})
+	}
 }
 
 // TestNonVideoFilesAreScannedBeforeTheyAreStored is SC3's core claim: the six
