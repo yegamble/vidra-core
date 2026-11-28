@@ -56,10 +56,7 @@ func webVideoLadderArgs(src source, root string, rungs []HLSRung, threads int) [
 	args = append(args, src.inputArgs()...)
 
 	chain, labels := splitChain(len(rungs))
-	chains := make([]string, 0, len(rungs)+1)
-	if chain != "" {
-		chains = append(chains, chain)
-	}
+	chains := []string{chain}
 	outLabels := make([]string, len(rungs))
 	for i, r := range rungs {
 		vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
@@ -256,7 +253,7 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 			return nil, err
 		}
 		key := path.Join(prefix, filename)
-		size, sum, putErr := storage.PutSizedHashed(ctx, t.blobs, key, f, storage.SizeUnknown)
+		size, sum, putErr := storage.PutSizedHashed(ctx, t.outputStore(), key, f, storage.SizeUnknown)
 		_ = f.Close()
 		if putErr != nil {
 			return nil, putErr

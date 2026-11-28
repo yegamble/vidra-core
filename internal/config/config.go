@@ -945,7 +945,8 @@ type Config struct {
 	// IPFSManagerSocket opts into the fixed host manager; it does not enable publication.
 	IPFSManagerSocket string
 	// IPFSReferenceStatusFile is the read-only observation of the operator-managed reference node.
-	IPFSReferenceStatusFile string
+	IPFSReferenceStatusFile     string
+	IPFSReferencePlaybackSocket string
 	// IPFSAPIURL is the Kubo RPC address (e.g. http://ipfs:5001). Required when
 	// enabled. IPFSGatewayURL is the public-facing gateway base emitted in API
 	// responses (e.g. https://ipfs.example.org) — required when enabled so we never
@@ -1028,6 +1029,8 @@ type Config struct {
 	// so the JSON API stays small while media uploads get headroom. Oversized
 	// uploads are rejected with 413.
 	UploadMaxSize string
+	// Optional on-host adapter for reconstructing large resumable uploads.
+	UploadNormalizerSocket string
 
 	// PeerTubeImportMaxSize caps the request body of POST /me/import/peertube
 	// only (Echo size string). Empty or 0 (the default) keeps HTTP_BODY_LIMIT,
@@ -1398,6 +1401,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		IPFSEnabled:                            p.Bool("IPFS_ENABLED", false),
 		IPFSManagerSocket:                      strings.TrimSpace(getEnv("IPFS_MANAGER_SOCKET", "")),
 		IPFSReferenceStatusFile:                strings.TrimSpace(getEnv("IPFS_REFERENCE_STATUS_FILE", "")),
+		IPFSReferencePlaybackSocket:            strings.TrimSpace(getEnv("IPFS_REFERENCE_PLAYBACK_SOCKET", "")),
 		IPFSAPIURL:                             strings.TrimRight(getEnv("IPFS_API_URL", ""), "/"),
 		IPFSRPCToken:                           getEnv("IPFS_RPC_TOKEN", ""),
 		IPFSGatewayURL:                         strings.TrimRight(getEnv("IPFS_GATEWAY_URL", ""), "/"),
@@ -1414,6 +1418,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		IPFSPrivateClusterAPIURL:               strings.TrimRight(getEnv("IPFS_PRIVATE_CLUSTER_API_URL", ""), "/"),
 		IPFSPrivateClusterToken:                getEnv("IPFS_PRIVATE_CLUSTER_TOKEN", ""),
 		UploadMaxSize:                          getEnv("UPLOAD_MAX_SIZE", "2G"),
+		UploadNormalizerSocket:                 strings.TrimSpace(getEnv("UPLOAD_NORMALIZER_SOCKET", "")),
 		PeerTubeImportMaxSize:                  getEnv("PEERTUBE_IMPORT_MAX_SIZE", ""),
 		PeerTubeImportTmpDir:                   getEnv("PEERTUBE_IMPORT_TMPDIR", ""),
 		YtdlpImportEnabled:                     p.Bool("YTDLP_IMPORT_ENABLED", false),
@@ -1802,6 +1807,14 @@ func (c *Config) validate() error {
 	}
 	if _, err := bytes.Parse(c.UploadMaxSize); err != nil {
 		add(varErrorf("UPLOAD_MAX_SIZE", "config: invalid UPLOAD_MAX_SIZE %q: %w", c.UploadMaxSize, err))
+	}
+	if c.UploadNormalizerSocket != "" {
+		if !filepath.IsAbs(c.UploadNormalizerSocket) || strings.ContainsRune(c.UploadNormalizerSocket, 0) {
+			add(varErrorf("UPLOAD_NORMALIZER_SOCKET", "config: expected an absolute Unix socket path"))
+		}
+		if c.MalwareScanMode != "fail-closed" || strings.TrimSpace(c.ClamAVAddr) == "" {
+			add(varErrorf("UPLOAD_NORMALIZER_SOCKET", "config: processed uploads require CLAMAV_ADDR and fail-closed scanning"))
+		}
 	}
 	if _, err := bytes.Parse(c.PeerTubeImportMaxSize); err != nil && c.PeerTubeImportMaxSize != "" { // "" = HTTP_BODY_LIMIT
 		add(varErrorf("PEERTUBE_IMPORT_MAX_SIZE", "config: invalid PEERTUBE_IMPORT_MAX_SIZE %q: %w", c.PeerTubeImportMaxSize, err))
@@ -2309,6 +2322,9 @@ func (c *Config) validateIPFS() error {
 	}
 	if c.IPFSManagerSocket != "" && (!filepath.IsAbs(c.IPFSManagerSocket) || strings.ContainsRune(c.IPFSManagerSocket, 0)) {
 		errs = append(errs, varErrorf("IPFS_MANAGER_SOCKET", "config: IPFS_MANAGER_SOCKET must be an absolute Unix socket path"))
+	}
+	if p := c.IPFSReferencePlaybackSocket; p != "" && (!filepath.IsAbs(p) || filepath.Clean(p) != p || strings.ContainsRune(p, 0)) {
+		errs = append(errs, varErrorf("IPFS_REFERENCE_PLAYBACK_SOCKET", "config: expected an absolute Unix socket path"))
 	}
 	if c.IPFSReferenceStatusFile != "" && (!filepath.IsAbs(c.IPFSReferenceStatusFile) || strings.ContainsRune(c.IPFSReferenceStatusFile, 0)) {
 		errs = append(errs, varErrorf("IPFS_REFERENCE_STATUS_FILE", "config: IPFS_REFERENCE_STATUS_FILE must be an absolute file path"))

@@ -75,6 +75,7 @@ import (
 	"github.com/vidra/vidra-core/internal/playbackstats"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
+	"github.com/vidra/vidra-core/internal/processedupload"
 	"github.com/vidra/vidra-core/internal/processheartbeat"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/pseudonym"
@@ -140,9 +141,11 @@ func main() {
 		case "owner-recovery":
 			// stdout carries ONLY the link; see owner_recovery.go.
 			os.Exit(runOwnerRecovery(os.Args[2:], os.Stdout, os.Stderr, openOwnerRecovery))
+		case "recover-scan-upload":
+			os.Exit(runRetainedUpload(os.Args[2:], os.Stdout, os.Stderr))
 		default:
 			slog.Error("unknown subcommand", "argv", os.Args[1],
-				"usage", "api ["+migrateUsage+"|"+verifyBlobsUsage+"|"+ownerRecoveryUsage+"] (no arguments runs the server)")
+				"usage", "api ["+migrateUsage+"|"+verifyBlobsUsage+"|"+ownerRecoveryUsage+"|"+retainedUsage+"] (no arguments runs the server)")
 			os.Exit(1)
 		}
 	}
@@ -369,6 +372,9 @@ func run() error {
 		instancedocs.WithVersionBump(bumpSettingsVersion))
 	if err := instancedocssvc.Load(startCtx); err != nil {
 		return err
+	}
+	if cfg.IPFSReferencePlaybackSocket != "" {
+		opts = append(opts, httpapi.WithReferencePlayback(cfg.IPFSReferencePlaybackSocket, db.Queries().PublicReferenceMasterKey))
 	}
 	opts = append(opts, httpapi.WithSitePages(db.Queries()))
 	opts = append(opts, httpapi.WithInstanceDocumentsService(instancedocssvc))
@@ -1198,6 +1204,9 @@ func run() error {
 	// pipeline on/off without a restart (the boot-baked-worker gotcha).
 	var hlsTranscoder transcode.Transcoder
 	if tc, ok := media.DetectHLSTranscoder(blobs); ok {
+		if cfg.UploadNormalizerSocket != "" {
+			tc.SetOutputScanner(fileScanner)
+		}
 		tc.SetVP9(cfg.TranscodingVP9Enabled)
 		tc.SetStreamOutput(cfg.TranscodingStreamOutput)
 		// Packaging format for NEW transcodes (phase-3 item 3). Config has already
@@ -2119,7 +2128,7 @@ func run() error {
 	// CDN that caps origin response time. On a remote bucket that is minutes of
 	// work, so every real upload failed the moment the progress bar reached 100%.
 	// The request now validates and enqueues; this queue does the work.
-	uploadfinalizesvc := uploadfinalize.NewService(db.Queries(), uploadsvc, videosvc,
+	finalizeOpts := []uploadfinalize.Option{
 		uploadfinalize.WithLogger(logger),
 		uploadfinalize.WithJobTrace(jobTrace),
 		// A replace-purpose session has no Process to fire its transcode enqueue,
@@ -2140,14 +2149,24 @@ func run() error {
 			if err := transcodesvc.Invalidate(ctx, videoID); err != nil {
 				logger.Error("replace: playlist invalidation failed", "video_id", videoID.String(), "error", err)
 			}
+		}),
+	}
+	if cfg.UploadNormalizerSocket != "" && fileScanner != nil {
+		finalizeOpts = append(finalizeOpts, uploadfinalize.WithNormalizer(processedupload.Client{
+			Socket: cfg.UploadNormalizerSocket, Scanner: fileScanner,
 		}))
+	}
+	uploadfinalizesvc := uploadfinalize.NewService(db.Queries(), uploadsvc, videosvc, finalizeOpts...)
 	opts = append(opts, httpapi.WithUploadFinalizeService(uploadfinalizesvc))
 
 	// Asynchronous URL import (P2.2). POST /videos/:id/import now enqueues a job
 	// and returns 202; a background worker performs the SSRF-guarded fetch and
 	// runs it through the same pipeline, with the same UPLOAD_MAX_SIZE cap and
 	// per-user quota enforcement the synchronous path had.
-	importMaxBytes := uploadMaxBytesDefault // parsed once above (boot-validated)
+	importMaxBytes := cfg.UploadLimit(uploadMaxBytesDefault, false)
+	originalLimit := func() int64 {
+		return cfg.UploadLimit(settingssvc.Int(instancesettings.KeyUploadMaxSizeBytes), false)
+	}
 	importOpts := []videoimport.Option{
 		videoimport.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs),
 		videoimport.WithQuota(quotasvc),
@@ -2159,9 +2178,7 @@ func run() error {
 		}),
 		// The per-file cap follows the upload-size overlay at runtime (resolved per
 		// job); the constructor value stays the boot default.
-		videoimport.WithMaxBytesFunc(func() int64 {
-			return settingssvc.Int(instancesettings.KeyUploadMaxSizeBytes)
-		}),
+		videoimport.WithMaxBytesFunc(originalLimit),
 		// The platform (yt-dlp) resolver follows the import_http_enabled overlay
 		// (config-parity W8): the gate can pause the path at runtime but never
 		// enable it on a deployment that did not wire the extractor below.
@@ -2194,7 +2211,7 @@ func run() error {
 			MaxBytes:  importMaxBytes,
 			// Resolution/size caps follow the overlay at argv-build time (per job).
 			MaxHeightFn: func() int { return int(settingssvc.Int(instancesettings.KeyImportMaxHeight)) },
-			MaxBytesFn:  func() int64 { return settingssvc.Int(instancesettings.KeyUploadMaxSizeBytes) },
+			MaxBytesFn:  originalLimit,
 		})
 		importOpts = append(importOpts, videoimport.WithYtdlp(ytdlpClient, ""))
 		logger.Info("yt-dlp platform-URL import enabled", "max_height", cfg.YtdlpMaxHeight, "proxy_set", cfg.YtdlpProxy != "")

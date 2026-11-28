@@ -118,7 +118,7 @@ func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, hlsPre
 	}
 	defer func() { _ = f.Close() }()
 	key = VP9WebMKey(hlsPrefix)
-	n, sum, err := storage.PutSizedHashed(ctx, t.blobs, key, f, storage.SizeUnknown)
+	n, sum, err := storage.PutSizedHashed(ctx, t.outputStore(), key, f, storage.SizeUnknown)
 	if err != nil {
 		return "", 0, "", err
 	}
