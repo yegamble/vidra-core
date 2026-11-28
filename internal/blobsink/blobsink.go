@@ -52,6 +52,7 @@
 package blobsink
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -318,6 +319,16 @@ func (s *Sink) Flush(ctx context.Context) error {
 	}
 	s.coalesced = retained
 	firstErr := s.err
+	// A muxer can open an empty media object before or after writing its
+	// payload. An empty request alone does not produce a playable object.
+	if firstErr == nil {
+		for key, n := range s.stored {
+			if n == 0 && !isCoalesced(key) {
+				firstErr = fmt.Errorf("blobsink: no media bytes received for %q", key)
+				break
+			}
+		}
+	}
 	s.mu.Unlock()
 	if firstErr != nil {
 		return firstErr
@@ -427,7 +438,24 @@ func (s *Sink) put(w http.ResponseWriter, r *http.Request, key string) {
 		return
 	}
 
-	n, err := s.backend.Put(r.Context(), key, r.Body)
+	// FFmpeg's single-file HLS muxer can reopen iframe.ts and send a final
+	// empty chunked PUT. It must not overwrite the trick-play data. Flush
+	// will fail if no other request delivers actual bytes for this key.
+	body := bufio.NewReader(r.Body)
+	if _, err := body.Peek(1); err != nil {
+		if !errors.Is(err, io.EOF) {
+			s.fail(w, key, err)
+			return
+		}
+		s.mu.Lock()
+		if _, seen := s.stored[key]; !seen {
+			s.stored[key] = 0
+		}
+		s.mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		return
+	}
+	n, err := s.backend.Put(r.Context(), key, body)
 	if err != nil {
 		s.fail(w, key, err)
 		return
