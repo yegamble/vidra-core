@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/audit"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/observability"
 )
 
@@ -50,6 +51,9 @@ func TestProcessAuditsMalwareRejections(t *testing.T) {
 		{"infected quarantine", fakeScanner{clean: false}, "quarantine", "failed", true, "infected"},
 		{"scan-error fail-closed", fakeScanner{err: errors.New("clamd down")}, "fail-closed", "failed", true, "scan_error"},
 		{"scan-error quarantine", fakeScanner{err: errors.New("clamd down")}, "quarantine", "quarantined", true, "scan_error"},
+		{"scan limit fail-closed", fakeScanner{err: media.ErrScanLimit}, "fail-closed", "failed", true, "scan_limit"},
+		{"scan limit fail-open", fakeScanner{err: media.ErrScanLimit}, "fail-open", "failed", true, "scan_limit"},
+		{"scan limit quarantine", fakeScanner{err: media.ErrScanLimit}, "quarantine", "failed", true, "scan_limit"},
 		// A clean scan never audits.
 		{"clean publishes", fakeScanner{clean: true}, "fail-closed", "published", false, ""},
 	}

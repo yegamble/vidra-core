@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"github.com/labstack/echo/v5"
 
 	"github.com/vidra/vidra-core/internal/audit"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -84,7 +86,7 @@ func (s *Server) scannerReadyForIngestion() bool {
 // kind names the asset class in the log and the audit reason (never the file
 // name, never the bytes). The policy:
 //
-//   - infected      → refused in EVERY mode, as on the video path.
+//   - infected or explicitly limited inspection → refused in every mode.
 //   - scan error    → fail-closed (default) refuses; fail-open stores the file
 //     unscanned and writes the same audit row the video path
 //     writes; quarantine ALSO refuses here, because these
@@ -100,6 +102,9 @@ func (s *Server) scanBeforeStore(ctx context.Context, kind string, data []byte) 
 	}
 	clean, err := s.filescanner.ScanBytes(ctx, data)
 	switch {
+	case errors.Is(err, media.ErrScanLimit):
+		s.auditScanRejected(ctx, kind, "scan_limit")
+		return &SafetyScanRejectedError{}
 	case err != nil:
 		if video.ScanMode(s.cfg.MalwareScanMode) == video.ScanModeFailOpen {
 			slog.WarnContext(ctx, "malware scan failed; storing anyway (MALWARE_SCAN_MODE=fail-open)",

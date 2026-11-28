@@ -1742,14 +1742,19 @@ wedged past `CLAMAV_TIMEOUT`, or answering garbage:
 
 One neutral sentence everywhere, with the stable code `safety_scan_rejected`:
 
-> This file was rejected by the instance's safety scan and was not stored.
+> This file was rejected by the instance's safety scan.
 
 It appears as a 422 on the synchronous routes, as the upload session's
 `failure_reason` (state `failed`, never `completed`), and as the import job's
 `error`. The signature and the scanner's name never reach the creator — telling
 them "malware" tells an attacker their probe worked. The verdict is in the audit
-row (`content.upload.malware_rejected`, with `outcome=infected|scan_error`) and,
+row (`content.upload.malware_rejected`, with `outcome=infected|scan_limit|scan_error`) and,
 under quarantine, on the moderation-queue entry.
+
+When ClamAV reports an inspection limit, Vidra records `outcome=scan_limit`
+and refuses publication in every scanning mode. The creator and authorized
+moderation staff retain their existing private access to a failed first
+upload. A refused replacement leaves the previously published file in place.
 
 A rejection is **terminal**: the finalize and import workers dead-letter it
 immediately rather than walking the retry ladder, because attempt five gets the
