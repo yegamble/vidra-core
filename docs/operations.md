@@ -256,6 +256,30 @@ digest and nothing that would read one back. Storage migration verifies that
 tree object-by-object while it copies it. Consequently a fully-hashed library
 says nothing about the integrity of the HLS trees.
 
+## Recovering an upload rejected during a scanner outage
+
+After repairing the fail-closed scanner, an operator can check one retained
+upload using its failed session UUID, creator UUID, current visibility and
+recorded original SHA-256. Run the command inside the deployed API container.
+
+```sh
+./deploy/compose.sh exec -T api /app/api recover-scan-upload \
+  --upload "$upload_id" --owner "$owner_id" --privacy "$privacy" --sha256 "$sha256"
+```
+
+An eligible result reports the original byte count. Repeat with `--apply` to
+queue a full scan and ordinary video processing. The worker hashes the full
+stream it sends to ClamAV, probes the video and applies the creator's existing
+visibility and the instance's moderation and transcoding policies. Repeating
+the same command reports the recorded job state. The admin jobs screen shows
+the new finalize attempt alongside the earlier failure.
+
+Recovery requires the attached original, a matching fail-closed scan-error
+audit, an active creator and the original failed session. A changed owner,
+visibility, source, moderation status or a newer upload makes the attempt
+ineligible. If the creator deleted the draft or the session expired, they
+can start a new upload from their own file.
+
 ## Verifying media consistency — `verify-blobs`
 
 The GC sweep enumerates the **store** and looks for objects no row references.
