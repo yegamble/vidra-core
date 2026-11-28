@@ -58,14 +58,17 @@ func (p *referencePlayback) request(ctx context.Context, method, filePath, byteR
 	return p.client.Do(req)
 }
 
-func (p *referencePlayback) checkGeneration(ctx context.Context, id uuid.UUID, master string) error {
+func (s *Server) checkReferenceGeneration(ctx context.Context, id uuid.UUID, master string) error {
+	if !s.ipfsDeliverySettingOn() {
+		return echo.NewHTTPError(http.StatusNotFound, "reference media not available")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	current, err := p.currentMaster(ctx, id)
+	current, err := s.referencePlayback.currentMaster(ctx, id)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "reference playback unavailable")
 	}
-	if err != nil || current != master {
+	if err != nil || current != master || !s.ipfsDeliverySettingOn() {
 		return echo.NewHTTPError(http.StatusNotFound, "reference media not available")
 	}
 	return nil
@@ -82,7 +85,7 @@ func (s *Server) referencePlaybackURL(ctx context.Context, id uuid.UUID, master 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 400*time.Millisecond)
 	defer cancel()
-	if p.checkGeneration(ctx, id, master) != nil {
+	if s.checkReferenceGeneration(ctx, id, master) != nil {
 		return ""
 	}
 	urlPath := referencePath(id, gen, "master.m3u8")
@@ -91,7 +94,7 @@ func (s *Server) referencePlaybackURL(ctx context.Context, id uuid.UUID, master 
 		return ""
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
+	if res.StatusCode != http.StatusOK || s.checkReferenceGeneration(ctx, id, master) != nil {
 		return ""
 	}
 	return strings.TrimRight(s.webOrigin(), "/") + urlPath
@@ -116,7 +119,7 @@ func (s *Server) handleReferenceFile(c *echo.Context) error {
 		return absent
 	}
 	master := media.HLSKeyPrefix(id) + "/" + gen + "/master.m3u8"
-	if err := p.checkGeneration(req.Context(), id, master); err != nil {
+	if err := s.checkReferenceGeneration(req.Context(), id, master); err != nil {
 		return err
 	}
 	byteRange := req.Header.Get("Range")
@@ -137,8 +140,8 @@ func (s *Server) handleReferenceFile(c *echo.Context) error {
 	default:
 		return unavailable
 	}
-	// A withdrawal or replacement may have committed while Kubo opened the file.
-	if err := p.checkGeneration(req.Context(), id, master); err != nil {
+	// The operator, visibility or generation may have changed while Kubo opened the file.
+	if err := s.checkReferenceGeneration(req.Context(), id, master); err != nil {
 		return err
 	}
 	for _, key := range []string{"Content-Length", "Content-Range", "Accept-Ranges"} {

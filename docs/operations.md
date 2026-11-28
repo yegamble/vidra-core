@@ -1572,6 +1572,9 @@ prompt cannot govern those copies.
 Install the reference playback bridge from the matching Vidra deployment release.
 Mount its dedicated Unix socket directory read-only into the API and set
 `IPFS_REFERENCE_PLAYBACK_SOCKET` to the absolute socket path inside that container.
+Turn on `delivery_ipfs_enabled` in the advanced delivery settings. It defaults
+to the value of `IPFS_ENABLED`, so a reference-only installation can enable
+delivery while keeping the pinning worker off.
 The bridge needs access to the native approvals, publication receipts and
 the reference node's loopback, no-fetch gateway. Set `PUBLIC_BASE_URL` to the
 public HTTPS origin and deploy the API. This integration works with S3 and
@@ -1584,8 +1587,9 @@ the video's current generation. GET and HEAD support HLS playlists and media,
 including single byte ranges. Each read verifies eligibility and approval.
 When a generation changes or an approval is withdrawn, a previous reference
 URL returns 404. Bridge outages return 503 for that source. The player can
-continue through the authoritative URL. Clear `IPFS_REFERENCE_PLAYBACK_SOCKET`
-and redeploy to disable this serving route.
+continue through the authoritative URL. Turning off `delivery_ipfs_enabled`
+removes the reference from new watch sessions and makes existing reference URLs
+return 404. Clear `IPFS_REFERENCE_PLAYBACK_SOCKET` and redeploy to remove the bridge.
 
 ## Private IPFS mirror tier (P19.P) — replication, not distribution
 
