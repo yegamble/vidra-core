@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"strings"
 	"time"
@@ -53,6 +56,30 @@ func (c *ClamAV) Scan(ctx context.Context, key string) (bool, error) {
 	}
 	defer func() { _ = rc.Close() }()
 	return c.scan(ctx, rc)
+}
+
+// ScanVerified binds the daemon's verdict to the exact retained upload the
+// operator approved. A changed object is an error even if clamd reports clean.
+func (c *ClamAV) ScanVerified(ctx context.Context, key string, size int64, digest string) (bool, error) {
+	want, err := hex.DecodeString(digest)
+	if err != nil || len(want) != sha256.Size || size <= 0 || size == math.MaxInt64 {
+		return false, fmt.Errorf("clamav: invalid retained source identity")
+	}
+	rc, err := c.blobs.Open(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rc.Close() }()
+	limit := &io.LimitedReader{R: rc, N: size + 1}
+	hash := sha256.New()
+	clean, err := c.scan(ctx, io.TeeReader(limit, hash))
+	if err != nil {
+		return false, err
+	}
+	if limit.N != 1 || !bytes.Equal(hash.Sum(nil), want) {
+		return false, fmt.Errorf("clamav: retained source changed")
+	}
+	return clean, nil
 }
 
 // ScanBytes runs the same INSTREAM scan over an in-memory buffer, for the
