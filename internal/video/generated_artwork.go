@@ -5,6 +5,8 @@ import (
 	"context"
 	"io"
 
+	"github.com/google/uuid"
+
 	"github.com/vidra/vidra-core/internal/processedupload"
 )
 
@@ -14,10 +16,23 @@ func WithGeneratedArtworkScanner(scanner processedupload.Scanner) Option {
 	return func(s *Service) { s.artworkScanner = scanner }
 }
 
-func (s *Service) generatedArtwork(ctx context.Context, data []byte) (io.ReadCloser, error) {
+// WithProtectedArtworkScanner keeps the scan policy attached to a reconstructed
+// original across worker restarts and changes to upload admission.
+func WithProtectedArtworkScanner(scanner processedupload.Scanner) Option {
+	return func(s *Service) { s.protectedArtwork = scanner }
+}
+
+func (s *Service) generatedArtwork(ctx context.Context, id uuid.UUID, sourceKey string, data []byte) (io.ReadCloser, error) {
 	src := bytes.NewReader(data)
-	if s.artworkScanner == nil {
+	scanner := s.artworkScanner
+	if scanner == nil && sourceKey == processedupload.SourceKey(id) {
+		scanner = s.protectedArtwork
+		if scanner == nil {
+			return nil, processedupload.ErrOutputScannerRequired
+		}
+	}
+	if scanner == nil {
 		return io.NopCloser(src), nil
 	}
-	return processedupload.ScanFile(ctx, s.artworkScanner, src, int64(len(data)))
+	return processedupload.ScanFile(ctx, scanner, src, int64(len(data)))
 }

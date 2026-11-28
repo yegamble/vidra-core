@@ -73,7 +73,7 @@ func TestPrivateInputOnlyAttachesScannedOutput(t *testing.T) {
 				}
 				return
 			}
-			if string(h.pipeline.attached) != "scanned output" || h.jobs.get(job.ID).State != StateDone {
+			if !h.pipeline.reconstructed || string(h.pipeline.attached) != "scanned output" || h.jobs.get(job.ID).State != StateDone {
 				t.Fatal("scanned output did not finish")
 			}
 			if exists, err := h.blobs.Exists(ctx, "uploads/"+sess.ID.String()+"/0"); err != nil || exists {

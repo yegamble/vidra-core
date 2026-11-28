@@ -333,6 +333,7 @@ type Service struct {
 	additionalExtGate    func() bool
 	scanner              Scanner
 	artworkScanner       processedupload.Scanner
+	protectedArtwork     processedupload.Scanner
 	scanMode             ScanMode
 	auditor              Auditor
 	viewDeduper          ViewDeduper
@@ -851,7 +852,8 @@ type UploadInput struct {
 	Reader      io.Reader
 	// InputSize records transferred bytes for the daily quota when a larger
 	// private input is reconstructed into a smaller stored download.
-	InputSize int64
+	InputSize     int64
+	Reconstructed bool
 }
 
 // AttachOriginal stores the original file for a video and moves it from draft to
@@ -888,6 +890,9 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 	}
 
 	key := originalKey(videoID, ext)
+	if in.Reconstructed {
+		key = processedupload.SourceKey(videoID)
+	}
 	// The digest of whatever original is currently recorded, read BEFORE the row
 	// is dropped: it is what tells a retry apart from a new upload when the
 	// daily-quota ledger is appended below.
@@ -1723,7 +1728,7 @@ func (s *Service) generateThumbnail(ctx context.Context, videoID uuid.UUID, orig
 	if err != nil || len(jpg) == 0 {
 		return
 	}
-	body, err := s.generatedArtwork(ctx, jpg)
+	body, err := s.generatedArtwork(ctx, videoID, originalKey, jpg)
 	if err != nil {
 		return
 	}
@@ -1797,12 +1802,12 @@ func (s *Service) GenerateStoryboard(ctx context.Context, videoID uuid.UUID, ori
 	vttKey := media.StoryboardKeyVTT(videoID)
 	// The pair replaces two stable keys. Validate both files before replacing
 	// either, so a rejected map leaves the previous sprite and its map intact.
-	image, err := s.generatedArtwork(ctx, sprite)
+	image, err := s.generatedArtwork(ctx, videoID, originalKey, sprite)
 	if err != nil {
 		return err
 	}
 	defer image.Close()
-	cues, err := s.generatedArtwork(ctx, vtt)
+	cues, err := s.generatedArtwork(ctx, videoID, originalKey, vtt)
 	if err != nil {
 		return err
 	}
@@ -1959,7 +1964,7 @@ func (s *Service) SetThumbnailFromFrame(ctx context.Context, ownerID, videoID uu
 	if len(jpg) == 0 {
 		return sqlcgen.VideoFile{}, errors.New("video: frame extraction produced no image")
 	}
-	body, err := s.generatedArtwork(ctx, jpg)
+	body, err := s.generatedArtwork(ctx, videoID, orig.StorageKey, jpg)
 	if err != nil {
 		return sqlcgen.VideoFile{}, err
 	}

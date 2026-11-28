@@ -1039,6 +1039,7 @@ func HLSAudioDownloadKey(masterKey string) string {
 type HLSTranscoder struct {
 	blobs          storage.Backend
 	scannedOutputs *scannedOutputStore
+	protectedStore *scannedOutputStore
 	probe          *FFProbe
 	bin            string
 	vp9            bool // also emit a progressive VP9/WebM alternate (SetVP9)
@@ -1328,7 +1329,10 @@ func (t *HLSTranscoder) TranscodeAll(ctx context.Context, videoID uuid.UUID, sou
 }
 
 // transcodeHLS is TranscodeHLS with the web-video derivation switched on or off.
-func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md Metadata, progress ProgressFunc, deriveWebVideos bool) (HLSResult, error) {
+func (t HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md Metadata, progress ProgressFunc, deriveWebVideos bool) (HLSResult, error) {
+	if err := t.prepareOutputScan(videoID, sourceKey); err != nil {
+		return HLSResult{}, err
+	}
 	// Runtime encode knobs, resolved once per job (config-parity W10): a
 	// settings change applies to the next job, never mid-job.
 	settings := t.encodeSettings()
