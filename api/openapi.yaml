@@ -7364,7 +7364,12 @@ paths:
         /api/v1/uploads/{upload_id}/complete, which ACCEPTS the completion (202)
         and queues the assembly + the same pipeline a direct upload runs; poll
         GET /api/v1/uploads/{upload_id} until its state is completed or failed.
-        Non-owner/unknown video → 404.
+        Non-owner/unknown video → 404. Instances with the private upload processor
+        can accept resumable inputs up to 21,474,836,480 bytes. Inputs over
+        2,147,483,645 bytes are reconstructed in isolation. After scanning,
+        the processed MP4 supplies playback and downloads. The exact input
+        remains in private staging until cleanup. Direct uploads, replacements,
+        and URL imports retain the smaller whole-file limit on these instances.
 
 
         BATCH GUARD (UPLOAD-10): a caller may hold at most
