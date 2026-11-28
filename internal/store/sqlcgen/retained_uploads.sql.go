@@ -123,11 +123,17 @@ func (q *Queries) GetRetainedScanSource(ctx context.Context, arg GetRetainedScan
 }
 
 const isRetainedScanAccepted = `-- name: IsRetainedScanAccepted :one
-SELECT accepted FROM retained_upload_recoveries WHERE job_id=$1
+SELECT r.accepted FROM retained_upload_recoveries r JOIN upload_finalize_jobs j ON j.id=r.job_id
+WHERE r.job_id=$1 AND j.video_id=$2
 `
 
-func (q *Queries) IsRetainedScanAccepted(ctx context.Context, jobID uuid.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, isRetainedScanAccepted, jobID)
+type IsRetainedScanAcceptedParams struct {
+	JobID   uuid.UUID `json:"job_id"`
+	VideoID uuid.UUID `json:"video_id"`
+}
+
+func (q *Queries) IsRetainedScanAccepted(ctx context.Context, arg IsRetainedScanAcceptedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isRetainedScanAccepted, arg.JobID, arg.VideoID)
 	var accepted bool
 	err := row.Scan(&accepted)
 	return accepted, err

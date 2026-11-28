@@ -37,7 +37,8 @@ WHERE v.id = sqlc.arg(video_id) AND v.state = 'failed'
 SELECT * FROM changed;
 
 -- name: IsRetainedScanAccepted :one
-SELECT accepted FROM retained_upload_recoveries WHERE job_id=$1;
+SELECT r.accepted FROM retained_upload_recoveries r JOIN upload_finalize_jobs j ON j.id=r.job_id
+WHERE r.job_id=sqlc.arg(job_id) AND j.video_id=sqlc.arg(video_id);
 
 -- name: DetachInfectedRetainedFile :exec
 -- Collection of the unreferenced bytes uses the ordinary media GC. A delete

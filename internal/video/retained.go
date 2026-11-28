@@ -15,7 +15,7 @@ type retainedQueries interface {
 	GetCurrentRetainedScanRecovery(context.Context, uuid.UUID) (sqlcgen.CurrentRetainedScanRecovery, error)
 	SetRetainedScanVideoState(context.Context, sqlcgen.SetRetainedScanVideoStateParams) (sqlcgen.SetRetainedScanVideoStateRow, error)
 	DetachInfectedRetainedFile(context.Context, uuid.UUID) error
-	IsRetainedScanAccepted(context.Context, uuid.UUID) (bool, error)
+	IsRetainedScanAccepted(context.Context, sqlcgen.IsRetainedScanAcceptedParams) (bool, error)
 }
 
 type retainedSource struct {
@@ -62,7 +62,10 @@ func (s *Service) ProcessRetained(ctx context.Context, jobID, videoID uuid.UUID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// A previous worker can commit publication just before losing its lease.
 		// That successful attempt must not be reported as a new failed scan.
-		accepted, readErr := q.IsRetainedScanAccepted(ctx, jobID)
+		accepted, readErr := q.IsRetainedScanAccepted(ctx, sqlcgen.IsRetainedScanAcceptedParams{JobID: jobID, VideoID: videoID})
+		if errors.Is(readErr, pgx.ErrNoRows) {
+			return ErrRecoveryIneligible
+		}
 		if readErr != nil {
 			return readErr
 		}
