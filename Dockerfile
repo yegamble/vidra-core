@@ -31,7 +31,8 @@ RUN set -eu; \
     if [ -n "$VERSION" ]; then ldflags="$ldflags -X $pkg.Version=$VERSION"; fi; \
     if [ -n "$COMMIT" ]; then ldflags="$ldflags -X $pkg.Commit=$COMMIT"; fi; \
     if [ -n "$BUILD_DATE" ]; then ldflags="$ldflags -X $pkg.Date=$BUILD_DATE"; fi; \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="$ldflags" -o /out/api ./cmd/api
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="$ldflags" -o /out/api ./cmd/api && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/normalize-upload ./cmd/normalize-upload
 
 # ---- runtime stage ----
 FROM alpine:3.24 AS runtime
@@ -90,6 +91,7 @@ RUN if [ -n "$YTDLP_VERSION" ]; then \
 USER vidra
 WORKDIR /app
 COPY --from=build /out/api /app/api
+COPY --from=build /out/normalize-upload /app/normalize-upload
 
 EXPOSE 8080
 # Liveness check used by Compose/orchestrators.
