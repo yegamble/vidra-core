@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/vidra/vidra-core/internal/processedupload"
 )
 
 func TestProfileBudgetsTheWholeDownloadAgainstTheScanCeiling(t *testing.T) {
@@ -13,7 +15,7 @@ func TestProfileBudgetsTheWholeDownloadAgainstTheScanCeiling(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if float64(p.videoKbps+p.audioKbps)*seconds*1000/8 >= float64(maxOutputBytes) {
+		if float64(p.videoKbps+p.audioKbps)*seconds*1000/8 >= float64(processedupload.MaxScannedBytes) {
 			t.Fatalf("duration %v, profile %+v exceeds scanner budget", seconds, p)
 		}
 	}
@@ -25,7 +27,7 @@ func TestInputOverTwentyGiBIsRejectedBeforeStartingFFmpeg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = source.Truncate(maxInputBytes + 1); err != nil {
+	if err = source.Truncate(processedupload.MaxInputBytes + 1); err != nil {
 		t.Fatal(err)
 	}
 	if err = source.Close(); err != nil {

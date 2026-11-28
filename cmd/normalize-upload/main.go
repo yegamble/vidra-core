@@ -14,11 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-)
 
-const (
-	maxInputBytes  int64 = 20 << 30
-	maxOutputBytes int64 = (2 << 30) - 3 // largest whole file our clamd configuration scans
+	"github.com/vidra/vidra-core/internal/processedupload"
 )
 
 // FFmpeg can resolve URLs embedded in some containers. Use a seekable,
@@ -55,7 +52,7 @@ type profile struct {
 
 func chooseProfile(seconds float64) (profile, error) {
 	// Leave room for the MP4 boxes and the rate controller's final buffer.
-	total := int(min(24192, float64(maxOutputBytes)*8*.90/(1000*seconds)))
+	total := int(min(24192, float64(processedupload.MaxScannedBytes)*8*.90/(1000*seconds)))
 	audio := min(192, max(32, total/8))
 	video := total - audio
 	if video < 100 {
@@ -97,7 +94,7 @@ func normalize(ctx context.Context, input, output string) error {
 	if err != nil {
 		return err
 	}
-	if !st.Mode().IsRegular() || st.Size() < 1 || st.Size() > maxInputBytes {
+	if !st.Mode().IsRegular() || st.Size() < 1 || st.Size() > processedupload.MaxInputBytes {
 		return errors.New("invalid source file size or type")
 	}
 	duration, err := mediaDuration(ctx, src)
@@ -136,15 +133,15 @@ func normalize(ctx context.Context, input, output string) error {
 	if err = cmd.Start(); err != nil {
 		return err
 	}
-	n, copyErr := io.Copy(dst, io.LimitReader(out, maxOutputBytes+1))
-	if copyErr != nil || n > maxOutputBytes {
+	n, copyErr := io.Copy(dst, io.LimitReader(out, processedupload.MaxScannedBytes+1))
+	if copyErr != nil || n > processedupload.MaxScannedBytes {
 		cancel()
 	}
 	waitErr := cmd.Wait()
 	switch {
 	case copyErr != nil:
 		return copyErr
-	case n > maxOutputBytes:
+	case n > processedupload.MaxScannedBytes:
 		return errors.New("processed file exceeds scanning limit")
 	case waitErr != nil:
 		return fmt.Errorf("encode media: %w", waitErr)
