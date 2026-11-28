@@ -299,6 +299,7 @@ const (
 	// carries only the safe video id, the outcome (infected|scan_error), and the
 	// applied policy — never the scanned bytes or any file content.
 	ActionUploadMalwareRejected = "content.upload.malware_rejected"
+	ActionUploadScanRecovery    = "content.upload.scan_recovery_queued"
 	// ActionUploadMalwareSkipped records that a file was PUBLISHED WITHOUT being
 	// scanned because the scan could not complete and MALWARE_SCAN_MODE is
 	// fail-open. A28 measured this path leaving nothing but a WARN log line, so

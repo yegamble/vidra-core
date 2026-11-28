@@ -4,15 +4,24 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"strings"
 	"time"
 
 	"github.com/vidra/vidra-core/internal/storage"
 )
+
+// ErrScanLimit means the daemon explicitly stopped inspection at one of its
+// limits. Callers must refuse the bytes in every mode and distinguish this
+// outcome from both a malware detection and an unavailable scanner.
+var ErrScanLimit = errors.New("clamav: inspection limit reached")
 
 // ClamAV scans stored objects for malware by streaming them to a clamd daemon
 // over its INSTREAM command. It satisfies video.Scanner.
@@ -53,6 +62,30 @@ func (c *ClamAV) Scan(ctx context.Context, key string) (bool, error) {
 	}
 	defer func() { _ = rc.Close() }()
 	return c.scan(ctx, rc)
+}
+
+// ScanVerified binds the daemon's verdict to the exact retained upload the
+// operator approved. A changed object is an error even if clamd reports clean.
+func (c *ClamAV) ScanVerified(ctx context.Context, key string, size int64, digest string) (bool, error) {
+	want, err := hex.DecodeString(digest)
+	if err != nil || len(want) != sha256.Size || size <= 0 || size == math.MaxInt64 {
+		return false, fmt.Errorf("clamav: invalid retained source identity")
+	}
+	rc, err := c.blobs.Open(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rc.Close() }()
+	limit := &io.LimitedReader{R: rc, N: size + 1}
+	hash := sha256.New()
+	clean, err := c.scan(ctx, io.TeeReader(limit, hash))
+	if err != nil {
+		return false, err
+	}
+	if limit.N != 1 || !bytes.Equal(hash.Sum(nil), want) {
+		return false, fmt.Errorf("clamav: retained source changed")
+	}
+	return clean, nil
 }
 
 // ScanBytes runs the same INSTREAM scan over an in-memory buffer, for the
@@ -96,10 +129,10 @@ func (c *ClamAV) scan(ctx context.Context, rc io.Reader) (bool, error) {
 			var sz [4]byte
 			binary.BigEndian.PutUint32(sz[:], uint32(n))
 			if _, err := conn.Write(sz[:]); err != nil {
-				return false, fmt.Errorf("clamav: write size: %w", err)
+				return refusedStream(conn, deadline, fmt.Errorf("clamav: write size: %w", err))
 			}
 			if _, err := conn.Write(buf[:n]); err != nil {
-				return false, fmt.Errorf("clamav: write chunk: %w", err)
+				return refusedStream(conn, deadline, fmt.Errorf("clamav: write chunk: %w", err))
 			}
 		}
 		if rerr == io.EOF {
@@ -111,19 +144,42 @@ func (c *ClamAV) scan(ctx context.Context, rc io.Reader) (bool, error) {
 	}
 	// A zero-length chunk terminates the stream.
 	if _, err := conn.Write([]byte{0, 0, 0, 0}); err != nil {
-		return false, fmt.Errorf("clamav: write terminator: %w", err)
+		return refusedStream(conn, deadline, fmt.Errorf("clamav: write terminator: %w", err))
 	}
+	return streamVerdict(conn)
+}
 
-	resp, err := bufio.NewReader(conn).ReadString('\x00')
+// clamd may reject INSTREAM and close its receiving side before the writer
+// reaches its terminator. Preserve an explicit refusal already on the socket.
+// A premature OK cannot establish that the entire input was scanned.
+func refusedStream(conn net.Conn, deadline time.Time, writeErr error) (bool, error) {
+	if soon := time.Now().Add(250 * time.Millisecond); soon.Before(deadline) {
+		_ = conn.SetReadDeadline(soon)
+	}
+	clean, err := streamVerdict(conn)
+	if errors.Is(err, ErrScanLimit) || (err == nil && !clean) {
+		return false, err
+	}
+	return false, writeErr
+}
+
+func streamVerdict(conn net.Conn) (bool, error) {
+	line, err := bufio.NewReader(conn).ReadSlice('\x00')
 	if err != nil && err != io.EOF {
 		return false, fmt.Errorf("clamav: read response: %w", err)
 	}
-	resp = strings.TrimRight(resp, "\x00\n ")
+	resp := strings.TrimRight(string(line), "\x00\r\n ")
 	// clamd replies "stream: OK" (clean) or "stream: <signature> FOUND" (infected).
 	switch {
-	case strings.HasSuffix(resp, "OK"):
+	case resp == "stream: OK":
 		return true, nil
-	case strings.HasSuffix(resp, "FOUND"):
+	case resp == "INSTREAM size limit exceeded. ERROR":
+		return false, ErrScanLimit
+	case strings.HasPrefix(resp, "stream: ") && strings.HasSuffix(resp, " FOUND"):
+		signature := strings.TrimPrefix(strings.TrimSuffix(resp, " FOUND"), "stream: ")
+		if signature == "Heuristics.Limits.Exceeded" || strings.HasPrefix(signature, "Heuristics.Limits.Exceeded.") {
+			return false, ErrScanLimit
+		}
 		return false, nil
 	default:
 		return false, fmt.Errorf("clamav: unexpected response %q", resp)
