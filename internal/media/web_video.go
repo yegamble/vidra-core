@@ -177,7 +177,10 @@ func WebVideoPrefixForGeneration(videoID uuid.UUID, generation int) string {
 // standalone web-video rebuild writes its own directory rather than overwriting
 // the one the last run left. md is the caller's already-obtained probe of
 // sourceKey; the worker probes once per job and shares it across targets.
-func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md Metadata, progress ProgressFunc) ([]WebVideoResult, error) {
+func (t HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md Metadata, progress ProgressFunc) ([]WebVideoResult, error) {
+	if err := t.prepareOutputScan(videoID, sourceKey); err != nil {
+		return nil, err
+	}
 	settings := t.encodeSettings()
 	rungs := PlanHLSLadderWith(settings, md.Width, md.Height, md.FPS)
 	if len(rungs) == 0 {

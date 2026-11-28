@@ -416,7 +416,7 @@ func (s *Service) runFinalize(ctx context.Context, row sqlcgen.ClaimDueUploadFin
 			return s.internalf("process private upload", err)
 		}
 		defer f.Close()
-		input = video.UploadInput{Filename: "processed.mp4", ContentType: "video/mp4", Reader: f, InputSize: sess.TotalSize}
+		input = video.UploadInput{Filename: "processed.mp4", ContentType: "video/mp4", Reader: f, InputSize: sess.TotalSize, Reconstructed: true}
 	} else if row.Purpose == upload.PurposeReplace {
 		return s.runReplace(ctx, row, sess, reader)
 	}

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/google/uuid"
+
 	"github.com/vidra/vidra-core/internal/processedupload"
 	"github.com/vidra/vidra-core/internal/storage"
 )
@@ -15,6 +17,24 @@ import (
 // backend's optional presigning, local-path and prefix-deletion capabilities.
 func (t *HLSTranscoder) SetOutputScanner(scanner processedupload.Scanner) {
 	t.scannedOutputs = &scannedOutputStore{Backend: t.blobs, scanner: scanner}
+}
+
+// SetProtectedOutputScanner applies to reconstructed originals on this worker.
+func (t *HLSTranscoder) SetProtectedOutputScanner(scanner processedupload.Scanner) {
+	t.protectedStore = &scannedOutputStore{Backend: t.blobs, scanner: scanner}
+}
+
+// Apply only to the per-job copy of the transcoder. A neighboring ordinary
+// upload can run concurrently with a protected generation on the same worker.
+func (t *HLSTranscoder) prepareOutputScan(id uuid.UUID, sourceKey string) error {
+	if sourceKey != processedupload.SourceKey(id) || t.scannedOutputs != nil {
+		return nil
+	}
+	if t.protectedStore == nil || t.protectedStore.scanner == nil {
+		return processedupload.ErrOutputScannerRequired
+	}
+	t.scannedOutputs = t.protectedStore
+	return nil
 }
 
 func (t *HLSTranscoder) outputStore() storage.Backend {
