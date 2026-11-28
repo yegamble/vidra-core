@@ -191,6 +191,41 @@ func TestSegmentsAreNotCoalesced(t *testing.T) {
 	}
 }
 
+func TestEmptyMediaWriteDoesNotReplaceTrickPlayBytes(t *testing.T) {
+	const rel = "240p/iframe.ts"
+	for _, tc := range []struct {
+		name   string
+		bodies []string
+		valid  bool
+	}{
+		{"empty reopen", []string{"frames", ""}, true},
+		{"empty open", []string{"", "frames"}, true},
+		{"no payload", []string{""}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, b := newTestSink(t)
+			for _, body := range tc.bodies {
+				resp := do(t, http.MethodPut, s.URL(rel), body)
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusCreated {
+					t.Fatalf("PUT = %d", resp.StatusCode)
+				}
+			}
+			err := s.Flush(context.Background())
+			key := "streaming-playlists/vid1/" + rel
+			if !tc.valid {
+				if err == nil || !strings.Contains(err.Error(), rel) || len(b.putKeys()) != 0 {
+					t.Fatalf("empty file: flush = %v, writes = %v", err, b.putKeys())
+				}
+				return
+			}
+			if err != nil || len(b.putKeys()) != 1 || string(b.object(key)) != "frames" {
+				t.Fatalf("flush = %v, writes = %v, stored = %q", err, b.putKeys(), b.object(key))
+			}
+		})
+	}
+}
+
 // TestGetServesStoredAndBufferedObjects covers the read-back the pipeline needs:
 // the progressive-download remux consumes the variant playlist and its segments
 // while the playlist is still buffered in memory.
