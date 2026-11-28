@@ -5993,6 +5993,28 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /api/v1/videos/{id}/ipfs-reference/{generation}/{file}:
+    get:
+      operationId: getApprovedReferenceFile
+      summary: Read an individually approved current public HLS reference
+      description: >-
+        This optional same-origin source reads through the operator's IPFS
+        reference node. Follow relative playlist links with literal directory
+        separators. GET and HEAD check publication approval and live eligibility
+        on every request. Responses are private and must not be cached.
+      tags: [videos]
+      security: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: generation, in: path, required: true, schema: { type: string, pattern: '^r[1-9][0-9]{0,18}$' } }
+        - { name: file, in: path, required: true, schema: { type: string }, description: Relative path within the approved HLS tree. }
+        - { name: Range, in: header, schema: { type: string }, description: A single byte range. }
+      responses:
+        "200": { description: An approved HLS playlist or media file. }
+        "206": { description: Requested byte range. }
+        "404": { description: "Unknown, ineligible, replaced or unapproved media." }
+        "416": { description: Unsatisfiable or unsupported byte range. }
+        "503": { description: Reference playback is temporarily unavailable. }
   /api/v1/videos/{id}/hls/master.m3u8:
     get:
       operationId: getVideoHLSMaster
