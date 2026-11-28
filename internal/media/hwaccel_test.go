@@ -188,13 +188,13 @@ func TestHardwareFilterGraphs(t *testing.T) {
 		{
 			name: "a backend with no upload leaves the graph exactly as it was",
 			hw:   HardwareVideoToolbox,
-			wantGraph: "[0:v]split=2[b0][b1];" +
+			wantGraph: "[0:v]setsar=sar:max=2147483647,split=2[b0][b1];" +
 				"[b0]scale=480:360[v0];[b1]scale=320:240[v1]",
 		},
 		{
 			name: "one uploading codec appends its tail to the scale, with no fork",
 			hw:   HardwareVAAPI,
-			wantGraph: "[0:v]split=2[b0][b1];" +
+			wantGraph: "[0:v]setsar=sar:max=2147483647,split=2[b0][b1];" +
 				"[b0]scale=480:360,format=nv12,hwupload[v0];" +
 				"[b1]scale=320:240,format=nv12,hwupload[v1]",
 			wantInit: []string{"-init_hw_device", "vaapi=vidra_hw:/dev/dri/renderD128", "-filter_hw_device", "vidra_hw"},
@@ -203,7 +203,7 @@ func TestHardwareFilterGraphs(t *testing.T) {
 			name: "two uploading codecs fork FIRST, then upload once each",
 			hw:   HardwareQSV,
 			hevc: true,
-			wantGraph: "[0:v]split=2[b0][b1];" +
+			wantGraph: "[0:v]setsar=sar:max=2147483647,split=2[b0][b1];" +
 				"[b0]scale=480:360,split=2[u0][u2];" +
 				"[u0]format=nv12,hwupload=extra_hw_frames=64[v0];" +
 				"[u2]format=nv12,hwupload=extra_hw_frames=64[v2];" +
@@ -217,7 +217,7 @@ func TestHardwareFilterGraphs(t *testing.T) {
 			hw:   HardwareVAAPI,
 			hevc: true,
 			av1:  true,
-			wantGraph: "[0:v]split=2[b0][b1];" +
+			wantGraph: "[0:v]setsar=sar:max=2147483647,split=2[b0][b1];" +
 				"[b0]scale=480:360,split=3[u0][u2][u4];" +
 				"[u0]format=nv12,hwupload[v0];" +
 				"[u2]format=nv12,hwupload[v2];" +

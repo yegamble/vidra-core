@@ -264,7 +264,7 @@ func TestMultiCodecLadderIsOnePassWithOneScalePerRung(t *testing.T) {
 	if n := strings.Count(graph, "scale="); n != len(plan.rungs) {
 		t.Errorf("graph scales %d times, want once per rung (%d): %s", n, len(plan.rungs), graph)
 	}
-	want := "[0:v]split=2[b0][b1];" +
+	want := "[0:v]setsar=sar:max=2147483647,split=2[b0][b1];" +
 		"[b0]scale=480:360,split=3[v0][v2][v4];" +
 		"[b1]scale=320:240,split=3[v1][v3][v5]"
 	if graph != want {
