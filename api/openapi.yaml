@@ -6010,8 +6010,26 @@ paths:
         - { name: file, in: path, required: true, schema: { type: string }, description: Relative path within the approved HLS tree. }
         - { name: Range, in: header, schema: { type: string }, description: A single byte range. }
       responses:
-        "200": { description: An approved HLS playlist or media file. }
-        "206": { description: Requested byte range. }
+        "200":
+          description: The complete approved HLS playlist or media file.
+          content:
+            application/vnd.apple.mpegurl: { schema: { type: string } }
+            text/vtt: { schema: { type: string } }
+            video/mp4: { schema: { type: string, format: binary } }
+            video/mp2t: { schema: { type: string, format: binary } }
+            audio/mp4: { schema: { type: string, format: binary } }
+            audio/aac: { schema: { type: string, format: binary } }
+        "206":
+          description: The requested byte range in the file's original media type.
+          headers:
+            Content-Range: { schema: { type: string } }
+          content:
+            application/vnd.apple.mpegurl: { schema: { type: string, format: binary } }
+            text/vtt: { schema: { type: string, format: binary } }
+            video/mp4: { schema: { type: string, format: binary } }
+            video/mp2t: { schema: { type: string, format: binary } }
+            audio/mp4: { schema: { type: string, format: binary } }
+            audio/aac: { schema: { type: string, format: binary } }
         "404": { description: Unknown, ineligible, replaced or unapproved media. }
         "416": { description: Unsatisfiable or unsupported byte range. }
         "503": { description: Reference playback is temporarily unavailable. }
