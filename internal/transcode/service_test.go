@@ -1033,6 +1033,19 @@ func TestDrainJobsBoundedConcurrency(t *testing.T) {
 
 	// With 3 workers over 6 blocked jobs, exactly 3 must be in flight.
 	waitFor(t, func() bool { return tc.callCount() == 3 })
+	repo.mu.Lock()
+	pending := 0
+	for _, job := range repo.jobs {
+		if job.State == "pending" {
+			pending++
+		}
+	}
+	repo.mu.Unlock()
+	if pending != jobs-3 {
+		close(block)
+		<-done
+		t.Fatalf("got %d pending jobs while all encoders were busy, want %d available to other workers", pending, jobs-3)
+	}
 	select {
 	case <-done:
 		t.Fatal("DrainJobs returned while jobs were still blocked")
