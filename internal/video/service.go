@@ -5,7 +5,6 @@
 package video
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -23,6 +22,7 @@ import (
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/pgconv"
+	"github.com/vidra/vidra-core/internal/processedupload"
 	"github.com/vidra/vidra-core/internal/shortid"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -332,6 +332,7 @@ type Service struct {
 	storyboardGate       func() bool
 	additionalExtGate    func() bool
 	scanner              Scanner
+	artworkScanner       processedupload.Scanner
 	scanMode             ScanMode
 	auditor              Auditor
 	viewDeduper          ViewDeduper
@@ -1685,8 +1686,13 @@ func (s *Service) generateThumbnail(ctx context.Context, videoID uuid.UUID, orig
 	if err != nil || len(jpg) == 0 {
 		return
 	}
+	body, err := s.generatedArtwork(ctx, jpg)
+	if err != nil {
+		return
+	}
+	defer body.Close()
 	key := thumbnailKey(videoID)
-	_, sum, err := storage.PutSizedHashed(ctx, s.blobs, key, bytes.NewReader(jpg), int64(len(jpg)))
+	_, sum, err := storage.PutSizedHashed(ctx, s.blobs, key, body, int64(len(jpg)))
 	if err != nil {
 		return
 	}
@@ -1752,11 +1758,23 @@ func (s *Service) GenerateStoryboard(ctx context.Context, videoID uuid.UUID, ori
 	}
 	jpgKey := media.StoryboardKeyJPG(videoID)
 	vttKey := media.StoryboardKeyVTT(videoID)
-	_, spriteSum, err := storage.PutSizedHashed(ctx, s.blobs, jpgKey, bytes.NewReader(sprite), int64(len(sprite)))
+	// The pair replaces two stable keys. Validate both files before replacing
+	// either, so a rejected map leaves the previous sprite and its map intact.
+	image, err := s.generatedArtwork(ctx, sprite)
 	if err != nil {
 		return err
 	}
-	_, vttSum, err := storage.PutSizedHashed(ctx, s.blobs, vttKey, bytes.NewReader(vtt), int64(len(vtt)))
+	defer image.Close()
+	cues, err := s.generatedArtwork(ctx, vtt)
+	if err != nil {
+		return err
+	}
+	defer cues.Close()
+	_, spriteSum, err := storage.PutSizedHashed(ctx, s.blobs, jpgKey, image, int64(len(sprite)))
+	if err != nil {
+		return err
+	}
+	_, vttSum, err := storage.PutSizedHashed(ctx, s.blobs, vttKey, cues, int64(len(vtt)))
 	if err != nil {
 		return err
 	}
@@ -1904,6 +1922,11 @@ func (s *Service) SetThumbnailFromFrame(ctx context.Context, ownerID, videoID uu
 	if len(jpg) == 0 {
 		return sqlcgen.VideoFile{}, errors.New("video: frame extraction produced no image")
 	}
+	body, err := s.generatedArtwork(ctx, jpg)
+	if err != nil {
+		return sqlcgen.VideoFile{}, err
+	}
+	defer body.Close()
 	key := thumbnailKey(videoID)
 	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
 		VideoID: videoID,
@@ -1911,7 +1934,7 @@ func (s *Service) SetThumbnailFromFrame(ctx context.Context, ownerID, videoID uu
 	}); err != nil {
 		return sqlcgen.VideoFile{}, err
 	}
-	_, sum, err := storage.PutSizedHashed(ctx, s.blobs, key, bytes.NewReader(jpg), int64(len(jpg)))
+	_, sum, err := storage.PutSizedHashed(ctx, s.blobs, key, body, int64(len(jpg)))
 	if err != nil {
 		return sqlcgen.VideoFile{}, err
 	}

@@ -1124,6 +1124,9 @@ func run() error {
 	if cfg.MalwareScanEnabled {
 		fileScanner = media.NewClamAV(cfg.ClamAVAddr, blobs, cfg.ClamAVTimeout)
 		vopts = append(vopts, video.WithScanner(fileScanner))
+		if cfg.UploadNormalizerSocket != "" {
+			vopts = append(vopts, video.WithGeneratedArtworkScanner(fileScanner))
+		}
 		logger.Info("malware scanning enabled (clamd)", "addr", cfg.ClamAVAddr, "mode", cfg.MalwareScanMode, "timeout", cfg.ClamAVTimeout.String())
 	} else if cfg.MalwareScanOptedOut() {
 		// The explicit opt-out. It is loud at boot AND durable in the audit
