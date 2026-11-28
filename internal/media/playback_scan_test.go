@@ -27,6 +27,7 @@ func TestPlaybackScanRefusesOutputBeforeStorage(t *testing.T) {
 		permanent bool
 	}{
 		{name: "denied", permanent: true},
+		{name: "inspection limit", failure: ErrScanLimit, permanent: true},
 		{name: "scanner unavailable", failure: errors.New("scanner unavailable")},
 		{name: "clean", clean: true},
 	} {

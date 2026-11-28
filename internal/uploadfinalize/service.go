@@ -50,6 +50,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/jobtrace"
 	"github.com/vidra/vidra-core/internal/lease"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/processedupload"
 	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/safeerr"
@@ -400,6 +401,10 @@ func (s *Service) runFinalize(ctx context.Context, row sqlcgen.ClaimDueUploadFin
 		f, err := s.normalize(ctx, reader, sess.TotalSize)
 		switch {
 		case errors.Is(err, processedupload.ErrInfected):
+			s.logger.Warn("processed upload safety scan refused the file", "video_id", row.VideoID, "outcome", "infected")
+			return safeerr.NewTerminal(video.SafetyScanRejectedMessage)
+		case errors.Is(err, media.ErrScanLimit), errors.Is(err, processedupload.ErrScanTooLarge):
+			s.logger.Warn("processed upload safety scan refused the file", "video_id", row.VideoID, "outcome", "scan_limit")
 			return safeerr.NewTerminal(video.SafetyScanRejectedMessage)
 		case errors.Is(err, processedupload.ErrRejected):
 			return safeerr.NewTerminal("the uploaded video could not be converted to a playable file")
