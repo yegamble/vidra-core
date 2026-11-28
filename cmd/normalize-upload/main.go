@@ -66,7 +66,10 @@ func (p profile) arguments() []string {
 	if p.videoKbps > 0 {
 		args = append(args, "-vf", scale, "-c:v", "libx264", "-a53cc", "0", "-threads:v", "2", "-preset", "veryfast", "-crf", "20", "-maxrate", rate(p.videoKbps), "-bufsize", rate(2*p.videoKbps), "-pix_fmt", "yuv420p")
 	}
-	return append(args, "-c:a", "aac", "-ac", "2", "-ar", "48000", "-b:a", rate(p.audioKbps), "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1")
+	// Write the first fragment's edit list after the initial timestamps are known.
+	// An empty upfront moov loses delayed audio. Bound fragments for audio-only
+	// inputs too, since they have no video keyframes to trigger the next fragment.
+	return append(args, "-c:a", "aac", "-ac", "2", "-ar", "48000", "-b:a", rate(p.audioKbps), "-movflags", "+frag_keyframe+delay_moov+default_base_moof", "-frag_duration", "5000000", "-f", "mp4", "pipe:1")
 }
 
 func normalize(ctx context.Context, input, output string) error {

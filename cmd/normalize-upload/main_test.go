@@ -42,3 +42,10 @@ func TestInputOverTwentyGiBIsRejectedBeforeStartingFFmpeg(t *testing.T) {
 		t.Fatalf("unexpected output: %v", err)
 	}
 }
+func TestSelectedAudioKeepsItsOffsetAfterRebasing(t *testing.T) {
+	source := tracks{video: track{true, 10, 15}, audio: track{true, 12, 17}}
+	if !source.matches(tracks{video: track{true, 0, 5}, audio: track{true, 2, 7}}) ||
+		source.matches(tracks{video: track{true, 2, 7}, audio: track{true, 0, 5}}) {
+		t.Fatal("output must preserve the delay between selected tracks")
+	}
+}

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,10 +16,12 @@ func TestNormalizeSelectedTracks(t *testing.T) {
 		name, extension string
 		streams         []string
 		wantVideo       bool
+		duration, delay float64
 	}{
-		{"extra audio", ".mp4", []string{"-f", "lavfi", "-i", "color=s=64x48:r=8:d=1", "-f", "lavfi", "-i", "sine=d=1", "-f", "lavfi", "-i", "sine=d=4", "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "libx264", "-c:a", "aac"}, true},
-		{"packet timestamps", ".mkv", []string{"-f", "lavfi", "-i", "testsrc2=s=64x48:r=8:d=2", "-f", "lavfi", "-i", "sine=d=2", "-c:v", "libx264", "-c:a", "aac"}, true},
-		{"audio with cover art", ".mp3", []string{"-f", "lavfi", "-i", "sine=d=2", "-f", "lavfi", "-i", "color=s=32x32:r=1:d=1", "-map", "0:a", "-map", "1:v", "-c:a", "libmp3lame", "-c:v", "mjpeg", "-frames:v", "1", "-disposition:v", "attached_pic"}, false},
+		{"extra audio", ".mp4", []string{"-f", "lavfi", "-i", "color=s=64x48:r=8:d=1", "-f", "lavfi", "-i", "sine=d=1", "-f", "lavfi", "-i", "sine=d=4", "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "libx264", "-c:a", "aac"}, true, 1, 0},
+		{"packet timestamps", ".mkv", []string{"-f", "lavfi", "-i", "testsrc2=s=64x48:r=8:d=2", "-f", "lavfi", "-i", "sine=d=2", "-c:v", "libx264", "-c:a", "aac"}, true, 2, 0},
+		{"audio with cover art", ".mp3", []string{"-f", "lavfi", "-i", "sine=d=12", "-f", "lavfi", "-i", "color=s=32x32:r=1:d=1", "-map", "0:a", "-map", "1:v", "-c:a", "libmp3lame", "-c:v", "mjpeg", "-disposition:v", "attached_pic"}, false, 12, 0},
+		{"delayed audio", ".mp4", []string{"-f", "lavfi", "-i", "testsrc2=s=64x48:r=8:d=5", "-itsoffset", "2", "-f", "lavfi", "-i", "sine=d=2", "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-c:a", "aac"}, true, 5, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -41,8 +44,17 @@ func TestNormalizeSelectedTracks(t *testing.T) {
 			}
 			defer f.Close()
 			got, err := inspectTracks(t.Context(), f)
-			if err != nil || !got.audio.present || got.video.present != tc.wantVideo || got.duration() > 3 {
+			if err != nil || !got.audio.present || got.video.present != tc.wantVideo || math.Abs(got.duration()-tc.duration) > 0.5 {
 				t.Fatalf("output tracks %+v, %v", got, err)
+			}
+			if tc.wantVideo && math.Abs((got.audio.start-got.video.start)-tc.delay) > 0.5 {
+				t.Fatalf("lost audio offset: got %+v, want %v", got, tc.delay)
+			}
+			if !tc.wantVideo {
+				trace, err := exec.CommandContext(t.Context(), "ffprobe", "-v", "trace", "-show_entries", "format=format_name", out).CombinedOutput()
+				if err != nil || bytes.Count(trace, []byte("'moof' parent:'root'")) < 3 {
+					t.Fatalf("12-second audio requires at least three fragments: %v", err)
+				}
 			}
 			bytesOut, err := exec.CommandContext(t.Context(), "ffprobe", "-v", "error", "-show_entries", "format_tags:stream_tags", "-of", "json", out).Output()
 			if err != nil || bytes.Contains(bytesOut, []byte("private-tag-for-test")) {

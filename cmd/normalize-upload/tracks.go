@@ -41,6 +41,9 @@ func (t tracks) matches(out tracks) bool {
 			return false
 		}
 	}
+	if t.video.present && t.audio.present && math.Abs((t.audio.start-t.video.start)-(out.audio.start-out.video.start)) > 1 {
+		return false
+	}
 	return math.Abs(t.duration()-out.duration()) <= 1
 }
 
