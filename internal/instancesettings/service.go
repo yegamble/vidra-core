@@ -430,10 +430,9 @@ const (
 	// deployment on upgrade, which is a behaviour change disguised as a safety
 	// default.
 	//
-	// EFFECTIVE availability is this AND the master env switch AND a healthy
-	// gateway — see httpapi.ipfsDeliveryEnabled. On an install with IPFS_ENABLED
-	// false the setting is inert rather than broken, exactly as
-	// delivery_presign_enabled is on a local-filesystem install.
+	// Gateway redirects also require a configured public mirror and a healthy
+	// gateway. Native reference playback uses the same delivery switch with
+	// a separately configured bridge that checks each approved generation.
 	KeyDeliveryIPFSEnabled = "delivery_ipfs_enabled"
 
 	// KeyQoECollectionEnabled is the playback-telemetry collection switch

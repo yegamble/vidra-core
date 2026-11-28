@@ -141,9 +141,11 @@ func main() {
 		case "owner-recovery":
 			// stdout carries ONLY the link; see owner_recovery.go.
 			os.Exit(runOwnerRecovery(os.Args[2:], os.Stdout, os.Stderr, openOwnerRecovery))
+		case "recover-scan-upload":
+			os.Exit(runRetainedUpload(os.Args[2:], os.Stdout, os.Stderr))
 		default:
 			slog.Error("unknown subcommand", "argv", os.Args[1],
-				"usage", "api ["+migrateUsage+"|"+verifyBlobsUsage+"|"+ownerRecoveryUsage+"] (no arguments runs the server)")
+				"usage", "api ["+migrateUsage+"|"+verifyBlobsUsage+"|"+ownerRecoveryUsage+"|"+retainedUsage+"] (no arguments runs the server)")
 			os.Exit(1)
 		}
 	}
@@ -370,6 +372,9 @@ func run() error {
 		instancedocs.WithVersionBump(bumpSettingsVersion))
 	if err := instancedocssvc.Load(startCtx); err != nil {
 		return err
+	}
+	if cfg.IPFSReferencePlaybackSocket != "" {
+		opts = append(opts, httpapi.WithReferencePlayback(cfg.IPFSReferencePlaybackSocket, db.Queries().PublicReferenceMasterKey))
 	}
 	opts = append(opts, httpapi.WithSitePages(db.Queries()))
 	opts = append(opts, httpapi.WithInstanceDocumentsService(instancedocssvc))

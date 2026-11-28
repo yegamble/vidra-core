@@ -98,7 +98,7 @@ func TestProcessDoesNotRejectWhenPolicyAbsorbs(t *testing.T) {
 // contract and the frontend renders it from the code, so a drifting word here
 // is a product change, not a refactor.
 func TestSafetyScanCopyIsNeutral(t *testing.T) {
-	const want = "This file was rejected by the instance's safety scan and was not stored."
+	const want = "This file was rejected by the instance's safety scan."
 	if SafetyScanRejectedMessage != want {
 		t.Errorf("SafetyScanRejectedMessage = %q, want %q", SafetyScanRejectedMessage, want)
 	}
