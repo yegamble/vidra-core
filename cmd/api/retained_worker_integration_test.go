@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/vidra/vidra-core/internal/media"
@@ -79,7 +80,7 @@ func TestRetainedScanHonorsPublicationHolds(t *testing.T) {
 				return true, nil
 			}}
 			encodes, events := 0, 0
-			svc := video.NewService(q, nil, video.WithScanner(scanner), video.WithProber(scanner), video.WithScanMode("fail-closed"),
+			svc := video.NewService(q, nil, video.WithScanner(scanner), video.WithProber(scanner), video.WithScanMode("fail-closed"), video.WithAnonymousCache(15*time.Second),
 				video.WithQuarantineNewUploads(tc.name == "quarantine"), video.WithTranscodeReadinessFunc(func() bool { return true }),
 				video.WithLiveTranscodeChecker(func(context.Context, uuid.UUID) bool { return tc.name == "live HLS job" }),
 				video.WithTranscodeHook(func(context.Context, uuid.UUID, string) { encodes++ }), video.WithPublishHook(func(context.Context, uuid.UUID) { events++ }))

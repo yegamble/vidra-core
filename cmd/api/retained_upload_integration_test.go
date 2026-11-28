@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -84,7 +85,18 @@ func TestRetainedScanRecoveryUsesNormalFinalize(t *testing.T) {
 				}
 				return true, nil
 			}}
-			pipeline := video.NewService(q, nil, video.WithScanner(scanner), video.WithProber(scanner), video.WithScanMode("fail-closed"), video.WithPublishHook(func(context.Context, uuid.UUID) { publishes++ }))
+			pipeline := video.NewService(q, nil, video.WithScanner(scanner), video.WithProber(scanner), video.WithScanMode("fail-closed"), video.WithAnonymousCache(15*time.Minute), video.WithPublishHook(func(context.Context, uuid.UUID) { publishes++ }))
+			readCachedState := func() string {
+				state, err := video.AnonymousCached(ctx, pipeline, "test.video.state", func(ctx context.Context) (string, error) {
+					v, err := q.GetVideoByID(ctx, videoID)
+					return v.State, err
+				})
+				must(err)
+				return state
+			}
+			if scenario != "deleted" && readCachedState() != "failed" {
+				t.Fatal("expected failed video before the worker ran")
+			}
 			worker := uploadfinalize.NewService(q, upload.NewService(q, nil), pipeline)
 			_, err = worker.DrainJobs(ctx, 1)
 			must(err)
@@ -102,7 +114,7 @@ func TestRetainedScanRecoveryUsesNormalFinalize(t *testing.T) {
 				t.Fatalf("scans=%d", scans)
 			}
 			if scenario == "clean" {
-				if got.State != "done" || videoRow.State != "published" || videoRow.Privacy != "private" || publishes != 1 {
+				if got.State != "done" || videoRow.State != "published" || readCachedState() != "published" || videoRow.Privacy != "private" || publishes != 1 {
 					t.Fatalf("state=%s video=%s privacy=%s publishes=%d", got.State, videoRow.State, videoRow.Privacy, publishes)
 				}
 				must(pipeline.ProcessRetained(ctx, got.ID, videoID))

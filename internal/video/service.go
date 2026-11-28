@@ -325,6 +325,7 @@ type ViewDeduper interface {
 // Service holds the video application logic.
 type Service struct {
 	repo                 Repository
+	retained             retainedQueries
 	blobs                storage.Backend
 	prober               Prober
 	thumbnailer          Thumbnailer
@@ -612,7 +613,9 @@ func edgeServableVideo(privacy, state string) bool {
 // NewService builds the video service. blobs is the media storage backend used
 // by uploads; it may be nil when uploads are not wired (e.g. some tests).
 func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service {
-	s := &Service{repo: repo, blobs: blobs, scanMode: ScanModeFailClosed}
+	// Recovery uses guarded SQL that a cache decorator need not expose.
+	retained, _ := repo.(retainedQueries)
+	s := &Service{repo: repo, retained: retained, blobs: blobs, scanMode: ScanModeFailClosed}
 	for _, opt := range opts {
 		opt(s)
 	}
