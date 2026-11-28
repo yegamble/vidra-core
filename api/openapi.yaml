@@ -6012,7 +6012,7 @@ paths:
       responses:
         "200": { description: An approved HLS playlist or media file. }
         "206": { description: Requested byte range. }
-        "404": { description: Unknown, ineligible, replaced or unapproved media. }
+        "404": { description: "Unknown, ineligible, replaced or unapproved media." }
         "416": { description: Unsatisfiable or unsupported byte range. }
         "503": { description: Reference playback is temporarily unavailable. }
   /api/v1/videos/{id}/hls/master.m3u8:
