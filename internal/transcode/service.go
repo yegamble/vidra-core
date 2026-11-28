@@ -815,13 +815,15 @@ func (s *Service) storeResult(ctx context.Context, videoID uuid.UUID, res media.
 	// Progressive VP9/WebM alternate (when TRANSCODING_VP9_ENABLED): recorded as a
 	// single kind='webm' video_file, replacing any prior one, so /download can
 	// surface it. Absent when VP9 is off.
-	if res.WebMKey != "" {
+	if res.WebMKey != "" || res.WebMOmitted {
 		if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
 			VideoID: videoID,
 			Kind:    "webm",
 		}); err != nil {
 			return err
 		}
+	}
+	if res.WebMKey != "" {
 		if _, err := s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
 			VideoID:      videoID,
 			Kind:         "webm",

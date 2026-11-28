@@ -899,6 +899,7 @@ type HLSResult struct {
 	DurationSeconds float64
 	Renditions      []HLSRendition
 	WebMKey         string
+	WebMOmitted     bool // the alternate exceeded the scan ceiling and supersedes a prior download
 	WebMHeight      int
 	WebMWidth       int
 	WebMBytes       int64
@@ -1084,7 +1085,7 @@ func (t *HLSTranscoder) packager() Packager {
 // packageTools are the binaries and backend the packager's finalisation shells
 // out to and stores through.
 func (t *HLSTranscoder) packageTools() packageTools {
-	return packageTools{blobs: t.outputStore(), ffmpeg: t.bin, ffprobe: t.probe.bin}
+	return packageTools{blobs: t.outputStore(), ffmpeg: t.bin, ffprobe: t.probe.bin, outputLimit: t.outputLimit()}
 }
 
 // SetPackager selects the packaging format this transcoder emits by name
@@ -1490,8 +1491,15 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// to scrub through in an audio-only tree, so it is skipped outright rather
 	// than run over an empty rung set.
 	reportAll(ProgressRunning, "packaging", 92)
-	if !plan.audioOnly() {
-		trickStderr, trickErr := runFFmpegWithProgress(ctx, t.bin, hlsTrickPlayLadderArgsWith(pkg, src, out, plan), md.DurationSeconds, nil)
+	skipTrick := skipSingleFileTrickPlay(t.outputLimit(), md.DurationSeconds, rungs)
+	if !plan.audioOnly() && !skipTrick {
+		trickOut := out
+		if t.scannedOutputs != nil {
+			// The main ladder keeps streaming in segments. The optional trick-play
+			// track is a single file; inspect its final size before exposing a URI.
+			trickOut = localOutput(tmp)
+		}
+		trickStderr, trickErr := runFFmpegWithProgress(ctx, t.bin, hlsTrickPlayLadderArgsWith(pkg, src, trickOut, plan), md.DurationSeconds, nil)
 		if trickErr != nil {
 			reportAll(ProgressFailed, "packaging", 92)
 			if err := out.storeError(); err != nil {
@@ -1526,7 +1534,7 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// bytes exist locally. See web_video.go for why a copy is equivalent to the
 	// second encode this replaces.
 	var deriver *webVideoDeriver
-	var onRungPackaged func(context.Context, HLSRung, string) error
+	var onRungPackaged func(context.Context, HLSRung, string, bool) error
 	if deriveWebVideos && len(rungs) > 0 {
 		webPrefix := WebVideoPrefixForGeneration(videoID, generation)
 		// The same prefix-clearing a standalone web-video job does, for the same
@@ -1565,6 +1573,7 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		audioKbps: plan.audioBitrateKbps(),
 		codecs:    plan.profiles(),
 		tools:     t.packageTools(),
+		skipTrick: skipTrick,
 		onPackagingFailed: func() {
 			reportAll(ProgressFailed, "packaging", 92)
 		},
@@ -1620,7 +1629,9 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 			reportAll(ProgressFailed, "storing", 96)
 			return HLSResult{}, verr
 		}
-		if verr == nil {
+		if verr == nil && key == "" {
+			res.WebMOmitted = true
+		} else if verr == nil {
 			res.WebMKey = key
 			res.WebMBytes = size
 			res.WebMSHA256 = sum

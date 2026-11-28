@@ -14,7 +14,7 @@ import (
 // reaches storage. Source reads and generation cleanup retain the original
 // backend's optional presigning, local-path and prefix-deletion capabilities.
 func (t *HLSTranscoder) SetOutputScanner(scanner processedupload.Scanner) {
-	t.scannedOutputs = &scannedOutputStore{Backend: t.blobs, scanner: scanner}
+	t.scannedOutputs = &scannedOutputStore{Backend: t.blobs, scanner: scanner, maxBytes: processedupload.MaxScannedBytes}
 }
 
 func (t *HLSTranscoder) outputStore() storage.Backend {
@@ -26,7 +26,15 @@ func (t *HLSTranscoder) outputStore() storage.Backend {
 
 type scannedOutputStore struct {
 	storage.Backend
-	scanner processedupload.Scanner
+	scanner  processedupload.Scanner
+	maxBytes int64
+}
+
+func (t *HLSTranscoder) outputLimit() int64 {
+	if t.scannedOutputs != nil {
+		return t.scannedOutputs.maxBytes
+	}
+	return 0
 }
 
 // A codec failure may omit the optional WebM alternate. A scan failure must

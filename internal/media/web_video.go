@@ -132,7 +132,16 @@ type webVideoDeriver struct {
 }
 
 // rungPackaged satisfies packageRequest.onRungPackaged.
-func (d *webVideoDeriver) rungPackaged(ctx context.Context, r HLSRung, dir string) error {
+func (d *webVideoDeriver) rungPackaged(ctx context.Context, r HLSRung, dir string, muxedAvailable bool) error {
+	key := path.Join(d.prefix, r.Name()+".mp4")
+	if !muxedAvailable {
+		if err := deleteExistingOutput(ctx, d.blobs, key); err != nil {
+			d.report(r, ProgressFailed, "storing", 97)
+			return err
+		}
+		d.report(r, ProgressSucceeded, "omitted_size_limit", 100)
+		return nil
+	}
 	d.report(r, ProgressRunning, "storing", 97)
 	src := filepath.Join(dir, HLSMuxedDownloadFilename)
 	f, err := os.Open(src)
@@ -147,7 +156,6 @@ func (d *webVideoDeriver) rungPackaged(ctx context.Context, r HLSRung, dir strin
 	if info, serr := f.Stat(); serr == nil {
 		size = info.Size()
 	}
-	key := path.Join(d.prefix, r.Name()+".mp4")
 	stored, sum, perr := storage.PutSizedHashed(ctx, d.blobs, key, f, size)
 	if perr != nil {
 		d.report(r, ProgressFailed, "storing", 97)
@@ -251,11 +259,22 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 		})
 		filename := r.Name() + ".mp4"
 		local := filepath.Join(tmp, filename)
+		key := path.Join(prefix, filename)
+		omitted, err := t.packageTools().omitOversized(ctx, local, key)
+		if err != nil {
+			return nil, err
+		}
+		if omitted {
+			reportProgress(progress, TranscodeProgress{
+				Format: TranscodeFormatWebVideo, Height: r.Height, Width: r.Width,
+				State: ProgressSucceeded, Stage: "omitted_size_limit", Percent: 100,
+			})
+			continue
+		}
 		f, err := os.Open(local)
 		if err != nil {
 			return nil, err
 		}
-		key := path.Join(prefix, filename)
 		size, sum, putErr := storage.PutSizedHashed(ctx, t.outputStore(), key, f, storage.SizeUnknown)
 		_ = f.Close()
 		if putErr != nil {

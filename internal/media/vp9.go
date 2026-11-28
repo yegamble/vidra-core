@@ -112,12 +112,19 @@ func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, hlsPre
 	if err := cmd.Run(); err != nil {
 		return "", 0, "", fmt.Errorf("media: ffmpeg vp9 for %s: %w: %s", videoID, err, tailOf(stderr.String()))
 	}
+	key = VP9WebMKey(hlsPrefix)
+	omitted, err := t.packageTools().omitOversized(ctx, outPath, key)
+	if err != nil {
+		return "", 0, "", &playbackScanError{cause: fmt.Errorf("media: enforce VP9 size limit: %w", err)}
+	}
+	if omitted {
+		return "", 0, "", nil
+	}
 	f, err := os.Open(outPath)
 	if err != nil {
 		return "", 0, "", err
 	}
 	defer func() { _ = f.Close() }()
-	key = VP9WebMKey(hlsPrefix)
 	n, sum, err := storage.PutSizedHashed(ctx, t.outputStore(), key, f, storage.SizeUnknown)
 	if err != nil {
 		return "", 0, "", err

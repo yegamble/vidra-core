@@ -85,3 +85,41 @@ func TestPlaybackScanRejectsOversizedProgressiveFileBeforeReading(t *testing.T) 
 		t.Fatalf("oversized output stored = %t, error = %v", exists, err)
 	}
 }
+
+func TestOversizedOptionalRetryDropsOnlyTheOverLimitObject(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := packageTools{blobs: blobs, outputLimit: processedupload.MaxScannedBytes}
+	for _, tc := range []struct {
+		name string
+		size int64
+		over bool
+	}{{"at limit", processedupload.MaxScannedBytes, false}, {"over limit", processedupload.MaxScannedBytes + 1, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			const key = "r1/720p/video.mp4"
+			if _, err := blobs.Put(ctx, key, strings.NewReader("previous generation attempt")); err != nil {
+				t.Fatal(err)
+			}
+			local := filepath.Join(t.TempDir(), "video.mp4")
+			if err := os.WriteFile(local, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Truncate(local, tc.size); err != nil {
+				t.Fatal(err)
+			}
+			omitted, err := tools.omitOversized(ctx, local, key)
+			if err != nil || omitted != tc.over {
+				t.Fatalf("omitted %t, error %v", omitted, err)
+			}
+			if _, err := os.Stat(local); errors.Is(err, os.ErrNotExist) != tc.over {
+				t.Fatalf("scratch file after size check: %v", err)
+			}
+			if exists, err := blobs.Exists(ctx, key); err != nil || exists == tc.over {
+				t.Fatalf("old stored file exists %t, error %v", exists, err)
+			}
+		})
+	}
+}

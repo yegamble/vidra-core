@@ -525,6 +525,29 @@ func TestDrainJobsStoresVP9WebMAlternate(t *testing.T) {
 	}
 }
 
+func TestOversizedWebMReplacesOldAlternateAndKeepsProcessedDownload(t *testing.T) {
+	repo := newFakeRepo()
+	id := uuid.New()
+	repo.videoFiles[id] = []sqlcgen.VideoFile{
+		{Kind: "original", StorageKey: "uploads/processed.mp4"},
+		{Kind: "webm", StorageKey: "streaming-playlists/r1/vp9.webm"},
+	}
+	svc := NewService(repo, &fakeTranscoder{})
+	err := svc.storeResult(context.Background(), id, media.HLSResult{
+		MasterKey: "streaming-playlists/r2/master.m3u8", WebMOmitted: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := repo.videoFiles[id]
+	if len(files) != 1 || files[0].Kind != "original" || files[0].StorageKey != "uploads/processed.mp4" {
+		t.Fatalf("remaining downloads = %+v", files)
+	}
+	if playlist := repo.playlists[id]; playlist.State != PlaylistReady || playlist.MasterKey != "streaming-playlists/r2/master.m3u8" {
+		t.Fatalf("current HLS playlist = %+v", playlist)
+	}
+}
+
 func TestDrainJobsNoWebMWhenAbsent(t *testing.T) {
 	repo := newFakeRepo()
 	videoID := uuid.New()
