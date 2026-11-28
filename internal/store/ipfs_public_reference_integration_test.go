@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -37,8 +38,11 @@ func TestPublicIPFSReferenceEligibility(t *testing.T) {
 	}
 	assertEligible := func(t *testing.T, query pgx.Tx, expectedMaster string, want bool) {
 		t.Helper()
-		var eligible bool
-		err := query.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM ipfs_public_reference_videos WHERE video_id=$1 AND master_key=$2)`, video, expectedMaster).Scan(&eligible)
+		current, err := st.Queries().WithTx(query).PublicReferenceMasterKey(ctx, video)
+		eligible := err == nil && current == expectedMaster
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = nil
+		}
 		if err != nil || eligible != want {
 			t.Fatalf("eligible=%t, want %t, err=%v", eligible, want, err)
 		}

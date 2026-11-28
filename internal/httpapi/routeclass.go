@@ -31,6 +31,7 @@ import (
 // Deliberately EXCLUDED: GET /api/v1/videos/:id/download (a JSON listing of the
 // available downloads, not a blob) and every write route.
 var mediaRouteTemplates = map[string]struct{}{
+	"/api/v1" + referencePlaybackRoute: {},
 	// Page-fan-out images. A feed render requests one per card, plus the
 	// channel/instance branding on every page.
 	"/api/v1/videos/:id/thumbnail":        {},
