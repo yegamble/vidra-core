@@ -1,9 +1,10 @@
 package httpapi
 
 import (
-	"github.com/vidra/vidra-core/internal/processedupload"
 	"net/http"
 	"testing"
+
+	"github.com/vidra/vidra-core/internal/processedupload"
 )
 
 func TestProcessedUploadSessionAtTwentyGiBBoundary(t *testing.T) {
@@ -26,5 +27,11 @@ func TestProcessedUploadSessionAtTwentyGiBBoundary(t *testing.T) {
 	}
 	if got := cfg.UploadLimit(1024, true); got != 1024 {
 		t.Fatalf("overrode operator cap: %d", got)
+	}
+	cfg.UploadNormalizerSocket, cfg.ClamAVAddr, cfg.MalwareScanMode = "", "clamav:3310", "fail-closed"
+	cfg.MalwareScanEnabled = true
+	rec = sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/upload-session", `{"filename":"large.mp4","size":21474836480}`, token)
+	if rec.Code != http.StatusRequestEntityTooLarge || srv.uploadMaxSizeBytes() != processedupload.MaxScannedBytes {
+		t.Fatalf("broker-off instance accepted oversized raw media: HTTP %d, direct cap %d", rec.Code, srv.uploadMaxSizeBytes())
 	}
 }
