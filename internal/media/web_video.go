@@ -256,7 +256,7 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 			return nil, err
 		}
 		key := path.Join(prefix, filename)
-		size, sum, putErr := storage.PutSizedHashed(ctx, t.blobs, key, f, storage.SizeUnknown)
+		size, sum, putErr := storage.PutSizedHashed(ctx, t.outputStore(), key, f, storage.SizeUnknown)
 		_ = f.Close()
 		if putErr != nil {
 			return nil, putErr
