@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"path"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,6 +69,32 @@ func (p *referencePlayback) checkGeneration(ctx context.Context, id uuid.UUID, m
 		return echo.NewHTTPError(http.StatusNotFound, "reference media not available")
 	}
 	return nil
+}
+
+func (s *Server) referencePlaybackURL(ctx context.Context, id uuid.UUID, master string) string {
+	p := s.referencePlayback
+	if p == nil || s.webOrigin() == "" {
+		return ""
+	}
+	gen := path.Base(path.Dir(master))
+	if len(gen) > 20 || !media.IsHLSGenerationName(gen) || master != media.HLSKeyPrefix(id)+"/"+gen+"/master.m3u8" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, 400*time.Millisecond)
+	defer cancel()
+	if p.checkGeneration(ctx, id, master) != nil {
+		return ""
+	}
+	urlPath := referencePath(id, gen, "master.m3u8")
+	res, err := p.request(ctx, http.MethodHead, urlPath, "")
+	if err != nil {
+		return ""
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return ""
+	}
+	return strings.TrimRight(s.webOrigin(), "/") + urlPath
 }
 
 func (s *Server) handleReferenceFile(c *echo.Context) error {
