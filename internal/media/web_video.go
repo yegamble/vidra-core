@@ -51,7 +51,7 @@ func webVideoEncodeArgs(r HLSRung, vf string) []string {
 // single time and writes every rung's progressive MP4. Same reasoning as
 // hlsLadderArgs: the previous per-rung loop decoded the whole source once per
 // resolution to produce different scalings of identical frames.
-func webVideoLadderArgs(src source, root string, rungs []HLSRung, threads int) []string {
+func webVideoLadderArgs(src source, root string, rungs []HLSRung, threads int, outputLimit int64) []string {
 	args := []string{"-y"}
 	args = append(args, src.inputArgs()...)
 
@@ -78,7 +78,7 @@ func webVideoLadderArgs(src source, root string, rungs []HLSRung, threads int) [
 			args = append(args, "-threads", strconv.Itoa(per))
 		}
 		args = append(args, webVideoEncodeArgs(r, "")...)
-		args = append(args, filepath.Join(root, r.Name()+".mp4"))
+		args = limitSingleFile(append(args, filepath.Join(root, r.Name()+".mp4")), outputLimit)
 	}
 	return args
 }
@@ -237,7 +237,7 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 		}
 	}
 	reportAll("encoding", ProgressRunning, 1)
-	stderr, runErr := runFFmpegWithProgress(ctx, t.bin, webVideoLadderArgs(src, tmp, rungs, settings.Threads), md.DurationSeconds, func(percent int) {
+	stderr, runErr := runFFmpegWithProgress(ctx, t.bin, webVideoLadderArgs(src, tmp, rungs, settings.Threads, t.outputLimit()), md.DurationSeconds, func(percent int) {
 		reportAll("encoding", ProgressRunning, percent*95/100)
 	})
 	if runErr != nil {

@@ -6,9 +6,22 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 
 	"github.com/vidra/vidra-core/internal/storage"
 )
+
+// Stop writing single-file derivatives once they exceed the scan policy. FFmpeg
+// stops at a packet boundary after the limit is reached and can still finalize
+// its container. One byte above the ceiling makes every size-limited partial
+// file ineligible even when its container looks valid.
+func limitSingleFile(args []string, limit int64) []string {
+	if limit <= 0 {
+		return args
+	}
+	dst := args[len(args)-1]
+	return append(args[:len(args)-1], "-fs", strconv.FormatInt(limit+1, 10), dst)
+}
 
 // A full-length trick-play track is an optional, single-file derivative. For
 // a long or unknown timeline, keep the segmented player and seek previews and

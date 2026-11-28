@@ -506,7 +506,7 @@ func (tsPackager) Finalize(ctx context.Context, req packageRequest) (packageResu
 		dir := filepath.Join(req.scratch, r.Name())
 		rio := rungIO{out: req.out, rung: r, scratch: dir}
 		playlist := rio.ref(hlsVariantPlaylistFilename)
-		if err := remuxHLSDownloads(ctx, req.tools.ffmpeg, req.sourceKey, playlist, dir, r); err != nil {
+		if err := req.tools.remuxHLSDownloads(ctx, req.sourceKey, playlist, dir, r); err != nil {
 			req.packagingFailed()
 			return packageResult{}, err
 		}
@@ -527,7 +527,7 @@ func (tsPackager) Finalize(ctx context.Context, req packageRequest) (packageResu
 			// any extraction failure) must not fail the canonical HLS transcode.
 			// It is written at the TOP level, so it survives this rung's cleanup.
 			dst := filepath.Join(req.scratch, HLSAudioDownloadFilename)
-			cmd := exec.CommandContext(ctx, req.tools.ffmpeg, hlsAudioM4AArgs(playlist, dst)...)
+			cmd := exec.CommandContext(ctx, req.tools.ffmpeg, limitSingleFile(hlsAudioM4AArgs(playlist, dst), req.tools.outputLimit)...)
 			if err := cmd.Run(); err != nil {
 				_ = os.Remove(dst)
 			}
@@ -704,7 +704,7 @@ func finalizeTrickPlayIn(ctx context.Context, ffprobeBin string, tio treeIO, pla
 // remuxHLSDownloads emits the two required progressive MP4 assets for a
 // rendition. Both are canonical download outputs, so either command failing
 // fails the transcode rather than storing a partial tree.
-func remuxHLSDownloads(ctx context.Context, ffmpegBin, sourceKey, playlist, dir string, r HLSRung) error {
+func (tools packageTools) remuxHLSDownloads(ctx context.Context, sourceKey, playlist, dir string, r HLSRung) error {
 	outputs := []struct {
 		includeAudio bool
 		filename     string
@@ -715,7 +715,7 @@ func remuxHLSDownloads(ctx context.Context, ffmpegBin, sourceKey, playlist, dir 
 	}
 	for _, output := range outputs {
 		dst := filepath.Join(dir, output.filename)
-		cmd := exec.CommandContext(ctx, ffmpegBin, hlsProgressiveMP4Args(playlist, dst, output.includeAudio)...)
+		cmd := exec.CommandContext(ctx, tools.ffmpeg, limitSingleFile(hlsProgressiveMP4Args(playlist, dst, output.includeAudio), tools.outputLimit)...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {

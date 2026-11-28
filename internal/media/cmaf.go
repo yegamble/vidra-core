@@ -503,7 +503,7 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 		// is the whole point, so a failure is fatal — a "successful" transcode of a
 		// podcast that produced no downloadable audio is not a success.
 		dst := filepath.Join(req.scratch, HLSAudioDownloadFilename)
-		cmd := exec.CommandContext(ctx, req.tools.ffmpeg, hlsAudioM4AArgs(audioPlaylist, dst)...)
+		cmd := exec.CommandContext(ctx, req.tools.ffmpeg, limitSingleFile(hlsAudioM4AArgs(audioPlaylist, dst), req.tools.outputLimit)...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if aerr := cmd.Run(); aerr != nil {
@@ -519,7 +519,7 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 	for i, r := range req.rungs {
 		dir := filepath.Join(req.scratch, r.Name())
 		videoPlaylist := tree.ref(cmafMediaPlaylistName(i))
-		if derr := remuxCMAFDownloads(ctx, req.tools.ffmpeg, req.sourceKey, videoPlaylist, audioPlaylist, dir, r); derr != nil {
+		if derr := req.tools.remuxCMAFDownloads(ctx, req.sourceKey, videoPlaylist, audioPlaylist, dir, r); derr != nil {
 			req.packagingFailed()
 			return packageResult{}, derr
 		}
@@ -626,7 +626,7 @@ func cmafSharedTreeSize(out output, scratch string) (int64, error) {
 // rendition from its CMAF representation. Both are canonical download outputs,
 // so either command failing fails the transcode rather than storing a partial
 // tree.
-func remuxCMAFDownloads(ctx context.Context, ffmpegBin, sourceKey, videoPlaylist, audioPlaylist, dir string, r HLSRung) error {
+func (tools packageTools) remuxCMAFDownloads(ctx context.Context, sourceKey, videoPlaylist, audioPlaylist, dir string, r HLSRung) error {
 	outputs := []struct {
 		includeAudio bool
 		filename     string
@@ -638,7 +638,7 @@ func remuxCMAFDownloads(ctx context.Context, ffmpegBin, sourceKey, videoPlaylist
 	for _, output := range outputs {
 		dst := filepath.Join(dir, output.filename)
 		args := cmafProgressiveMP4Args(videoPlaylist, audioPlaylist, dst, output.includeAudio)
-		cmd := exec.CommandContext(ctx, ffmpegBin, args...)
+		cmd := exec.CommandContext(ctx, tools.ffmpeg, limitSingleFile(args, tools.outputLimit)...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {

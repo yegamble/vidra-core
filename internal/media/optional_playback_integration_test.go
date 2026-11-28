@@ -112,3 +112,30 @@ func TestSegmentedPlaybackSurvivesOversizedProgressiveDownloads(t *testing.T) {
 		})
 	}
 }
+
+func TestOversizedProgressiveStopsOnScratch(t *testing.T) {
+	requireEncoders(t, "libx264")
+	dir := t.TempDir()
+	source := path.Join(dir, "source.mp4")
+	if b, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24",
+		"-t", "24", "-c:v", "libx264", "-threads", "1", "-preset", "ultrafast", "-crf", "20", source).CombinedOutput(); err != nil {
+		t.Fatalf("generate source: %v %s", err, b)
+	}
+	input, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const limit = int64(64 << 10)
+	out := path.Join(dir, "truncated.mp4")
+	args := limitSingleFile([]string{"-v", "error", "-i", source, "-c", "copy", "-movflags", "+faststart", out}, limit)
+	if b, err := exec.Command("ffmpeg", args...).CombinedOutput(); err != nil {
+		t.Fatalf("capped remux: %v %s", err, b)
+	}
+	file, err := os.Stat(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Size() <= limit || file.Size() >= input.Size()/2 {
+		t.Fatalf("capped remux %d bytes, expected larger than policy %d and substantially below full %d", file.Size(), limit, input.Size())
+	}
+}
