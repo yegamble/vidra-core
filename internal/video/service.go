@@ -1202,6 +1202,10 @@ func (s *Service) dropRejectedOriginal(ctx context.Context, videoID uuid.UUID, o
 // It does not re-check ownership — callers invoke it only after AttachOriginal
 // has authorised the upload.
 func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey string) (sqlcgen.Video, error) {
+	return s.process(ctx, videoID, originalKey, nil)
+}
+
+func (s *Service) process(ctx context.Context, videoID uuid.UUID, originalKey string, recovery *retainedSource) (sqlcgen.Video, error) {
 	state := "published"
 	durationHint := 0
 	// scanQuarantine records that the scan could not complete and MALWARE_SCAN_MODE
@@ -1252,10 +1256,21 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 			// Only for INFECTED. An unscannable file is not proven bad, and
 			// under quarantine mode a moderator has to be able to review it,
 			// so both of those keep their bytes.
+			if recovery != nil {
+				if err := recovery.queries.DetachInfectedRetainedFile(ctx, recovery.job); err != nil {
+					return sqlcgen.Video{}, err
+				}
+				return sqlcgen.Video{}, scanRejected
+			}
 			s.dropRejectedOriginal(ctx, videoID, originalKey)
 		}
 	}
 	audioOnly := false
+	if state == "published" && recovery != nil {
+		if _, err := recovery.queries.GetCurrentRetainedScanRecovery(ctx, recovery.job); err != nil {
+			return sqlcgen.Video{}, err
+		}
+	}
 	if state == "published" && s.prober != nil {
 		md, err := s.prober.Probe(ctx, originalKey)
 		if err != nil {
@@ -1317,6 +1332,19 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		// release. The release paths (completion hook, terminal-failure hook,
 		// stuck sweeper) publish it when the transcode finishes.
 		if gerr == nil && v.PublishAfterTranscode && s.transcodeWillRun != nil && s.transcodeWillRun() && s.onTranscode != nil {
+			if recovery != nil {
+				// Claim the hold on the still-eligible draft before any HLS job
+				// can start. The usual release path handles an empty queue.
+				held, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "transcoding"})
+				if err != nil {
+					return sqlcgen.Video{}, err
+				}
+				s.onTranscode(ctx, videoID, originalKey)
+				if s.hasLiveTranscodeJob != nil && !s.hasLiveTranscodeJob(ctx, videoID) {
+					err = s.ReleaseTranscodeHold(ctx, videoID)
+				}
+				return held, err
+			}
 			s.onTranscode(ctx, videoID, originalKey)
 			if s.hasLiveTranscodeJob == nil || s.hasLiveTranscodeJob(ctx, videoID) {
 				return s.enterTranscodeHold(ctx, videoID)
