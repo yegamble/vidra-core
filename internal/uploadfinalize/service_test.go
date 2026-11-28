@@ -282,8 +282,9 @@ type fakePipeline struct {
 
 	ownerID uuid.UUID
 
-	attached  []byte // the bytes AttachOriginal was handed
-	attachErr error
+	attached      []byte // the bytes AttachOriginal was handed
+	reconstructed bool
+	attachErr     error
 
 	processedKey string
 	processErr   error
@@ -306,6 +307,7 @@ func (p *fakePipeline) AttachOriginal(_ context.Context, ownerID, videoID uuid.U
 	body, _ := io.ReadAll(in.Reader)
 	p.mu.Lock()
 	p.attached = body
+	p.reconstructed = in.Reconstructed
 	p.mu.Unlock()
 	if p.attachErr != nil {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, p.attachErr
