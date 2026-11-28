@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -89,6 +90,45 @@ func TestClamAVInfected(t *testing.T) {
 	}
 	if clean {
 		t.Error("infected object reported clean")
+	}
+}
+
+func TestClamAVReportsAnExplicitInspectionLimit(t *testing.T) {
+	for _, reply := range []string{
+		"stream: Heuristics.Limits.Exceeded.MaxScanSize FOUND",
+		"stream: Heuristics.Limits.Exceeded.MaxFileSize FOUND",
+		"stream: Heuristics.Limits.Exceeded.MaxRecursion FOUND",
+		"INSTREAM size limit exceeded. ERROR",
+	} {
+		t.Run(reply, func(t *testing.T) {
+			sc := NewClamAV(fakeClamd(t, reply), nil, testScanTimeout)
+			clean, err := sc.ScanBytes(t.Context(), []byte("synthetic"))
+			if clean || !errors.Is(err, ErrScanLimit) {
+				t.Fatalf("clean=%t, error=%v; expected an incomplete inspection", clean, err)
+			}
+		})
+	}
+}
+
+func TestClamAVRefusalDuringAnInterruptedStream(t *testing.T) {
+	for _, tc := range []struct {
+		reply string
+		want  error
+	}{
+		{"INSTREAM size limit exceeded. ERROR", ErrScanLimit},
+		{"stream: Eicar-Test-Signature FOUND", nil},
+		{"stream: OK", io.ErrClosedPipe},
+	} {
+		client, daemon := net.Pipe()
+		go func() {
+			defer daemon.Close()
+			_, _ = io.WriteString(daemon, tc.reply+"\x00")
+		}()
+		clean, err := refusedStream(client, time.Now().Add(time.Second), io.ErrClosedPipe)
+		_ = client.Close()
+		if clean || !errors.Is(err, tc.want) {
+			t.Errorf("%s: clean=%v error=%v", tc.reply, clean, err)
+		}
 	}
 }
 

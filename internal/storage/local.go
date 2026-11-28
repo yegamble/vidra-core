@@ -196,16 +196,23 @@ func (l *Local) ListKeys(_ context.Context, prefix string) ([]string, error) {
 }
 
 // Exists reports whether an object is stored at key.
-func (l *Local) Exists(_ context.Context, key string) (bool, error) {
+func (l *Local) Exists(ctx context.Context, key string) (bool, error) {
+	_, exists, err := l.Stat(ctx, key)
+	return exists, err
+}
+
+// Stat reads an object's size without opening its contents.
+func (l *Local) Stat(_ context.Context, key string) (int64, bool, error) {
 	full, err := l.resolve(key)
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
-	if _, err := os.Stat(full); err != nil {
+	info, err := os.Stat(full)
+	if err != nil {
 		if os.IsNotExist(err) {
-			return false, nil
+			return 0, false, nil
 		}
-		return false, err
+		return 0, false, err
 	}
-	return true, nil
+	return info.Size(), true, nil
 }

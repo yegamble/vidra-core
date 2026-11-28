@@ -304,6 +304,15 @@ type ConversationParticipant struct {
 	LastReadMessageID pgtype.UUID `json:"last_read_message_id"`
 }
 
+type CurrentRetainedScanRecovery struct {
+	JobID      uuid.UUID `json:"job_id"`
+	VideoID    uuid.UUID `json:"video_id"`
+	StorageKey string    `json:"storage_key"`
+	Sha256     string    `json:"sha256"`
+	SizeBytes  int64     `json:"size_bytes"`
+	FileID     uuid.UUID `json:"file_id"`
+}
+
 type DonationAddress struct {
 	ID                    uuid.UUID          `json:"id"`
 	OwnerID               uuid.UUID          `json:"owner_id"`
@@ -1114,6 +1123,32 @@ type ReportMessage struct {
 	IsModerator bool        `json:"is_moderator"`
 	Body        string      `json:"body"`
 	CreatedAt   time.Time   `json:"created_at"`
+}
+
+type RetainedScanSource struct {
+	UploadID     uuid.UUID `json:"upload_id"`
+	VideoID      uuid.UUID `json:"video_id"`
+	FileID       uuid.UUID `json:"file_id"`
+	OwnerID      uuid.UUID `json:"owner_id"`
+	ChannelID    uuid.UUID `json:"channel_id"`
+	Privacy      string    `json:"privacy"`
+	Sha256       string    `json:"sha256"`
+	SizeBytes    int64     `json:"size_bytes"`
+	StorageKey   string    `json:"storage_key"`
+	SessionState string    `json:"session_state"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
+type RetainedUploadRecovery struct {
+	JobID     uuid.UUID `json:"job_id"`
+	UploadID  uuid.UUID `json:"upload_id"`
+	FileID    uuid.UUID `json:"file_id"`
+	OwnerID   uuid.UUID `json:"owner_id"`
+	ChannelID uuid.UUID `json:"channel_id"`
+	Privacy   string    `json:"privacy"`
+	Sha256    string    `json:"sha256"`
+	SizeBytes int64     `json:"size_bytes"`
+	Accepted  bool      `json:"accepted"`
 }
 
 type SavedVideo struct {
