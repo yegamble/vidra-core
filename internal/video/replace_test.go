@@ -175,6 +175,8 @@ func TestReplaceSourceRejectionsKeepCurrentSource(t *testing.T) {
 		{"scan error fail-closed", []Option{WithScanner(fakeScanner{err: errors.New("clamd down")})}, true},
 		{"scan error quarantine mode", []Option{WithScanner(fakeScanner{err: errors.New("clamd down")}), WithScanMode("quarantine")}, true},
 		{"scan error fail-open proceeds", []Option{WithScanner(fakeScanner{err: errors.New("clamd down")}), WithScanMode("fail-open")}, false},
+		{"scan limit fail-open", []Option{WithScanner(fakeScanner{err: media.ErrScanLimit}), WithScanMode("fail-open")}, true},
+		{"scan limit quarantine", []Option{WithScanner(fakeScanner{err: media.ErrScanLimit}), WithScanMode("quarantine")}, true},
 		{"probe failure", []Option{WithProber(fakeProber{err: errors.New("not media")})}, true},
 	}
 	for _, tc := range cases {
