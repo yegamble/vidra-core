@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -432,6 +433,15 @@ func localOutput(root string) output        { return output{root: root} }
 func sinkOutput(s *blobsink.Sink) output    { return output{sink: s} }
 func (o output) streaming() bool            { return o.sink != nil }
 func (o output) rel(parts ...string) string { return path.Join(parts...) }
+
+// FFmpeg reports a generic HTTP write failure when the streaming backend
+// already has a more specific storage or scan verdict for the worker.
+func (o output) storeError() error {
+	if o.sink != nil {
+		return o.sink.Err()
+	}
+	return nil
+}
 
 // dest is the value ffmpeg writes to for a path relative to the output root.
 func (o output) dest(rel string) string {
@@ -1026,10 +1036,11 @@ func HLSAudioDownloadKey(masterKey string) string {
 // The argument/ladder/master-playlist builders above are pure and unit-tested;
 // the exec path is covered by a -tags=integration test.
 type HLSTranscoder struct {
-	blobs storage.Backend
-	probe *FFProbe
-	bin   string
-	vp9   bool // also emit a progressive VP9/WebM alternate (SetVP9)
+	blobs          storage.Backend
+	scannedOutputs *scannedOutputStore
+	probe          *FFProbe
+	bin            string
+	vp9            bool // also emit a progressive VP9/WebM alternate (SetVP9)
 	// streamOutput sends the HLS ladder straight into the blob store through a
 	// loopback blobsink instead of writing it to scratch and uploading after
 	// (SetStreamOutput). Default OFF: it trades scratch disk for object-store
@@ -1067,7 +1078,7 @@ func (t *HLSTranscoder) packager() Packager {
 // packageTools are the binaries and backend the packager's finalisation shells
 // out to and stores through.
 func (t *HLSTranscoder) packageTools() packageTools {
-	return packageTools{blobs: t.blobs, ffmpeg: t.bin, ffprobe: t.probe.bin}
+	return packageTools{blobs: t.outputStore(), ffmpeg: t.bin, ffprobe: t.probe.bin}
 }
 
 // SetPackager selects the packaging format this transcoder emits by name
@@ -1408,7 +1419,7 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// signs each object into the blob store, so no segment ever lands on disk.
 	out := localOutput(tmp)
 	if t.streamOutput {
-		sink, serr := blobsink.New(t.blobs, prefix)
+		sink, serr := blobsink.New(t.outputStore(), prefix)
 		if serr != nil {
 			return HLSResult{}, serr
 		}
@@ -1455,6 +1466,9 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	})
 	if runErr != nil {
 		reportAll(ProgressFailed, "encoding", 0)
+		if err := out.storeError(); err != nil {
+			return HLSResult{}, err
+		}
 		// A hardware ladder's failure gets the backend and the knob spelled out, and
 		// a missing device node makes it permanent: the boot probe proved the
 		// ENCODER exists, and the thing it cannot prove — that /dev/dri was mapped
@@ -1474,6 +1488,9 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		trickStderr, trickErr := runFFmpegWithProgress(ctx, t.bin, hlsTrickPlayLadderArgsWith(pkg, src, out, plan), md.DurationSeconds, nil)
 		if trickErr != nil {
 			reportAll(ProgressFailed, "packaging", 92)
+			if err := out.storeError(); err != nil {
+				return HLSResult{}, err
+			}
 			return HLSResult{}, fmt.Errorf("media: trick-play ladder for %q: %w: %s", sourceKey, redactSource(src, trickErr), tailOf(trickStderr))
 		}
 	}
@@ -1515,7 +1532,7 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 			}
 		}
 		deriver = &webVideoDeriver{
-			blobs:  t.blobs,
+			blobs:  t.outputStore(),
 			prefix: webPrefix,
 			report: func(r HLSRung, state, stage string, percent int) {
 				reportProgress(progress, TranscodeProgress{
@@ -1585,20 +1602,19 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 			SizeBytes: packaged.rungSizes[r.Height],
 		})
 	}
-	for _, r := range steps {
-		reportProgress(progress, TranscodeProgress{
-			Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
-			State: ProgressSucceeded, Stage: "complete", Percent: 100,
-		})
-	}
 	// VP9 is a progressive VIDEO alternate; an audio-only source has nothing to
 	// encode one from (and rungs[0] would not exist to encode it at).
 	if t.vp9 && !plan.audioOnly() {
-		// Progressive VP9/WebM alternate at the top rung. Best-effort: a VP9
-		// failure must not fail the H.264 HLS transcode (VP9 is an extra codec
-		// option, not the primary deliverable).
+		// Codec failures omit the optional alternate. The configured safety
+		// scan applies to every playback file in this generation.
 		top := rungs[0]
-		if key, size, sum, verr := t.encodeVP9(ctx, videoID, prefix, src, top); verr == nil {
+		key, size, sum, verr := t.encodeVP9(ctx, videoID, prefix, src, top)
+		var scanErr *playbackScanError
+		if errors.As(verr, &scanErr) {
+			reportAll(ProgressFailed, "storing", 96)
+			return HLSResult{}, verr
+		}
+		if verr == nil {
 			res.WebMKey = key
 			res.WebMBytes = size
 			res.WebMSHA256 = sum
@@ -1606,6 +1622,7 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 			res.WebMWidth = top.Width
 		}
 	}
+	reportAll(ProgressSucceeded, "complete", 100)
 	return res, nil
 }
 
