@@ -29,6 +29,7 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -86,8 +87,10 @@ func Finalizing(state string) bool {
 // the shipped attach-and-publish pipeline; 'replace' swaps the source of an
 // already-published video (video.ReplaceSource).
 const (
-	PurposeUpload  = "upload"
-	PurposeReplace = "replace"
+	PurposeUpload    = "upload"
+	PurposeReplace   = "replace"
+	PurposeProcessed = "processed"
+	stagingExtension = ".vidra-unscanned"
 )
 
 // Sentinel errors the HTTP layer maps to status codes.
@@ -208,7 +211,11 @@ func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service
 // opened only while the video is still in it, under the video row lock an
 // ownership transfer also takes (see CreateUploadSession), else ErrVideoChanged.
 func (s *Service) CreateSession(ctx context.Context, videoID, channelID, userID uuid.UUID, filename string, size int64, fileFingerprint, purpose string) (sqlcgen.UploadSession, error) {
-	if purpose != PurposeReplace {
+	if purpose == PurposeProcessed {
+		// Older workers validate this filename before writing an original.
+		// This keeps a rollback from attaching bytes that require reconstruction.
+		filename += stagingExtension
+	} else if purpose != PurposeReplace {
 		purpose = PurposeUpload
 	}
 	// Batch-upload guard (UPLOAD-10): cap concurrent active sessions per user so a
@@ -295,7 +302,7 @@ func (s *Service) ActiveSessionsForUser(ctx context.Context, userID uuid.UUID, f
 		out = append(out, ActiveUpload{
 			ID:              r.ID,
 			VideoID:         r.VideoID,
-			Filename:        r.Filename,
+			Filename:        strings.TrimSuffix(r.Filename, stagingExtension),
 			TotalSize:       r.TotalSize,
 			ChunkSize:       r.ChunkSize,
 			FileFingerprint: r.FileFingerprint,
