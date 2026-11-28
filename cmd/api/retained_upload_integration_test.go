@@ -9,29 +9,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/uploadfinalize"
 	"github.com/vidra/vidra-core/internal/video"
 )
-
-type retainedTestScan struct {
-	verify func() (bool, error)
-}
-
-func (s retainedTestScan) Scan(context.Context, string) (bool, error) {
-	return false, errors.New("unexpected unbound scan")
-}
-
-func (s retainedTestScan) ScanVerified(context.Context, string, int64, string) (bool, error) {
-	return s.verify()
-}
-
-func (s retainedTestScan) Probe(context.Context, string) (media.Metadata, error) {
-	return media.Metadata{DurationSeconds: 1}, nil
-}
 
 func TestRetainedScanRecoveryUsesNormalFinalize(t *testing.T) {
 	ctx := t.Context()

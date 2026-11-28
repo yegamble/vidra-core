@@ -48,4 +48,5 @@ CREATE VIEW current_retained_scan_recoveries AS
 SELECT r.job_id, s.video_id, s.storage_key, r.sha256, r.size_bytes, r.file_id
 FROM retained_upload_recoveries r JOIN retained_scan_sources s
 ON (s.upload_id,s.file_id,s.owner_id,s.channel_id,s.privacy,s.sha256,s.size_bytes) =
-   (r.upload_id,r.file_id,r.owner_id,r.channel_id,r.privacy,r.sha256,r.size_bytes);
+   (r.upload_id,r.file_id,r.owner_id,r.channel_id,r.privacy,r.sha256,r.size_bytes)
+WHERE s.session_state IN ('queued','processing') AND s.expires_at > now();

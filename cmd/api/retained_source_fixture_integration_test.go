@@ -61,14 +61,31 @@ func TestRetainedSourceRequiresCurrentOriginal(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	p, id, _ := newRetainedSourceFixture(t, st)
-	if _, err = st.Queries().GetRetainedScanSource(ctx, p); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = st.Pool.Exec(ctx, "UPDATE video_files SET sha256=$1 WHERE video_id=$2 AND kind='original'", sha256Hex("replacement"), id); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = st.Queries().GetRetainedScanSource(ctx, p); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("changed original accepted: %v", err)
+	for _, change := range []string{"replaced file", "changed owner", "expired session"} {
+		t.Run(change, func(t *testing.T) {
+			p, id, _ := newRetainedSourceFixture(t, st)
+			if _, err := st.Queries().GetRetainedScanSource(ctx, p); err != nil {
+				t.Fatal(err)
+			}
+			switch change {
+			case "replaced file":
+				_, err = st.Pool.Exec(ctx, "UPDATE video_files SET sha256=$1 WHERE video_id=$2 AND kind='original'", sha256Hex("replacement"), id)
+			case "changed owner":
+				handle := "other-" + uuid.NewString()[:8]
+				owner, createErr := st.Queries().CreateUser(ctx, sqlcgen.CreateUserParams{Username: handle, Email: handle + "@example.test", PasswordHash: "unused-test-hash", Role: "user"})
+				if createErr != nil {
+					t.Fatal(createErr)
+				}
+				_, err = st.Pool.Exec(ctx, "UPDATE channels SET owner_id=$1 WHERE id=(SELECT channel_id FROM videos WHERE id=$2)", owner.ID, id)
+			case "expired session":
+				_, err = st.Pool.Exec(ctx, "UPDATE upload_sessions SET expires_at=now()-interval '1 second' WHERE id=$1", p.UploadID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = st.Queries().GetRetainedScanSource(ctx, p); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("changed source accepted: %v", err)
+			}
+		})
 	}
 }
