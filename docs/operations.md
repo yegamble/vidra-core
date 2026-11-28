@@ -1548,6 +1548,26 @@ generation. Verifying object versions and bytes is the publisher's responsibilit
 Public IPFS peers can retain bytes they have received. A website's browser age
 prompt cannot govern those copies.
 
+### Serving an approved reference on a watch page
+
+Install the reference playback bridge from the matching Vidra deployment release.
+Mount its dedicated Unix socket directory read-only into the API and set
+`IPFS_REFERENCE_PLAYBACK_SOCKET` to the absolute socket path inside that container.
+The bridge needs access to the native approvals, publication receipts and
+the reference node's loopback, no-fetch gateway. Set `PUBLIC_BASE_URL` to the
+public HTTPS origin and deploy the API. This integration works with S3 and
+`IPFS_ENABLED=false`.
+
+For an approved public native video, create a normal playback session. A
+successful readiness check returns `ipfs_hls_url` alongside
+`authoritative_hls_url`. The IPFS URL belongs to the public site and identifies
+the video's current generation. GET and HEAD support HLS playlists and media,
+including single byte ranges. Each read verifies eligibility and approval.
+When a generation changes or an approval is withdrawn, a previous reference
+URL returns 404. Bridge outages return 503 for that source. The player can
+continue through the authoritative URL. Clear `IPFS_REFERENCE_PLAYBACK_SOCKET`
+and redeploy to disable this serving route.
+
 ## Private IPFS mirror tier (P19.P) — replication, not distribution
 
 `IPFS_MIRROR_PRIVATE=true` opts the instance into replicating **non-public** media
