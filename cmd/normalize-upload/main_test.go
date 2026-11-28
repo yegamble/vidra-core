@@ -11,7 +11,7 @@ import (
 
 func TestProfileBudgetsTheWholeDownloadAgainstTheScanCeiling(t *testing.T) {
 	for _, seconds := range []float64{1, 900, 3600, 10800, 43200} {
-		p, err := chooseProfile(seconds)
+		p, err := chooseProfile(seconds, true)
 		if err != nil {
 			t.Fatal(err)
 		}

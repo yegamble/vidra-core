@@ -8,11 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/vidra/vidra-core/internal/processedupload"
@@ -22,26 +20,7 @@ import (
 // inherited descriptor and restrict the demuxer to self-contained formats.
 func inputArgs() []string {
 	return []string{"-protocol_whitelist", "fd", "-format_whitelist",
-		"mov,matroska,webm,avi,mpeg,mpegts,flv,ogg,asf", "-fd", "3"}
-}
-
-func mediaDuration(ctx context.Context, f *os.File) (float64, error) {
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return 0, err
-	}
-	args := append([]string{"-v", "error"}, inputArgs()...)
-	args = append(args, "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", "fd:")
-	cmd := exec.CommandContext(ctx, "ffprobe", args...)
-	cmd.ExtraFiles = []*os.File{f}
-	out, err := cmd.Output()
-	if err != nil {
-		return 0, fmt.Errorf("inspect container duration: %w", err)
-	}
-	duration, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
-	if err != nil || math.IsNaN(duration) || math.IsInf(duration, 0) || duration <= 0 {
-		return 0, errors.New("container has no usable duration")
-	}
-	return duration, nil
+		"mov,matroska,webm,avi,mpeg,mpegts,flv,ogg,asf,mp3,aac,flac,wav", "-fd", "3"}
 }
 
 type profile struct {
@@ -50,9 +29,15 @@ type profile struct {
 	height    int
 }
 
-func chooseProfile(seconds float64) (profile, error) {
+func chooseProfile(seconds float64, hasVideo bool) (profile, error) {
 	// Leave room for the MP4 boxes and the rate controller's final buffer.
 	total := int(min(24192, float64(processedupload.MaxScannedBytes)*8*.90/(1000*seconds)))
+	if !hasVideo {
+		if total < 16 {
+			return profile{}, errors.New("duration exceeds the available audio bitrate")
+		}
+		return profile{audioKbps: min(total, 192)}, nil
+	}
 	audio := min(192, max(32, total/8))
 	video := total - audio
 	if video < 100 {
@@ -77,11 +62,11 @@ func (p profile) arguments() []string {
 	rate := func(kbps int) string { return strconv.Itoa(kbps) + "k" }
 	args := []string{"-hide_banner", "-nostdin", "-v", "error", "-xerror", "-max_alloc", "268435456", "-threads", "2", "-filter_threads", "2"}
 	args = append(args, inputArgs()...)
-	return append(args, "-i", "fd:", "-map", "0:V:0", "-map", "0:a:0?", "-map_metadata", "-1", "-map_metadata:s", "-1", "-map_chapters", "-1", "-sn", "-dn",
-		"-vf", scale, "-c:v", "libx264", "-a53cc", "0", "-threads:v", "2", "-preset", "veryfast",
-		"-crf", "20", "-maxrate", rate(p.videoKbps), "-bufsize", rate(2*p.videoKbps), "-pix_fmt", "yuv420p",
-		"-c:a", "aac", "-ac", "2", "-ar", "48000", "-b:a", rate(p.audioKbps),
-		"-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1")
+	args = append(args, "-i", "fd:", "-map", "0:V:0?", "-map", "0:a:0?", "-map_metadata", "-1", "-map_metadata:s", "-1", "-map_chapters", "-1", "-sn", "-dn")
+	if p.videoKbps > 0 {
+		args = append(args, "-vf", scale, "-c:v", "libx264", "-a53cc", "0", "-threads:v", "2", "-preset", "veryfast", "-crf", "20", "-maxrate", rate(p.videoKbps), "-bufsize", rate(2*p.videoKbps), "-pix_fmt", "yuv420p")
+	}
+	return append(args, "-c:a", "aac", "-ac", "2", "-ar", "48000", "-b:a", rate(p.audioKbps), "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1")
 }
 
 func normalize(ctx context.Context, input, output string) error {
@@ -97,11 +82,11 @@ func normalize(ctx context.Context, input, output string) error {
 	if !st.Mode().IsRegular() || st.Size() < 1 || st.Size() > processedupload.MaxInputBytes {
 		return errors.New("invalid source file size or type")
 	}
-	duration, err := mediaDuration(ctx, src)
+	inputTracks, err := inspectTracks(ctx, src)
 	if err != nil {
 		return err
 	}
-	p, err := chooseProfile(duration)
+	p, err := chooseProfile(inputTracks.duration(), inputTracks.video.present)
 	if err != nil {
 		return err
 	}
@@ -146,11 +131,11 @@ func normalize(ctx context.Context, input, output string) error {
 	case waitErr != nil:
 		return fmt.Errorf("encode media: %w", waitErr)
 	}
-	processedDuration, err := mediaDuration(ctx, dst)
+	outputTracks, err := inspectTracks(ctx, dst)
 	if err != nil {
 		return err
 	}
-	if math.Abs(processedDuration-duration) > 1 {
+	if !inputTracks.matches(outputTracks) {
 		return errors.New("processed duration differs from source")
 	}
 	return dst.Sync()
