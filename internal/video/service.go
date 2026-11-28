@@ -848,6 +848,9 @@ type UploadInput struct {
 	Filename    string
 	ContentType string
 	Reader      io.Reader
+	// InputSize records transferred bytes for the daily quota when a larger
+	// private input is reconstructed into a smaller stored download.
+	InputSize int64
 }
 
 // AttachOriginal stores the original file for a video and moves it from draft to
@@ -934,7 +937,7 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 	// Daily-quota ledger (config-parity W7): record the stored bytes against
 	// the owner's rolling 24h window. Best-effort by design, and billed once per
 	// stored original — see billStoredOriginal.
-	s.billStoredOriginal(ctx, ownerID, priorSum, sum, size)
+	s.billStoredOriginal(ctx, ownerID, priorSum, sum, max(size, in.InputSize))
 	return updated, file, nil
 }
 

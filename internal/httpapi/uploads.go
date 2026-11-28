@@ -10,6 +10,7 @@ import (
 
 	"github.com/labstack/echo/v5"
 
+	"github.com/vidra/vidra-core/internal/processedupload"
 	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -227,7 +228,8 @@ func (s *Server) handleCreateUploadSession(c *echo.Context) error {
 	}
 	// Size vs the effective upload cap up front (413). The cap is the DB overlay
 	// (default_… from UPLOAD_MAX_SIZE) so an admin can retune it without a restart.
-	if maxBytes := s.uploadMaxSizeBytes(); maxBytes > 0 && in.Size > maxBytes {
+	maxBytes := s.cfg.UploadLimit(s.configuredUploadMaxSizeBytes(), true)
+	if maxBytes > 0 && in.Size > maxBytes {
 		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "the file is too large")
 	}
 	// Quotas up front: total (422 quota_exceeded) then the rolling daily
@@ -235,7 +237,11 @@ func (s *Server) handleCreateUploadSession(c *echo.Context) error {
 	if qerr := s.checkUploadQuotas(ctx, v.OwnerID, in.Size); qerr != nil {
 		return qerr
 	}
-	sess, err := s.uploadsvc.CreateSession(ctx, id, v.ChannelID, userID, strings.TrimSpace(in.Filename), in.Size, strings.TrimSpace(in.FileFingerprint), upload.PurposeUpload)
+	purpose := upload.PurposeUpload
+	if s.cfg.UploadNormalizerSocket != "" && in.Size > processedupload.MaxScannedBytes {
+		purpose = upload.PurposeProcessed
+	}
+	sess, err := s.uploadsvc.CreateSession(ctx, id, v.ChannelID, userID, strings.TrimSpace(in.Filename), in.Size, strings.TrimSpace(in.FileFingerprint), purpose)
 	if err != nil {
 		if errors.Is(err, upload.ErrVideoChanged) {
 			return echo.NewHTTPError(http.StatusConflict, "the video changed while the upload was being set up; reload and try again")
