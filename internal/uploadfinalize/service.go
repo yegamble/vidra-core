@@ -360,7 +360,7 @@ func (s *Service) runFinalize(ctx context.Context, row sqlcgen.ClaimDueUploadFin
 		case errors.As(err, &rejected):
 			return safeerr.NewTerminal(video.SafetyScanRejectedMessage)
 		case errors.Is(err, video.ErrRecoveryIneligible):
-			return safeerr.NewTerminal("the retained upload is no longer eligible for recovery")
+			return safeerr.NewTerminal(video.RetainedRecoveryDeclined)
 		case err != nil:
 			return s.internalf("process retained original", err)
 		default:

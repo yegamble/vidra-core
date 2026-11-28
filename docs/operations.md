@@ -275,6 +275,19 @@ an unexpired session and an audited scanner error. A newer upload or a
 moderation hold prevents recovery. For an expired session or deleted draft,
 the creator can start a new upload from their own file.
 
+If a previous recovery failed on its first attempt with
+`the retained upload is no longer eligible for recovery`, install the corrected
+worker and add `--retry-job <job UUID>` to the same dry run. Use the finalize
+queue's source job UUID from the original recovery audit event.
+
+The command rechecks the original enrollment, current ownership, moderation,
+visibility, file identity, session expiry, object size and subsequent scanner
+audit outcomes. If the dry run says `eligible previously declined job`, repeat
+it with `--apply`. The worker scans and probes the retained object before the
+normal publication or hold decision. The job keeps its attempt counter and
+event history, and the retry appends an operator audit event. Repeating the
+command reports the job state while it is queued, running or complete.
+
 ## Verifying media consistency — `verify-blobs`
 
 The GC sweep enumerates the **store** and looks for objects no row references.

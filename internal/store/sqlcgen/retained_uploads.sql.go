@@ -139,6 +139,37 @@ func (q *Queries) IsRetainedScanAccepted(ctx context.Context, arg IsRetainedScan
 	return accepted, err
 }
 
+const lockDeclinedRetainedScanRecovery = `-- name: LockDeclinedRetainedScanRecovery :one
+SELECT j.id
+FROM upload_finalize_jobs j
+JOIN retained_upload_recoveries r ON r.job_id = j.id
+JOIN retained_scan_sources s
+  ON (s.upload_id,s.file_id,s.owner_id,s.channel_id,s.privacy,s.sha256,s.size_bytes)
+   = (r.upload_id,r.file_id,r.owner_id,r.channel_id,r.privacy,r.sha256,r.size_bytes)
+WHERE j.id = $1 AND j.state = 'failed' AND j.attempts = 1
+  AND j.error = $2 AND NOT r.accepted
+  AND s.session_state = 'failed' AND s.expires_at > now()
+  AND NOT EXISTS (SELECT 1 FROM audit_log a
+    WHERE a.action = 'content.upload.malware_rejected' AND a.reason LIKE 'video=' || s.video_id::text || ' outcome=%'
+    AND a.occurred_at >= j.created_at)
+FOR UPDATE OF j,r NOWAIT
+`
+
+type LockDeclinedRetainedScanRecoveryParams struct {
+	JobID          uuid.UUID `json:"job_id"`
+	DeclinedReason string    `json:"declined_reason"`
+}
+
+// The original enrollment must still identify the same attached bytes and
+// creator. Preserve completed work, real scanner verdicts and subsequent
+// attempts. The caller already holds the associated session and video locks.
+func (q *Queries) LockDeclinedRetainedScanRecovery(ctx context.Context, arg LockDeclinedRetainedScanRecoveryParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockDeclinedRetainedScanRecovery, arg.JobID, arg.DeclinedReason)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockRetainedUpload = `-- name: LockRetainedUpload :one
 SELECT s.id FROM upload_sessions s JOIN videos v ON v.id = s.video_id
 WHERE s.id = $1 FOR UPDATE OF s, v NOWAIT
@@ -192,6 +223,26 @@ func (q *Queries) RecordRetainedScanRecovery(ctx context.Context, arg RecordReta
 		arg.SizeBytes,
 	)
 	return err
+}
+
+const requeueDeclinedRetainedScanRecovery = `-- name: RequeueDeclinedRetainedScanRecovery :execrows
+UPDATE upload_finalize_jobs SET state='pending', next_attempt_at=now(), updated_at=now(), error=''
+WHERE id = $1 AND state='failed' AND attempts=1 AND error=$2
+`
+
+type RequeueDeclinedRetainedScanRecoveryParams struct {
+	JobID          uuid.UUID `json:"job_id"`
+	DeclinedReason string    `json:"declined_reason"`
+}
+
+// Keep attempts and the same execution id. Its projection appends the retry
+// after the original terminal event, retaining both in the operator timeline.
+func (q *Queries) RequeueDeclinedRetainedScanRecovery(ctx context.Context, arg RequeueDeclinedRetainedScanRecoveryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, requeueDeclinedRetainedScanRecovery, arg.JobID, arg.DeclinedReason)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setRetainedScanVideoState = `-- name: SetRetainedScanVideoState :one

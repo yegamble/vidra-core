@@ -9,6 +9,10 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
+// RetainedRecoveryDeclined is the terminal eligibility refusal stored on a
+// recovery job. The operator retry command recognizes only this outcome.
+const RetainedRecoveryDeclined = "the retained upload is no longer eligible for recovery"
+
 var ErrRecoveryIneligible = errors.New("video: retained source is no longer eligible")
 
 type retainedQueries interface {
