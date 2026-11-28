@@ -19,9 +19,10 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
-const retainedUsage = "recover-scan-upload --upload UUID --owner UUID --privacy VISIBILITY --sha256 HEX [--apply]"
+const retainedUsage = "recover-scan-upload --upload UUID --owner UUID --privacy VISIBILITY --sha256 HEX [--retry-job UUID] [--apply]"
 
 func runRetainedUpload(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("recover-scan-upload", flag.ContinueOnError)
@@ -30,6 +31,7 @@ func runRetainedUpload(args []string, stdout, stderr io.Writer) int {
 	owner := flags.String("owner", "", "expected creator UUID")
 	privacy := flags.String("privacy", "", "expected current visibility")
 	hash := flags.String("sha256", "", "recorded original SHA-256")
+	prior := flags.String("retry-job", "", "retry one specific enrollment previously declined for eligibility")
 	apply := flags.Bool("apply", false, "queue the verified source for normal processing")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -37,6 +39,14 @@ func runRetainedUpload(args []string, stdout, stderr io.Writer) int {
 	uploadID, uerr := uuid.Parse(*id)
 	ownerID, oerr := uuid.Parse(*owner)
 	digest, herr := hex.DecodeString(*hash)
+	var retryJob uuid.UUID
+	if *prior != "" {
+		var err error
+		if retryJob, err = uuid.Parse(*prior); err != nil || retryJob == uuid.Nil {
+			fmt.Fprintln(stderr, retainedUsage)
+			return 2
+		}
+	}
 	if flags.NArg() != 0 || uerr != nil || oerr != nil || uploadID == uuid.Nil || ownerID == uuid.Nil || *privacy == "" || herr != nil || len(digest) != 32 {
 		fmt.Fprintln(stderr, retainedUsage)
 		return 2
@@ -72,7 +82,7 @@ func runRetainedUpload(args []string, stdout, stderr io.Writer) int {
 	}
 	result, err := queueRetainedUpload(ctx, db, stat, sqlcgen.GetRetainedScanSourceParams{
 		UploadID: uploadID, OwnerID: ownerID, Privacy: *privacy, Sha256: hex.EncodeToString(digest),
-	}, *apply, settings.Int(instancesettings.KeyUploadMaxSizeBytes))
+	}, *apply, settings.Int(instancesettings.KeyUploadMaxSizeBytes), retryJob)
 	if err != nil {
 		fmt.Fprintln(stderr, "The upload is ineligible or busy. No recovery was queued by this attempt.")
 		return 1
@@ -81,7 +91,7 @@ func runRetainedUpload(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func queueRetainedUpload(ctx context.Context, db *store.Store, blobs storage.ObjectStatter, p sqlcgen.GetRetainedScanSourceParams, apply bool, maxSize int64) (string, error) {
+func queueRetainedUpload(ctx context.Context, db *store.Store, blobs storage.ObjectStatter, p sqlcgen.GetRetainedScanSourceParams, apply bool, maxSize int64, retryJob uuid.UUID) (string, error) {
 	tx, err := db.Pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -92,10 +102,21 @@ func queueRetainedUpload(ctx context.Context, db *store.Store, blobs storage.Obj
 		return "", err
 	}
 	record, err := q.GetRecordedScanRecovery(ctx, sqlcgen.GetRecordedScanRecoveryParams(p))
-	if err == nil {
+	if retryJob != uuid.Nil {
+		if err != nil || record.ID != retryJob {
+			return "", errors.New("recovery job does not match this enrollment")
+		}
+		if record.State != "failed" {
+			return "previously queued, current job state " + record.State, nil
+		}
+		if _, err := q.LockDeclinedRetainedScanRecovery(ctx, sqlcgen.LockDeclinedRetainedScanRecoveryParams{
+			JobID: retryJob, DeclinedReason: video.RetainedRecoveryDeclined,
+		}); err != nil {
+			return "", err
+		}
+	} else if err == nil {
 		return "previously queued, current job state " + record.State, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return "", err
 	}
 	src, err := q.GetRetainedScanSource(ctx, p)
@@ -110,20 +131,37 @@ func queueRetainedUpload(ctx context.Context, db *store.Store, blobs storage.Obj
 		return "", errors.New("the stored source is unavailable or has changed")
 	}
 	if !apply {
+		if retryJob != uuid.Nil {
+			return fmt.Sprintf("eligible previously declined job, %d bytes, dry run", src.SizeBytes), nil
+		}
 		return fmt.Sprintf("eligible, %d bytes, dry run", src.SizeBytes), nil
 	}
-	job, err := q.EnqueueUploadFinalizeJob(ctx, sqlcgen.EnqueueUploadFinalizeJobParams{
-		UploadID: src.UploadID, VideoID: src.VideoID, Purpose: "upload",
-	})
-	if err != nil {
-		return "", err
-	}
-	err = q.RecordRetainedScanRecovery(ctx, sqlcgen.RecordRetainedScanRecoveryParams{
-		JobID: job.ID, UploadID: src.UploadID, FileID: src.FileID, OwnerID: src.OwnerID,
-		ChannelID: src.ChannelID, Privacy: src.Privacy, Sha256: src.Sha256, SizeBytes: src.SizeBytes,
-	})
-	if err != nil {
-		return "", err
+	jobID := retryJob
+	reason := "operator requested a full rescan of an existing failed upload"
+	if retryJob != uuid.Nil {
+		updated, err := q.RequeueDeclinedRetainedScanRecovery(ctx, sqlcgen.RequeueDeclinedRetainedScanRecoveryParams{JobID: retryJob, DeclinedReason: video.RetainedRecoveryDeclined})
+		if err != nil {
+			return "", err
+		}
+		if updated != 1 {
+			return "", errors.New("recovery job changed")
+		}
+		reason = "operator retried the first recovery attempt after its terminal eligibility refusal"
+	} else {
+		job, err := q.EnqueueUploadFinalizeJob(ctx, sqlcgen.EnqueueUploadFinalizeJobParams{
+			UploadID: src.UploadID, VideoID: src.VideoID, Purpose: "upload",
+		})
+		if err != nil {
+			return "", err
+		}
+		err = q.RecordRetainedScanRecovery(ctx, sqlcgen.RecordRetainedScanRecoveryParams{
+			JobID: job.ID, UploadID: src.UploadID, FileID: src.FileID, OwnerID: src.OwnerID,
+			ChannelID: src.ChannelID, Privacy: src.Privacy, Sha256: src.Sha256, SizeBytes: src.SizeBytes,
+		})
+		if err != nil {
+			return "", err
+		}
+		jobID = job.ID
 	}
 	n, err := q.MarkRetainedUploadQueued(ctx, src.UploadID)
 	if err != nil || n != 1 {
@@ -132,7 +170,7 @@ func queueRetainedUpload(ctx context.Context, db *store.Store, blobs storage.Obj
 	err = audit.NewService(q).Record(ctx, audit.Event{
 		Actor: audit.ActorSnapshot{Kind: "system"}, Action: observability.ActionUploadScanRecovery,
 		Result: observability.ResultSuccess, ResourceType: "video", ResourceID: src.VideoID.String(),
-		JobID: job.ID, Reason: "operator requested a full rescan of an existing failed upload",
+		JobID: jobID, Reason: reason,
 	})
 	if err != nil {
 		return "", err

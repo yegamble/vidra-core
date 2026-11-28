@@ -39,29 +39,29 @@ func TestRetainedScanRecoveryUsesNormalFinalize(t *testing.T) {
 				{UploadID: p.UploadID, OwnerID: p.OwnerID, Privacy: "public", Sha256: p.Sha256},
 				{UploadID: p.UploadID, OwnerID: p.OwnerID, Privacy: "private", Sha256: sha256Hex("other")},
 			} {
-				if _, err = queueRetainedUpload(ctx, st, blobs, mismatched, true, 100); err == nil {
+				if _, err = queueRetainedUpload(ctx, st, blobs, mismatched, true, 100, uuid.Nil); err == nil {
 					t.Fatal("admitted a mismatched source")
 				}
 			}
-			_, err = queueRetainedUpload(ctx, st, blobs, p, false, 100)
+			_, err = queueRetainedUpload(ctx, st, blobs, p, false, 100, uuid.Nil)
 			must(err)
 			if scenario == "clean" {
-				if _, sizeErr := queueRetainedUpload(ctx, st, blobs, p, true, 2); sizeErr == nil {
+				if _, sizeErr := queueRetainedUpload(ctx, st, blobs, p, true, 2, uuid.Nil); sizeErr == nil {
 					t.Fatal("admitted an original exceeding the current upload limit")
 				}
 				tx, lockErr := st.Pool.Begin(ctx)
 				must(lockErr)
 				_, lockErr = q.WithTx(tx).LockRetainedUpload(ctx, p.UploadID)
 				must(lockErr)
-				_, secondErr := queueRetainedUpload(ctx, st, blobs, p, true, 100)
+				_, secondErr := queueRetainedUpload(ctx, st, blobs, p, true, 100, uuid.Nil)
 				must(tx.Rollback(ctx))
 				if secondErr == nil {
 					t.Fatal("concurrent operator acquired the same upload")
 				}
 			}
-			_, err = queueRetainedUpload(ctx, st, blobs, p, true, 100)
+			_, err = queueRetainedUpload(ctx, st, blobs, p, true, 100, uuid.Nil)
 			must(err)
-			_, err = queueRetainedUpload(ctx, st, blobs, p, true, 100)
+			_, err = queueRetainedUpload(ctx, st, blobs, p, true, 100, uuid.Nil)
 			must(err)
 			if scenario == "blocked" {
 				_, err = st.Pool.Exec(ctx, "INSERT INTO video_blocks(video_id) VALUES ($1)", videoID)

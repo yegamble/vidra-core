@@ -46,3 +46,27 @@ WHERE r.job_id=sqlc.arg(job_id) AND j.video_id=sqlc.arg(video_id);
 DELETE FROM video_files f USING retained_upload_recoveries r
 WHERE r.job_id = $1 AND f.id = r.file_id AND f.sha256 = r.sha256
   AND f.kind = 'original' AND f.size_bytes = r.size_bytes;
+
+-- name: LockDeclinedRetainedScanRecovery :one
+-- The original enrollment must still identify the same attached bytes and
+-- creator. Preserve completed work, real scanner verdicts and subsequent
+-- attempts. The caller already holds the associated session and video locks.
+SELECT j.id
+FROM upload_finalize_jobs j
+JOIN retained_upload_recoveries r ON r.job_id = j.id
+JOIN retained_scan_sources s
+  ON (s.upload_id,s.file_id,s.owner_id,s.channel_id,s.privacy,s.sha256,s.size_bytes)
+   = (r.upload_id,r.file_id,r.owner_id,r.channel_id,r.privacy,r.sha256,r.size_bytes)
+WHERE j.id = sqlc.arg(job_id) AND j.state = 'failed' AND j.attempts = 1
+  AND j.error = sqlc.arg(declined_reason) AND NOT r.accepted
+  AND s.session_state = 'failed' AND s.expires_at > now()
+  AND NOT EXISTS (SELECT 1 FROM audit_log a
+    WHERE a.action = 'content.upload.malware_rejected' AND a.reason LIKE 'video=' || s.video_id::text || ' outcome=%'
+    AND a.occurred_at >= j.created_at)
+FOR UPDATE OF j,r NOWAIT;
+
+-- name: RequeueDeclinedRetainedScanRecovery :execrows
+-- Keep attempts and the same execution id. Its projection appends the retry
+-- after the original terminal event, retaining both in the operator timeline.
+UPDATE upload_finalize_jobs SET state='pending', next_attempt_at=now(), updated_at=now(), error=''
+WHERE id = sqlc.arg(job_id) AND state='failed' AND attempts=1 AND error=sqlc.arg(declined_reason);
