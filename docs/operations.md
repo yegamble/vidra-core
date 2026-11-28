@@ -256,6 +256,25 @@ digest and nothing that would read one back. Storage migration verifies that
 tree object-by-object while it copies it. Consequently a fully-hashed library
 says nothing about the integrity of the HLS trees.
 
+## Recovering an upload rejected during a scanner outage
+
+After repairing the fail-closed scanner, check the retained original using its
+failed session UUID, creator UUID, current visibility and recorded SHA-256.
+
+```sh
+./deploy/compose.sh exec -T api /app/api recover-scan-upload \
+  --upload "$upload_id" --owner "$owner_id" --privacy "$privacy" --sha256 "$sha256"
+```
+
+The dry run reports the eligible byte count. Add `--apply` to rescan those
+bytes with ClamAV and run the normal media, moderation and publication steps.
+Repeat the command to see the job state, or view both attempts in Admin Jobs.
+
+Recovery requires the same active creator, channel, visibility and original,
+an unexpired session and an audited scanner error. A newer upload or a
+moderation hold prevents recovery. For an expired session or deleted draft,
+the creator can start a new upload from their own file.
+
 ## Verifying media consistency — `verify-blobs`
 
 The GC sweep enumerates the **store** and looks for objects no row references.
@@ -1548,6 +1567,30 @@ generation. Verifying object versions and bytes is the publisher's responsibilit
 Public IPFS peers can retain bytes they have received. A website's browser age
 prompt cannot govern those copies.
 
+### Serving an approved reference on a watch page
+
+Install the reference playback bridge from the matching Vidra deployment release.
+Mount its dedicated Unix socket directory read-only into the API and set
+`IPFS_REFERENCE_PLAYBACK_SOCKET` to the absolute socket path inside that container.
+Turn on `delivery_ipfs_enabled` in the advanced delivery settings. It defaults
+to the value of `IPFS_ENABLED`, so a reference-only installation can enable
+delivery while keeping the pinning worker off.
+The bridge needs access to the native approvals, publication receipts and
+the reference node's loopback, no-fetch gateway. Set `PUBLIC_BASE_URL` to the
+public HTTPS origin and deploy the API. This integration works with S3 and
+`IPFS_ENABLED=false`.
+
+For an approved public native video, create a normal playback session. A
+successful readiness check returns `ipfs_hls_url` alongside
+`authoritative_hls_url`. The IPFS URL belongs to the public site and identifies
+the video's current generation. GET and HEAD support HLS playlists and media,
+including single byte ranges. Each read verifies eligibility and approval.
+When a generation changes or an approval is withdrawn, a previous reference
+URL returns 404. Bridge outages return 503 for that source. The player can
+continue through the authoritative URL. Turning off `delivery_ipfs_enabled`
+removes the reference from new watch sessions and makes existing reference URLs
+return 404. Clear `IPFS_REFERENCE_PLAYBACK_SOCKET` and redeploy to remove the bridge.
+
 ## Private IPFS mirror tier (P19.P) — replication, not distribution
 
 `IPFS_MIRROR_PRIVATE=true` opts the instance into replicating **non-public** media
@@ -1703,14 +1746,19 @@ wedged past `CLAMAV_TIMEOUT`, or answering garbage:
 
 One neutral sentence everywhere, with the stable code `safety_scan_rejected`:
 
-> This file was rejected by the instance's safety scan and was not stored.
+> This file was rejected by the instance's safety scan.
 
 It appears as a 422 on the synchronous routes, as the upload session's
 `failure_reason` (state `failed`, never `completed`), and as the import job's
 `error`. The signature and the scanner's name never reach the creator — telling
 them "malware" tells an attacker their probe worked. The verdict is in the audit
-row (`content.upload.malware_rejected`, with `outcome=infected|scan_error`) and,
+row (`content.upload.malware_rejected`, with `outcome=infected|scan_limit|scan_error`) and,
 under quarantine, on the moderation-queue entry.
+
+When ClamAV reports an inspection limit, Vidra records `outcome=scan_limit`
+and refuses publication in every scanning mode. The creator and authorized
+moderation staff retain their existing private access to a failed first
+upload. A refused replacement leaves the previously published file in place.
 
 A rejection is **terminal**: the finalize and import workers dead-letter it
 immediately rather than walking the retry ladder, because attempt five gets the

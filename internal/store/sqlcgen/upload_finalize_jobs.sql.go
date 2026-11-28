@@ -23,16 +23,18 @@ WHERE id IN (
     LIMIT $1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, upload_id, video_id, purpose, can_manage, attempts
+RETURNING id, upload_id, video_id, purpose, can_manage, attempts,
+  EXISTS (SELECT 1 FROM retained_upload_recoveries r WHERE r.job_id = upload_finalize_jobs.id) AS recovering
 `
 
 type ClaimDueUploadFinalizeJobsRow struct {
-	ID        uuid.UUID `json:"id"`
-	UploadID  uuid.UUID `json:"upload_id"`
-	VideoID   uuid.UUID `json:"video_id"`
-	Purpose   string    `json:"purpose"`
-	CanManage bool      `json:"can_manage"`
-	Attempts  int32     `json:"attempts"`
+	ID         uuid.UUID `json:"id"`
+	UploadID   uuid.UUID `json:"upload_id"`
+	VideoID    uuid.UUID `json:"video_id"`
+	Purpose    string    `json:"purpose"`
+	CanManage  bool      `json:"can_manage"`
+	Attempts   int32     `json:"attempts"`
+	Recovering bool      `json:"recovering"`
 }
 
 // Atomically claims due pending jobs (oldest first) by flipping them to
@@ -59,6 +61,7 @@ func (q *Queries) ClaimDueUploadFinalizeJobs(ctx context.Context, limit int32) (
 			&i.Purpose,
 			&i.CanManage,
 			&i.Attempts,
+			&i.Recovering,
 		); err != nil {
 			return nil, err
 		}

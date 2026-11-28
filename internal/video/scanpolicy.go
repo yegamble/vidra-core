@@ -19,7 +19,7 @@ package video
 // engine. The verdict is not lost: it stays in the audit row
 // (content.upload.malware_rejected) and, under quarantine mode, on the
 // moderation-queue entry — surfaces only staff can read.
-const SafetyScanRejectedMessage = "This file was rejected by the instance's safety scan and was not stored."
+const SafetyScanRejectedMessage = "This file was rejected by the instance's safety scan."
 
 // SafetyScanRejectedCode is the stable machine-readable reason the frontend
 // renders the sentence from. The frontend must key on this and never on the
@@ -32,9 +32,8 @@ const SafetyScanRejectedCode = "safety_scan_rejected"
 // dead-letter immediately and write SafetyScanRejectedMessage where the creator
 // can read it, rather than retrying a verdict that will never change.
 type MalwareRejectedError struct {
-	// Outcome is the audit reason class: "infected" (the scanner named a
-	// signature) or "scan_error" (the scan could not complete and the policy in
-	// force refuses). Never rendered to a creator.
+	// Outcome is the staff audit class: "infected", "scan_limit" or
+	// "scan_error". Never rendered to a creator.
 	Outcome string
 }
 

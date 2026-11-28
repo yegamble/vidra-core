@@ -50,6 +50,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/jobtrace"
 	"github.com/vidra/vidra-core/internal/lease"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/processedupload"
 	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/safeerr"
@@ -293,7 +294,11 @@ func (s *Service) LatestForSession(ctx context.Context, uploadID uuid.UUID) (sql
 //
 // Intended to be called on a ticker by a single worker goroutine per instance.
 func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
-	rows, err := s.repo.ClaimDueUploadFinalizeJobs(ctx, int32(limit))
+	// A claim starts the database lease. Only claim jobs that can start their
+	// heartbeat now, so a long upload cannot exhaust the next job's lease
+	// while that job is still waiting for a local worker slot.
+	workers := s.Concurrency()
+	rows, err := s.repo.ClaimDueUploadFinalizeJobs(ctx, int32(min(limit, workers)))
 	if err != nil {
 		return 0, err
 	}
@@ -301,7 +306,7 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 		mu   sync.Mutex
 		done int
 	)
-	workerpool.Run(s.Concurrency(), len(rows), func(i int) {
+	workerpool.Run(workers, len(rows), func(i int) {
 		row := rows[i]
 		// Assembling a multi-gigabyte upload out of object storage and probing
 		// it routinely outlives one lease, so renew while the work runs —
@@ -354,6 +359,26 @@ func (s *Service) runFinalize(ctx context.Context, row sqlcgen.ClaimDueUploadFin
 		s.logger.Warn("upload finalize: could not mark the session processing", "upload_id", row.UploadID.String(), "error", err)
 	}
 
+	if row.Recovering {
+		p, ok := s.pipeline.(interface {
+			ProcessRetained(context.Context, uuid.UUID, uuid.UUID) error
+		})
+		if !ok {
+			return safeerr.NewTerminal("the retained upload cannot be recovered")
+		}
+		err := p.ProcessRetained(ctx, row.ID, row.VideoID)
+		var rejected *video.MalwareRejectedError
+		switch {
+		case errors.As(err, &rejected):
+			return safeerr.NewTerminal(video.SafetyScanRejectedMessage)
+		case errors.Is(err, video.ErrRecoveryIneligible):
+			return safeerr.NewTerminal("the retained upload is no longer eligible for recovery")
+		case err != nil:
+			return s.internalf("process retained original", err)
+		default:
+			return nil
+		}
+	}
 	sess, reader, err := s.uploads.Assemble(ctx, row.UploadID)
 	if err != nil {
 		switch {
@@ -380,6 +405,10 @@ func (s *Service) runFinalize(ctx context.Context, row sqlcgen.ClaimDueUploadFin
 		f, err := s.normalize(ctx, reader, sess.TotalSize)
 		switch {
 		case errors.Is(err, processedupload.ErrInfected):
+			s.logger.Warn("processed upload safety scan refused the file", "video_id", row.VideoID, "outcome", "infected")
+			return safeerr.NewTerminal(video.SafetyScanRejectedMessage)
+		case errors.Is(err, media.ErrScanLimit), errors.Is(err, processedupload.ErrScanTooLarge):
+			s.logger.Warn("processed upload safety scan refused the file", "video_id", row.VideoID, "outcome", "scan_limit")
 			return safeerr.NewTerminal(video.SafetyScanRejectedMessage)
 		case errors.Is(err, processedupload.ErrRejected):
 			return safeerr.NewTerminal("the uploaded video could not be converted to a playable file")

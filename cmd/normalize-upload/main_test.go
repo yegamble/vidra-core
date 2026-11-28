@@ -11,7 +11,7 @@ import (
 
 func TestProfileBudgetsTheWholeDownloadAgainstTheScanCeiling(t *testing.T) {
 	for _, seconds := range []float64{1, 900, 3600, 10800, 43200} {
-		p, err := chooseProfile(seconds)
+		p, err := chooseProfile(seconds, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -40,5 +40,12 @@ func TestInputOverTwentyGiBIsRejectedBeforeStartingFFmpeg(t *testing.T) {
 	}
 	if _, err = os.Stat(output); !os.IsNotExist(err) {
 		t.Fatalf("unexpected output: %v", err)
+	}
+}
+func TestSelectedAudioKeepsItsOffsetAfterRebasing(t *testing.T) {
+	source := tracks{video: track{true, 10, 15}, audio: track{true, 12, 17}}
+	if !source.matches(tracks{video: track{true, 0, 5}, audio: track{true, 2, 7}}) ||
+		source.matches(tracks{video: track{true, 2, 7}, audio: track{true, 0, 5}}) {
+		t.Fatal("output must preserve the delay between selected tracks")
 	}
 }

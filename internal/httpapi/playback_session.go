@@ -194,6 +194,9 @@ type ipfsPlaybackProvider interface {
 }
 
 func (s *Server) sessionIPFSHLS(ctx context.Context, id uuid.UUID, masterKey string) string {
+	if ref := s.referencePlaybackURL(ctx, id, masterKey); ref != "" {
+		return ref
+	}
 	if !s.ipfsDeliveryEnabled() || s.ipfsHealth == nil || !s.ipfsHealth.GatewayHealth().Redirectable() {
 		return ""
 	}

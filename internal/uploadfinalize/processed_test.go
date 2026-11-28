@@ -3,12 +3,14 @@ package uploadfinalize
 import (
 	"context"
 	"errors"
-	"github.com/vidra/vidra-core/internal/processedupload"
-	"github.com/vidra/vidra-core/internal/upload"
-	"github.com/vidra/vidra-core/internal/video"
 	"io"
 	"os"
 	"testing"
+
+	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/processedupload"
+	"github.com/vidra/vidra-core/internal/upload"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 func TestPrivateInputOnlyAttachesScannedOutput(t *testing.T) {
@@ -16,7 +18,16 @@ func TestPrivateInputOnlyAttachesScannedOutput(t *testing.T) {
 		name         string
 		normalizeErr error
 		disabled     bool
-	}{{name: "accepted"}, {name: "unavailable", disabled: true}, {name: "scanner offline", normalizeErr: errors.New("offline")}, {name: "infected", normalizeErr: processedupload.ErrInfected}, {name: "invalid input", normalizeErr: processedupload.ErrRejected}} {
+		permanent    bool
+	}{
+		{name: "accepted"},
+		{name: "unavailable", disabled: true},
+		{name: "scanner offline", normalizeErr: errors.New("offline")},
+		{name: "infected", normalizeErr: processedupload.ErrInfected, permanent: true},
+		{name: "inspection limit", normalizeErr: media.ErrScanLimit, permanent: true},
+		{name: "output too large", normalizeErr: processedupload.ErrScanTooLarge, permanent: true},
+		{name: "invalid input", normalizeErr: processedupload.ErrRejected, permanent: true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
 			const raw = "private input bytes"
@@ -56,8 +67,9 @@ func TestPrivateInputOnlyAttachesScannedOutput(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.disabled || tc.normalizeErr != nil {
-				if h.pipeline.attached != nil || h.pipeline.processedKey != "" || h.jobs.get(job.ID).State == StateDone {
-					t.Fatal("failed processing advanced into publication")
+				state := h.jobs.get(job.ID).State
+				if h.pipeline.attached != nil || h.pipeline.processedKey != "" || state == StateDone || (state == StateFailed) != tc.permanent {
+					t.Fatalf("failed processing returned state %s, permanent %v", state, tc.permanent)
 				}
 				return
 			}

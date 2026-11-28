@@ -481,19 +481,19 @@ func (o output) hlsFlags(base string) string {
 	return base + "-temp_file"
 }
 
-// splitChain renders the filter-graph prologue that decodes the source's video
-// stream once and forks it into n identically-timed branches labelled [b0]..
-// [bN-1]. A single branch needs no split at all. Returns the chain (empty when
-// n <= 1 and the caller should read [0:v] directly) and the branch labels.
+// splitChain establishes the source pixel aspect before any rung rounds its
+// width. FFmpeg's sar expression uses square pixels for an unspecified ratio.
+// Raise setsar's default maximum of 100 to preserve ratios such as 1000:1001.
+// scale can then preserve one display shape across all branches.
 func splitChain(n int) (chain string, labels []string) {
-	labels = make([]string, n)
+	const input = "[0:v]setsar=sar:max=2147483647"
 	if n == 1 {
-		labels[0] = "0:v"
-		return "", labels
+		return input + "[b0]", []string{"b0"}
 	}
 	var b strings.Builder
-	b.WriteString("[0:v]split=")
+	b.WriteString(input + ",split=")
 	b.WriteString(strconv.Itoa(n))
+	labels = make([]string, n)
 	for i := range labels {
 		labels[i] = fmt.Sprintf("b%d", i)
 		b.WriteString("[")
@@ -577,10 +577,7 @@ func hlsLadderArgsWith(pkg Packager, src source, out output, plan ladderPlan) []
 	}
 
 	chain, labels := splitChain(len(plan.rungs))
-	chains := make([]string, 0, len(plan.rungs)+1)
-	if chain != "" {
-		chains = append(chains, chain)
-	}
+	chains := []string{chain}
 	// One filter-graph output per REPRESENTATION — rung × codec — laid out
 	// h264 rungs first in ladder order, then hevc, then av1 (ladderPlan.repIndex).
 	// The rung is SCALED once and the scaled frames are forked to that rung's
@@ -681,10 +678,7 @@ func hlsTrickPlayLadderArgsWith(pkg Packager, src source, out output, plan ladde
 	args = append(args, src.inputArgs()...)
 
 	chain, labels := splitChain(len(plan.rungs))
-	chains := make([]string, 0, len(plan.rungs)+1)
-	if chain != "" {
-		chains = append(chains, chain)
-	}
+	chains := []string{chain}
 	plan.labels = make([]string, len(plan.rungs))
 	for i, r := range plan.rungs {
 		plan.labels[i] = fmt.Sprintf("t%d", i)

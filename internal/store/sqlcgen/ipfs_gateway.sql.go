@@ -7,6 +7,8 @@ package sqlcgen
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 const listPublicIPFSRootPins = `-- name: ListPublicIPFSRootPins :many
@@ -62,4 +64,15 @@ func (q *Queries) ListPublicIPFSRootPins(ctx context.Context, cid string) ([]Med
 		return nil, err
 	}
 	return items, nil
+}
+
+const publicReferenceMasterKey = `-- name: PublicReferenceMasterKey :one
+SELECT master_key::text AS master_key FROM ipfs_public_reference_videos WHERE video_id = $1::uuid
+`
+
+func (q *Queries) PublicReferenceMasterKey(ctx context.Context, videoID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, publicReferenceMasterKey, videoID)
+	var master_key string
+	err := row.Scan(&master_key)
+	return master_key, err
 }
