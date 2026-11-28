@@ -827,6 +827,42 @@ func assertCMAFGeometryMatchesMPEGTS(t *testing.T, genArgs []string) {
 	}
 }
 
+// Rounded rung widths need a meaningful input sample aspect ratio for scale to
+// preserve the source display shape. Exercise both missing and explicitly
+// signalled pixels, including a ratio beyond setsar's default precision.
+func TestCMAFGeometrySourcePixelAspect(t *testing.T) {
+	for _, tc := range []struct {
+		name, size, sar, wantDAR string
+		rungs                    int
+	}{
+		{"unspecified", "1280x720", "0", "16:9", 3},
+		{"declared", "320x240", "1000/1001", "4000:3003", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCMAFFixture(t, []string{
+				"-f", "lavfi", "-i", "color=size=" + tc.size + ":rate=12:duration=2",
+				"-vf", "setsar=" + tc.sar + ":max=65535", "-c:v", "libx264", "-preset", "ultrafast", "-an",
+			}, false)
+			src, err := f.blobs.Path(f.sourceKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sar := ffprobeEntries(t, src, "stream=sample_aspect_ratio")["sample_aspect_ratio"]
+			if tc.sar == "0" && sar != "" && sar != "N/A" && sar != "0:1" {
+				t.Fatalf("fixture signalled SAR %q", sar)
+			}
+			if len(f.res.Renditions) != tc.rungs {
+				t.Fatalf("got %d rungs, want %d", len(f.res.Renditions), tc.rungs)
+			}
+			for i, r := range f.res.Renditions {
+				if got := probedDAR(t, f.concatRepresentation(t, i)); got != tc.wantDAR {
+					t.Errorf("%dp display aspect = %s, want %s", r.Height, got, tc.wantDAR)
+				}
+			}
+		})
+	}
+}
+
 // TestCMAFGeometryRotatedSource is the case that motivated all of this: a
 // portrait clip recorded as landscape-plus-display-matrix. ffmpeg autorotates
 // before the filter graph, so the graph sees 1080x1920 and scale's corrective

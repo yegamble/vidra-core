@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 )
@@ -39,7 +40,10 @@ func TestOnlyTheCompleteCleanDerivativeCanBeAttached(t *testing.T) {
 		clean, early bool
 		scanErr      error
 	}{
-		{"clean", true, false, nil}, {"infected", false, false, nil}, {"unavailable", false, false, errors.New("scan failed")}, {"incomplete", true, true, nil},
+		{"clean", true, false, nil},
+		{"infected", false, false, nil},
+		{"unavailable", false, false, errors.New("scan failed")},
+		{"incomplete", true, true, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			scan := scanFunc(func(_ context.Context, r io.Reader) (bool, error) {
@@ -57,16 +61,39 @@ func TestOnlyTheCompleteCleanDerivativeCanBeAttached(t *testing.T) {
 				if f != nil || err == nil {
 					t.Fatal("returned an unverified download")
 				}
+				if test.scanErr != nil && !errors.Is(err, test.scanErr) {
+					t.Fatalf("lost scanner error: %v", err)
+				}
+				if errors.Is(err, ErrInfected) != (test.name == "infected") {
+					t.Fatalf("unexpected malware classification: %v", err)
+				}
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer f.Close()
+			if _, err := os.Stat(f.Name()); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("scan scratch file has a directory entry: %v", err)
+			}
 			b, err := io.ReadAll(f)
 			if err != nil || string(b) != processed {
 				t.Fatal("returned different bytes from the scan")
 			}
 		})
+	}
+}
+
+func TestScanFileLengthMatchesTheScannedContent(t *testing.T) {
+	const body = "complete candidate"
+	inspect := scanFunc(func(_ context.Context, r io.Reader) (bool, error) {
+		_, err := io.Copy(io.Discard, r)
+		return err == nil, err
+	})
+	for _, size := range []int64{0, int64(len(body) - 1), int64(len(body) + 1), MaxScannedBytes + 1} {
+		file, err := ScanFile(t.Context(), inspect, strings.NewReader(body), size)
+		if file != nil || err == nil || errors.Is(err, ErrInfected) {
+			t.Fatalf("size %d returned file %v, err %v", size, file, err)
+		}
 	}
 }

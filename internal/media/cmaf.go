@@ -165,8 +165,8 @@ func (cmafPackager) SupportsMultiCodec() bool { return true }
 // widths are rounded to even for H.264 4:2:0 and a 720p source's 480p rung is
 // 854x480 (1.7792) beside 1280x720 (1.7778).
 //
-// It does not. scale ALREADY sets each output's sample aspect ratio to exactly
-// the value that preserves the input's display aspect through that rounding —
+// splitChain gives scale a known input SAR. scale then adjusts each output's
+// sample aspect ratio to preserve the input's display aspect through rounding —
 // 854x480 comes out sar 1280:1281, so its display ratio is 16:9 to the bit, the
 // same as every other rung. The adaptation set is consistent for free.
 //

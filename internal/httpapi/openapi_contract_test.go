@@ -199,10 +199,14 @@ func routeOperations(srv *Server) map[string]bool {
 	}
 	ops := map[string]bool{}
 	for _, r := range srv.Handler().Router().Routes() {
-		if !httpMethods[r.Method] || strings.Contains(r.Path, "*") {
+		routePath := r.Path
+		if routePath == "/api/v1"+referencePlaybackRoute {
+			routePath = strings.TrimSuffix(routePath, "*") + "{file}"
+		}
+		if !httpMethods[r.Method] || strings.Contains(routePath, "*") {
 			continue // skip Echo's internal/wildcard routes
 		}
-		ops[r.Method+" "+echoParam.ReplaceAllString(r.Path, "{$1}")] = true
+		ops[r.Method+" "+echoParam.ReplaceAllString(routePath, "{$1}")] = true
 	}
 	// A HEAD beside a GET on the same path is that GET's metadata form (RFC 9110
 	// §9.3.2), not a separate operation; mediaGET registers one for every media
