@@ -734,6 +734,9 @@ x-api-env: &api-env
   # scratch space needs roughly 4x this value per concurrent transcode job, so
   # raising it without growing the scratch volume fills the disk.
   UPLOAD_MAX_SIZE: ${UPLOAD_MAX_SIZE:-2G}
+  # Opt in only when the private processor socket is mounted. The normalizer
+  # runs in either the combined API or the separately configured worker.
+  UPLOAD_NORMALIZER_SOCKET: ${UPLOAD_NORMALIZER_SOCKET:-}
   # Max body of POST /me/import/peertube only; empty/0 = HTTP_BODY_LIMIT
   # (metadata-only exports). Raising it (e.g. 20G, for full exports with their
   # videos) is opt-in: up to 2 uploads are spooled at once to

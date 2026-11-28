@@ -38,18 +38,18 @@ func splitArgsByOutput(t *testing.T, args []string, root string) [][]string {
 // TestSplitChain pins the filter-graph prologue: n branches, correctly labelled,
 // and no pointless split for a single rung.
 func TestSplitChain(t *testing.T) {
-	t.Run("single rung reads the input directly", func(t *testing.T) {
+	t.Run("single rung uses the source ratio without a split", func(t *testing.T) {
 		chain, labels := splitChain(1)
-		if chain != "" {
-			t.Errorf("chain = %q, want empty for one branch", chain)
+		if chain != "[0:v]setsar=sar:max=2147483647[b0]" {
+			t.Errorf("chain = %q", chain)
 		}
-		if len(labels) != 1 || labels[0] != "0:v" {
-			t.Errorf("labels = %v, want [0:v]", labels)
+		if len(labels) != 1 || labels[0] != "b0" {
+			t.Errorf("labels = %v, want [b0]", labels)
 		}
 	})
 	t.Run("multiple rungs fork one decode", func(t *testing.T) {
 		chain, labels := splitChain(4)
-		if chain != "[0:v]split=4[b0][b1][b2][b3]" {
+		if chain != "[0:v]setsar=sar:max=2147483647,split=4[b0][b1][b2][b3]" {
 			t.Errorf("chain = %q", chain)
 		}
 		if len(labels) != 4 {
@@ -107,7 +107,7 @@ func TestHLSLadderArgsDecodesOnce(t *testing.T) {
 		t.Errorf("-filter_complex appears %d times, want 1", n)
 	}
 	graph := argValue(t, args, "-filter_complex")
-	if !strings.HasPrefix(graph, fmt.Sprintf("[0:v]split=%d", len(rungs))) {
+	if !strings.HasPrefix(graph, fmt.Sprintf("[0:v]setsar=sar:max=2147483647,split=%d", len(rungs))) {
 		t.Errorf("graph does not fork the decode into one branch per rung: %q", graph)
 	}
 	outputs := splitArgsByOutput(t, args, root)

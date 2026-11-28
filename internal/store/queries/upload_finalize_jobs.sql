@@ -72,7 +72,8 @@ WHERE id IN (
     LIMIT $1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, upload_id, video_id, purpose, can_manage, attempts;
+RETURNING id, upload_id, video_id, purpose, can_manage, attempts,
+  EXISTS (SELECT 1 FROM retained_upload_recoveries r WHERE r.job_id = upload_finalize_jobs.id) AS recovering;
 
 -- name: CompleteUploadFinalizeJob :exec
 UPDATE upload_finalize_jobs

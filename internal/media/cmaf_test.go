@@ -184,8 +184,14 @@ func TestCMAFFilterGraphIsIdenticalToTheMPEGTSOne(t *testing.T) {
 		if cmaf != ts {
 			t.Errorf("CMAF graph diverges from MPEG-TS:\n cmaf %q\n   ts %q", cmaf, ts)
 		}
+		// Only the input may establish square pixels for an unspecified SAR.
+		// Changing a ratio after the split would erase scale's correction.
+		graph, ok := strings.CutPrefix(cmaf, "[0:v]setsar=sar:max=2147483647")
+		if !ok {
+			t.Fatalf("missing input sample aspect in %q", cmaf)
+		}
 		for _, banned := range []string{"setsar", "setdar", "aspect"} {
-			if strings.Contains(cmaf, banned) {
+			if strings.Contains(graph, banned) {
 				t.Errorf("graph carries %q; it overwrites the sample aspect ratio scale computed to "+
 					"preserve the SOURCE display ratio, which silently re-renders rotated and "+
 					"anamorphic sources at the wrong shape: %q", banned, cmaf)

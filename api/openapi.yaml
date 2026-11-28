@@ -5993,6 +5993,46 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /api/v1/videos/{id}/ipfs-reference/{generation}/{file}:
+    get:
+      operationId: getApprovedReferenceFile
+      summary: Read an individually approved current public HLS reference
+      description: >-
+        This optional same-origin source reads through the operator's IPFS
+        reference node. Follow relative playlist links with literal directory
+        separators. GET and HEAD check publication approval and live eligibility
+        on every request. Responses are private and must not be cached.
+      tags: [videos]
+      security: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: generation, in: path, required: true, schema: { type: string, pattern: '^r[1-9][0-9]{0,18}$' } }
+        - { name: file, in: path, required: true, schema: { type: string }, description: Relative path within the approved HLS tree. }
+        - { name: Range, in: header, schema: { type: string }, description: A single byte range. }
+      responses:
+        "200":
+          description: The complete approved HLS playlist or media file.
+          content:
+            application/vnd.apple.mpegurl: { schema: { type: string } }
+            text/vtt: { schema: { type: string } }
+            video/mp4: { schema: { type: string, format: binary } }
+            video/mp2t: { schema: { type: string, format: binary } }
+            audio/mp4: { schema: { type: string, format: binary } }
+            audio/aac: { schema: { type: string, format: binary } }
+        "206":
+          description: The requested byte range in the file's original media type.
+          headers:
+            Content-Range: { schema: { type: string } }
+          content:
+            application/vnd.apple.mpegurl: { schema: { type: string, format: binary } }
+            text/vtt: { schema: { type: string, format: binary } }
+            video/mp4: { schema: { type: string, format: binary } }
+            video/mp2t: { schema: { type: string, format: binary } }
+            audio/mp4: { schema: { type: string, format: binary } }
+            audio/aac: { schema: { type: string, format: binary } }
+        "404": { description: "Unknown, ineligible, replaced or unapproved media." }
+        "416": { description: Unsatisfiable or unsupported byte range. }
+        "503": { description: Reference playback is temporarily unavailable. }
   /api/v1/videos/{id}/hls/master.m3u8:
     get:
       operationId: getVideoHLSMaster
@@ -22726,11 +22766,12 @@ components:
           type: string
           format: uri
           description: >-
-            Optional public IPFS gateway master playlist URL for the exact
-            current promoted generation, including its actual imported filename.
-            Present only for clear public published media with a complete,
-            eligible public pin, delivery enabled, and an affirmative gateway
-            health observation. Never append credentials or playback tokens.
+            Optional IPFS HLS master for the current eligible public generation.
+            An individually approved native S3 reference uses a same-origin
+            URL after the reference bridge confirms readiness. An enabled,
+            healthy public asset mirror can supply a gateway URL, including
+            an imported video's actual master filename. Never append credentials
+            or playback tokens.
             Try with a bounded startup/stall deadline, then fall back to
             authoritative_hls_url. Omission never blocks ordinary playback.
         dash_url:

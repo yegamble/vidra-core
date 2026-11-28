@@ -354,6 +354,26 @@ func (s *Service) runFinalize(ctx context.Context, row sqlcgen.ClaimDueUploadFin
 		s.logger.Warn("upload finalize: could not mark the session processing", "upload_id", row.UploadID.String(), "error", err)
 	}
 
+	if row.Recovering {
+		p, ok := s.pipeline.(interface {
+			ProcessRetained(context.Context, uuid.UUID, uuid.UUID) error
+		})
+		if !ok {
+			return safeerr.NewTerminal("the retained upload cannot be recovered")
+		}
+		err := p.ProcessRetained(ctx, row.ID, row.VideoID)
+		var rejected *video.MalwareRejectedError
+		switch {
+		case errors.As(err, &rejected):
+			return safeerr.NewTerminal(video.SafetyScanRejectedMessage)
+		case errors.Is(err, video.ErrRecoveryIneligible):
+			return safeerr.NewTerminal("the retained upload is no longer eligible for recovery")
+		case err != nil:
+			return s.internalf("process retained original", err)
+		default:
+			return nil
+		}
+	}
 	sess, reader, err := s.uploads.Assemble(ctx, row.UploadID)
 	if err != nil {
 		switch {
