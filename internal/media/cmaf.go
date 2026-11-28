@@ -468,13 +468,14 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 	// correct codec for them and a per-codec set would be pure waste.
 	trickPlay := make(map[int]hlsTrickPlayInfo, len(req.rungs))
 	for i, r := range req.rungs {
-		info, terr := finalizeTrickPlayIn(ctx, req.tools.ffprobe, tree,
-			cmafIFramePlaylistName(i), cmafIFrameMediaName(i))
+		info, terr := req.trickPlay(ctx, tree, cmafIFramePlaylistName(i), cmafIFrameMediaName(i))
 		if terr != nil {
 			req.packagingFailed()
 			return packageResult{}, fmt.Errorf("media: trick-play %s for %q: %w", r.Name(), req.sourceKey, terr)
 		}
-		trickPlay[r.Height] = info
+		if info.Bandwidth > 0 {
+			trickPlay[r.Height] = info
+		}
 	}
 
 	// Progressive downloads. A CMAF video representation carries no audio, so the
@@ -591,7 +592,7 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 
 	// Only the master playlist and the optional audio-only download are left in
 	// the scratch root now, so what it measures IS the top-level extra.
-	extra, err := directorySize(req.scratch)
+	extra, err := req.topLevelSize(ctx)
 	if err != nil {
 		return packageResult{}, err
 	}
@@ -599,16 +600,6 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 		rungSizes[req.rungs[0].Height] += extra
 	}
 
-	// A replacement source may be silent when the previous generation had audio.
-	// storeTree only overwrites files present in the new tree, so remove the old
-	// optional derivative before storing a generation that omits it.
-	if _, statErr := os.Stat(filepath.Join(req.scratch, HLSAudioDownloadFilename)); os.IsNotExist(statErr) {
-		if derr := req.tools.blobs.Delete(ctx, req.prefix+"/"+HLSAudioDownloadFilename); derr != nil {
-			return packageResult{}, derr
-		}
-	} else if statErr != nil {
-		return packageResult{}, statErr
-	}
 	if serr := storeTree(ctx, req.tools.blobs, req.scratch, req.prefix); serr != nil {
 		req.storeFailed(req.rungs...)
 		return packageResult{}, serr
