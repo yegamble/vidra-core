@@ -11,12 +11,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v5"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
 const referencePlaybackRoute = "/videos/:id/ipfs-reference/:generation/*"
 
-var referenceGeneration = regexp.MustCompile("^r[1-9][0-9]{0,18}$")
 var referenceFile = regexp.MustCompile("^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254}(/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254})*$")
 var referenceRange = regexp.MustCompile("^bytes=([0-9]{1,19}-[0-9]{0,19}|-[0-9]{1,19})$")
 var referenceExtensions = regexp.MustCompile(`\.(m3u8|mp4|m4s|m4a|ts|aac|vtt)$`)
@@ -84,10 +84,10 @@ func (s *Server) handleReferenceFile(c *echo.Context) error {
 	mime := storage.ContentTypeForKey(file)
 	req := c.Request()
 	p := s.referencePlayback
-	if p == nil || !referenceExtensions.MatchString(file) || len(file) > 1024 || !referenceGeneration.MatchString(gen) || !referenceFile.MatchString(file) || req.URL.EscapedPath() != referencePath(id, gen, file) {
+	if p == nil || !referenceExtensions.MatchString(file) || len(file) > 1024 || (len(gen) > 20 || !media.IsHLSGenerationName(gen)) || !referenceFile.MatchString(file) || req.URL.EscapedPath() != referencePath(id, gen, file) {
 		return absent
 	}
-	master := "streaming-playlists/" + id.String() + "/" + gen + "/master.m3u8"
+	master := media.HLSKeyPrefix(id) + "/" + gen + "/master.m3u8"
 	if err := p.checkGeneration(req.Context(), id, master); err != nil {
 		return err
 	}

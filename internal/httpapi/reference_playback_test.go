@@ -40,12 +40,12 @@ func TestApprovedReferencePlayback(t *testing.T) {
 				t.Error("lost byte range")
 			}
 			w.Header().Set("Content-Range", "bytes 0-1/4")
-			w.WriteHeader(206)
+			w.WriteHeader(http.StatusPartialContent)
 			_, _ = w.Write([]byte("ab"))
 		case prefix + "cmaf/redirect.m4s":
-			http.Redirect(w, r, "https://unrelated.invalid/", 302)
+			http.Redirect(w, r, "https://unrelated.invalid/", http.StatusFound)
 		default:
-			w.WriteHeader(404)
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	bridge.Listener.Close()
