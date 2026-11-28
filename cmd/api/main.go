@@ -1198,6 +1198,9 @@ func run() error {
 	// pipeline on/off without a restart (the boot-baked-worker gotcha).
 	var hlsTranscoder transcode.Transcoder
 	if tc, ok := media.DetectHLSTranscoder(blobs); ok {
+		if cfg.UploadNormalizerSocket != "" {
+			tc.SetOutputScanner(fileScanner)
+		}
 		tc.SetVP9(cfg.TranscodingVP9Enabled)
 		tc.SetStreamOutput(cfg.TranscodingStreamOutput)
 		// Packaging format for NEW transcodes (phase-3 item 3). Config has already

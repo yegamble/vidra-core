@@ -44,7 +44,9 @@ func (s *scannedOutputStore) PutSized(ctx context.Context, key string, body io.R
 	clean, err := processedupload.ScanFile(ctx, s.scanner, body, size)
 	if err != nil {
 		failure := fmt.Errorf("media: scan playback object %q: %w", key, err)
-		if errors.Is(err, processedupload.ErrInfected) || errors.Is(err, processedupload.ErrScanTooLarge) {
+		if errors.Is(err, processedupload.ErrScanTooLarge) {
+			failure = permanentf("%s (%d-byte maximum)", failure, processedupload.MaxScannedBytes)
+		} else if errors.Is(err, processedupload.ErrInfected) {
 			failure = NewPermanentError(failure.Error())
 		}
 		return 0, &playbackScanError{cause: failure}
